@@ -91,6 +91,19 @@ public final class StudioEditingCapabilities {
                     .put("animatedMatteTracking",false)
                     .put("videoMattes",false)
                     .put("sourceMediaUnchanged",true)
+                    .put("galleryAccess",false))
+                  .put("nativeCornerPin",new JSONObject()
+                    .put("minimumNativeVersion","4.10.34")
+                    .put("action","corner_pin_edit")
+                    .put("planAction","corner_pin_plan")
+                    .put("realSkiaHomography",true)
+                    .put("fourTouchHandles",true)
+                    .put("numericCornerEditing",true)
+                    .put("inputLimits",new org.json.JSONArray().put(0).put(1))
+                    .put("sourceMediaUnchanged",true)
+                    .put("cachedNativePixelWarp",true)
+                    .put("3DCamera",false)
+                    .put("automatedTracking",false)
                     .put("galleryAccess",false));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }

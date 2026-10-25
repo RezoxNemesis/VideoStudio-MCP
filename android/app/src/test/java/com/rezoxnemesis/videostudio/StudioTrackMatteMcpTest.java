@@ -19,7 +19,7 @@ public class StudioTrackMatteMcpTest {
             assertTrue(NativeCommandExecutionPolicy.requiresBackgroundThread(action));
         }
         assertFalse(NativeAgentMailboxActions.supports("studio_gallery_list"));
-        assertEquals(98,NativeWorkbenchBridge.capabilities()
+        assertEquals(101,NativeWorkbenchBridge.capabilities()
                 .getJSONArray("canonicalActions").length());
     }
     @Test public void schemaDeclaresExplicitHonestLimitations()throws Exception{

@@ -1118,6 +1118,43 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     /** One target + one shape matte, guarded as a single native editing operation. */
+    /** Corner pin is a project-preserving, revision-guarded native composition edit. */
+    private void openStudioCornerPin(StudioLayer layer){
+        if(activeProject==null||layer==null)return;
+        if(!StudioLayer.IMAGE.equals(layer.type)&&!StudioLayer.SHAPE.equals(layer.type))return;
+        final String owner=activeProject.id,targetId=layer.id;
+        final long revision=activeProject.updatedAt;
+        StudioCornerPinDialog.show(this,layer,candidate->{
+            if(activeProject==null||!owner.equals(activeProject.id)
+                    ||activeProject.updatedAt!=revision){
+                Toast.makeText(this,"Project changed; reopen the corner pin editor",Toast.LENGTH_LONG).show();
+                return false;
+            }
+            try{
+                ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+                JSONObject request=new JSONObject()
+                        .put("projectId",owner)
+                        .put("expectedUpdatedAt",revision)
+                        .put("layerId",targetId)
+                        .put("operation",candidate.cornerPin==null?"clear":"apply");
+                if(candidate.cornerPin!=null)
+                    request.put("corners",candidate.cornerPin);
+                if(candidate.cornerPin==null&&layer.cornerPin==null)return true;
+                JSONObject result=StudioCornerPinOps.apply(store,request);
+                ProjectStore.Project updated=store.get(result.getString("projectId"));
+                if(updated==null)throw new IllegalStateException("Edited project no longer available");
+                editHistory.checkpoint(before);
+                activeProject=updated;studioSelectedLayerId=targetId;
+                syncProtocolState();showEditor();
+                if(studioWorkspace!=null)studioWorkspace.showPane("Inspector");
+                return true;
+            }catch(Exception problem){
+                Toast.makeText(this,"Corner pin was not saved: "+problem.getMessage(),Toast.LENGTH_LONG).show();
+                return false;
+            }
+        });
+    }
+
     private void openStudioTrackMatte(StudioLayer target) {
         if(activeProject==null||target==null)return;
         if(!StudioLayer.IMAGE.equals(target.type)&&!StudioLayer.SHAPE.equals(target.type))return;
@@ -1471,6 +1508,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(body("One-level motion parent. All linked text, image and vector layers receive its transform during preview and export."));
             }else if(StudioLayer.IMAGE.equals(layer.type)){
                 box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
+                box.addView(studioButton("Corner Pin · 2D perspective",()->openStudioCornerPin(layer)));
                 box.addView(studioButton("Track matte · linked shape alpha",()->openStudioTrackMatte(layer)));
                 box.addView(studioButton("Touch-transform directly on preview",()->openStudioDirectTouch(layer)));
                 box.addView(studioButton("Animate overlay",()->openStudioImageMotion(layer)));
@@ -1484,6 +1522,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Delete video overlay",()->removeStudioLayer(layer)));
                 box.addView(body("Silent independent video source. Source in trims its own footage; it does not move the base timeline or add source audio."));
             }else if(StudioLayer.SHAPE.equals(layer.type)){
+                box.addView(studioButton("Corner Pin · 2D perspective",()->openStudioCornerPin(layer)));
                 if(layer.matteOnly)box.addView(body("Alpha matte source · hidden during rendering. Select the image/shape it masks to unlink it."));
                 else box.addView(studioButton("Track matte · linked shape alpha",()->openStudioTrackMatte(layer)));
                 box.addView(studioButton("Mask / feather",()->openStudioMaskEditor(layer)));
