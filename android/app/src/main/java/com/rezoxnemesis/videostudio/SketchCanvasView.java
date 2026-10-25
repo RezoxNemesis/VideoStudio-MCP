@@ -56,6 +56,9 @@ public final class SketchCanvasView extends View {
     private final java.util.LinkedHashMap<String,JSONObject> pendingPaintPreviews=new java.util.LinkedHashMap<>();
     private SketchPaintReplay.Frame paintPublication;
     private boolean agentHandEnabled=true;
+    private boolean agentPenCameraFollow;
+    private long lastAgentCameraAt;
+    private android.animation.ValueAnimator agentCameraAnimator;
     private SketchAgentHand.State agentHand=SketchAgentHand.State.hidden();
     private final Object touchPreviewLock=new Object();
     private static final class TouchPreviewRequest {
@@ -183,7 +186,36 @@ public final class SketchCanvasView extends View {
     public void setOnion(boolean onion) { this.onion = onion;rasterKey="";invalidate(); }
     public void setBrushStyle(JSONObject brush,float smoothing){this.brushStyle=brush;this.stabilization=Math.max(0,Math.min(.9f,smoothing));invalidate();}
     public void setAgentHandEnabled(boolean enabled){agentHandEnabled=enabled;invalidate();}
-    public void setAgentHand(SketchAgentHand.State state){agentHand=state==null?SketchAgentHand.State.hidden():state;invalidate();}
+    public void setAgentPenCameraFollow(boolean enabled){
+        agentPenCameraFollow=enabled;
+        if(!enabled)cancelAgentCamera();
+    }
+    public boolean agentPenCameraFollow(){return agentPenCameraFollow;}
+    public void setAgentHand(SketchAgentHand.State state){
+        agentHand=state==null?SketchAgentHand.State.hidden():state;
+        if(agentPenCameraFollow&&agentHand.drawing&&agentHand.visible
+                &&agentHand.x>=0&&agentHand.x<=1&&agentHand.y>=0&&agentHand.y<=1
+                &&document!=null&&!isDrawing()&&!disposed
+                &&getWidth()>0&&getHeight()>0){
+            long now=android.os.SystemClock.uptimeMillis();
+            if(now-lastAgentCameraAt>=160){
+                lastAgentCameraAt=now;
+                try{
+                    float[] suggested=SketchViewportMath.follow(getWidth(),getHeight(),
+                            document.getInt("width"),document.getInt("height"),
+                            zoom,panX,panY,agentHand.x,agentHand.y);
+                    if(Math.abs(suggested[0]-panX)+Math.abs(suggested[1]-panY)>3){
+                        cancelAgentCamera();
+                        panX=suggested[0];panY=suggested[1];
+                    }
+                }catch(Exception ignored){
+                    // Camera-follow is optional UI presentation, never a reason
+                    // to interrupt an accepted drawing or stop its replay.
+                }
+            }
+        }
+        invalidate();
+    }
     public void hideAgentHand(){agentHand=SketchAgentHand.State.hidden();invalidate();}
     public void setBookOnionDocuments(String owner,JSONObject previous,JSONObject next)throws Exception{
         if(document==null||!owner.equals(document.getString("id")))return;
@@ -221,7 +253,36 @@ public final class SketchCanvasView extends View {
         symmetryConfiguration=configuration==null?null:SketchSymmetry.configuration(configuration);symmetry=configuration!=null;invalidate();
     }
     public void setOnionOptions(int range,int alpha){onionRange=Math.max(1,Math.min(3,range));onionAlpha=Math.max(0,Math.min(128,alpha));invalidate();}
-    public void resetView(){zoom=1;panX=panY=0;invalidate();}
+    /** Bounded, animated viewport travel to a real normalized sketch location. */
+    public void agentFocus(double x,double y,double requestedZoom){
+        if(document==null||isDrawing()||disposed)
+            throw new IllegalStateException("The canvas cannot be repositioned during a drawing gesture");
+        SketchViewportMath.Camera focus=SketchViewportMath.focus(
+                getWidth(),getHeight(),document.optInt("width"),
+                document.optInt("height"),x,y,requestedZoom);
+        cancelAgentCamera();
+        final float z0=zoom,px=panX,py=panY;
+        agentCameraAnimator=android.animation.ValueAnimator.ofFloat(0,1);
+        agentCameraAnimator.setDuration(190);
+        agentCameraAnimator.setInterpolator(new android.view.animation.DecelerateInterpolator(1.35f));
+        agentCameraAnimator.addUpdateListener(animation->{
+            if(disposed||pointerDown||navigating){cancelAgentCamera();return;}
+            float fraction=(float)animation.getAnimatedValue();
+            zoom=z0+(focus.zoom-z0)*fraction;
+            panX=px+(focus.panX-px)*fraction;
+            panY=py+(focus.panY-py)*fraction;
+            invalidate();
+        });
+        agentCameraAnimator.start();
+    }
+
+    private void cancelAgentCamera(){
+        android.animation.ValueAnimator animator=agentCameraAnimator;
+        agentCameraAnimator=null;
+        if(animator!=null)animator.cancel();
+    }
+
+    public void resetView(){cancelAgentCamera();zoom=1;panX=panY=0;invalidate();}
     public void focusSelection() throws Exception {
         if(document==null||selectedId==null)throw SketchDocument.bad("Select an object to focus");
         JSONObject object=SketchShapeKeys.sampled(SketchDocument.object(document,selectedId),frame),layer=SketchDocument.owner(document,selectedId);int w=document.getInt("width"),h=document.getInt("height");RectF bounds;
@@ -295,7 +356,7 @@ public final class SketchCanvasView extends View {
         if(image==null||image.bitmap.isRecycled())return;JSONObject c=image.crop;RectF target=c==null?new RectF(0,0,w,h):new RectF((float)c.getDouble("x")*w,(float)c.getDouble("y")*h,(float)(c.getDouble("x")+c.getDouble("width"))*w,(float)(c.getDouble("y")+c.getDouble("height"))*h);
         canvas.drawBitmap(image.bitmap,null,target,tint);
     }
-    public void dispose() { if(disposed)return;disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
+    public void dispose() { if(disposed)return;cancelAgentCamera();disposed=true;imageSelections.clear();playbackPreview=false;previewActive=false;hideAgentHand();invalidateTouchPreview(true);++rasterGeneration;requestedRasterGeneration=rasterGeneration;rasterWorker.execute(()->{if(touchPaintCache!=null){touchPaintCache.close();touchPaintCache=null;touchPaintOwner=null;}});rasterWorker.shutdown();detachPaintPublication();clearFrameCache();if(renderer!=null){renderer.close();renderer=null;} }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas); if (document == null||disposed) return;
@@ -393,11 +454,11 @@ public final class SketchCanvasView extends View {
         if(!isEnabled()&&!(event.getPointerCount()>1||navigating||"pan".equals(tool)))return false;
         try {
             scaling.onTouchEvent(event);
-            if(event.getPointerCount()>1){float cx=(event.getX(0)+event.getX(1))/2,cy=(event.getY(0)+event.getY(1))/2;if(!navigating||event.getActionMasked()==MotionEvent.ACTION_POINTER_DOWN){navigating=true;invalidateTouchPreview(true);pointerDown=false;paintCommitter=null;paintTarget=null;gesture=new JSONArray();dragTransform=null;lastPanX=cx;lastPanY=cy;}else if(event.getActionMasked()==MotionEvent.ACTION_MOVE&&!scaling.isInProgress()){panX+=cx-lastPanX;panY+=cy-lastPanY;}lastPanX=cx;lastPanY=cy;getParent().requestDisallowInterceptTouchEvent(true);invalidate();return true;}
+            if(event.getPointerCount()>1){cancelAgentCamera();float cx=(event.getX(0)+event.getX(1))/2,cy=(event.getY(0)+event.getY(1))/2;if(!navigating||event.getActionMasked()==MotionEvent.ACTION_POINTER_DOWN){navigating=true;invalidateTouchPreview(true);pointerDown=false;paintCommitter=null;paintTarget=null;gesture=new JSONArray();dragTransform=null;lastPanX=cx;lastPanY=cy;}else if(event.getActionMasked()==MotionEvent.ACTION_MOVE&&!scaling.isInProgress()){panX+=cx-lastPanX;panY+=cy-lastPanY;}lastPanX=cx;lastPanY=cy;getParent().requestDisallowInterceptTouchEvent(true);invalidate();return true;}
             if(navigating){if(event.getActionMasked()==MotionEvent.ACTION_UP||event.getActionMasked()==MotionEvent.ACTION_CANCEL){navigating=false;pointerDown=false;getParent().requestDisallowInterceptTouchEvent(false);}return true;}
             float x = (event.getX() - left) / viewScale / document.getInt("width"), y = (event.getY() - top) / viewScale / document.getInt("height");
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                pointerDown=true;
+                cancelAgentCamera();pointerDown=true;
                 if (x < 0 || x > 1 || y < 0 || y > 1){pointerDown=false;return false;}
                 getParent().requestDisallowInterceptTouchEvent(true); downX = x; downY = y;
                 if("eyedropper".equals(tool)){pointerDown=false;if(listener!=null)listener.onSampleRequested(x,y,frame);getParent().requestDisallowInterceptTouchEvent(false);return true;}
