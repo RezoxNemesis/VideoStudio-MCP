@@ -1567,6 +1567,36 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 showAgentStage(claimed,"selected "+target+" tool");
                 break;
             }
+            case "brush": {
+                if(document==null||canvas==null)
+                    throw SketchDocument.bad("Open the owned Sketch Studio canvas before choosing a brush");
+                int side=Math.min(document.getInt("width"),document.getInt("height"));
+                String nextColor=step.optString("color",brushColor);
+                float nextWidth=step.has("widthPx")
+                        ?(float)(SketchDocument.number(step,"widthPx",side*.0005,side*.2)/side)
+                        :brushWidth;
+                boolean nextFill=step.optBoolean("fill",brushFill);
+                String nextPreset=step.optString("preset",brushPreset);
+                float nextOpacity=(float)step.optDouble("opacity",brushOpacity);
+                float nextHardness=(float)step.optDouble("hardness",brushHardness);
+                float nextAngle=(float)step.optDouble("angle",brushAngle);
+                float nextSmoothing=(float)step.optDouble("stabilization",smoothing);
+                SketchDocument.color(nextColor);
+                SketchBrushes.style(nextPreset,nextOpacity,nextHardness,true,nextAngle);
+                if(!Float.isFinite(nextWidth)||nextWidth<.0005f||nextWidth>.2f||
+                        !Float.isFinite(nextSmoothing)||nextSmoothing<0||nextSmoothing>.9f)
+                    throw SketchDocument.bad("Agent brush controls exceed native on-screen limits");
+                // Settings are applied to the actual current brush/canvas exactly
+                // as if the human used Brush and colour. No artwork is drawn here.
+                brushColor=nextColor;brushWidth=nextWidth;brushFill=nextFill;
+                brushPreset=nextPreset;brushOpacity=nextOpacity;
+                brushHardness=nextHardness;brushAngle=nextAngle;
+                smoothing=nextSmoothing;
+                updateBrush();
+                showAgentStage(claimed,"set "+nextPreset+" brush · "+
+                        Math.round(nextWidth*side)+" px · "+nextColor);
+                break;
+            }
             case "frame":{
                 int target=step.getInt("frameIndex");
                 setFrame(target);
@@ -1694,6 +1724,13 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     .put("sourceRevision",document==null?-1:document.optLong("revision"))
                     .put("atMs",System.currentTimeMillis());
             if(canvas!=null)evidence.put("actualCamera",canvas.cameraSnapshot());
+            if("brush".equals(claim.getJSONObject("step").getString("action")))
+                evidence.put("actualBrush",new JSONObject()
+                        .put("color",brushColor).put("widthPx",brushWidth*
+                                Math.min(document.getInt("width"),document.getInt("height")))
+                        .put("fill",brushFill).put("preset",brushPreset)
+                        .put("opacity",brushOpacity)
+                        .put("stabilization",smoothing));
         }catch(Exception error){
             succeeded=false;
             evidence=new JSONObject();
