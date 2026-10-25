@@ -287,6 +287,28 @@ public final class SketchAgentStageCommands implements AutoCloseable {
         }finally{db.endTransaction();}
     }
 
+    /** Return an unexecuted foreground claim without claiming false progress. */
+    public void release(JSONObject claim)throws Exception{
+        if(claim==null)return;
+        String id=SketchDocument.id(claim,"sketchId"),
+                operation=SketchDocument.id(claim,"operationId");
+        int step=(int)SketchDocument.integer(claim,"stepIndex",0,MAX_STEPS-1);
+        db.beginTransaction();
+        try{
+            JSONObject row=lookup(id,operation);
+            if(row!=null&&"running".equals(row.getString("state"))&&row.getInt("nextStep")==step){
+                ContentValues update=new ContentValues();
+                update.put("state","queued");
+                update.put("lease_until_ms",0);
+                update.put("updated_at_ms",System.currentTimeMillis());
+                db.update("stage_commands",update,
+                        "sketch_id=? AND operation_id=? AND next_step=? AND state='running'",
+                        new String[]{id,operation,String.valueOf(step)});
+            }
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+    }
+
     /** Foreground proof only; never mark queued work completed in the relay. */
     public JSONObject finish(JSONObject claimed,boolean succeeded,JSONObject evidence)throws Exception{
         String id=SketchDocument.id(claimed,"sketchId"),
