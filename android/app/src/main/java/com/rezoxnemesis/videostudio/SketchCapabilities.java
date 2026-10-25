@@ -470,6 +470,7 @@ public final class SketchCapabilities {
                         .put("notification",new JSONObject().put("minimumNativeVersion","4.1.1").put("tapOpensExactSession",true).put("missedStrokesReplayed",true).put("androidPermissionRequired",true).put("reportedByBegin",true).put("phoneDeliveryVerified",false))
                         .put("drawingMethod",new JSONObject().put("minimumNativeVersion","4.1.1").put("original_strokes","Blank baseline; authored geometry and paint only. Clone, tracing, cel copying and reference reveals rejected.").put("source_assisted","Reference pixels or existing artwork may be copied; never present as drawing from scratch.").put("legacyDefault","source_assisted").put("artisticLikenessCertified",false))
                         .put("agentHand",new JSONObject().put("minimumNativeVersion","4.1.0").put("actualPublishedStrokePrefixes",true).put("actualToolLabels",true).put("pausedWhilePreparing",true).put("workspaceDisplayToggle",true).put("includedInArtworkExport",false).put("phonePlaybackVerified",false)))
+                .put("visibleAgentDirector",SketchAgentStageCommands.capabilities())
                 .put("shapeAnimation",new JSONObject().put("minimumNativeVersion","4.6.1")
                         .put("operation","set_shape_key").put("geometry","topology-preserving Bezier paths")
                         .put("maximumKeysPerPath",240).put("sharedNativePreviewAndExport",true)

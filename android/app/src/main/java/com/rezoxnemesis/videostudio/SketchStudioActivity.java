@@ -92,7 +92,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private final String[] toolValues={"stroke","eraser","line","rect","ellipse","polygon","select","eyedropper","pan","curve","nodes","paint","paint_erase","clone","precision","precision_brush"};
     private String sketchId;
     private SketchCanvasView canvas;
-    private TextView status,previewStatus;
+    private TextView status,previewStatus,agentStageIndicator;
+    private boolean agentStageInFlight,agentStageBurst;
+    private long lastAgentStageProbeAt;
+    private String agentStageActiveOperation="";
     private SeekBar frames;
     private Spinner layers;
     private final ArrayList<String> layerIds = new ArrayList<>();
@@ -133,6 +136,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         android.widget.FrameLayout viewport=new android.widget.FrameLayout(this);
         viewport.addView(canvas,new android.widget.FrameLayout.LayoutParams(-1,-1));
         viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
+        agentStageIndicator=new TextView(this);
+        agentStageIndicator.setTextColor(0xffeaf6e7);
+        agentStageIndicator.setTextSize(12);
+        agentStageIndicator.setPadding(dp(10),dp(7),dp(10),dp(7));
+        agentStageIndicator.setBackgroundColor(0xee183a32);
+        agentStageIndicator.setMaxLines(2);
+        agentStageIndicator.setVisibility(View.GONE);
+        agentStageIndicator.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        agentStageIndicator.setContentDescription("Real ChatGPT Sketch Studio navigation");
+        android.widget.FrameLayout.LayoutParams agentStagePosition=
+                new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP);
+        agentStagePosition.topMargin=dp(66);
+        viewport.addView(agentStageIndicator,agentStagePosition);
         LinearLayout drawingArea=new LinearLayout(this);drawingArea.setOrientation(LinearLayout.HORIZONTAL);drawingArea.addView(viewport,new LinearLayout.LayoutParams(0,-1,2));
         layeredReferencePanel=column();layeredReferencePanel.setBackgroundColor(0xff273345);layeredReferencePanel.setVisibility(View.GONE);drawingArea.addView(layeredReferencePanel,new LinearLayout.LayoutParams(0,-1,1));
         TextView referenceTitle=new TextView(this);referenceTitle.setText("REFERENCE ONLY");referenceTitle.setTextColor(StudioUi.TEXT);referenceTitle.setTextSize(11);layeredReferencePanel.addView(referenceTitle);
@@ -448,8 +464,23 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             timing.setSelection(Math.max(0,java.util.Arrays.asList(modes).indexOf(mode)));form.addView(timing);
             String controlValues=authored!=null&&authored.has("curve")?commaValues(authored.getJSONArray("curve")):"0.42, 0, 1, 1";
             EditText curve=input("Bezier timing: x1, y1, x2, y2",controlValues,false);form.addView(curve);
+            SketchCurveGraphView graph=new SketchCurveGraphView(this);
+            graph.setCurve(new JSONArray("["+controlValues+"]"));
+            graph.setOnCurveChanged(points->{
+                try{curve.setText(commaValues(points));timing.setSelection(5);}
+                catch(Exception error){onMessage(error.getMessage());}
+            });
+            form.addView(graph,new LinearLayout.LayoutParams(-1,dp(216)));
+            button(row(form),"Graph from numbers",()->{
+                try{graph.setCurve(new JSONArray("["+curve.getText().toString()+"]"));}
+                catch(Exception error){onMessage("Invalid curve: "+error.getMessage());}
+            });
             curve.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){curve.setVisibility(position==5?View.VISIBLE:View.GONE);}});
+            graph.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){
+                curve.setVisibility(position==5?View.VISIBLE:View.GONE);
+                graph.setVisibility(position==5?View.VISIBLE:View.GONE);
+            }});
             new AlertDialog.Builder(this).setTitle(objectId == null ? "Layer transform" : "Object transform").setView(form).setNegativeButton("Cancel", null)
                     .setNeutralButton("Remove key", (d,w) -> { try { onOperation(targetOperation("set_keyframe", objectId).put("frame", canvas.getFrame()).put("remove", true)); } catch (Exception e) { onMessage(e.getMessage()); } })
                     .setPositiveButton("Apply", (d,w) -> { try { JSONObject transform = new JSONObject(); for (int i = 0; i < keys.length; i++) { double value = Double.parseDouble(values[i].getText().toString()); if (i == 0) value /= document.getInt("width"); if (i == 1) value /= document.getInt("height"); transform.put(keys[i], value); }
@@ -481,8 +512,23 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     new String[]{"Linear","Smooth","Hold","Ease in","Ease out","Ease in/out","Bezier"}));
             timing.setSelection(prior==null?0:Math.max(0,java.util.Arrays.asList(modes).indexOf(prior.getString("interpolation"))));form.addView(timing);
             EditText curve=input("Bezier timing: x1, y1, x2, y2",prior!=null&&prior.has("curve")?commaValues(prior.getJSONArray("curve")):"0.42, 0, 1, 1",false);form.addView(curve);
+            SketchCurveGraphView graph=new SketchCurveGraphView(this);
+            graph.setCurve(new JSONArray("["+curve.getText().toString()+"]"));
+            graph.setOnCurveChanged(points->{
+                try{curve.setText(commaValues(points));timing.setSelection(6);}
+                catch(Exception error){onMessage(error.getMessage());}
+            });
+            form.addView(graph,new LinearLayout.LayoutParams(-1,dp(216)));
+            button(row(form),"Graph from numbers",()->{
+                try{graph.setCurve(new JSONArray("["+curve.getText().toString()+"]"));}
+                catch(Exception error){onMessage("Invalid shape timing: "+error.getMessage());}
+            });
             curve.setVisibility(timing.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){curve.setVisibility(index==6?View.VISIBLE:View.GONE);}});
+            graph.setVisibility(timing.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){
+                curve.setVisibility(index==6?View.VISIBLE:View.GONE);
+                graph.setVisibility(index==6?View.VISIBLE:View.GONE);
+            }});
             button(row(form),"Clear shape animation",()->{try{onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("shapeKeys",new JSONArray())));}catch(Exception failure){onMessage(failure.getMessage());}});
             new AlertDialog.Builder(this).setTitle("Shape key · frame "+(frame+1)).setView(form).setNegativeButton("Cancel",null)
                 .setNeutralButton("Remove key",(dialog,which)->{try{onOperation(new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame).put("remove",true));}catch(Exception failure){onMessage(failure.getMessage());}})
@@ -1104,6 +1150,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
      * Accepted events remain on disk so watching can resume without discarding steps. */
     private void takeOverLive(Runnable action){
         watching=false;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",false).apply();updateLiveControl();
+        if(canvas!=null)canvas.stopAgentCamera(); // Human takeover cancels any in-flight native agent viewport move.
         int liveGeneration=++liveLoadGeneration;loadingDrawing=true;stopLivePlayer();
         SketchEditorSession active=session;String id=sketchId;int generation=loadGeneration,page=pageGeneration;int frame=canvas.getFrame();
         if(active==null){updateStatus();return;}
@@ -1191,6 +1238,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        pollAgentStage();
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
             handler.postDelayed(this,250);
@@ -1212,6 +1260,243 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         handler.postDelayed(this,250);
     }};
 
+    /**
+     * Actual Sketch Studio foreground executor. It never marks a remote step
+     * applied from the background ControlService. Drawing and brush replay
+     * remain on the existing accepted-stroke live player.
+     */
+    private void pollAgentStage(){
+        if(!agentStageBurst&&SystemClock.uptimeMillis()-lastAgentStageProbeAt<950L)return;
+        if(agentStageInFlight||!resumed||!watching||loadingDrawing
+                ||localEditableReturn!=null&&localEditableReturn.ownsEditor()
+                ||livePlayer!=null||watchInFlight||session==null||session.pending()>0
+                ||session.error()!=null||canvas==null||canvas.isDrawing()
+                ||bookId!=null||sketchId==null||document==null)return;
+        final String id=sketchId;final SketchEditorSession active=session;
+        final int generation=loadGeneration,page=pageGeneration;
+        lastAgentStageProbeAt=SystemClock.uptimeMillis();
+        agentStageInFlight=true;
+        io.execute(()->{
+            try(SketchAgentStageCommands queue=new SketchAgentStageCommands(this)){
+                JSONObject claimed=queue.claim(id);
+                postUi(()->{
+                    if(destroyed||!resumed||session!=active||generation!=loadGeneration
+                            ||page!=pageGeneration||!id.equals(sketchId)||!watching
+                            ||loadingDrawing||livePlayer!=null||canvas.isDrawing()){
+                        if(claimed!=null)io.execute(()->{
+                            try(SketchAgentStageCommands paused=new SketchAgentStageCommands(this)){
+                                paused.release(claimed);
+                            }catch(Exception ignored){}
+                        });
+                        agentStageInFlight=false;
+                        return;
+                    }
+                    if(claimed==null){agentStageBurst=false;agentStageInFlight=false;return;}
+                    agentStageBurst=true;
+                    try{applyAgentStage(claimed);}
+                    catch(Exception failure){
+                        settleAgentStage(claimed,false,
+                                "Stage action rejected: "+failure.getMessage());
+                    }
+                });
+            }catch(Exception problem){
+                postUi(()->{agentStageInFlight=false;
+                    if(status!=null)status.setText("Sketch agent stage queue: "+problem.getMessage());
+                });
+            }
+        });
+    }
+
+    private void showAgentStage(JSONObject claim,String description){
+        if(agentStageIndicator==null)return;
+        agentStageActiveOperation=claim.optString("operationId");
+        agentStageIndicator.setText("ChatGPT  ·  "+(claim.optInt("stepIndex")+1)
+                +"/"+claim.optInt("stepCount",1)+"  ·  "+description);
+        agentStageIndicator.setVisibility(View.VISIBLE);
+        agentGlobalTool=true;
+        updateAgentToolIndicator();
+    }
+
+    private void agentChooseObject(String objectId)throws Exception{
+        JSONObject object=SketchDocument.object(document,objectId),
+                owner=SketchDocument.owner(document,objectId);
+        if(!owner.getBoolean("visible"))
+            throw SketchDocument.bad("Selected object belongs to a hidden layer");
+        int targetFrame=Math.max(0,object.getInt("frame"));
+        if(canvas.getFrame()!=targetFrame)setFrame(targetFrame);
+        String layer=owner.getString("id");
+        canvas.setLayerId(layer);
+        int index=layerIds.indexOf(layer);
+        if(index>=0)layers.setSelection(index);
+        canvas.selectObject(objectId);
+        updateStatus();
+    }
+
+    private void applyAgentStage(JSONObject claimed)throws Exception{
+        if(!sketchId.equals(claimed.getString("sketchId"))||bookId!=null
+                ||document.getLong("revision")!=claimed.getLong("expectedRevision"))
+            throw new IllegalStateException("SKETCH_STAGE_SOURCE_CHANGED: foreground drawing changed");
+        JSONObject step=claimed.getJSONObject("step");
+        String action=step.getString("action");
+        if(!"play".equals(action)&&!"pause".equals(action)&&!"wait".equals(action))
+            stopPlayback();
+        switch(action){
+            case "tool":{
+                String target=step.getString("tool");
+                int index=java.util.Arrays.asList(toolValues).indexOf(target);
+                if(index<0)throw SketchDocument.bad("Unavailable studio tool");
+                showAgentToolPosition(index);
+                canvas.setTool(target);
+                showAgentStage(claimed,"selected "+target+" tool");
+                break;
+            }
+            case "frame":{
+                int target=step.getInt("frameIndex");
+                setFrame(target);
+                showAgentStage(claimed,"moved timeline to frame "+(target+1));
+                break;
+            }
+            case "layer":{
+                String id=step.getString("layerId");
+                SketchDocument.layer(document,id);
+                canvas.setLayerId(id);
+                int index=layerIds.indexOf(id);
+                if(index>=0)layers.setSelection(index);
+                updateStatus();
+                showAgentStage(claimed,"selected layer "+id);
+                break;
+            }
+            case "object":{
+                String object=step.getString("objectId");
+                agentChooseObject(object);
+                showAgentStage(claimed,"selected editable object "+object);
+                break;
+            }
+            case "camera":{
+                double wantedZoom=step.getDouble("zoom"),
+                        centerX=step.getDouble("centerX"),
+                        centerY=step.getDouble("centerY");
+                int duration=step.optInt("animationMs",300);
+                showAgentStage(claimed,"moving canvas camera • "+wantedZoom+"×");
+                canvas.animateAgentCamera(wantedZoom,centerX,centerY,duration,ok->
+                    settleAgentStage(claimed,ok,ok?
+                            "Canvas camera reached requested position":"Camera gesture interrupted"));
+                return;
+            }
+            case "fit":{
+                canvas.resetView();
+                showAgentStage(claimed,"fit canvas to workspace");
+                break;
+            }
+            case "onion":{
+                onionEnabled=step.getBoolean("enabled");
+                onionRange=step.optInt("range",onionRange);
+                onionAlpha=step.optInt("alpha",onionAlpha);
+                canvas.setOnion(onionEnabled);
+                canvas.setOnionOptions(onionRange,onionAlpha);
+                saveOnionOptions();
+                showAgentStage(claimed,"onion skin "+(onionEnabled?"enabled":"hidden"));
+                break;
+            }
+            case "grid":{
+                grid=step.getBoolean("enabled");
+                canvas.setGuides(grid,symmetry);
+                getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();
+                showAgentStage(claimed,"canvas grid "+(grid?"enabled":"hidden"));
+                break;
+            }
+            case "play":{
+                if(!playing)togglePlayback();
+                showAgentStage(claimed,"playing authored frames");
+                break;
+            }
+            case "pause":{
+                if(playing)stopPlayback();
+                showAgentStage(claimed,"paused at frame "+(canvas.getFrame()+1));
+                break;
+            }
+            case "wait":{
+                int duration=step.getInt("durationMs");
+                showAgentStage(claimed,"reviewing current drawing for "+duration+" ms");
+                handler.postDelayed(()->{
+                    if(!destroyed&&resumed&&sketchId.equals(claimed.optString("sketchId")))
+                        settleAgentStage(claimed,true,"Elapsed visible review "+duration+" ms");
+                    else settleAgentStage(claimed,false,"Stage review interrupted");
+                },duration);
+                return;
+            }
+            case "transform_curve":{
+                if(step.has("objectId"))agentChooseObject(step.getString("objectId"));
+                else if(step.has("layerId")){
+                    String id=step.getString("layerId");
+                    SketchDocument.layer(document,id);
+                    canvas.setLayerId(id);
+                    canvas.selectObject(null);
+                    int index=layerIds.indexOf(id);
+                    if(index>=0)layers.setSelection(index);
+                }
+                transformDialog();
+                showAgentStage(claimed,"opened transform timing controls");
+                break;
+            }
+            case "shape_curve":{
+                agentChooseObject(step.getString("objectId"));
+                shapeAnimationDialog();
+                showAgentStage(claimed,"opened editable shape timing controls");
+                break;
+            }
+            default:throw SketchDocument.bad("Stage action not supported in native Sketch Studio");
+        }
+        settleAgentStage(claimed,true,action+" performed in foreground Sketch Studio");
+    }
+
+    /** The proof is recorded only after a foreground UI action has finished. */
+    private void settleAgentStage(JSONObject claim,boolean succeeded,String description){
+        JSONObject evidence=new JSONObject();
+        try{
+            evidence.put("appliedOnScreen",succeeded)
+                    .put("action",claim.getJSONObject("step").getString("action"))
+                    .put("detail",description)
+                    .put("actualFrameIndex",canvas==null?-1:canvas.getFrame())
+                    .put("selectedLayerId",canvas==null?"":canvas.getLayerId())
+                    .put("selectedObjectId",canvas==null||canvas.getSelectedId()==null?
+                            "":canvas.getSelectedId())
+                    .put("sourceRevision",document==null?-1:document.optLong("revision"))
+                    .put("atMs",System.currentTimeMillis());
+            if(canvas!=null)evidence.put("actualCamera",canvas.cameraSnapshot());
+        }catch(Exception error){
+            succeeded=false;
+            evidence=new JSONObject();
+            try{evidence.put("appliedOnScreen",false).put("reason","Foreground inspection failed");}
+            catch(Exception ignored){}
+        }
+        final JSONObject proof=evidence;
+        final boolean completed=succeeded;
+        io.execute(()->{
+            try(SketchAgentStageCommands queue=new SketchAgentStageCommands(this)){
+                queue.finish(claim,completed,proof);
+            }catch(Exception error){
+                postUi(()->{if(status!=null)status.setText("Native stage receipt: "+error.getMessage());});
+            }finally{
+                postUi(()->{
+                    agentStageInFlight=false;
+                    if(!completed)agentStageBurst=false;
+                    if(agentStageIndicator!=null&&agentStageActiveOperation.equals(claim.optString("operationId"))){
+                        agentStageIndicator.setText(completed?"ChatGPT  ·  "+description:
+                                "ChatGPT stage rejected  ·  "+description);
+                        handler.postDelayed(()->{
+                            if(!destroyed&&agentStageIndicator!=null&&!agentStageInFlight)
+                                agentStageIndicator.setVisibility(View.GONE);
+                        },2200);
+                    }
+                    // Continue an already admitted batch immediately instead of
+                    // paying the normal idle SQLite poll interval for every step.
+                    if(completed&&resumed&&watching&&!destroyed)pollAgentStage();
+                });
+            }
+        });
+    }
+
     private void setFrame(int index) { stopPlayback(); if (document == null) return; int next = Math.max(0, Math.min(document.optInt("frameCount") - 1, index));if(canvas.getFrame()!=next)closeStillPngDialog(); canvas.setFrame(next); frames.setProgress(bookId==null?next:bookPage); updateStatus(); }
     private void togglePlayback() { if (playing) { stopPlayback(); return; } if (document == null) return; playing = true;++playbackGeneration;bookPlaybackInFlight=false;canvas.setEnabled(false); playStarted = SystemClock.uptimeMillis(); playFirst = canvas.getFrame();if(bookId!=null&&session.pending()>0){playing=false;afterSaves(()->postUi(this::togglePlayback));return;} canvas.setPlaybackPreview(true);playButton.setText("Pause");if(bookId==null)postUi(playTick);else {if(bookTimeline==null){stopPlayback();return;}bookPlayFirst=bookTimeline.firstFrame(bookPage);handler.postDelayed(playTick,1);} }
     private final Runnable playTick = new Runnable() { @Override public void run() {
@@ -1221,7 +1506,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     } };
     private void stopPlayback(){stopPlayback(true);}
     private void stopPlayback(boolean restoreBookPage) { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;if(canvas!=null)canvas.setPlaybackPreview(false);android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(restoreBookPage&&wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
-    @Override protected void onPause() { closeStillPngDialog();resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
+    @Override protected void onPause() { closeStillPngDialog();resumed=false;if(canvas!=null)canvas.stopAgentCamera();++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(localEditableReturn!=null&&localEditableReturn.ownsEditor())localEditableReturn.deferredResumeReload=true;else if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onStop(){resumed=false;stopPlayback();if(canvas!=null)canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onStop();}
     @Override protected void onDestroy() { destroyed=true;closeStillPngDialog();if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
