@@ -124,6 +124,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         layeredStageLabel=new TextView(this);layeredStageLabel.setTextColor(StudioUi.TEXT);layeredStageLabel.setContentDescription("Current drawing pass");layeredToolbar.addView(layeredStageLabel,new LinearLayout.LayoutParams(0,-2,1));
         button(layeredToolbar,"Stages",this::layeredDrawingDialog);button(layeredToolbar,"Reference",this::toggleLayeredReference);
         canvas = new SketchCanvasView(this); canvas.setListener(this);canvas.setAgentHandEnabled(getPreferences(MODE_PRIVATE).getBoolean("agentHand",true));
+        canvas.setAgentPenCameraFollow(watching&&getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true));
         try{
             symmetrySettings=SketchSymmetry.configuration(new JSONObject(getPreferences(MODE_PRIVATE).getString("symmetrySettings","{\"mode\":\"vertical\"}")));
             symmetry=getPreferences(MODE_PRIVATE).getBoolean("symmetry",false);grid=getPreferences(MODE_PRIVATE).getBoolean("grid",false);
@@ -448,16 +449,33 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             timing.setSelection(Math.max(0,java.util.Arrays.asList(modes).indexOf(mode)));form.addView(timing);
             String controlValues=authored!=null&&authored.has("curve")?commaValues(authored.getJSONArray("curve")):"0.42, 0, 1, 1";
             EditText curve=input("Bezier timing: x1, y1, x2, y2",controlValues,false);form.addView(curve);
+            SketchTimingCurveView curveGraph=new SketchTimingCurveView(this);
+            curveGraph.setCurve(SketchTimingCurveView.parse(controlValues));
+            curveGraph.setOnDraftChanged(handles->{
+                curve.setText(SketchTimingCurveView.format(handles));
+                timing.setSelection(5);
+            });
+            form.addView(curveGraph,new LinearLayout.LayoutParams(-1,dp(218)));
+            button(row(form),"Update graph from numeric values",()->{
+                try{curveGraph.setCurve(SketchTimingCurveView.parse(curve.getText().toString()));}
+                catch(Exception error){onMessage(error.getMessage());}
+            });
             curve.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){curve.setVisibility(position==5?View.VISIBLE:View.GONE);}});
-            new AlertDialog.Builder(this).setTitle(objectId == null ? "Layer transform" : "Object transform").setView(form).setNegativeButton("Cancel", null)
+            curveGraph.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){
+                boolean custom=position==5;
+                curve.setVisibility(custom?View.VISIBLE:View.GONE);
+                curveGraph.setVisibility(custom?View.VISIBLE:View.GONE);
+            }});
+            ScrollView motionScroll=new ScrollView(this);motionScroll.addView(form);
+            new AlertDialog.Builder(this).setTitle(objectId == null ? "Layer transform" : "Object transform").setView(motionScroll).setNegativeButton("Cancel", null)
                     .setNeutralButton("Remove key", (d,w) -> { try { onOperation(targetOperation("set_keyframe", objectId).put("frame", canvas.getFrame()).put("remove", true)); } catch (Exception e) { onMessage(e.getMessage()); } })
                     .setPositiveButton("Apply", (d,w) -> { try { JSONObject transform = new JSONObject(); for (int i = 0; i < keys.length; i++) { double value = Double.parseDouble(values[i].getText().toString()); if (i == 0) value /= document.getInt("width"); if (i == 1) value /= document.getInt("height"); transform.put(keys[i], value); }
                         JSONObject operation = targetOperation(key.isChecked() ? "set_keyframe" : "set_transform", objectId).put("transform", transform);
                         if (key.isChecked()) {
                             String selected=hold.isChecked()?"hold":modes[timing.getSelectedItemPosition()];
                             operation.put("frame",canvas.getFrame()).put("interpolation",selected);
-                            if("bezier".equals(selected))operation.put("curve",new JSONArray("["+curve.getText().toString()+"]"));
+                            if("bezier".equals(selected))operation.put("curve",SketchTimingCurveView.parse(curve.getText().toString()));
                         }
                         onOperation(operation);
                     } catch (Exception e) { onMessage(e.getMessage()); } }).show();
@@ -481,15 +499,31 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     new String[]{"Linear","Smooth","Hold","Ease in","Ease out","Ease in/out","Bezier"}));
             timing.setSelection(prior==null?0:Math.max(0,java.util.Arrays.asList(modes).indexOf(prior.getString("interpolation"))));form.addView(timing);
             EditText curve=input("Bezier timing: x1, y1, x2, y2",prior!=null&&prior.has("curve")?commaValues(prior.getJSONArray("curve")):"0.42, 0, 1, 1",false);form.addView(curve);
-            curve.setVisibility(timing.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){curve.setVisibility(index==6?View.VISIBLE:View.GONE);}});
+            SketchTimingCurveView curveGraph=new SketchTimingCurveView(this);
+            curveGraph.setCurve(SketchTimingCurveView.parse(curve.getText().toString()));
+            curveGraph.setOnDraftChanged(handles->{
+                curve.setText(SketchTimingCurveView.format(handles));timing.setSelection(6);
+            });
+            form.addView(curveGraph,new LinearLayout.LayoutParams(-1,dp(218)));
+            button(row(form),"Update graph from numeric values",()->{
+                try{curveGraph.setCurve(SketchTimingCurveView.parse(curve.getText().toString()));}
+                catch(Exception error){onMessage(error.getMessage());}
+            });
+            boolean initialCurve=timing.getSelectedItemPosition()==6;
+            curve.setVisibility(initialCurve?View.VISIBLE:View.GONE);
+            curveGraph.setVisibility(initialCurve?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){
+                curve.setVisibility(index==6?View.VISIBLE:View.GONE);
+                curveGraph.setVisibility(index==6?View.VISIBLE:View.GONE);
+            }});
             button(row(form),"Clear shape animation",()->{try{onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("shapeKeys",new JSONArray())));}catch(Exception failure){onMessage(failure.getMessage());}});
-            new AlertDialog.Builder(this).setTitle("Shape key · frame "+(frame+1)).setView(form).setNegativeButton("Cancel",null)
+            ScrollView shapeScroll=new ScrollView(this);shapeScroll.addView(form);
+            new AlertDialog.Builder(this).setTitle("Shape key · frame "+(frame+1)).setView(shapeScroll).setNegativeButton("Cancel",null)
                 .setNeutralButton("Remove key",(dialog,which)->{try{onOperation(new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame).put("remove",true));}catch(Exception failure){onMessage(failure.getMessage());}})
                 .setPositiveButton("Set key",(dialog,which)->{try{
                     String mode=modes[timing.getSelectedItemPosition()];JSONObject operation=new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame)
                         .put("commands",SketchShapeKeys.commandsAt(object,frame)).put("interpolation",mode);
-                    if("bezier".equals(mode))operation.put("curve",new JSONArray("["+curve.getText().toString()+"]"));
+                    if("bezier".equals(mode))operation.put("curve",SketchTimingCurveView.parse(curve.getText().toString()));
                     SketchEasing.validate(operation);onOperation(operation);
                 }catch(Exception failure){onMessage(failure.getMessage());}}).show();
         }catch(Exception failure){onMessage(failure.getMessage());}
@@ -629,8 +663,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private static boolean hasArtwork(JSONObject doc) throws Exception {JSONArray layers=doc.getJSONArray("layers");for(int i=0;i<layers.length();i++)if(layers.getJSONObject(i).getJSONArray("objects").length()>0)return true;return false;}
     private void workspaceDialog(){
-        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Symmetry drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import drawing packet","Drawing content audit","ChatGPT hand","2D animation"};
-        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();break;case 2:symmetryDialog();break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;case 11:runAction("2D animation",this::openAnimationStudio);break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
+        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Symmetry drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import drawing packet","Drawing content audit","ChatGPT hand","2D animation","Follow real ChatGPT pen (camera)"};
+        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();break;case 2:symmetryDialog();break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;case 11:runAction("2D animation",this::openAnimationStudio);break;case 12:boolean follow=!getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentCameraFollow",follow).apply();canvas.setAgentPenCameraFollow(watching&&follow);onMessage(follow?"Following actual accepted pen location":"Agent camera follow paused");break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
     }
     private void symmetryDialog(){
         try{
@@ -1094,7 +1128,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void showActualAgentTool(String label){int position=agentToolPosition(label);if(position>=0)showAgentToolPosition(position);}
     private void updateAgentToolIndicator(){if(status==null)return;boolean enabled=getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);if(enabled&&agentGlobalTool){if(agentToolIndicator==null)agentToolIndicator=SketchAgentHand.toolIndicator(this,18);status.setCompoundDrawablePadding(dp(4));status.setCompoundDrawablesWithIntrinsicBounds(agentToolIndicator,null,null,null);}else status.setCompoundDrawables(null,null,null,null);}
-    private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
+    private void updateLiveControl(){if(canvas!=null)canvas.setAgentPenCameraFollow(watching&&getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true));if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
     private void toggleLiveWatch(){
         if(watching){takeOverLive(null);return;}
         ++liveLoadGeneration;stopPlayback();watching=true;if(notifiedSessionId!=null)notificationReplayPending=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
@@ -1189,10 +1223,81 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         return true;
     }
 
+    /** The queued tool/camera programme is applied only in the explicitly
+     * visible Sketch follow-mode, on this UI thread, one real step per tick.
+     * Unlike sketch_edit, these never alter the saved drawing or its revision. */
+    private boolean applyVisibleAgentStage(){
+        if(!resumed||destroyed||!watching||session==null||document==null
+                ||canvas==null||bookId!=null||playing||livePlayer!=null
+                ||loadingDrawing||watchInFlight||notificationReplayPending
+                ||session.pending()!=0||session.error()!=null||canvas.isDrawing())
+            return false;
+        try{
+            long revision=session.document().getLong("revision");
+            JSONObject pending=SketchAgentStageControl.nextVisibleStep(this,sketchId,revision);
+            if(pending==null)return false;
+            JSONObject command=pending.getJSONObject("step");
+            String type=command.getString("type"),label=type;
+            switch(type){
+                case "tool":{
+                    String selected=command.getString("tool");
+                    canvas.setTool(selected);
+                    int where=java.util.Arrays.asList(toolValues).indexOf(selected);
+                    if(where>=0&&where<=10||where>=14)showAgentToolPosition(where);
+                    label="tool · "+selected;break;
+                }
+                case "frame":{
+                    int index=command.getInt("frame");
+                    setFrame(index);label="timeline · frame "+(index+1);break;
+                }
+                case "layer":{
+                    String id=command.getString("layerId");
+                    canvas.setLayerId(id);
+                    updating=true;
+                    try{layers.setSelection(layerIds.indexOf(id));}
+                    finally{updating=false;}
+                    label="selected layer · "+id;break;
+                }
+                case "object":{
+                    String id=command.getString("objectId");
+                    canvas.setLayerId(SketchDocument.owner(document,id).getString("id"));
+                    canvas.selectObject(id);
+                    label="inspect object · "+id;break;
+                }
+                case "viewport":{
+                    canvas.agentFocus(command.getDouble("x"),command.getDouble("y"),
+                            command.getDouble("zoom"));
+                    label="camera · zoom "+command.getDouble("zoom")+"×";break;
+                }
+                case "onion":{
+                    canvas.setOnion(command.getBoolean("enabled"));
+                    canvas.setOnionOptions(command.getInt("range"),command.getInt("alpha"));
+                    label="onion skin · "+(command.getBoolean("enabled")?"on":"off");break;
+                }
+                default:return false;
+            }
+            // ACK is issued only after the corresponding native UI method
+            // returned successfully, not when the agent merely sent commands.
+            SketchAgentStageControl.acknowledge(this,sketchId,revision,
+                    pending.getLong("sequence"),pending.getInt("index"));
+            if(toolStatus!=null)toolStatus.setText("ChatGPT visible control "
+                    +(pending.getInt("index")+1)+"/"+pending.getInt("total")+" · "+label);
+            updateStatus();
+            return true;
+        }catch(Exception invalid){
+            if(status!=null)status.setText("Sketch agent stage held · "+invalid.getMessage());
+            return false;
+        }
+    }
+
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
+            handler.postDelayed(this,250);
+            return;
+        }
+        if(applyVisibleAgentStage()){
             handler.postDelayed(this,250);
             return;
         }

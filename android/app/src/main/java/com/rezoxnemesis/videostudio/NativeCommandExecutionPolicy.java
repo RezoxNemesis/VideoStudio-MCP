@@ -16,7 +16,7 @@ public final class NativeCommandExecutionPolicy {
             case "kinetic_benchmark_capabilities": case "kinetic_benchmark_plan": case "kinetic_benchmark_apply":
             case "motion_group_capabilities": case "motion_group_plan": case "motion_group_edit":
             case "apply_tool": case "set_studio_layers":
-            case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit":
+            case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit": case "sketch_edit": case "sketch_agent_stage": case "sketch_agent_stage_status":
             case "sketch_animation_save": case "sketch_animation_get": case "sketch_animation_list": case "sketch_animation_bake": case "sketch_animation_place_in_book":
             case "sketch_correction_start": case "sketch_correction_get": case "sketch_correction_note": case "sketch_correction_propose": case "sketch_correction_preview": case "sketch_correction_apply": case "sketch_correction_options": case "sketch_correction_list": case "sketch_correction_close":
             case "sketch_story_create": case "sketch_story_preview": case "sketch_story_audio_create": case "sketch_story_example":
