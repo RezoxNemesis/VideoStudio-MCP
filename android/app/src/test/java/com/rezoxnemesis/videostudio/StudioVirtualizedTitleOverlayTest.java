@@ -80,7 +80,7 @@ public class StudioVirtualizedTitleOverlayTest {
         }
     }
 
-    @Test public void shapeInterleavingKeepsActualZOrder(){
+    @Test public void shapeInterleavingKeepsActualZOrder() throws Exception {
         try(ProjectStore store=new ProjectStore(RuntimeEnvironment.getApplication())){
             ProjectStore.Project p=store.create("Interleaved track");
             for(int i=0;i<4;i++)p.studioLayers.add(title("before "+i,i*1000,1000));
@@ -118,6 +118,36 @@ public class StudioVirtualizedTitleOverlayTest {
             assertTrue("Parent group must still change frame anchor",
                     virtual.getOverlaySettings(4_200_000L).getBackgroundFrameAnchor().first
                     >virtual.getOverlaySettings(200_000L).getBackgroundFrameAnchor().first);
+        }
+    }
+
+    @Test public void overlappingVisualEffectsAreSplitIntoSixSamplerShaderPasses()throws Exception{
+        try(ProjectStore store=new ProjectStore(RuntimeEnvironment.getApplication())){
+            ProjectStore.Project project=store.create("12 overlay graphics");
+            for(int i=0;i<12;i++){
+                StudioLayer effect=StudioShapePresets.create("ring","hold",0,3000);
+                effect.id="shape-"+i;project.studioLayers.add(effect);
+            }
+            StudioCompositionOverlayEffect composer=new StudioCompositionOverlayEffect(
+                    RuntimeEnvironment.getApplication(),project);
+            assertEquals(java.util.Arrays.asList(6,6),composer.plannedPassSizes());
+            assertEquals(2,composer.batchedEffects().size());
+            assertEquals(12,composer.createOverlays().size());
+        }
+    }
+
+    @Test public void dozensOfIndependentAnimatedLettersAreNeverPackedIntoOneShader()throws Exception{
+        try(ProjectStore store=new ProjectStore(RuntimeEnvironment.getApplication())){
+            ProjectStore.Project project=store.create("40 independently keyed letters");
+            for(int i=0;i<4;i++){
+                StudioLayer word=title("ABCDEFGHIJ",i*4000L,4000);
+                word.glyphAnimation=new JSONObject().put("mode","scatter");
+                word.validate();project.studioLayers.add(word);
+            }
+            StudioCompositionOverlayEffect composer=new StudioCompositionOverlayEffect(
+                    RuntimeEnvironment.getApplication(),project);
+            assertEquals(java.util.Arrays.asList(6,6,6,6,6,6,4),composer.plannedPassSizes());
+            assertEquals(7,composer.batchedEffects().size());
         }
     }
 
