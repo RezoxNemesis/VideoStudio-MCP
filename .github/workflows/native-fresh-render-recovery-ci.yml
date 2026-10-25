@@ -39,7 +39,8 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --no-daemon --stacktrace --console=plain
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --tests com.rezoxnemesis.videostudio.NativeStartupGuardTest --tests com.rezoxnemesis.videostudio.NativeFreshRenderRecoveryTest --no-daemon --stacktrace --console=plain
+          gradle :app:testDebugUnitTest --no-daemon --stacktrace --console=plain
       - name: Preserve tests on failure
         if: always()
         uses: actions/upload-artifact@v4
