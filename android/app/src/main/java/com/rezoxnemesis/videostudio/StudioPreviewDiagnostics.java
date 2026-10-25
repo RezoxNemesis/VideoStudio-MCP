@@ -42,6 +42,23 @@ public final class StudioPreviewDiagnostics {
             }
             receipt.put("titleLayers", titles).put("imageLayers", images)
                     .put("audioLayers", audio).put("videoLayers", videos);
+            // Native plan diagnostics are generated from owned immutable layer
+            // metadata only. No source names, paths, media samples or exception
+            // messages are collected. These metrics prove plan bounds, not GPU success.
+            try{
+                StudioCompositionOverlayEffect plan=new StudioCompositionOverlayEffect(context,project);
+                java.util.List<Integer> passes=plan.plannedPassSizes();
+                JSONArray sizes=new JSONArray();
+                int total=0;
+                for(int size:passes){sizes.put(size);total+=size;}
+                receipt.put("plannedShaderPasses",passes.size())
+                        .put("plannedOverlayTextures",total)
+                        .put("plannedPassSizes",sizes)
+                        .put("maxTexturesPerShader",StudioCompositionOverlayEffect.MAX_OVERLAYS_PER_SHADER)
+                        .put("denseTitleTimeline",titles>=12);
+            }catch(Exception invalidPlan){
+                receipt.put("shaderPlanAvailable",false);
+            }
             JSONArray classes = new JSONArray();
             boolean videoFrames = false, decoder = false, gl = false;
             Throwable cursor = error;
