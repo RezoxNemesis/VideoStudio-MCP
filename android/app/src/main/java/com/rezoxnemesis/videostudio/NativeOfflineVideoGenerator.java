@@ -302,7 +302,8 @@ public final class NativeOfflineVideoGenerator {
                         throw new IllegalStateException("SOURCE_PROJECT_CHANGED_DURING_GENERATION");
                     ProjectStore.Asset anchor="text_to_video".equals(plan.getString("mode"))?null:
                             current.asset(assets.getString(shot));
-                    try(Bitmap conditioning=image(anchor)){
+                    Bitmap conditioning=image(anchor);
+                    try{
                         Map<String,OnnxTensor> inputs=new LinkedHashMap<>();
                         try{
                             inputs.put("image",runner.tensor(pixels(conditioning),1,3,128,128));
@@ -368,7 +369,7 @@ public final class NativeOfflineVideoGenerator {
                                         "Decoding newly generated frame "+(shot*9+frame+1)+"/"+scenes*9);
                             }
                         }finally{for(OnnxTensor t:inputs.values())if(t!=null)t.close();}
-                    }
+                    }finally{conditioning.recycle();}
                 }
             }
         }finally{LocalDrawingEngine.INFERENCE_SLOT.release();}
