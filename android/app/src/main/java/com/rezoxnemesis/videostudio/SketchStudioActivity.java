@@ -98,6 +98,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private String agentStageActiveOperation="";
     private android.animation.ValueAnimator agentGestureAnimator;
     private SketchAgentCurveCanvas agentCurveCanvas;
+    private SketchAgentExposureCanvas agentExposureCanvas;
     private android.widget.FrameLayout agentDrawingViewport;
     private boolean agentGestureSaving;
     private SeekBar frames;
@@ -1689,6 +1690,11 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 },duration);
                 return;
             }
+            case "exposure_drag":{
+                SketchAgentExposureDrag.Plan program=SketchAgentExposureDrag.plan(document,step);
+                startAgentExposureDrag(claimed,program);
+                return;
+            }
             case "curve_handle_drag":{
                 SketchAgentCurveDrag.Plan plan=SketchAgentCurveDrag.plan(document,step);
                 startAgentCurveDrag(claimed,plan);
@@ -2045,6 +2051,215 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         });
     }
 
+    /** Source-safe transient timeline drawing, never included in exported cels. */
+    private void clearAgentExposurePreview(){
+        if(agentExposureCanvas==null)return;
+        SketchAgentExposureCanvas visible=agentExposureCanvas;
+        agentExposureCanvas=null;
+        visible.close();
+        if(visible.getParent() instanceof android.view.ViewGroup)
+            ((android.view.ViewGroup)visible.getParent()).removeView(visible);
+    }
+
+    /** Move a REAL Xsheet source-cel hold handle, then apply a single native edit. */
+    private void startAgentExposureDrag(JSONObject claim,SketchAgentExposureDrag.Plan plan)
+            throws Exception{
+        if(agentGestureAnimator!=null||agentGestureSaving||agentExposureCanvas!=null)
+            throw SketchDocument.bad("Another ChatGPT gesture is already active");
+        if(session==null||session.pending()!=0||session.error()!=null||bookId!=null)
+            throw SketchDocument.bad("Finish the human stroke save and open an original Sketch project");
+        final String owner=sketchId;
+        final SketchEditorSession origin=session;
+        final int generation=loadGeneration,bookGeneration=pageGeneration;
+        final long revision=document.getLong("revision");
+        if(!owner.equals(plan.sketchId)||plan.sourceRevision!=revision)
+            throw SketchDocument.bad("The authored cel changed before its hold gesture");
+        if(canvas.getFrame()!=plan.frameIndex)setFrame(plan.frameIndex);
+        int level=layerIds.indexOf(plan.layerId);
+        if(level<0)throw SketchDocument.bad("The Xsheet level is no longer selectable");
+        canvas.setLayerId(plan.layerId);
+        layers.setSelection(level);
+        if(!stageGestureCurrent(owner,origin,generation,bookGeneration,revision))
+            throw SketchDocument.bad("Visible Sketch frame is no longer owned by this source revision");
+        if(agentDrawingViewport==null)
+            throw SketchDocument.bad("Actual native Sketch Studio viewport is unavailable");
+        SketchAgentExposureCanvas visible=new SketchAgentExposureCanvas(this,plan);
+        agentExposureCanvas=visible;
+        android.widget.FrameLayout.LayoutParams position=
+                new android.widget.FrameLayout.LayoutParams(dp(290),dp(205),
+                        android.view.Gravity.BOTTOM|android.view.Gravity.END);
+        position.bottomMargin=dp(64);position.rightMargin=dp(8);
+        agentDrawingViewport.addView(visible,position);
+        canvas.setEnabled(false);
+        showAgentStage(claim,"dragging real Xsheet exposure from "+
+                plan.fromExposure+" to "+plan.toExposure+" frames");
+        final java.util.concurrent.atomic.AtomicBoolean settled=
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        android.animation.ValueAnimator animator=android.animation.ValueAnimator.ofFloat(0f,1f);
+        agentGestureAnimator=animator;
+        animator.setDuration(plan.durationMs);
+        animator.setInterpolator(new android.view.animation.LinearInterpolator());
+        final int[] sampled={-1};
+        animator.addUpdateListener(value->{
+            if(settled.get())return;
+            float progress=(float)value.getAnimatedValue();
+            int index=Math.max(0,Math.min(SketchAgentExposureDrag.MAX_SAMPLES,
+                    (int)Math.floor(progress*SketchAgentExposureDrag.MAX_SAMPLES)));
+            if(index==sampled[0]&&progress<1f)return;
+            sampled[0]=index;
+            if(!stageGestureCurrent(owner,origin,generation,bookGeneration,revision)
+                    ||agentExposureCanvas!=visible){
+                animator.cancel();return;
+            }
+            try{
+                visible.present(index/(float)SketchAgentExposureDrag.MAX_SAMPLES);
+                if(agentStageIndicator!=null)
+                    agentStageIndicator.setText("ChatGPT  ·  "+
+                            (claim.optInt("stepIndex")+1)+"/"+claim.optInt("stepCount",1)+
+                            "  ·  Xsheet held for "+visible.exposure()+" frames  ·  "+
+                            Math.round(100f*index/SketchAgentExposureDrag.MAX_SAMPLES)+"%");
+            }catch(Exception failure){
+                if(status!=null)status.setText("Native Xsheet gesture: "+failure.getMessage());
+                animator.cancel();
+            }
+        });
+        animator.addListener(new android.animation.AnimatorListenerAdapter(){
+            private boolean canceled;
+            @Override public void onAnimationCancel(android.animation.Animator sourceAnimator){
+                canceled=true;
+                if(!settled.compareAndSet(false,true))return;
+                agentGestureAnimator=null;
+                clearAgentExposurePreview();
+                canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                settleAgentStage(claim,false,
+                        "Actual Xsheet drag was interrupted before any source cel was changed");
+            }
+            @Override public void onAnimationEnd(android.animation.Animator sourceAnimator){
+                if(canceled||!settled.compareAndSet(false,true))return;
+                agentGestureAnimator=null;
+                // The final native Canvas.invalidate() must be shown before
+                // success; a queued drawing command is not visual evidence.
+                handler.postDelayed(()->commitAgentExposureDrag(
+                        claim,plan,visible,owner,origin,generation,bookGeneration,revision),48);
+            }
+        });
+        animator.start();
+    }
+
+    private void commitAgentExposureDrag(JSONObject claim,SketchAgentExposureDrag.Plan plan,
+                                         SketchAgentExposureCanvas visible,String owner,
+                                         SketchEditorSession origin,int generation,
+                                         int bookGeneration,long revision){
+        if(!stageGestureCurrent(owner,origin,generation,bookGeneration,revision)
+                ||agentExposureCanvas!=visible){
+            clearAgentExposurePreview();
+            if(canvas!=null)canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+            settleAgentStage(claim,false,"Sketch Studio changed before the Xsheet hold could save");
+            return;
+        }
+        final JSONObject visualProof;
+        try{
+            if(!visible.isShown()||visible.exposure()!=plan.toExposure)
+                throw new IllegalStateException("The real foreground Xsheet handle did not reach target");
+            visualProof=plan.receipt(visible.actualDraws(),visible.exposure());
+        }catch(Exception notShown){
+            clearAgentExposurePreview();
+            canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+            settleAgentStage(claim,false,"The authored exposure was not visibly displayed on the frame ruler");
+            return;
+        }
+        agentGestureSaving=true;
+        if(agentStageIndicator!=null)
+            agentStageIndicator.setText("ChatGPT  ·  saving genuine Xsheet exposure through Sketch Studio…");
+        io.execute(()->{
+            boolean persisted=false,verified=false;
+            long savedRevision=-1;
+            JSONObject stored=null;
+            String editId="",error="";
+            try{
+                editId=SketchAgentGestureOps.deterministicEditId(claim);
+                JSONObject request=new JSONObject()
+                        .put("sketchId",owner).put("operationId",editId)
+                        .put("expectedRevision",revision)
+                        .put("operations",new JSONArray().put(plan.editOperation));
+                JSONObject receipt=SketchEditOps.execute(
+                        SketchStudioActivity.this,"sketch_edit",request);
+                persisted=receipt.optBoolean("persisted",false);
+                if(!persisted)throw new IllegalStateException("Native source cel save was not durable");
+                savedRevision=receipt.getLong("revision");
+                try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){
+                    stored=store.get(owner);
+                }
+                if(stored==null||stored.getLong("revision")<savedRevision)
+                    throw new IllegalStateException("The saved Xsheet revision cannot be inspected");
+                JSONObject level=SketchDocument.layer(stored,plan.layerId);
+                JSONArray marks=level.getJSONArray("objects");
+                for(int i=0;i<plan.authoredObjectIds.length();i++){
+                    String objectId=plan.authoredObjectIds.getString(i);
+                    boolean found=false;
+                    for(int m=0;m<marks.length();m++){
+                        JSONObject candidate=marks.getJSONObject(m);
+                        if(objectId.equals(candidate.optString("id",""))&&
+                                candidate.getInt("frame")==plan.frameIndex){
+                            if(candidate.getInt("exposure")!=plan.toExposure)
+                                throw new IllegalStateException("Saved original cel exposure differs from displayed handle");
+                            found=true;break;
+                        }
+                    }
+                    if(!found)throw new IllegalStateException("Original authored mark disappeared during Xsheet edit");
+                }
+                verified=true;
+            }catch(Exception issue){
+                error=issue.getMessage()==null?issue.getClass().getSimpleName():issue.getMessage();
+            }
+            final boolean saved=persisted&&verified,wasWritten=persisted;
+            final long finalRevision=savedRevision;
+            final JSONObject finalDoc=stored;
+            final String finalId=editId,finalError=error;
+            postUi(()->{
+                agentGestureSaving=false;
+                clearAgentExposurePreview();
+                if(canvas!=null)canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                boolean foreground=saved&&stageGestureCurrentForDisplay(
+                        owner,origin,generation,bookGeneration);
+                boolean adopted=false;
+                if(foreground&&finalDoc!=null)try{
+                    adopted=session.adopt(finalDoc);
+                    if(adopted){
+                        present(session.document());
+                        setFrame(plan.frameIndex);
+                        canvas.setLayerId(plan.layerId);
+                        int levelIndex=layerIds.indexOf(plan.layerId);
+                        if(levelIndex>=0)layers.setSelection(levelIndex);
+                        updateStatus();
+                    }
+                }catch(Exception visualError){
+                    adopted=false;
+                    if(status!=null)
+                        status.setText("Xsheet saved, but reload the original level: "+visualError.getMessage());
+                }
+                JSONObject evidence=new JSONObject();
+                try{
+                    java.util.Iterator<String> names=visualProof.keys();
+                    while(names.hasNext()){
+                        String name=names.next();evidence.put(name,visualProof.opt(name));
+                    }
+                    evidence.put("documentModified",wasWritten)
+                            .put("nativeEditId",finalId)
+                            .put("savedRevision",finalRevision)
+                            .put("verifiedAuthoredMarkCount",saved?plan.authoredObjectIds.length():0)
+                            .put("savedAndDisplayed",adopted)
+                            .put("sourceMediaChanged",false);
+                }catch(Exception ignored){}
+                settleAgentStage(claim,adopted,
+                        adopted?"Actual Xsheet hold saved and displayed at revision "+finalRevision:
+                            wasWritten?"Exposure was saved but not verified in the foreground; reload the original level":
+                                    "Native Xsheet exposure not saved: "+finalError,
+                        evidence);
+            });
+        });
+    }
+
     /**
      * Perform the native object/curve gesture visibly on the REAL drawing
      * canvas, then commit precisely one revision-guarded sketch_edit on the
@@ -2216,6 +2431,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private void interruptAgentGesture(){
         clearAgentCurvePreview();
+        clearAgentExposurePreview();
         if(agentGestureAnimator!=null){
             android.animation.ValueAnimator active=agentGestureAnimator;
             agentGestureAnimator=null;
