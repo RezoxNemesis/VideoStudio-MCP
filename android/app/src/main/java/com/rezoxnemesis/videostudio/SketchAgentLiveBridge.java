@@ -23,8 +23,14 @@ final class SketchAgentLiveBridge {
         String id=SketchDocument.id(input,"sketchId");
         String operationId=SketchDocument.id(input,"operationId");
         long expected=SketchDocument.integer(input,"expectedRevision",1,Long.MAX_VALUE-1);
-        JSONArray edits=input.getJSONArray("operations");
-        if(edits.length()==0)return SketchEditOps.execute(context,"sketch_edit",input);
+        int visibleStrokeMs=input.has("displayStrokeMs")
+                ?(int)SketchDocument.integer(input,"displayStrokeMs",80,5000):420;
+        // Optional UI replay pacing is not part of the persisted drawing
+        // mutation or its operation fingerprint. Remove it before native edit.
+        JSONObject actualEdit=SketchDocument.copy(input);
+        actualEdit.remove("displayStrokeMs");
+        JSONArray edits=actualEdit.getJSONArray("operations");
+        if(edits.length()==0)return SketchEditOps.execute(context,"sketch_edit",actualEdit);
 
         boolean explicitSession=false;
         boolean freshRevision,layered;
@@ -35,18 +41,18 @@ final class SketchAgentLiveBridge {
         // Existing live stream, duplicate queued command, or edit conflict.
         // The normal idempotent receipt/revision logic remains authoritative.
         if(explicitSession || !freshRevision)
-            return SketchEditOps.execute(context,"sketch_edit",input);
+            return SketchEditOps.execute(context,"sketch_edit",actualEdit);
 
         String journalId=UUID.nameUUIDFromBytes(("native-chatgpt-sketch-edit:"
                 +id+"/"+operationId).getBytes(StandardCharsets.UTF_8)).toString();
         JSONObject begin=new JSONObject().put("sketchId",id).put("expectedRevision",expected)
-                .put("operationId",journalId).put("strokeDurationMs",80)
+                .put("operationId",journalId).put("strokeDurationMs",visibleStrokeMs)
                 .put("drawingMethod",layered?SketchDrawingPolicy.ORIGINAL:SketchDrawingPolicy.ASSISTED);
         SketchLiveDrawing.beginQuietly(context,begin);
         JSONObject edited=null;
         Exception failure=null;
         try{
-            edited=SketchEditOps.execute(context,"sketch_edit",input);
+            edited=SketchEditOps.execute(context,"sketch_edit",actualEdit);
         }catch(Exception original){failure=original;}
         try{
             long current;
@@ -65,6 +71,8 @@ final class SketchAgentLiveBridge {
         return edited.put("watchableNativeOperations",edits.length())
                 .put("watchSessionId",journalId)
                 .put("autoLiveMethod",layered?SketchDrawingPolicy.ORIGINAL:SketchDrawingPolicy.ASSISTED)
+                .put("displayStrokeMs",visibleStrokeMs)
+                .put("recordingActuallyNative",true)
                 .put("deviceExecuted",true);
     }
 }

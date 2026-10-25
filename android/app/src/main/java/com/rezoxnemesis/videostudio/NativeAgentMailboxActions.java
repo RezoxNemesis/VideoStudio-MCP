@@ -20,6 +20,7 @@ final class NativeAgentMailboxActions {
   "sketch_sample_color",
   "sketch_archive",
   "sketch_restore_archive",
+  "sketch_agent_workspace_capabilities","sketch_agent_workspace_plan","sketch_agent_workspace_apply","sketch_agent_workspace_status","sketch_agent_workspace_cancel",
   "sketch_edit",
   "sketch_undo",
   "sketch_redo",
