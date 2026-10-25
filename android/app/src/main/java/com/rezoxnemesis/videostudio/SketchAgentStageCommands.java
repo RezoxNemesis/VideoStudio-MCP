@@ -29,7 +29,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
             "eyedropper","pan","curve","nodes","precision","precision_brush");
     private static final Set<String> ACTIONS=Set.of(
             "tool","frame","layer","object","camera","fit","onion",
-            "grid","play","pause","wait","transform_curve","shape_curve");
+            "grid","play","pause","wait","transform_curve","shape_curve","xsheet");
 
     private final SQLiteDatabase db;
     private final Helper helper;
@@ -149,6 +149,13 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                     SketchDocument.fields(step,"action,durationMs");
                     SketchDocument.integer(step,"durationMs",50,1500);
                     break;
+                case "xsheet":
+                    SketchDocument.fields(step,"action,frameIndex,layerId");
+                    SketchDocument.integer(step,"frameIndex",0,document.getInt("frameCount")-1);
+                    JSONObject xsLayer=SketchDocument.layer(document,SketchDocument.id(step,"layerId"));
+                    if(!xsLayer.getBoolean("visible"))
+                        throw SketchDocument.bad("Agent Xsheet inspection needs a visible authored level");
+                    break;
                 case "shape_curve":
                     SketchDocument.fields(step,"action,objectId");
                     JSONObject shape=SketchDocument.object(document,SketchDocument.id(step,"objectId"));
@@ -167,7 +174,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                 default:
                     SketchDocument.fields(step,"action");break;
             }
-            if(("shape_curve".equals(action)||"transform_curve".equals(action))&&i!=steps.length()-1)
+            if(("shape_curve".equals(action)||"transform_curve".equals(action)||"xsheet".equals(action))&&i!=steps.length()-1)
                 throw SketchDocument.bad("A native curve inspector must be the final visible stage step");
             prepared.put(SketchDocument.copy(step));
         }
