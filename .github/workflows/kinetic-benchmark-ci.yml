@@ -14,6 +14,7 @@ on:
       - feature/ae-davinci-foundations-v41034
       - feature/fairlight-native-audio-v41035
       - feature/sketch-visible-agent-director-v41037-20261025
+      - feature/sketch-writable-xsheet-v41038-20261025
   pull_request:
     branches:
       - feat/native-preview-audio-import-20261024
