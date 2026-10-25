@@ -35,7 +35,7 @@ public final class StudioFairlightSettings {
                 .put("galleryAccess",false);
     }
 
-    public static JSONObject validate(JSONObject raw)throws Exception{
+    public static JSONObject validate(JSONObject raw)throws org.json.JSONException{
         if(raw==null)throw new IllegalArgumentException("Fairlight audio effect object required");
         java.util.Iterator<String> keys=raw.keys();
         while(keys.hasNext())if(!FIELDS.contains(keys.next()))
