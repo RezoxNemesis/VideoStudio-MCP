@@ -41,6 +41,7 @@ final class SketchAgentLiveBridge {
                 +id+"/"+operationId).getBytes(StandardCharsets.UTF_8)).toString();
         JSONObject begin=new JSONObject().put("sketchId",id).put("expectedRevision",expected)
                 .put("operationId",journalId).put("strokeDurationMs",80)
+                .put("adaptiveNativePacing",true)
                 .put("drawingMethod",layered?SketchDrawingPolicy.ORIGINAL:SketchDrawingPolicy.ASSISTED);
         SketchLiveDrawing.beginQuietly(context,begin);
         JSONObject edited=null;

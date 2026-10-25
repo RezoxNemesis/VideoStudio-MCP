@@ -33,6 +33,9 @@ public final class SketchLivePlayer implements AutoCloseable {
     private final Listener listener;
     private final String id, sessionId;
     private final int duration;
+    private final boolean adaptiveNativePacing;
+    private final String replayPace;
+    private int visualDuration;
     private JSONObject document, event;
     private JSONArray events = new JSONArray(), operations;
     private SketchLivePreparation.Prepared current;
@@ -54,6 +57,11 @@ public final class SketchLivePlayer implements AutoCloseable {
         sessionId = baseline.getString("sessionId");
         sequence = baseline.getLong("afterSequence");
         duration = baseline.getInt("strokeDurationMs");
+        visualDuration=duration;
+        adaptiveNativePacing=baseline.optBoolean("adaptiveNativePacing",false);
+        String requestedPace=context.getSharedPreferences(SketchHumanPacing.PREFS,Context.MODE_PRIVATE)
+                .getString(SketchHumanPacing.KEY,SketchHumanPacing.READABLE);
+        replayPace=SketchHumanPacing.requireMode(requestedPace);
         this.listener = listener;
     }
     public void start() { listener.committed(document); main.post(tick); }
@@ -67,7 +75,7 @@ public final class SketchLivePlayer implements AutoCloseable {
                         if(paintFraction<1){if(!paintPreparing)preparePaintPrefix();return;}
                         finishOperation();
                     }else{
-                    float fraction = Math.min(1, (SystemClock.uptimeMillis()-started)/(float)duration);
+                    float fraction = Math.min(1, (SystemClock.uptimeMillis()-started)/(float)visualDuration);
                     listener.preparedDrawing(current, target, fraction, "Live ChatGPT · drawing "+
                             (operationIndex+1)+"/"+operations.length()+" · r"+event.getLong("revision"));
                     if(closed)return;showHand(current.handTrack.at(fraction));
@@ -108,7 +116,7 @@ public final class SketchLivePlayer implements AutoCloseable {
     private void preparePaintPrefix()throws Exception{
         SketchLivePreparation.Prepared prepared=current;SketchPaintReplay.Viewport viewport=listener.paintViewport(target,prepared.frameIndex);
         // A slow worker may extend presentation, but it still exposes multiple real prefixes.
-        float elapsed=Math.min(1,(SystemClock.uptimeMillis()-started)/(float)duration);
+        float elapsed=Math.min(1,(SystemClock.uptimeMillis()-started)/(float)visualDuration);
         float fraction=Math.min(1,Math.min(paintFraction+.25f,Math.max(paintFraction+.01f,elapsed)));
         paintPreparing=true;String objectId=target;String label=caption();
         pauseHand("Preparing next brush step");
@@ -137,6 +145,8 @@ public final class SketchLivePlayer implements AutoCloseable {
     private static void release(AutoCloseable resource){try{resource.close();}catch(Exception ignored){}}
 
     private void prepareOperation(JSONObject operation) {
+        visualDuration=adaptiveNativePacing
+                ?SketchHumanPacing.durationMs(operation,duration,replayPace):duration;
         String objectId=operation.has("object")?operation.optJSONObject("object").optString("id",null):operation.optString("objectId",null);
         JSONObject baseline = document; preparing = true;
         pauseHand("Preparing next drawing step");
