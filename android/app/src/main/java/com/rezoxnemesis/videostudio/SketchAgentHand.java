@@ -69,6 +69,15 @@ public final class SketchAgentHand {
             this.objectId=objectId;this.toolLabel=toolLabel;this.caption=caption;this.operationType=operationType;this.color=color;
         }
         public static State hidden() {return new State(0,0,0,0,false,false,"","","","",0);}
+        /** Shows a real selected native handle, never claims a new pen stroke. */
+        public static State manipulation(double x,double y,String objectId,
+                                         String toolLabel,String caption){
+            if(!Double.isFinite(x)||!Double.isFinite(y)||objectId==null||toolLabel==null
+                    ||caption==null) return hidden();
+            boolean visible=x>=0&&x<=1&&y>=0&&y<=1;
+            return new State(x,y,0,0,visible,false,objectId,toolLabel,caption,
+                    "native_gesture",0xff58d7d8);
+        }
         /** Preserve the last displayed position while the next actual prefix is prepared. */
         public State paused(String caption) {
             return new State(x,y,pressure,sizePx,visible,false,objectId,toolLabel,

@@ -6,6 +6,7 @@ on:
       - feature/sketch-agent-live-reliability-v41041-20261025
       - feature/sketch-human-live-controls-v41041-20261025
       - feature/sketch-visible-brush-agent-v41042-20261025
+      - feature/sketch-human-gesture-ops-v41043-20261025
   pull_request:
     branches:
       - feature/sketch-live-replay-deck-v41040-20261025
@@ -48,7 +49,9 @@ jobs:
             --tests '*SketchLiveViewerCommandsTest' \
             --tests '*SketchLiveViewerMcpAdmissionTest' \
             --tests '*SketchPreviewRecoveryTest' \
-            --tests '*SketchVisibleXsheetStageTest'
+            --tests '*SketchVisibleXsheetStageTest' \
+            --tests '*SketchAgentGestureOpsTest' \
+            --tests '*SketchAgentGestureStageTest'
       - name: Preserve failing assertions and XML diagnostics
         if: always()
         uses: actions/upload-artifact@v4

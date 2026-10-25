@@ -96,6 +96,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private boolean agentStageInFlight,agentStageBurst;
     private long lastAgentStageProbeAt;
     private String agentStageActiveOperation="";
+    private android.animation.ValueAnimator agentGestureAnimator;
+    private boolean agentGestureSaving;
     private SeekBar frames;
     private Spinner layers;
     private final ArrayList<String> layerIds = new ArrayList<>();
@@ -1359,6 +1361,12 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(destroyed)return;
         pollLiveViewerCommands();
         pollAgentStage();
+        // An actual foreground ChatGPT gesture owns the selected frame until
+        // the UI preview and atomic native edit have both resolved. Do not
+        // steal the workspace with a follow-session or new live playback.
+        if(agentGestureAnimator!=null||agentGestureSaving){
+            handler.postDelayed(this,180);return;
+        }
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
             handler.postDelayed(this,250);
@@ -1672,6 +1680,12 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 },duration);
                 return;
             }
+            case "object_drag":
+            case "node_drag":{
+                SketchAgentGestureOps.Plan gesture=SketchAgentGestureOps.plan(document,step);
+                startAgentGesture(claimed,gesture);
+                return;
+            }
             case "xsheet":{
                 int page=step.getInt("frameIndex");
                 String level=step.getString("layerId");
@@ -1710,8 +1724,188 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         settleAgentStage(claimed,true,action+" performed in foreground Sketch Studio");
     }
 
+    /**
+     * Perform the native object/curve gesture visibly on the REAL drawing
+     * canvas, then commit precisely one revision-guarded sketch_edit on the
+     * background serial executor. No fake MotionEvents or externally edited
+     * screenshots ever cross this boundary.
+     */
+    private void startAgentGesture(JSONObject claim,SketchAgentGestureOps.Plan gesture)throws Exception {
+        if(agentGestureAnimator!=null||agentGestureSaving)
+            throw SketchDocument.bad("A native ChatGPT gesture is already active");
+        if(session==null||session.pending()!=0||session.error()!=null)
+            throw SketchDocument.bad("Finish the current human stroke save first");
+        final String original=sketchId;
+        final SketchEditorSession source=session;
+        final int generation=loadGeneration,bookGeneration=pageGeneration;
+        final long revision=document.getLong("revision");
+        agentChooseObject(gesture.objectId);
+        if(canvas.getFrame()!=gesture.frameIndex)setFrame(gesture.frameIndex);
+        int targetIndex=java.util.Arrays.asList(toolValues)
+                .indexOf(gesture.editingNode()?"nodes":"select");
+        if(targetIndex>=0)showAgentToolPosition(targetIndex);
+        canvas.setTool(gesture.editingNode()?"nodes":"select");
+        showAgentStage(claim,"moving real "+(gesture.editingNode()?
+                "Bézier knot":"selected object")+" on frame "+(gesture.frameIndex+1));
+        canvas.setEnabled(false);
+        final java.util.concurrent.atomic.AtomicBoolean settled=
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        android.animation.ValueAnimator animator=android.animation.ValueAnimator.ofFloat(0f,1f);
+        agentGestureAnimator=animator;
+        animator.setDuration(gesture.durationMs);
+        final int[] lastSample={-1};
+        animator.addUpdateListener(value->{
+            if(settled.get())return;
+            float progress=(float)value.getAnimatedValue();
+            int sample=Math.max(0,Math.min(24,(int)Math.floor(progress*24)));
+            if(sample==lastSample[0]&&progress<1)return;
+            lastSample[0]=sample;
+            try{
+                if(!stageGestureCurrent(original,source,generation,bookGeneration,revision)){
+                    animator.cancel();return;
+                }
+                canvas.presentAgentGesture(gesture,sample/24f);
+                if(agentStageIndicator!=null){
+                    agentStageIndicator.setText("ChatGPT  ·  "+(claim.optInt("stepIndex")+1)+
+                            "/"+claim.optInt("stepCount",1)+"  ·  "+
+                            (gesture.editingNode()?"Moving node":"Transforming object")+
+                            " · "+Math.round(sample*100/24f)+"%");
+                }
+            }catch(Exception failed){
+                if(status!=null)status.setText("Agent gesture preview: "+failed.getMessage());
+                animator.cancel();
+            }
+        });
+        animator.addListener(new android.animation.AnimatorListenerAdapter(){
+            private boolean canceled;
+            @Override public void onAnimationCancel(android.animation.Animator animation){
+                canceled=true;
+                if(settled.compareAndSet(false,true)){
+                    agentGestureAnimator=null;
+                    canvas.clearAgentGesture();
+                    canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                    settleAgentStage(claim,false,"Visible gesture interrupted before native save");
+                }
+            }
+            @Override public void onAnimationEnd(android.animation.Animator animation){
+                if(canceled||!settled.compareAndSet(false,true))return;
+                agentGestureAnimator=null;
+                if(!stageGestureCurrent(original,source,generation,bookGeneration,revision)){
+                    canvas.clearAgentGesture();
+                    canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                    settleAgentStage(claim,false,"Drawing changed before the native gesture could save");
+                    return;
+                }
+                agentGestureSaving=true;
+                final JSONObject displayed;
+                try{displayed=canvas.actualAgentGestureState();}
+                catch(Exception failure){
+                    agentGestureSaving=false;canvas.clearAgentGesture();
+                    settleAgentStage(claim,false,"Could not verify the native selected geometry");
+                    return;
+                }
+                if(agentStageIndicator!=null)
+                    agentStageIndicator.setText("ChatGPT  ·  saving "+
+                            (gesture.editingNode()?"Bézier node":"object transform")+
+                            " through Sketch Studio…");
+                io.execute(()->{
+                    boolean persisted=false;
+                    long savedRevision=-1;
+                    String editId="";
+                    JSONObject saved=null;
+                    String failure="";
+                    try{
+                        editId=SketchAgentGestureOps.deterministicEditId(claim);
+                        JSONObject request=new JSONObject()
+                                .put("sketchId",original)
+                                .put("operationId",editId)
+                                .put("expectedRevision",revision)
+                                .put("operations",new JSONArray().put(gesture.editOperation));
+                        JSONObject receipt=SketchEditOps.execute(
+                                SketchStudioActivity.this,"sketch_edit",request);
+                        persisted=receipt.optBoolean("persisted",false);
+                        if(!persisted)
+                            throw new IllegalStateException("Sketch Studio did not acknowledge a durable edit");
+                        savedRevision=receipt.getLong("revision");
+                        try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){
+                            saved=store.get(original);
+                        }
+                        if(saved.getLong("revision")<savedRevision)
+                            throw new IllegalStateException("Native saved revision could not be inspected");
+                    }catch(Exception error){failure=error.getMessage()==null?
+                            error.getClass().getSimpleName():error.getMessage();}
+                    final boolean didSave=persisted;
+                    final long finalRevision=savedRevision;
+                    final String finalId=editId,issue=failure;
+                    final JSONObject result=saved;
+                    postUi(()->{
+                        agentGestureSaving=false;
+                        if(canvas!=null)canvas.clearAgentGesture();
+                        if(canvas!=null)canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                        boolean foreground=didSave&&stageGestureCurrentForDisplay(original,source,
+                                generation,bookGeneration);
+                        boolean adopted=false;
+                        if(foreground&&result!=null)try{
+                            adopted=session.adopt(result);
+                            if(adopted){
+                                present(session.document());
+                                setFrame(gesture.frameIndex);
+                                canvas.selectObject(gesture.objectId);
+                                updateStatus();
+                            }
+                        }catch(Exception error){
+                            adopted=false;
+                            if(status!=null)status.setText("Gesture saved; reload drawing to inspect: "+error.getMessage());
+                        }
+                        JSONObject details=new JSONObject();
+                        try{
+                            details.put("documentModified",didSave)
+                                    .put("nativeEditId",finalId)
+                                    .put("savedRevision",finalRevision)
+                                    .put("previewWasVisible",displayed.optBoolean("visible"))
+                                    .put("previewedExactObject",displayed.optString("objectId"))
+                                    .put("savedAndDisplayed",adopted);
+                        }catch(Exception ignored){}
+                        settleAgentStage(claim,adopted,
+                                adopted?"Real gesture saved and displayed at revision "+finalRevision:
+                                        didSave?"Sketch saved, but foreground view changed; reload source":
+                                        "Gesture not saved: "+issue,
+                                details);
+                    });
+                });
+            }
+        });
+        animator.start();
+    }
+
+    private boolean stageGestureCurrent(String id,SketchEditorSession source,
+                                        int generation,int bookGeneration,long revision){
+        return stageGestureCurrentForDisplay(id,source,generation,bookGeneration)
+                &&document!=null&&document.optLong("revision") == revision
+                &&source.pending()==0&&source.error()==null;
+    }
+
+    private boolean stageGestureCurrentForDisplay(String id,SketchEditorSession source,
+                                                  int generation,int bookGeneration){
+        return !destroyed&&resumed&&watching&&bookId==null
+                &&sketchId!=null&&sketchId.equals(id)&&session==source
+                &&generation==loadGeneration&&bookGeneration==pageGeneration
+                &&canvas!=null&&!loadingDrawing&&!playing&&!watchInFlight&&livePlayer==null;
+    }
+
+    private void interruptAgentGesture(){
+        if(agentGestureAnimator!=null){
+            android.animation.ValueAnimator active=agentGestureAnimator;
+            agentGestureAnimator=null;
+            active.cancel();
+        }
+    }
+
     /** The proof is recorded only after a foreground UI action has finished. */
     private void settleAgentStage(JSONObject claim,boolean succeeded,String description){
+        settleAgentStage(claim,succeeded,description,null);
+    }
+    private void settleAgentStage(JSONObject claim,boolean succeeded,String description,JSONObject persisted){
         JSONObject evidence=new JSONObject();
         try{
             evidence.put("appliedOnScreen",succeeded)
@@ -1724,6 +1918,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     .put("sourceRevision",document==null?-1:document.optLong("revision"))
                     .put("atMs",System.currentTimeMillis());
             if(canvas!=null)evidence.put("actualCamera",canvas.cameraSnapshot());
+            if(persisted!=null){java.util.Iterator<String> keys=persisted.keys();
+                while(keys.hasNext()){String key=keys.next();evidence.put(key,persisted.opt(key));}}
+
             if("brush".equals(claim.getJSONObject("step").getString("action")))
                 evidence.put("actualBrush",new JSONObject()
                         .put("color",brushColor).put("widthPx",brushWidth*
@@ -1773,10 +1970,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     } };
     private void stopPlayback(){stopPlayback(true);}
     private void stopPlayback(boolean restoreBookPage) { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;if(canvas!=null)canvas.setPlaybackPreview(false);android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(restoreBookPage&&wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
-    @Override protected void onPause() { closeStillPngDialog();resumed=false;if(canvas!=null)canvas.stopAgentCamera();++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
+    @Override protected void onPause() { closeStillPngDialog();resumed=false;interruptAgentGesture();if(canvas!=null)canvas.stopAgentCamera();++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
     @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(localEditableReturn!=null&&localEditableReturn.ownsEditor())localEditableReturn.deferredResumeReload=true;else if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onStop(){resumed=false;stopPlayback();if(canvas!=null)canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onStop();}
-    @Override protected void onDestroy() { destroyed=true;closeStillPngDialog();if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true;interruptAgentGesture();closeStillPngDialog();if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
@@ -1784,6 +1981,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // Browsing a menu never takes ownership of an active drawing. Its chosen action
     // goes through the same loading, playback and live-takeover gate as the toolbar.
     private void runAction(String title,Runnable action){try{
+        if(agentGestureAnimator!=null||agentGestureSaving){
+            if("Draw myself".equals(title)){interruptAgentGesture();}
+            else {onMessage("ChatGPT is visibly moving a selected shape; finish or stop that gesture first");return;}
+        }
         boolean navigation=java.util.Arrays.asList("File","More","Refresh preview","Retry preview","Brush / Text","Layers","Frames / Cels","Workspace","Canvas view","Drawing status","Drawing alerts","Colours","Select layer","Go to frame","Go","Exposure sheet","Onion skin","Onion settings","First","−100","+100","Last","On ones","On twos","On threes","Paint studio","Paint settings","Clone source","Xsheet (read-only)","Linked palette styles","Follow current work","Replay last saved drawing","Save current frame as PNG").contains(title);
         if(navigation){action.run();return;}
         if(loadingDrawing&&!java.util.Arrays.asList("New","Open","Sketch books","Draw myself").contains(title)){onMessage("Opening the selected drawing");return;}
