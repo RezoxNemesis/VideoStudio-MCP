@@ -1036,6 +1036,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }else if("Inspector".equals(pane))buildStudioInspector(box);
         else{
             LinearLayout heading=new LinearLayout(this);heading.setGravity(Gravity.CENTER_VERTICAL);heading.addView(title("Timeline",17),new LinearLayout.LayoutParams(0,dp(48),1));
+            final boolean multiTrack=prefs.getBoolean("studio_professional_multitrack",false);
+            Button toggleTracks=studioButton(multiTrack?"Compact":"Tracks",()->{
+                prefs.edit().putBoolean("studio_professional_multitrack",!multiTrack).apply();
+                if(studioWorkspace!=null)studioWorkspace.refreshPane();
+            });
+            toggleTracks.setContentDescription(multiTrack?"Switch to compact timeline":"Switch to independent professional multitrack timeline");
+            heading.addView(toggleTracks,new LinearLayout.LayoutParams(dp(76),dp(48)));
             Button undo=studioButton("↶ Undo",()->restoreStudioHistory(false));undo.setEnabled(editHistory.canUndo());heading.addView(undo,new LinearLayout.LayoutParams(dp(76),dp(48)));
             Button redo=studioButton("↷ Redo",()->restoreStudioHistory(true));redo.setEnabled(editHistory.canRedo());heading.addView(redo,new LinearLayout.LayoutParams(dp(76),dp(48)));box.addView(heading);
             renderStudioTrackLanes(box);renderStudioCompactClips(box);
@@ -2160,11 +2167,6 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
      */
     private void renderStudioTrackLanes(LinearLayout box){
         final boolean professional=prefs.getBoolean("studio_professional_multitrack",false);
-        box.addView(studioButton(professional?"Timeline view: Multitrack · tap for compact":
-                "Timeline view: Compact · tap for multitrack",()->{
-            prefs.edit().putBoolean("studio_professional_multitrack",!professional).apply();
-            if(studioWorkspace!=null)studioWorkspace.refreshPane();
-        }));
         StudioTracksView bands=new StudioTracksView(this);studioTracks=bands;
         bands.setQuietEditorPalette(true);
         bands.setProfessionalRows(professional);
