@@ -59,7 +59,9 @@ public final class SketchAgentCurveCanvas extends View {
     private float py(double y){return b-(float)y*(b-t);}
     @Override protected void onDraw(Canvas canvas){
         super.onDraw(canvas);
-        if(released||!isShown())return;
+        // Offscreen Canvas unit tests may render this view without an Activity.
+        // Real stage success is independently gated on view.isShown() in SketchStudioActivity.
+        if(released)return;
         l=dp(28);t=dp(43);r=Math.max(l+1,getWidth()-dp(18));
         b=Math.max(t+1,getHeight()-dp(27));
         pen.setStyle(Paint.Style.FILL);
