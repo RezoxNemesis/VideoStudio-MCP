@@ -43,6 +43,46 @@ jobs:
         run: |
           set -euo pipefail
           gradle :app:testDebugUnitTest --no-daemon --stacktrace --console=plain
+      - name: Restore the original VideoStudio signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: videostudio-android-debug-signing-v1
+          lookup-only: true
+      - name: Verify pinned owner key before candidate APK
+        run: |
+          set -euo pipefail
+          key="$HOME/.android/debug.keystore"
+          test -r "$key" || { echo "::error::Owner signing key unavailable; refusing replacement certificate"; exit 1; }
+          expected="$(keytool -list -v -keystore "$key" -storepass android -alias androiddebugkey | awk -F': ' '/SHA256:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$expected" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd" || {
+            echo "::error::Candidate APK signer differs from installed VideoStudio certificate"; exit 1;
+          }
+      - name: Build owner-signed integrated APK candidate
+        working-directory: android
+        env:
+          VIDEOSTUDIO_SIGNING_KEYSTORE: ${{ runner.home }}/.android/debug.keystore
+        run: |
+          set -euo pipefail
+          export VIDEOSTUDIO_SIGNING_KEYSTORE="$HOME/.android/debug.keystore"
+          gradle :app:assembleDebug --no-daemon --stacktrace --console=plain
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$apk"
+          sha256sum "$apk" > "$apk.sha256"
+          actual="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          test "$actual" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd" || {
+            echo "::error::Signed candidate APK does not match original owner's cert"; exit 1;
+          }
+          python3 ../scripts/verify-android-apk.py --apk "$apk" --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+      - name: Upload owner-compatible candidate (not installed)
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-integrated-offline-candidate
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/debug/app-debug.apk.sha256
       - name: Publish unit test reports
         if: always()
         uses: actions/upload-artifact@v4
