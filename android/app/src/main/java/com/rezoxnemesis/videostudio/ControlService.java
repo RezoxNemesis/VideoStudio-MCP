@@ -446,6 +446,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         "failed", null, null, intent.getStringExtra("projectId"));
             }
         } else if (ACTION_LOCAL_VIDEO_INSTALL.equals(action)) {
+            if(startupGuard!=null&&startupGuard.held()){
+                ActivityLog.add(this,"system","Local model install paused",
+                        "Native recovery is held. Open VideoStudio safely before retrying model installation.",
+                        "info",null,null,null);
+                return START_STICKY;
+            }
             final String ownedProject=intent.getStringExtra("projectId");
             final String ownedAsset=intent.getStringExtra("assetId");
             directorSetupExecutor.execute(()->{
@@ -4399,6 +4405,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
     /** No job or new project is created until a locally installed neural model passes preflight. */
     private JSONObject queueNativeOfflineVideo(JSONObject input)throws Exception {
+        if(startupGuard!=null&&startupGuard.held())
+            throw new IllegalStateException("NATIVE_RECOVERY_HELD: previous render preserved. "
+                    +"New neural inference cannot bypass the native heavy-render safety hold.");
         JSONObject request=publicOperationParameters(input);
         NativeOfflineVideoGenerator generator=new NativeOfflineVideoGenerator(this);
         JSONObject plan=generator.plan(store,request);
