@@ -21,6 +21,7 @@ final class NativeAgentMailboxActions {
   "sketch_archive",
   "sketch_restore_archive",
   "sketch_edit",
+  "sketch_agent_stage","sketch_agent_stage_status",
   "sketch_undo",
   "sketch_redo",
   "sketch_import_reference","sketch_import_reference_layers","sketch_reference_layers_preview","sketch_layered_drawing_preview",
