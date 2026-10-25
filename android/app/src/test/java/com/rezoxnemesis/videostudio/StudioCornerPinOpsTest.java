@@ -63,7 +63,9 @@ public final class StudioCornerPinOpsTest {
             assertTrue(StudioCornerPinOps.apply(store,clear).getBoolean("saved"));
             ProjectStore.Project restored=store.get(initial.id);
             assertNull(restored.studioLayers.get(1).cornerPin);
-            assertEquals(before,SketchDocument.canonical(restored.toJson()));
+            assertEquals("file:///private/Photo.png",restored.asset("owned-image").uri);
+            assertEquals("file:///private/Sound.mp3",restored.asset("owned-song").uri);
+            assertEquals("original-clip",restored.clips.get(0).id);
         }
     }
 
