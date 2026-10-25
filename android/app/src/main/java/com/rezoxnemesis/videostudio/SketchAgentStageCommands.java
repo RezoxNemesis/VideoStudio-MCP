@@ -30,7 +30,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
     private static final Set<String> ACTIONS=Set.of(
             "tool","brush","frame","layer","object","camera","fit","onion",
             "grid","play","pause","wait","scrub","transform_curve","shape_curve","xsheet",
-            "object_drag","node_drag","curve_handle_drag");
+            "object_drag","node_drag","curve_handle_drag","exposure_drag");
 
     private final SQLiteDatabase db;
     private final Helper helper;
@@ -69,7 +69,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
     public static JSONObject capabilities() throws Exception {
         return new JSONObject()
                 .put("schema","videostudio.sketch-visible-director.v1")
-                .put("minimumNativeVersion","4.10.45")
+                .put("minimumNativeVersion","4.10.46")
                 .put("enqueueAction","sketch_stage_execute")
                 .put("statusAction","sketch_stage_status")
                 .put("discoverAction","sketch_stage_capabilities")
@@ -81,7 +81,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                         .put("camera").put("fit").put("onion").put("grid")
                         .put("play").put("pause").put("wait").put("scrub").put("transform_curve")
                         .put("shape_curve").put("xsheet")
-                        .put("object_drag").put("node_drag").put("curve_handle_drag"))
+                        .put("object_drag").put("node_drag").put("curve_handle_drag").put("exposure_drag"))
                 .put("camera",new JSONObject().put("zoomMin",1).put("zoomMax",12)
                         .put("centerCoordinates","normalized drawing [0,1]")
                         .put("animationMsMax",800))
@@ -97,11 +97,12 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                 .put("strokeVisualization","existing accepted native SketchLivePlayer")
                 .put("humanGestureControls",SketchAgentGestureOps.capabilities())
                 .put("timingCurveGesture",SketchAgentCurveDrag.capabilities())
+                .put("writableExposureGesture",SketchAgentExposureDrag.capabilities())
                 .put("visibleTimelineScrub",SketchAgentTimelineScrub.capabilities())
                 .put("mutatingGesturesTerminalOnly",true)
                 .put("persistedWithoutBackgroundUI",true)
                 .put("navigationStepsSourceUnchanged",true)
-                .put("sourceChangingGestureSteps",new JSONArray().put("object_drag").put("node_drag").put("curve_handle_drag"))
+                .put("sourceChangingGestureSteps",new JSONArray().put("object_drag").put("node_drag").put("curve_handle_drag").put("exposure_drag"))
                 .put("sourceChangesOnlyAfterForegroundCommit",true)
                 .put("originalDocumentUnchanged",false)
                 .put("galleryAccess",false);
@@ -211,6 +212,11 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                     SketchAgentGestureOps.plan(document,step);
                     if(i!=steps.length()-1)
                         throw SketchDocument.bad("A source-changing human gesture must be the final visible stage action");
+                    break;
+                case "exposure_drag":
+                    SketchAgentExposureDrag.plan(document,step);
+                    if(i!=steps.length()-1)
+                        throw SketchDocument.bad("A source-changing Xsheet hold drag must be the final visible stage step");
                     break;
                 case "curve_handle_drag":
                     SketchAgentCurveDrag.plan(document,step);
