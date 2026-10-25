@@ -85,6 +85,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private JSONObject paintClip,paintCloneSource;
     private SketchFilmstripView filmstrip;
     private TextView toolStatus;
+    private TextView agentStageHud;
     private Spinner toolPicker;
     private int humanToolPosition,pendingAgentToolSelection=-1;
     private boolean syncingAgentTool,agentGlobalTool;
@@ -134,6 +135,17 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         android.widget.FrameLayout viewport=new android.widget.FrameLayout(this);
         viewport.addView(canvas,new android.widget.FrameLayout.LayoutParams(-1,-1));
         viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
+        agentStageHud=new TextView(this);
+        agentStageHud.setTextSize(12);
+        agentStageHud.setSingleLine(true);
+        agentStageHud.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        agentStageHud.setTextColor(0xffe1f2e5);
+        agentStageHud.setBackgroundColor(0xdd15302b);
+        agentStageHud.setPadding(dp(8),dp(5),dp(8),dp(5));
+        agentStageHud.setContentDescription("ChatGPT visibly executed native Sketch Studio action");
+        agentStageHud.setVisibility(View.GONE);
+        viewport.addView(agentStageHud,new android.widget.FrameLayout.LayoutParams(
+                -1,dp(33),android.view.Gravity.BOTTOM));
         LinearLayout drawingArea=new LinearLayout(this);drawingArea.setOrientation(LinearLayout.HORIZONTAL);drawingArea.addView(viewport,new LinearLayout.LayoutParams(0,-1,2));
         layeredReferencePanel=column();layeredReferencePanel.setBackgroundColor(0xff273345);layeredReferencePanel.setVisibility(View.GONE);drawingArea.addView(layeredReferencePanel,new LinearLayout.LayoutParams(0,-1,1));
         TextView referenceTitle=new TextView(this);referenceTitle.setText("REFERENCE ONLY");referenceTitle.setTextColor(StudioUi.TEXT);referenceTitle.setTextSize(11);layeredReferencePanel.addView(referenceTitle);
@@ -1143,7 +1155,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void showActualAgentTool(String label){int position=agentToolPosition(label);if(position>=0)showAgentToolPosition(position);}
     private void updateAgentToolIndicator(){if(status==null)return;boolean enabled=getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);if(enabled&&agentGlobalTool){if(agentToolIndicator==null)agentToolIndicator=SketchAgentHand.toolIndicator(this,18);status.setCompoundDrawablePadding(dp(4));status.setCompoundDrawablesWithIntrinsicBounds(agentToolIndicator,null,null,null);}else status.setCompoundDrawables(null,null,null,null);}
-    private void updateLiveControl(){if(canvas!=null)canvas.setAgentPenCameraFollow(watching&&getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true));if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
+    private void updateLiveControl(){if(agentStageHud!=null&&!watching)agentStageHud.setVisibility(View.GONE);if(canvas!=null)canvas.setAgentPenCameraFollow(watching&&getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true));if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
     private void toggleLiveWatch(){
         if(watching){takeOverLive(null);return;}
         ++liveLoadGeneration;stopPlayback();watching=true;if(notifiedSessionId!=null)notificationReplayPending=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
@@ -1295,6 +1307,11 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             // returned successfully, not when the agent merely sent commands.
             SketchAgentStageControl.acknowledge(this,sketchId,revision,
                     pending.getLong("sequence"),pending.getInt("index"));
+            if(agentStageHud!=null){
+                agentStageHud.setText("ChatGPT · "+label+" · "+(pending.getInt("index")+1)
+                        +"/"+pending.getInt("total"));
+                agentStageHud.setVisibility(View.VISIBLE);
+            }
             if(toolStatus!=null)toolStatus.setText("ChatGPT visible control "
                     +(pending.getInt("index")+1)+"/"+pending.getInt("total")+" · "+label);
             updateStatus();
