@@ -178,6 +178,21 @@ public final class SketchCanvasView extends View {
     public String getLayerId() { return layerId; }
     public void setLayerId(String id) { layerId = id; selectedId = null; if (listener != null) listener.onSelection(null); invalidate(); }
     public String getSelectedId() { return selectedId; }
+    /** A real selection on the native canvas, never synthesized touch coordinates. */
+    public void selectObjectForAgent(String objectId)throws Exception{
+        if(document==null)throw SketchDocument.bad("Open an editable sketch first");
+        if(objectId==null||objectId.isEmpty())throw SketchDocument.bad("Choose a stable object ID");
+        JSONObject object=SketchDocument.object(document,objectId);
+        JSONObject owner=SketchDocument.owner(document,objectId);
+        if(!SketchFrameRenderer.exposed(object,frame))
+            throw SketchDocument.bad("Object is not exposed on the selected frame");
+        invalidateTouchPreview(true);
+        selectedId=objectId;
+        layerId=owner.getString("id");
+        dragBase=null;dragTransform=null;
+        if(listener!=null)listener.onSelection(objectId);
+        invalidate();
+    }
     public void setTool(String tool) { invalidateTouchPreview(true);this.tool = tool;paintCommitter=null;paintTarget=null; gesture = new JSONArray(); polygon = new JSONArray(); invalidate(); }
     public void setBrush(String color, float width, boolean fill) { this.color = color; this.brushWidth = width; this.fill = fill; invalidate(); }
     public void setOnion(boolean onion) { this.onion = onion;rasterKey="";invalidate(); }
