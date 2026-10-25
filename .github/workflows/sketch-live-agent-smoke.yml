@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/sketch-agent-live-reliability-v41041-20261025
+      - feature/sketch-human-live-controls-v41041-20261025
   pull_request:
     branches:
       - feature/sketch-live-replay-deck-v41040-20261025
