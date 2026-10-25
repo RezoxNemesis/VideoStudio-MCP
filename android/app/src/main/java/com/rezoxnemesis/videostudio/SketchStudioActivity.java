@@ -1228,6 +1228,235 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         handler.postDelayed(this,250);
     }};
 
+    /**
+     * Actual Sketch Studio foreground executor. It never marks a remote step
+     * applied from the background ControlService. Drawing and brush replay
+     * remain on the existing accepted-stroke live player.
+     */
+    private void pollAgentStage(){
+        if(agentStageInFlight||!resumed||!watching||loadingDrawing
+                ||livePlayer!=null||watchInFlight||session==null||session.pending()>0
+                ||session.error()!=null||canvas==null||canvas.isDrawing()
+                ||bookId!=null||sketchId==null||document==null)return;
+        final String id=sketchId;final SketchEditorSession active=session;
+        final int generation=loadGeneration,page=pageGeneration;
+        agentStageInFlight=true;
+        io.execute(()->{
+            try(SketchAgentStageCommands queue=new SketchAgentStageCommands(this)){
+                JSONObject claimed=queue.claim(id);
+                postUi(()->{
+                    if(destroyed||!resumed||session!=active||generation!=loadGeneration
+                            ||page!=pageGeneration||!id.equals(sketchId)||!watching
+                            ||loadingDrawing||livePlayer!=null||canvas.isDrawing()){
+                        if(claimed!=null)io.execute(()->{
+                            try(SketchAgentStageCommands paused=new SketchAgentStageCommands(this)){
+                                paused.release(claimed);
+                            }catch(Exception ignored){}
+                        });
+                        agentStageInFlight=false;
+                        return;
+                    }
+                    if(claimed==null){agentStageInFlight=false;return;}
+                    try{applyAgentStage(claimed);}
+                    catch(Exception failure){
+                        settleAgentStage(claimed,false,
+                                "Stage action rejected: "+failure.getMessage());
+                    }
+                });
+            }catch(Exception problem){
+                postUi(()->{agentStageInFlight=false;
+                    if(status!=null)status.setText("Sketch agent stage queue: "+problem.getMessage());
+                });
+            }
+        });
+    }
+
+    private void showAgentStage(JSONObject claim,String description){
+        if(agentStageIndicator==null)return;
+        agentStageActiveOperation=claim.optString("operationId");
+        agentStageIndicator.setText("ChatGPT  ·  "+(claim.optInt("stepIndex")+1)
+                +"/"+claim.optInt("stepCount",1)+"  ·  "+description);
+        agentStageIndicator.setVisibility(View.VISIBLE);
+        agentGlobalTool=true;
+        updateAgentToolIndicator();
+    }
+
+    private void agentChooseObject(String objectId)throws Exception{
+        JSONObject object=SketchDocument.object(document,objectId),
+                owner=SketchDocument.owner(document,objectId);
+        if(!owner.getBoolean("visible"))
+            throw SketchDocument.bad("Selected object belongs to a hidden layer");
+        int targetFrame=Math.max(0,object.getInt("frame"));
+        if(canvas.getFrame()!=targetFrame)setFrame(targetFrame);
+        String layer=owner.getString("id");
+        canvas.setLayerId(layer);
+        int index=layerIds.indexOf(layer);
+        if(index>=0)layers.setSelection(index);
+        canvas.selectObject(objectId);
+        updateStatus();
+    }
+
+    private void applyAgentStage(JSONObject claimed)throws Exception{
+        if(!sketchId.equals(claimed.getString("sketchId"))||bookId!=null
+                ||document.getLong("revision")!=claimed.getLong("expectedRevision"))
+            throw new IllegalStateException("SKETCH_STAGE_SOURCE_CHANGED: foreground drawing changed");
+        JSONObject step=claimed.getJSONObject("step");
+        String action=step.getString("action");
+        if(!"play".equals(action)&&!"pause".equals(action)&&!"wait".equals(action))
+            stopPlayback();
+        switch(action){
+            case "tool":{
+                String target=step.getString("tool");
+                int index=java.util.Arrays.asList(toolValues).indexOf(target);
+                if(index<0)throw SketchDocument.bad("Unavailable studio tool");
+                showAgentToolPosition(index);
+                canvas.setTool(target);
+                showAgentStage(claimed,"selected "+target+" tool");
+                break;
+            }
+            case "frame":{
+                int target=step.getInt("frameIndex");
+                setFrame(target);
+                showAgentStage(claimed,"moved timeline to frame "+(target+1));
+                break;
+            }
+            case "layer":{
+                String id=step.getString("layerId");
+                SketchDocument.layer(document,id);
+                canvas.setLayerId(id);
+                int index=layerIds.indexOf(id);
+                if(index>=0)layers.setSelection(index);
+                updateStatus();
+                showAgentStage(claimed,"selected layer "+id);
+                break;
+            }
+            case "object":{
+                String object=step.getString("objectId");
+                agentChooseObject(object);
+                showAgentStage(claimed,"selected editable object "+object);
+                break;
+            }
+            case "camera":{
+                double wantedZoom=step.getDouble("zoom"),
+                        centerX=step.getDouble("centerX"),
+                        centerY=step.getDouble("centerY");
+                int duration=step.optInt("animationMs",300);
+                showAgentStage(claimed,"moving canvas camera • "+wantedZoom+"×");
+                canvas.animateAgentCamera(wantedZoom,centerX,centerY,duration,ok->
+                    settleAgentStage(claimed,ok,ok?
+                            "Canvas camera reached requested position":"Camera gesture interrupted"));
+                return;
+            }
+            case "fit":{
+                canvas.resetView();
+                showAgentStage(claimed,"fit canvas to workspace");
+                break;
+            }
+            case "onion":{
+                onionEnabled=step.getBoolean("enabled");
+                onionRange=step.optInt("range",onionRange);
+                onionAlpha=step.optInt("alpha",onionAlpha);
+                canvas.setOnion(onionEnabled);
+                canvas.setOnionOptions(onionRange,onionAlpha);
+                saveOnionOptions();
+                showAgentStage(claimed,"onion skin "+(onionEnabled?"enabled":"hidden"));
+                break;
+            }
+            case "grid":{
+                grid=step.getBoolean("enabled");
+                canvas.setGuides(grid,symmetry);
+                getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();
+                showAgentStage(claimed,"canvas grid "+(grid?"enabled":"hidden"));
+                break;
+            }
+            case "play":{
+                if(!playing)togglePlayback();
+                showAgentStage(claimed,"playing authored frames");
+                break;
+            }
+            case "pause":{
+                if(playing)stopPlayback();
+                showAgentStage(claimed,"paused at frame "+(canvas.getFrame()+1));
+                break;
+            }
+            case "wait":{
+                int duration=step.getInt("durationMs");
+                showAgentStage(claimed,"reviewing current drawing for "+duration+" ms");
+                handler.postDelayed(()->{
+                    if(!destroyed&&resumed&&sketchId.equals(claimed.optString("sketchId")))
+                        settleAgentStage(claimed,true,"Elapsed visible review "+duration+" ms");
+                    else settleAgentStage(claimed,false,"Stage review interrupted");
+                },duration);
+                return;
+            }
+            case "transform_curve":{
+                if(step.has("objectId"))agentChooseObject(step.getString("objectId"));
+                else if(step.has("layerId")){
+                    String id=step.getString("layerId");
+                    SketchDocument.layer(document,id);
+                    canvas.setLayerId(id);
+                    canvas.selectObject(null);
+                    int index=layerIds.indexOf(id);
+                    if(index>=0)layers.setSelection(index);
+                }
+                transformDialog();
+                showAgentStage(claimed,"opened transform timing controls");
+                break;
+            }
+            case "shape_curve":{
+                agentChooseObject(step.getString("objectId"));
+                shapeAnimationDialog();
+                showAgentStage(claimed,"opened editable shape timing controls");
+                break;
+            }
+            default:throw SketchDocument.bad("Stage action not supported in native Sketch Studio");
+        }
+        settleAgentStage(claimed,true,action+" performed in foreground Sketch Studio");
+    }
+
+    /** The proof is recorded only after a foreground UI action has finished. */
+    private void settleAgentStage(JSONObject claim,boolean succeeded,String description){
+        JSONObject evidence=new JSONObject();
+        try{
+            evidence.put("appliedOnScreen",succeeded)
+                    .put("action",claim.getJSONObject("step").getString("action"))
+                    .put("detail",description)
+                    .put("actualFrameIndex",canvas==null?-1:canvas.getFrame())
+                    .put("selectedLayerId",canvas==null?"":canvas.getLayerId())
+                    .put("selectedObjectId",canvas==null||canvas.getSelectedId()==null?
+                            "":canvas.getSelectedId())
+                    .put("sourceRevision",document==null?-1:document.optLong("revision"))
+                    .put("atMs",System.currentTimeMillis());
+            if(canvas!=null)evidence.put("actualCamera",canvas.cameraSnapshot());
+        }catch(Exception error){
+            succeeded=false;
+            evidence=new JSONObject();
+            try{evidence.put("appliedOnScreen",false).put("reason","Foreground inspection failed");}
+            catch(Exception ignored){}
+        }
+        final JSONObject proof=evidence;
+        final boolean completed=succeeded;
+        io.execute(()->{
+            try(SketchAgentStageCommands queue=new SketchAgentStageCommands(this)){
+                queue.finish(claim,completed,proof);
+            }catch(Exception error){
+                postUi(()->{if(status!=null)status.setText("Native stage receipt: "+error.getMessage());});
+            }finally{
+                postUi(()->{
+                    agentStageInFlight=false;
+                    if(agentStageIndicator!=null&&agentStageActiveOperation.equals(claim.optString("operationId"))){
+                        agentStageIndicator.setText(completed?"ChatGPT  ·  "+description:
+                                "ChatGPT stage rejected  ·  "+description);
+                        handler.postDelayed(()->{
+                            if(!destroyed&&agentStageIndicator!=null&&!agentStageInFlight)
+                                agentStageIndicator.setVisibility(View.GONE);
+                        },2200);
+                    }
+                });
+            }
+        });
+    }
+
     private void setFrame(int index) { stopPlayback(); if (document == null) return; int next = Math.max(0, Math.min(document.optInt("frameCount") - 1, index));if(canvas.getFrame()!=next)closeStillPngDialog(); canvas.setFrame(next); frames.setProgress(bookId==null?next:bookPage); updateStatus(); }
     private void togglePlayback() { if (playing) { stopPlayback(); return; } if (document == null) return; playing = true;++playbackGeneration;bookPlaybackInFlight=false;canvas.setEnabled(false); playStarted = SystemClock.uptimeMillis(); playFirst = canvas.getFrame();if(bookId!=null&&session.pending()>0){playing=false;afterSaves(()->postUi(this::togglePlayback));return;} canvas.setPlaybackPreview(true);playButton.setText("Pause");if(bookId==null)postUi(playTick);else {if(bookTimeline==null){stopPlayback();return;}bookPlayFirst=bookTimeline.firstFrame(bookPage);handler.postDelayed(playTick,1);} }
     private final Runnable playTick = new Runnable() { @Override public void run() {
