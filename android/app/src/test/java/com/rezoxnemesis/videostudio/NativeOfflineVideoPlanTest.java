@@ -101,6 +101,37 @@ public class NativeOfflineVideoPlanTest {
             }
         }
     }
+    @Test public void remotePaidOrExpiringModelPackCannotBeActivated()throws Exception{
+        Context context=RuntimeEnvironment.getApplication();
+        java.io.File root=new java.io.File(context.getFilesDir(),
+                "creative_workspace/models/installed/"+NativeOfflineVideoPlan.PACK_ID);
+        org.junit.Assume.assumeFalse("Never alter an existing installed model",root.exists());
+        assertTrue(root.mkdirs());
+        try(ProjectStore store=new ProjectStore(context)){
+            ProjectStore.Project source=project(store);
+            java.io.File manifest=new java.io.File(root,"manifest.json");
+            JSONObject pack=new JSONObject()
+                    .put("id",NativeOfflineVideoPlan.PACK_ID)
+                    .put("runtimeAdapter",NativeOfflineVideoGenerator.MODEL_ABI)
+                    .put("version","1").put("license","trial")
+                    .put("archiveSha256",String.format("%064d",1))
+                    .put("files",new JSONObject());
+            java.nio.file.Files.writeString(manifest.toPath(),pack.toString());
+            NativeOfflineVideoGenerator runner=new NativeOfflineVideoGenerator(context);
+            assertThrows(IllegalArgumentException.class,()->runner.plan(store,input(source)));
+            pack.put("license","Apache-2.0").put("requiresSubscription",true);
+            java.nio.file.Files.writeString(manifest.toPath(),pack.toString());
+            assertThrows(IllegalArgumentException.class,()->runner.plan(store,input(source)));
+            pack.remove("requiresSubscription");
+            pack.put("endpoint","https://paid.invalid/generate");
+            java.nio.file.Files.writeString(manifest.toPath(),pack.toString());
+            assertThrows(IllegalArgumentException.class,()->runner.plan(store,input(source)));
+        }finally{
+            java.nio.file.Files.deleteIfExists(new java.io.File(root,"manifest.json").toPath());
+            java.nio.file.Files.deleteIfExists(root.toPath());
+        }
+    }
+
     @Test public void sdkAdmissionExposesExactlyTheThreePrivateModelOnlyActions(){
         assertTrue(NativeAgentMailboxActions.supports("native_offline_video_capabilities"));
         assertTrue(NativeAgentMailboxActions.supports("native_offline_video_plan"));
