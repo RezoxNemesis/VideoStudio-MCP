@@ -369,7 +369,9 @@ public final class NativeRenderEngine {
                                           ProjectStore.Project project){
         StudioCompositionOverlayEffect overlays=new StudioCompositionOverlayEffect(context,project);
         ArrayList<Effect> finalStage=new ArrayList<>();
-        if(!overlays.isEmpty())finalStage.add(overlays);
+        // Never create one shader with dozens of title/glyph texture samplers.
+        // Both CompositionPlayer and Transformer consume these exact ordered passes.
+        if(!overlays.isEmpty())finalStage.addAll(overlays.batchedEffects());
         // The camera is a composition-global matrix AFTER image/title/vector
         // overlay compositing, not an item-local zoom of a source screenshot.
         // This effect order is shared by interactive CompositionPlayer and
