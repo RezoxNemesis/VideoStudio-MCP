@@ -893,6 +893,19 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command,StudioTrackMatteOps.apply(store,p));
                     syncProtocolState();
                     return;
+                case "corner_pin_capabilities":
+                    complete(command,StudioCornerPinOps.capabilities());
+                    return;
+                case "corner_pin_plan": {
+                    ProjectStore.Project source=store.get(p.optString("projectId",""));
+                    complete(command,StudioCornerPinOps.plan(source,p));
+                    return;
+                }
+                case "corner_pin_edit":
+                    complete(command,StudioCornerPinOps.apply(store,p));
+                    syncProtocolState();
+                    return;
+
                 case "set_studio_layers":
                     complete(command, setStudioLayers(p));
                     syncProtocolState();
@@ -5134,6 +5147,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("kineticDirector",StudioKineticDirector.capabilities());
             out.put("motionGroupDirector",StudioMotionGroupOps.capabilities());
             out.put("staticTrackMattes",StudioTrackMatteOps.capabilities());
+            out.put("cornerPin",StudioCornerPinOps.capabilities());
             out.put("lastEditedPreviewFailure",StudioPreviewDiagnostics.last(this));
             out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());

@@ -69,6 +69,7 @@ final class NativeAgentMailboxActions {
   "apply_edit_plan",
   "motion_group_capabilities","motion_group_plan","motion_group_edit",
   "track_matte_capabilities","track_matte_plan","track_matte_edit",
+  "corner_pin_capabilities","corner_pin_plan","corner_pin_edit",
   "kinetic_benchmark_capabilities", "kinetic_benchmark_plan", "kinetic_benchmark_apply",
   "set_studio_layers",
   "apply_tool",
