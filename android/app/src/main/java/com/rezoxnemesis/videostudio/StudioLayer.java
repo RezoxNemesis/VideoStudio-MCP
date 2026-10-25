@@ -33,6 +33,8 @@ public final class StudioLayer {
     public float x=.5f,y=.5f,width=.35f,height=.35f,rotation=0f,opacity=1f;
     /** Null retains legacy serialization; an empty array is an explicit motion clear. */
     public JSONArray motionKeyframes;
+    /** TITLE-only independent codepoint transforms; absent keeps legacy title pixels and JSON. */
+    public JSONObject glyphAnimation;
     /** Optional source-preserving IMAGE/SHAPE alpha mask. Null retains legacy JSON. */
     public JSONObject mask;
     /** AUDIO-only source-preserving native EQ/dynamics recipe. */
@@ -124,6 +126,11 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
         if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type)&&!CAMERA.equals(type))
             throw new IllegalArgumentException("motionKeyframes is only supported on image, title, shape or video layers");
+        if(glyphAnimation!=null){
+            if(!TITLE.equals(type))throw new IllegalArgumentException("Glyph animation requires a title layer");
+            if(backgroundColor!=0)throw new IllegalArgumentException("Glyph animation cannot rasterize a legacy full-line background");
+            StudioGlyphAnimation.validate(glyphAnimation,text,durationMs);
+        }
         if(TITLE.equals(type)&&motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
         if(IMAGE.equals(type)||VIDEO.equals(type)||SHAPE.equals(type)){
             String name=VIDEO.equals(type)?"Video":"Image";
@@ -153,6 +160,8 @@ public final class StudioLayer {
             if(TITLE.equals(type)){
                 obj.put("fontSize",fontSize);obj.put("fontFamily",fontFamily);obj.put("fontStyle",fontStyle);
                 obj.put("textAlign",textAlign);obj.put("backgroundColor",backgroundColor);
+                if(glyphAnimation!=null)
+                    obj.put("glyphAnimation",StudioGlyphAnimation.validate(glyphAnimation,text,durationMs));
             }
             // The accepted .01 minimum rounds slightly below .01 in a float.
             // Emit that boundary exactly so our own saved JSON remains valid;
@@ -180,6 +189,8 @@ public final class StudioLayer {
         StudioLayer l=new StudioLayer();
         l.id=o.optString("id",UUID.randomUUID().toString());
         l.type=o.optString("type",TITLE);
+        if(o.has("glyphAnimation")&&!TITLE.equals(l.type))
+            throw new IllegalArgumentException("Glyph animation only belongs on title layers");
         if(VIDEO.equals(l.type))return videoFromJson(o,l);
         if(SHAPE.equals(l.type))return shapeFromJson(o,l);
         if(GROUP.equals(l.type))return groupFromJson(o,l);
@@ -206,6 +217,11 @@ public final class StudioLayer {
         }
         l.assetId=o.optString("assetId","");
         l.text=o.optString("text","");
+        if(o.has("glyphAnimation")){
+            if(!(o.opt("glyphAnimation") instanceof JSONObject))
+                throw new IllegalArgumentException("Glyph animation must be an object");
+            l.glyphAnimation=o.optJSONObject("glyphAnimation");
+        }
         l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
         l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
         l.sourceInMs=o.has("sourceInMs")?StudioClipKeyframes.integer(o,"sourceInMs",0,86_400_000):0;

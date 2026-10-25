@@ -2873,6 +2873,13 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             studioCaptionPreview.setVisibility(View.GONE);
             return;
         }
+        // The lightweight fallback caption label cannot display independent glyph frames.
+        // Only Media3's edited composition preview is truthful for per-letter motion.
+        for(StudioLayer lane:active)if(lane.glyphAnimation!=null){
+            studioCaptionPreview.setText("");
+            studioCaptionPreview.setVisibility(View.GONE);
+            return;
+        }
         android.text.SpannableStringBuilder copy=new android.text.SpannableStringBuilder();
         for(int i=0;i<Math.min(3,active.size());i++){
             if(i>0)copy.append("\n");

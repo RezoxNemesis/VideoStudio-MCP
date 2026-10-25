@@ -34,7 +34,7 @@ public final class StudioFusionSceneCompiler {
             "id","type","text","shapeKind","style","assetId","startMs",
             "durationMs","fontSize","color","strokeColor","strokeWidth",
             "position","textAlign","x","y","width","height","rotation",
-            "opacity","motionKeyframes","mask");
+            "opacity","motionKeyframes","mask","glyphAnimation");
     private static final Set<String> CAMERA=Set.of("id","type","motionKeyframes");
     private static final Set<String> GROUP=Set.of(
             "id","type","children","motionKeyframes");
@@ -62,6 +62,9 @@ public final class StudioFusionSceneCompiler {
                 .put("sourceMediaUnchanged",true)
                 .put("nativeRenderer","Media3 native existing composer")
                 .put("arbitraryThirdPartyPlugins",false)
+                .put("nativeGlyphTitles",true)
+                .put("glyphModes",new JSONArray().put("scatter").put("assemble").put("cascade").put("wave"))
+                .put("glyphRequiresCandidateApk",true)
                 .put("real3DTracking",false)
                 .put("arbitraryNestedPrecomp",false)
                 .put("onDeviceRenderedPreviewVerified",false)
@@ -175,6 +178,7 @@ public final class StudioFusionSceneCompiler {
                     (outputId+"/"+alias).getBytes(StandardCharsets.UTF_8)).toString();
             switch(type){
                 case "shape":{
+                    if(node.has("glyphAnimation"))throw new IllegalArgumentException("Glyph motion belongs to TITLE nodes");
                     long start=whole(node,"startMs",0,0,86_399_900);
                     long duration=whole(node,"durationMs",2500,100,86_400_000);
                     String kind=node.optString("shapeKind","ring");
@@ -198,11 +202,18 @@ public final class StudioFusionSceneCompiler {
                     layer.position=(int)whole(node,"position",1,0,2);
                     layer.textAlign=node.optString("textAlign","center");
                     if(node.has("color"))layer.color=argb(node,"color");
+                    if(node.has("glyphAnimation")){
+                        if(!(node.opt("glyphAnimation") instanceof JSONObject))
+                            throw new IllegalArgumentException("Glyph animation requires a typed object");
+                        layer.glyphAnimation=StudioGlyphAnimation.validate(
+                                node.getJSONObject("glyphAnimation"),layer.text,layer.durationMs);
+                    }
                     if(node.has("motionKeyframes"))layer.motionKeyframes=keys(node);
                     layer.validate();copy.studioLayers.add(layer);
                     named.put(alias,layer);created++;break;
                 }
                 case "image":{
+                    if(node.has("glyphAnimation"))throw new IllegalArgumentException("Glyph motion belongs to TITLE nodes");
                     Object own=node.opt("assetId");
                     if(!(own instanceof String))
                         throw new IllegalArgumentException("Image node needs owned assetId");

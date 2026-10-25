@@ -31,6 +31,8 @@ public final class StudioTitleMotionDialog {
     private final EditText[] values=new EditText[FIELDS.length];
     private final Spinner easing;
     private final EditText bezierHandles;
+    private final Spinner glyphMode;
+    private final EditText glyphStagger,glyphSpread,glyphWave;
     private final StudioBezierCurveView curve;
     private StudioLayer draft;
     private AlertDialog dialog;
@@ -51,7 +53,9 @@ public final class StudioTitleMotionDialog {
         dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{
             if(!editor.active())return;
             try{
-                StudioLayer candidate=editor.draft.copy();candidate.validate();
+                StudioLayer candidate=editor.draft.copy();
+                editor.applyGlyphProgram(candidate);
+                candidate.validate();
                 if(editor.save.test(candidate)){editor.closed=true;dialog.dismiss();}
             }catch(Exception error){editor.invalid(error);}
         }));
@@ -71,6 +75,24 @@ public final class StudioTitleMotionDialog {
         content=column();content.setPadding(dp(18),dp(8),dp(18),dp(12));
         label("Times start at this title's appearance, not at the start of the video. Load time samples this draft's motion. Add / update key keeps your entered values in the draft; Apply animation saves all draft keys together.");
         label("X/Y move the title by fractions of the output frame, positive right/down (-2..2). Axis scale multiplies the text size (0.1..8); it does not change the saved font size. Rotation adds degrees (-360..360). Opacity multiplies title alpha (0..1). The saved text position anchor stays in place.");
+        label("Independent native letter animation · Off preserves ordinary whole-title editing. At most 18 codepoints; saving validates duration, GPU limits and spacing.");
+        glyphMode=new Spinner(context);
+        String[] modes={"Off","Assemble","Scatter","Cascade","Wave"};
+        glyphMode.setAdapter(new ArrayAdapter<>(context,android.R.layout.simple_spinner_dropdown_item,modes));
+        String selected=draft.glyphAnimation==null?"off":draft.glyphAnimation.optString("mode","assemble");
+        for(int i=0;i<modes.length;i++)if(modes[i].equalsIgnoreCase(selected))glyphMode.setSelection(i);
+        content.addView(glyphMode);
+        label("Letter stagger in milliseconds (0–160)");
+        glyphStagger=number("Glyph stagger milliseconds");
+        glyphStagger.setText(Long.toString(draft.glyphAnimation==null?45:draft.glyphAnimation.optLong("staggerMs",45)));
+        content.addView(glyphStagger);
+        label("Scatter radius (0–0.75) and wave amplitude (0–0.3)");
+        glyphSpread=number("Glyph spread radius");
+        glyphSpread.setText(Double.toString(draft.glyphAnimation==null?.31:draft.glyphAnimation.optDouble("spread",.31)));
+        content.addView(glyphSpread);
+        glyphWave=number("Glyph wave amplitude");
+        glyphWave.setText(Double.toString(draft.glyphAnimation==null?.07:draft.glyphAnimation.optDouble("waveAmplitude",.07)));
+        content.addView(glyphWave);
         status=label("");keyList=column();content.addView(keyList);
         label("Title-local time (ms), 0.."+draft.durationMs);
         time=number("Title key time (ms)");time.setInputType(InputType.TYPE_CLASS_NUMBER);content.addView(time);
@@ -103,6 +125,18 @@ public final class StudioTitleMotionDialog {
         });
         label("Close discards this draft. Apply animation keeps the title text, typography, saved position, timing, other tracks and video duration. Load time only samples the draft values; use the edited video preview to review applied motion.");
         refreshKeys();load(Math.max(0,Math.min(draft.durationMs,initialTime)));
+    }
+
+    private void applyGlyphProgram(StudioLayer candidate)throws Exception{
+        String mode=glyphMode.getSelectedItem().toString().toLowerCase(java.util.Locale.ROOT);
+        if("off".equals(mode)){candidate.glyphAnimation=null;return;}
+        JSONObject program=candidate.glyphAnimation==null?new JSONObject():
+                new JSONObject(candidate.glyphAnimation.toString());
+        program.put("mode",mode);
+        program.put("staggerMs",Long.parseLong(glyphStagger.getText().toString().trim()));
+        program.put("spread",Double.parseDouble(glyphSpread.getText().toString().trim()));
+        program.put("waveAmplitude",Double.parseDouble(glyphWave.getText().toString().trim()));
+        candidate.glyphAnimation=StudioGlyphAnimation.validate(program,candidate.text,candidate.durationMs);
     }
 
     private JSONArray keys()throws Exception{

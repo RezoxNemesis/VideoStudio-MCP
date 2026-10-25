@@ -50,10 +50,21 @@ public final class StudioKineticDirectorDialog {
         Spinner style = new Spinner(activity);
         ArrayAdapter<String> modes = new ArrayAdapter<>(activity,
                 android.R.layout.simple_spinner_item,
-                new String[]{"Editorial", "Impact", "Minimal"});
+                new String[]{"Editorial", "Impact", "Minimal", "Glyph"});
         modes.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         style.setAdapter(modes);
         fields.addView(style, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView glyphLabel = new TextView(activity);
+        glyphLabel.setText("Per-letter effect (used for Glyph style; 1–18 codepoints per phrase):");
+        fields.addView(glyphLabel,new LinearLayout.LayoutParams(-1,-2));
+        Spinner glyphMode = new Spinner(activity);
+        ArrayAdapter<String> glyphModes = new ArrayAdapter<>(activity,
+                android.R.layout.simple_spinner_item,
+                new String[]{"Scatter","Assemble","Cascade","Wave"});
+        glyphModes.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        glyphMode.setAdapter(glyphModes);
+        fields.addView(glyphMode,new LinearLayout.LayoutParams(-1,-2));
 
         android.widget.CheckBox shapes=new android.widget.CheckBox(activity);
         shapes.setText("Animated vector accents / perspective grid (up to 4)");
@@ -89,6 +100,7 @@ public final class StudioKineticDirectorDialog {
                                 .put("projectId", projectId)
                                 .put("expectedUpdatedAt", expectedRevision)
                                 .put("style", style.getSelectedItem().toString().toLowerCase(java.util.Locale.ROOT))
+                                .put("glyphMode",glyphMode.getSelectedItem().toString().toLowerCase(java.util.Locale.ROOT))
                                 .put("shapeAccents",shapes.isChecked())
                                 .put("titles", phrases)
                                 .put("operationId", UUID.randomUUID().toString());
