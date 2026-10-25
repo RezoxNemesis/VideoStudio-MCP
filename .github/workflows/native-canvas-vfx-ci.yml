@@ -39,7 +39,8 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --no-daemon --stacktrace --console=plain
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --tests com.rezoxnemesis.videostudio.StudioProceduralVfxTest --no-daemon --stacktrace --console=plain
+          gradle :app:testDebugUnitTest --no-daemon --stacktrace --console=plain
       - name: Upload native evidence
         if: always()
         uses: actions/upload-artifact@v4
