@@ -42,6 +42,17 @@ public final class StudioTimedGlyphOverlay extends TextOverlay {
         return result;
     }
 
+    /** Lazily materialize one text texture for a bounded GPU render pass. */
+    static TextureOverlay single(StudioLayer layer,StudioLayer group,int index){
+        if(layer==null||!StudioLayer.TITLE.equals(layer.type)||layer.glyphAnimation==null)
+            throw new IllegalArgumentException("Native animated title required");
+        layer.validate();
+        String glyph=StudioGlyphAnimation.glyphAt(layer.text,index);
+        if(Character.isWhitespace(glyph.codePointAt(0)))
+            throw new IllegalArgumentException("Whitespace is positioning, not a GPU glyph texture");
+        return new StudioTimedGlyphOverlay(layer,group,index,glyph);
+    }
+
     private StudioTimedGlyphOverlay(StudioLayer layer, StudioLayer group, int index, String glyph) {
         layer.validate();
         this.index = index;

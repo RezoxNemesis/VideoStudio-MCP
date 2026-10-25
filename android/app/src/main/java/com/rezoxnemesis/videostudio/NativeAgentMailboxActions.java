@@ -59,6 +59,7 @@ final class NativeAgentMailboxActions {
   "ping",
   "get_state",
   "self_test",
+  "studio_preview_diagnostics",
   "connection_health",
   "get_native_result_page",
   "get_native_delivery_status",

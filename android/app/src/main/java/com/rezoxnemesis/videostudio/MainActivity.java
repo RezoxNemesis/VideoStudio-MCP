@@ -448,6 +448,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         }).show();
             });
             recoveryCard.addView(retry,margins(-1,dp(46),dp(8),0,0,0));
+            recoveryCard.addView(studioButton("New renders only · keep interrupted jobs paused",this::allowNewRenderSession),
+                    margins(-1,dp(46),dp(7),0,0,0));
             box.addView(recoveryCard,margins(-1,-2,dp(9),0,0,0));
         }
         NativeStartupGuard launchGuard=new NativeStartupGuard(this);
@@ -460,6 +462,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             safety.addView(body(launchGuard.reason()));
             Button retry=studioButton("Retry interrupted work (optional)",this::retryHeldRecovery);
             safety.addView(retry,margins(-1,dp(48),dp(10),0,0,0));
+            safety.addView(studioButton("New exports only · keep old recovery paused",this::allowNewRenderSession),
+                    margins(-1,dp(48),dp(7),0,0,0));
             box.addView(safety,margins(-1,-2,dp(10),0,0,0));
         }
 
@@ -492,6 +496,29 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         creative.addView(authoring,margins(-1,dp(46),dp(7),0,0,0));
         box.addView(creative,margins(-1,-2,dp(16),0,0,0));
         setScreen(scroll,"home");
+    }
+
+    /** A deliberate foreground Android-only grant, never a private MCP bypass. */
+    private void allowNewRenderSession(){
+        new AlertDialog.Builder(this)
+                .setTitle("Allow new rendering while old recovery stays paused?")
+                .setMessage("Check that VideoStudio opens and all your projects load normally. "
+                        +"New video rendering is enabled for 30 minutes after confirmation; "
+                        +"the previously interrupted render stays quarantined. "
+                        +"A new task can still fail or use significant memory. "
+                        +"No source deletion or Gallery access occurs.")
+                .setNegativeButton("Keep paused",null)
+                .setPositiveButton("Allow new renders",(dialog,which)->{
+                    try{
+                        startForegroundService(new Intent(this,ControlService.class)
+                                .setAction(ControlService.ACTION_ALLOW_FRESH_RENDER));
+                        Toast.makeText(this,"New render permission requested; previous recovery remains paused",
+                                Toast.LENGTH_LONG).show();
+                    }catch(Exception error){
+                        Toast.makeText(this,"New render permission unavailable: "
+                                +error.getClass().getSimpleName(),Toast.LENGTH_LONG).show();
+                    }
+                }).show();
     }
 
     private void retryHeldRecovery(){
@@ -821,7 +848,23 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         studioPreviewErrorView=body(studioPreviewError);studioPreviewErrorView.setTag("studio-preview-error");
         studioPreviewErrorView.setMaxLines(2);studioPreviewErrorView.setEllipsize(android.text.TextUtils.TruncateAt.END);
         studioPreviewErrorView.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
-        studioPreviewErrorView.setOnClickListener(view->{if(!studioPreviewError.isEmpty())new AlertDialog.Builder(this).setTitle("Edited preview").setMessage(studioPreviewError).setPositiveButton("OK",null).show();});
+        studioPreviewErrorView.setOnClickListener(view->{
+            if(studioPreviewError.isEmpty())return;
+            String detail=studioPreviewError;
+            JSONObject diagnostic=StudioPreviewDiagnostics.last(this);
+            if(activeProject!=null&&activeProject.id.equals(diagnostic.optString("projectId"))){
+                detail+="\\n\\nNative Media3 diagnostic (no source media shared):"
+                        +"\\nError: "+diagnostic.optString("media3ErrorCodeName","unknown")
+                        +" ("+diagnostic.optInt("media3ErrorCode",-1)+")"
+                        +"\\nStage: "+diagnostic.optString("phase","unknown")
+                        +"\\nTitles: "+diagnostic.optInt("titleLayers",0)
+                        +" · Graphics: "+diagnostic.optInt("imageLayers",0)
+                        +"\\nShader passes: "+diagnostic.optInt("plannedShaderPasses",-1)
+                        +" · Textures: "+diagnostic.optInt("plannedOverlayTextures",-1);
+            }
+            new AlertDialog.Builder(this).setTitle("Edited preview diagnostics")
+                    .setMessage(detail).setPositiveButton("Close",null).show();
+        });
         FrameLayout.LayoutParams errorSize=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);errorSize.bottomMargin=dp(50);studioPreviewFrame.addView(studioPreviewErrorView,errorSize);
         studioPreviewRetry=studioButton("Retry preview",this::playStudioTimeline);studioPreviewRetry.setTag("studio-preview-retry");
         studioPreviewRetry.setVisibility(studioPreviewError.isEmpty()?View.GONE:View.VISIBLE);
@@ -2090,6 +2133,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         showStudioPreviewError(error);
                     });
             player().setContextIds("",selectedClip==null?"":selectedClip.id);
+            // Candidate allocation/preparation is not proof of a live edited player.
+            // Never clear the visible error if the native graph failed admission.
+            if(!player().isEditedPreview()){
+                timelinePreviewRunning=false;
+                if(studioPreviewError.isEmpty())showStudioPreviewError(
+                        "Edited preview is still unavailable: the Media3 composition could not be activated.");
+                updateStudioPlayToggle();
+                return false;
+            }
             if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
             if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(View.GONE);
             if(stillTimelineNext!=null){ui.removeCallbacks(stillTimelineNext);stillTimelineNext=null;}

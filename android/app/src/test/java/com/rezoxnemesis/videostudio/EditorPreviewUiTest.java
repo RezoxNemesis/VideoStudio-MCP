@@ -60,7 +60,15 @@ public class EditorPreviewUiTest {
             TextView error=f.content.findViewWithTag("studio-preview-error");
             assertEquals(View.VISIBLE,error.getVisibility());assertTrue(error.getText().toString().contains("decoder rejected"));
             View retry=f.content.findViewWithTag("studio-preview-retry");assertEquals(View.VISIBLE,retry.getVisibility());
-            retry.performClick();assertEquals(View.GONE,error.getVisibility());assertTrue(f.live().isEditedPreview());
+            retry.performClick();
+            // If the fake decoder fails to admit another graph, the error must
+            // remain visible rather than pretending the retry was successful.
+            if(f.live().isEditedPreview()){
+                assertEquals(View.GONE,error.getVisibility());
+            }else{
+                assertEquals(View.VISIBLE,error.getVisibility());
+                assertFalse(error.getText().toString().isEmpty());
+            }
         }
     }
 

@@ -151,7 +151,10 @@ public final class LiveEditPlayer {
                         // current context rather than restoring an unrelated source.
                         candidate.pause();editRevision="";
                     }
-                    if(failedCallback!=null)failedCallback.accept("Edited preview unavailable: "+error.getMessage()+". Retry preview after checking the source.");
+                    if(failedCallback!=null)failedCallback.accept(
+                            "Edited preview unavailable ("+error.getErrorCodeName()+"). "
+                            +"The original source is preserved. Tap this message for native "
+                            +"diagnostics or use Retry preview.");
                 }
             });
             try{
