@@ -29,7 +29,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
             "eyedropper","pan","curve","nodes","precision","precision_brush");
     private static final Set<String> ACTIONS=Set.of(
             "tool","frame","layer","object","camera","fit","onion",
-            "grid","play","pause","transform_curve","shape_curve");
+            "grid","play","pause","wait","transform_curve","shape_curve");
 
     private final SQLiteDatabase db;
     private final Helper helper;
@@ -78,7 +78,7 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                 .put("availableSteps",new JSONArray()
                         .put("tool").put("frame").put("layer").put("object")
                         .put("camera").put("fit").put("onion").put("grid")
-                        .put("play").put("pause").put("transform_curve")
+                        .put("play").put("pause").put("wait").put("transform_curve")
                         .put("shape_curve"))
                 .put("camera",new JSONObject().put("zoomMin",1).put("zoomMax",12)
                         .put("centerCoordinates","normalized drawing [0,1]")
@@ -145,6 +145,10 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                     SketchDocument.fields(step,"action,enabled");
                     SketchDocument.bool(step,"enabled");
                     break;
+                case "wait":
+                    SketchDocument.fields(step,"action,durationMs");
+                    SketchDocument.integer(step,"durationMs",50,1500);
+                    break;
                 case "shape_curve":
                     SketchDocument.fields(step,"action,objectId");
                     JSONObject shape=SketchDocument.object(document,SketchDocument.id(step,"objectId"));
@@ -163,6 +167,8 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                 default:
                     SketchDocument.fields(step,"action");break;
             }
+            if(("shape_curve".equals(action)||"transform_curve".equals(action))&&i!=steps.length()-1)
+                throw SketchDocument.bad("A native curve inspector must be the final visible stage step");
             prepared.put(SketchDocument.copy(step));
         }
         JSONObject normalized=new JSONObject()
@@ -176,6 +182,18 @@ public final class SketchAgentStageCommands implements AutoCloseable {
     }
 
     public JSONObject enqueue(Context context,JSONObject raw)throws Exception {
+        if(raw==null)throw SketchDocument.bad("Stage request required");
+        SketchDocument.fields(raw,"sketchId,operationId,expectedRevision,steps");
+        String existingId=SketchDocument.id(raw,"sketchId");
+        String existingOperation=SketchDocument.id(raw,"operationId");
+        JSONObject earlier=lookup(existingId,existingOperation);
+        if(earlier!=null){
+            String requestHash=SketchDocument.sha256(
+                    SketchDocument.canonical(raw).getBytes(StandardCharsets.UTF_8));
+            if(!requestHash.equals(earlier.getString("fingerprint")))
+                throw new IllegalStateException("SKETCH_STAGE_OPERATION_CONFLICT");
+            return receipt(earlier,true);
+        }
         JSONObject doc;
         try(SketchProjectStore store=new SketchProjectStore(context)) {
             String id=SketchDocument.id(raw,"sketchId");
