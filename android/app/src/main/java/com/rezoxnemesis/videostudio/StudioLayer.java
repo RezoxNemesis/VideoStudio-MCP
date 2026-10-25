@@ -37,13 +37,16 @@ public final class StudioLayer {
     public JSONObject mask;
     /** One-level source-free motion parent. Missing ID preserves all old layers. */
     public String parentId="";
+    /** Static project-owned SHAPE track matte. Missing fields keep old JSON byte-compatible. */
+    public String matteLayerId="",matteMode="alpha";
+    public boolean matteOnly=false;
     /** SHAPE-only original Canvas geometry. No external image source required. */
     public String shapeKind="rect";
     public int strokeColor=0xffffffff;
     public float strokeWidth=.02f;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
     private static final Set<String> SHAPE_KINDS=Set.of("rect","ellipse","ring","diamond","line","grid");
-    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask","parentId");
+    private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask","parentId","matteLayerId","matteMode","matteOnly");
     private static final Set<String> GROUP_FIELDS=Set.of("id","type","startMs","durationMs","motionKeyframes");
     private static final Set<String> VIDEO_FIELDS=Set.of("id","type","assetId","audioMode","startMs","durationMs","sourceInMs",
             "x","y","width","height","rotation","opacity","motionKeyframes");
@@ -74,6 +77,19 @@ public final class StudioLayer {
                 throw new IllegalArgumentException("Native SHAPE has no external asset, title text or audio");
             if(!SHAPE_KINDS.contains(shapeKind)||!Float.isFinite(strokeWidth)||strokeWidth<0||strokeWidth>.20f)
                 throw new IllegalArgumentException("Unknown shape or invalid normalized stroke width");
+        }
+        if(matteLayerId==null||matteLayerId.length()>128||matteLayerId.equals(id))
+            throw new IllegalArgumentException("Invalid or self-referential alpha matte layer");
+        if(matteMode==null||(!"alpha".equals(matteMode)&&!"alpha_inverted".equals(matteMode)))
+            throw new IllegalArgumentException("Unsupported alpha matte blending mode");
+        if(matteOnly&&!SHAPE.equals(type))
+            throw new IllegalArgumentException("Only original vector shape tracks can be matte-only");
+        if(!matteLayerId.isEmpty()){
+            if(!IMAGE.equals(type)&&!SHAPE.equals(type))
+                throw new IllegalArgumentException("Static matte targets must be image or original shape overlays");
+            if(matteOnly)throw new IllegalArgumentException("Hidden matte source cannot also use a second matte");
+            if(!parentId.isEmpty()||(motionKeyframes!=null&&motionKeyframes.length()>0))
+                throw new IllegalArgumentException("Static matte target cannot use independently moving keys");
         }
         if(mask!=null){
             if(!IMAGE.equals(type)&&!SHAPE.equals(type))
@@ -136,6 +152,9 @@ public final class StudioLayer {
                 obj.put("width",width==.01f?.01:(double)width);obj.put("height",height==.01f?.01:(double)height);
                 obj.put("rotation",rotation);obj.put("opacity",opacity);}
             if((IMAGE.equals(type)||TITLE.equals(type))&&!parentId.isEmpty())obj.put("parentId",parentId);
+            if(IMAGE.equals(type)&&!matteLayerId.isEmpty()){
+                obj.put("matteLayerId",matteLayerId).put("matteMode",matteMode);
+            }
             if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null){
                 if(IMAGE.equals(type))StudioImageMotion.fromLayer(this);
@@ -159,6 +178,17 @@ public final class StudioLayer {
         if(o.has("shapeKind")||o.has("strokeColor")||o.has("strokeWidth"))
             throw new IllegalArgumentException("Shape-only fields require type shape");
         if(o.has("audioMode"))throw new IllegalArgumentException("audioMode is only supported on video layers");
+        if(o.has("matteOnly"))throw new IllegalArgumentException("Only original shape tracks can be matte-only");
+        if((o.has("matteLayerId")||o.has("matteMode"))&&!IMAGE.equals(l.type))
+            throw new IllegalArgumentException("Only image or shape tracks can use static alpha mattes");
+        if(o.has("matteMode")&&!o.has("matteLayerId"))
+            throw new IllegalArgumentException("Matte blending mode requires a matte source");
+        if(o.has("matteLayerId")&&!(o.opt("matteLayerId") instanceof String))
+            throw new IllegalArgumentException("Matte source ID must be a string");
+        if(o.has("matteMode")&&!(o.opt("matteMode") instanceof String))
+            throw new IllegalArgumentException("Matte mode must be a string");
+        l.matteLayerId=o.optString("matteLayerId","");
+        l.matteMode=o.optString("matteMode","alpha");
         if(o.has("parentId")&&!TITLE.equals(l.type)&&!IMAGE.equals(l.type))
             throw new IllegalArgumentException("Unsupported parent link for audio track");
         if(o.has("parentId")&&!(o.opt("parentId") instanceof String))
@@ -212,6 +242,10 @@ public final class StudioLayer {
                     .put("color",color).put("shapeKind",shapeKind)
                     .put("strokeColor",strokeColor).put("strokeWidth",strokeWidth);
             if(!parentId.isEmpty())obj.put("parentId",parentId);
+            if(matteOnly)obj.put("matteOnly",true);
+            if(!matteLayerId.isEmpty()){
+                obj.put("matteLayerId",matteLayerId).put("matteMode",matteMode);
+            }
             if(mask!=null)obj.put("mask",StudioMaskRasterizer.validate(mask));
             if(motionKeyframes!=null)obj.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
         }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize original shape",error);}
@@ -226,6 +260,17 @@ public final class StudioLayer {
         if(o.has("parentId")&&!(o.opt("parentId") instanceof String))
             throw new IllegalArgumentException("Motion parent ID must be a string");
         l.parentId=o.optString("parentId","");
+        if(o.has("matteOnly")&&!(o.opt("matteOnly") instanceof Boolean))
+            throw new IllegalArgumentException("Matte-only source flag must be boolean");
+        if(o.has("matteLayerId")&&!(o.opt("matteLayerId") instanceof String))
+            throw new IllegalArgumentException("Matte source ID must be a string");
+        if(o.has("matteMode")&&!(o.opt("matteMode") instanceof String))
+            throw new IllegalArgumentException("Matte mode must be a string");
+        if(o.has("matteMode")&&!o.has("matteLayerId"))
+            throw new IllegalArgumentException("Matte mode requires a matte reference");
+        l.matteOnly=o.optBoolean("matteOnly",false);
+        l.matteLayerId=o.optString("matteLayerId","");
+        l.matteMode=o.optString("matteMode","alpha");
         l.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
         l.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
         l.x=(float)StudioClipKeyframes.number(o,"x",.5,0,1);
