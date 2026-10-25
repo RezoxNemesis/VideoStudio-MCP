@@ -45,23 +45,46 @@ final class StudioCompositionOverlayEffect implements GlEffect {
     List<TextureOverlay> createOverlays(){
         ArrayList<TextureOverlay> overlays=new ArrayList<>();
         try{
-            int glyphOverlays = 0;
-            for(Entry entry:entries){
-                if(StudioLayer.TITLE.equals(entry.layer.type)){
-                    if(entry.layer.glyphAnimation==null){
-                        overlays.add(new StudioTimedTitleOverlay(entry.layer,entry.parent));
-                    }else{
-                        int count=StudioGlyphAnimation.visibleGlyphCount(entry.layer.text);
-                        glyphOverlays+=count;
-                        if(glyphOverlays>StudioGlyphAnimation.MAX_COMPOSITION_GLYPHS)
-                            throw new IllegalArgumentException("Maximum 48 independently animated glyphs per composition");
-                        overlays.addAll(StudioTimedGlyphOverlay.expand(entry.layer,entry.parent));
+            int glyphOverlays=0;
+            for(int index=0;index<entries.size();){
+                Entry entry=entries.get(index);
+                if(StudioLayer.TITLE.equals(entry.layer.type)
+                        &&entry.layer.glyphAnimation==null){
+                    // Preserve native z-order. Only merge consecutive TITLE rows
+                    // whose exact time windows cannot overlap. Each virtual slot
+                    // dynamically switches between their existing styled TextOverlays.
+                    ArrayList<StudioLayer> run=new ArrayList<>();
+                    ArrayList<StudioLayer> parents=new ArrayList<>();
+                    long end=-1;
+                    int next=index;
+                    while(next<entries.size()
+                            &&run.size()<StudioVirtualizedTitleOverlay.MAX_TITLES_PER_TEXTURE){
+                        Entry lane=entries.get(next);
+                        if(!StudioLayer.TITLE.equals(lane.layer.type)
+                                ||lane.layer.glyphAnimation!=null
+                                ||(!run.isEmpty()&&lane.layer.startMs<end))break;
+                        run.add(lane.layer);parents.add(lane.parent);
+                        end=Math.addExact(lane.layer.startMs,lane.layer.durationMs);
+                        next++;
                     }
+                    if(run.size()>=4)overlays.add(new StudioVirtualizedTitleOverlay(run,parents));
+                    else for(int i=0;i<run.size();i++)
+                        overlays.add(new StudioTimedTitleOverlay(run.get(i),parents.get(i)));
+                    index=next;
+                    continue;
+                }
+                if(StudioLayer.TITLE.equals(entry.layer.type)){
+                    int count=StudioGlyphAnimation.visibleGlyphCount(entry.layer.text);
+                    glyphOverlays+=count;
+                    if(glyphOverlays>StudioGlyphAnimation.MAX_COMPOSITION_GLYPHS)
+                        throw new IllegalArgumentException("Maximum 48 independently animated glyphs per composition");
+                    overlays.addAll(StudioTimedGlyphOverlay.expand(entry.layer,entry.parent));
                 }else if(StudioLayer.SHAPE.equals(entry.layer.type))
                     overlays.add(new StudioTimedShapeOverlay(entry.layer,entry.parent));
                 else if(StudioLayer.VFX.equals(entry.layer.type))
                     overlays.add(new StudioProceduralVfxOverlay(entry.layer));
                 else overlays.add(new StudioTimedImageOverlay(context,entry.asset,entry.layer,entry.parent));
+                index++;
             }
             return overlays;
         }catch(RuntimeException|Error failure){
