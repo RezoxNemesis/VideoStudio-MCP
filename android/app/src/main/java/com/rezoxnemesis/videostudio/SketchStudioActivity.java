@@ -124,6 +124,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         layeredStageLabel=new TextView(this);layeredStageLabel.setTextColor(StudioUi.TEXT);layeredStageLabel.setContentDescription("Current drawing pass");layeredToolbar.addView(layeredStageLabel,new LinearLayout.LayoutParams(0,-2,1));
         button(layeredToolbar,"Stages",this::layeredDrawingDialog);button(layeredToolbar,"Reference",this::toggleLayeredReference);
         canvas = new SketchCanvasView(this); canvas.setListener(this);canvas.setAgentHandEnabled(getPreferences(MODE_PRIVATE).getBoolean("agentHand",true));
+        canvas.setAgentPenCameraFollow(watching&&getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true));
         try{
             symmetrySettings=SketchSymmetry.configuration(new JSONObject(getPreferences(MODE_PRIVATE).getString("symmetrySettings","{\"mode\":\"vertical\"}")));
             symmetry=getPreferences(MODE_PRIVATE).getBoolean("symmetry",false);grid=getPreferences(MODE_PRIVATE).getBoolean("grid",false);
@@ -629,8 +630,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private static boolean hasArtwork(JSONObject doc) throws Exception {JSONArray layers=doc.getJSONArray("layers");for(int i=0;i<layers.length();i++)if(layers.getJSONObject(i).getJSONArray("objects").length()>0)return true;return false;}
     private void workspaceDialog(){
-        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Symmetry drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import drawing packet","Drawing content audit","ChatGPT hand","2D animation"};
-        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();break;case 2:symmetryDialog();break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;case 11:runAction("2D animation",this::openAnimationStudio);break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
+        if(document==null)return;String[] choices={"Fit canvas","Grid guides","Symmetry drawing","Onion skin settings","Live ChatGPT drawing","Reference crop / tracing","Recover local draft as a separate sketch","Focus selected object","Import drawing packet","Drawing content audit","ChatGPT hand","2D animation","Follow real ChatGPT pen (camera)"};
+        new AlertDialog.Builder(this).setTitle("Drawing workspace").setItems(choices,(d,index)->{try{switch(index){case 0:canvas.resetView();break;case 1:grid=!grid;canvas.setGuides(grid,symmetry);getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid).apply();break;case 2:symmetryDialog();break;case 3:onionDialog();break;case 4:toggleLiveWatch();break;case 5:referenceTools();break;case 6:String source=sketchId;io.execute(()->{try{if(session!=null)session.awaitIdle(15000);String recovered=SketchEditorSession.recoverAsCopy(this,source);postUi(()->{bookId=null;book=null;loadSketch(recovered,0);});}catch(Exception error){postUi(()->onMessage(error.getMessage()));}});break;case 7:canvas.focusSelection();break;case 8:importDrawingDialog();break;case 9:inspectDrawing();break;case 10:boolean hand=!getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentHand",hand).apply();canvas.setAgentHandEnabled(hand);updateAgentToolIndicator();onMessage(hand?"ChatGPT hand visible":"ChatGPT hand hidden");break;case 11:runAction("2D animation",this::openAnimationStudio);break;case 12:boolean follow=!getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true);getPreferences(MODE_PRIVATE).edit().putBoolean("agentCameraFollow",follow).apply();canvas.setAgentPenCameraFollow(watching&&follow);onMessage(follow?"Following actual accepted pen location":"Agent camera follow paused");break;}}catch(Exception error){onMessage(error.getMessage());}}).show();
     }
     private void symmetryDialog(){
         try{
@@ -1094,7 +1095,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
     private void showActualAgentTool(String label){int position=agentToolPosition(label);if(position>=0)showAgentToolPosition(position);}
     private void updateAgentToolIndicator(){if(status==null)return;boolean enabled=getPreferences(MODE_PRIVATE).getBoolean("agentHand",true);if(enabled&&agentGlobalTool){if(agentToolIndicator==null)agentToolIndicator=SketchAgentHand.toolIndicator(this,18);status.setCompoundDrawablePadding(dp(4));status.setCompoundDrawablesWithIntrinsicBounds(agentToolIndicator,null,null,null);}else status.setCompoundDrawables(null,null,null,null);}
-    private void updateLiveControl(){if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
+    private void updateLiveControl(){if(canvas!=null)canvas.setAgentPenCameraFollow(watching&&getPreferences(MODE_PRIVATE).getBoolean("agentCameraFollow",true));if(liveButton!=null){liveButton.setText(watching?"Draw myself":"Watch ChatGPT");liveButton.setContentDescription(watching?"Leave latest native drawing follow mode and edit yourself":"Follow the most recent native sketch and replay newly authored steps");}}
     private void toggleLiveWatch(){
         if(watching){takeOverLive(null);return;}
         ++liveLoadGeneration;stopPlayback();watching=true;if(notifiedSessionId!=null)notificationReplayPending=true;getPreferences(MODE_PRIVATE).edit().putBoolean("watchLiveDrawing",true).apply();updateLiveControl();
@@ -1189,10 +1190,81 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         return true;
     }
 
+    /** The queued tool/camera programme is applied only in the explicitly
+     * visible Sketch follow-mode, on this UI thread, one real step per tick.
+     * Unlike sketch_edit, these never alter the saved drawing or its revision. */
+    private boolean applyVisibleAgentStage(){
+        if(!resumed||destroyed||!watching||session==null||document==null
+                ||canvas==null||bookId!=null||playing||livePlayer!=null
+                ||loadingDrawing||watchInFlight||notificationReplayPending
+                ||session.pending()!=0||session.error()!=null||canvas.isDrawing())
+            return false;
+        try{
+            long revision=session.document().getLong("revision");
+            JSONObject pending=SketchAgentStageControl.nextVisibleStep(this,sketchId,revision);
+            if(pending==null)return false;
+            JSONObject command=pending.getJSONObject("step");
+            String type=command.getString("type"),label=type;
+            switch(type){
+                case "tool":{
+                    String selected=command.getString("tool");
+                    canvas.setTool(selected);
+                    int where=java.util.Arrays.asList(toolValues).indexOf(selected);
+                    if(where>=0&&where<=10||where>=14)showAgentToolPosition(where);
+                    label="tool · "+selected;break;
+                }
+                case "frame":{
+                    int index=command.getInt("frame");
+                    setFrame(index);label="timeline · frame "+(index+1);break;
+                }
+                case "layer":{
+                    String id=command.getString("layerId");
+                    canvas.setLayerId(id);
+                    updating=true;
+                    try{layers.setSelection(layerIds.indexOf(id));}
+                    finally{updating=false;}
+                    label="selected layer · "+id;break;
+                }
+                case "object":{
+                    String id=command.getString("objectId");
+                    canvas.setLayerId(SketchDocument.owner(document,id).getString("id"));
+                    canvas.selectObject(id);
+                    label="inspect object · "+id;break;
+                }
+                case "viewport":{
+                    canvas.agentFocus(command.getDouble("x"),command.getDouble("y"),
+                            command.getDouble("zoom"));
+                    label="camera · zoom "+command.getDouble("zoom")+"×";break;
+                }
+                case "onion":{
+                    canvas.setOnion(command.getBoolean("enabled"));
+                    canvas.setOnionOptions(command.getInt("range"),command.getInt("alpha"));
+                    label="onion skin · "+(command.getBoolean("enabled")?"on":"off");break;
+                }
+                default:return false;
+            }
+            // ACK is issued only after the corresponding native UI method
+            // returned successfully, not when the agent merely sent commands.
+            SketchAgentStageControl.acknowledge(this,sketchId,revision,
+                    pending.getLong("sequence"),pending.getInt("index"));
+            if(toolStatus!=null)toolStatus.setText("ChatGPT visible control "
+                    +(pending.getInt("index")+1)+"/"+pending.getInt("total")+" · "+label);
+            updateStatus();
+            return true;
+        }catch(Exception invalid){
+            if(status!=null)status.setText("Sketch agent stage held · "+invalid.getMessage());
+            return false;
+        }
+    }
+
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
+            handler.postDelayed(this,250);
+            return;
+        }
+        if(applyVisibleAgentStage()){
             handler.postDelayed(this,250);
             return;
         }
