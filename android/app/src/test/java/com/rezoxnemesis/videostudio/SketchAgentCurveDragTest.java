@@ -24,7 +24,7 @@ import static org.junit.Assert.*;
 @Config(sdk=33,manifest=Config.NONE)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public final class SketchAgentCurveDragTest {
-    private static JSONArray handles(double x1,double y1,double x2,double y2){
+    private static JSONArray handles(double x1,double y1,double x2,double y2) throws Exception {
         return new JSONArray().put(x1).put(y1).put(x2).put(y2);
     }
     private static JSONObject key(int frame,JSONObject transform,JSONArray curve)throws Exception{
