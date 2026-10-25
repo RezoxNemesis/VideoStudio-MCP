@@ -1,0 +1,53 @@
+name: Native Glyph Editor CI
+
+on:
+  push:
+    branches:
+      - feat/native-glyph-kinetic-editor-20261025
+  pull_request:
+    branches:
+      - feature/sketch-human-gesture-ops-v41043-20261025
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-glyph-editor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Verify Android SDK
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ANDROID_HOME/platforms/android-36/package.xml" ]; then
+            timeout 240s bash -c 'yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" >/dev/null'
+          fi
+          test -f "$ANDROID_HOME/platforms/android-36/package.xml"
+      - name: Compile native editor and run unit regression suite
+        working-directory: android
+        run: |
+          set -euo pipefail
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --no-daemon --stacktrace --console=plain
+      - name: Upload native test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-glyph-editor-test-reports
+          retention-days: 7
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
