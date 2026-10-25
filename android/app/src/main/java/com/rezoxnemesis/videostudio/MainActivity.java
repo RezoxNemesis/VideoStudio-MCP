@@ -592,7 +592,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         TextView heroTitle = title("Create Without Limits", 28);
         hero.addView(heroTitle);
         hero.addView(body("Native " + AppProtocol.APP_VERSION + " Creative Runtime • stable MCP compatibility core • on-device portrait AI • MotionScript/CreativeIR • local Media3 export"));
-        Button promptVideo = neonButton("✦  Create Video from a Prompt", C_MAGENTA);
+        Button offlineVideo=neonButton("Offline AI Video Generator · no API required",C_MAGENTA);
+        offlineVideo.setOnClickListener(v->openNativeOfflineVideo());
+        hero.addView(offlineVideo,margins(-1,dp(54),dp(14),dp(8),0,0));
+        Button promptVideo=studioButton("Procedural Prompt Video (not neural AI)",this::promptVideoDialog);
         promptVideo.setOnClickListener(v -> promptVideoDialog());
         hero.addView(promptVideo, margins(-1, dp(54), dp(14), dp(8), 0, 0));
         Button create = compactButton("+ New project");
@@ -3979,14 +3982,19 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         });
     }
 
+    /** Independent owner-local neural image-to-video studio; never enumerate Gallery. */
+    private void openNativeOfflineVideo(){
+        startActivity(new Intent(this,NativeOfflineVideoActivity.class));
+    }
+
     private LinearLayout buildStudioDirectory(String query){
         LinearLayout list=column();
         String q=query==null?"":query.trim().toLowerCase(java.util.Locale.ROOT);
-        String[] names={"New Project","Import Media","Open Editor","All Renders","Generate from Prompt",
+        String[] names={"New Project","Import Media","Open Editor","All Renders","Offline AI Video Generator","Procedural Prompt Video",
                 "Cinematic 3D Studio","Storyboard Studio","Storyboard Artwork","Animate Imported Stills",
                 "My Projects","Agent connection","Native jobs","Archive to Google Drive"};
         Runnable[] actions={this::createProjectDialog,this::pickMedia,this::showEditor,this::showStudioRenderLibrary,
-                this::promptVideoDialog,this::openCinematicStudio,this::storyboardStudioDialog,this::storyboardArtworkDialog,
+                this::openNativeOfflineVideo,this::promptVideoDialog,this::openCinematicStudio,this::storyboardStudioDialog,this::storyboardArtworkDialog,
                 this::animateImagesDialog,this::showStudioProjectLibrary,this::showStudioConnectionHub,
                 this::showStudioJobDetails,this::archiveActiveProjectToCloud};
         for(int i=0;i<names.length;i++)if(names[i].toLowerCase(java.util.Locale.ROOT).contains(q)){

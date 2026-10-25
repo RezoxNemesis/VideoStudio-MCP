@@ -49,6 +49,7 @@
         <activity android:name=".SketchAnimationActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".SketchStudioActivity" android:exported="false" android:launchMode="singleTop" android:screenOrientation="unspecified" />
         <activity android:name=".OpenPipelineActivity" android:exported="false" android:screenOrientation="unspecified" />
+        <activity android:name=".NativeOfflineVideoActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity android:name=".LocalDrawingActivity" android:exported="false" android:screenOrientation="unspecified" />
         <activity
             android:name=".FilamentGlbActivity"

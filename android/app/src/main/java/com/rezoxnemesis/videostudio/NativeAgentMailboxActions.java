@@ -59,6 +59,7 @@ final class NativeAgentMailboxActions {
   "ping",
   "get_state",
   "self_test",
+  "native_offline_video_capabilities","native_offline_video_plan","native_offline_video_generate",
   "studio_preview_diagnostics",
   "connection_health",
   "get_native_result_page",
