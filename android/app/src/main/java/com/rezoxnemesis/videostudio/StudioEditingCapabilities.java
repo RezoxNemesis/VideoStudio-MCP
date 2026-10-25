@@ -77,7 +77,21 @@ public final class StudioEditingCapabilities {
                     .put("pinchTimelineZoom",true)
                     .put("usesNativeRevisionGuardOnSave",true)
                     .put("portraitAndLandscape",true)
-                    .put("preservesExistingProjectAssets",true));}
+                    .put("preservesExistingProjectAssets",true))
+                  .put("nativeStaticTrackMattes",new JSONObject()
+                    .put("minimumNativeVersion","4.10.33")
+                    .put("action","track_matte_edit")
+                    .put("planAction","track_matte_plan")
+                    .put("matteSourceType","shape")
+                    .put("supportedTargets",new org.json.JSONArray(java.util.Arrays.asList("image","shape")))
+                    .put("supportedModes",new org.json.JSONArray(java.util.Arrays.asList("alpha","alpha_inverted")))
+                    .put("hiddenSourceVector",true)
+                    .put("samePreviewAndExportRenderer",true)
+                    .put("staticOnly",true)
+                    .put("animatedMatteTracking",false)
+                    .put("videoMattes",false)
+                    .put("sourceMediaUnchanged",true)
+                    .put("galleryAccess",false));}
         catch(org.json.JSONException error){throw new IllegalStateException("Invalid native editor capability registry",error);}
     }
 }
