@@ -97,6 +97,8 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private long lastAgentStageProbeAt;
     private String agentStageActiveOperation="";
     private android.animation.ValueAnimator agentGestureAnimator;
+    private SketchAgentCurveCanvas agentCurveCanvas;
+    private android.widget.FrameLayout agentDrawingViewport;
     private boolean agentGestureSaving;
     private SeekBar frames;
     private Spinner layers;
@@ -139,6 +141,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }catch(Exception invalid){symmetry=false;grid=false;try{symmetrySettings=SketchSymmetry.configuration(new JSONObject().put("mode","vertical"));canvas.setSymmetry(null);}catch(Exception impossible){throw new IllegalStateException(impossible);}}
         onionEnabled=getPreferences(MODE_PRIVATE).getBoolean("onionEnabled",true);onionRange=getPreferences(MODE_PRIVATE).getInt("onionRange",1);onionAlpha=getPreferences(MODE_PRIVATE).getInt("onionAlpha",48);canvas.setOnion(onionEnabled);canvas.setOnionOptions(onionRange,onionAlpha);
         android.widget.FrameLayout viewport=new android.widget.FrameLayout(this);
+        agentDrawingViewport=viewport;
         viewport.addView(canvas,new android.widget.FrameLayout.LayoutParams(-1,-1));
         viewport.addView(previewStatus,new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP));
         agentStageIndicator=new TextView(this);
@@ -1686,6 +1689,11 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 },duration);
                 return;
             }
+            case "curve_handle_drag":{
+                SketchAgentCurveDrag.Plan plan=SketchAgentCurveDrag.plan(document,step);
+                startAgentCurveDrag(claimed,plan);
+                return;
+            }
             case "object_drag":
             case "node_drag":{
                 SketchAgentGestureOps.Plan gesture=SketchAgentGestureOps.plan(document,step);
@@ -1821,6 +1829,218 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             }
         });
         animator.start();
+    }
+
+    /** This exact live graph is a temporary human-visible editor, not artwork. */
+    private void clearAgentCurvePreview(){
+        if(agentCurveCanvas==null)return;
+        SketchAgentCurveCanvas view=agentCurveCanvas;
+        agentCurveCanvas=null;
+        view.close();
+        if(view.getParent() instanceof android.view.ViewGroup)
+            ((android.view.ViewGroup)view.getParent()).removeView(view);
+    }
+
+    /**
+     * ChatGPT drags a real saved timing key's Bézier handle on the foreground
+     * canvas overlay. The only source write is one revision-checked sketch_edit
+     * after the display was drawn at the exact authored target curve.
+     */
+    private void startAgentCurveDrag(JSONObject claim,SketchAgentCurveDrag.Plan plan)
+            throws Exception {
+        if(agentGestureAnimator!=null||agentGestureSaving||agentCurveCanvas!=null)
+            throw SketchDocument.bad("Another native ChatGPT hand gesture is active");
+        if(session==null||session.pending()!=0||session.error()!=null||bookId!=null)
+            throw SketchDocument.bad("Finish the current drawing save and open an original Sketch project");
+        final String owner=sketchId;
+        final SketchEditorSession origin=session;
+        final int generation=loadGeneration,bookGeneration=pageGeneration;
+        final long revision=document.getLong("revision");
+        if(!owner.equals(plan.sketchId)||plan.sourceRevision!=revision)
+            throw SketchDocument.bad("Animation source changed before a visible timing handle drag");
+        if(canvas.getFrame()!=plan.frameIndex)setFrame(plan.frameIndex);
+        if(plan.targetId.equals(plan.ownerId)&&"transform".equals(plan.mode)){
+            canvas.setLayerId(plan.targetId);
+            canvas.selectObject(null);
+            int idx=layerIds.indexOf(plan.targetId);
+            if(idx>=0)layers.setSelection(idx);
+        }else agentChooseObject(plan.targetId);
+        if(!stageGestureCurrent(owner,origin,generation,bookGeneration,revision))
+            throw SketchDocument.bad("The selected original animation is no longer editable");
+        if(agentDrawingViewport==null)
+            throw SketchDocument.bad("The real Sketch canvas viewport is unavailable");
+
+        SketchAgentCurveCanvas overlay=new SketchAgentCurveCanvas(this,plan);
+        agentCurveCanvas=overlay;
+        android.widget.FrameLayout.LayoutParams placement=
+                new android.widget.FrameLayout.LayoutParams(dp(264),dp(237),
+                        android.view.Gravity.BOTTOM|android.view.Gravity.END);
+        placement.rightMargin=dp(8);placement.bottomMargin=dp(64);
+        agentDrawingViewport.addView(overlay,placement);
+        canvas.setEnabled(false);
+        showAgentStage(claim,"dragging real "+plan.mode+" Bézier handle "+
+                (plan.handleIndex+1)+" at frame "+(plan.frameIndex+1));
+        final java.util.concurrent.atomic.AtomicBoolean settled=
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        android.animation.ValueAnimator animator=android.animation.ValueAnimator.ofFloat(0f,1f);
+        agentGestureAnimator=animator;
+        animator.setDuration(plan.durationMs);
+        animator.setInterpolator(new android.view.animation.LinearInterpolator());
+        final int[] lastSample={-1};
+        animator.addUpdateListener(value->{
+            if(settled.get())return;
+            float progress=(float)value.getAnimatedValue();
+            int sample=Math.max(0,Math.min(SketchAgentCurveDrag.MAX_VISUAL_SAMPLES,
+                    (int)Math.floor(progress*SketchAgentCurveDrag.MAX_VISUAL_SAMPLES)));
+            if(sample==lastSample[0]&&progress<1)return;
+            lastSample[0]=sample;
+            try{
+                if(!stageGestureCurrent(owner,origin,generation,bookGeneration,revision)){
+                    animator.cancel();return;
+                }
+                if(agentCurveCanvas!=overlay){animator.cancel();return;}
+                overlay.present(sample/(float)SketchAgentCurveDrag.MAX_VISUAL_SAMPLES);
+                if(agentStageIndicator!=null)
+                    agentStageIndicator.setText("ChatGPT  ·  "+
+                            (claim.optInt("stepIndex")+1)+"/"+claim.optInt("stepCount",1)+
+                            "  ·  moving Bézier timing handle  ·  "+
+                            Math.round(100f*sample/SketchAgentCurveDrag.MAX_VISUAL_SAMPLES)+"%");
+            }catch(Exception failure){
+                if(status!=null)status.setText("Timing curve preview: "+failure.getMessage());
+                animator.cancel();
+            }
+        });
+        animator.addListener(new android.animation.AnimatorListenerAdapter(){
+            private boolean canceled;
+            @Override public void onAnimationCancel(android.animation.Animator sourceAnimator){
+                canceled=true;
+                if(!settled.compareAndSet(false,true))return;
+                agentGestureAnimator=null;
+                clearAgentCurvePreview();
+                canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                settleAgentStage(claim,false,"Timing curve hand gesture was interrupted before save");
+            }
+            @Override public void onAnimationEnd(android.animation.Animator sourceAnimator){
+                if(canceled||!settled.compareAndSet(false,true))return;
+                agentGestureAnimator=null;
+                // Invalidation is asynchronous: allow a real Canvas draw of the
+                // final handle position before claiming visual proof.
+                handler.postDelayed(()->commitAgentCurveDrag(
+                        claim,plan,overlay,owner,origin,generation,bookGeneration,revision),48);
+            }
+        });
+        animator.start();
+    }
+
+    private void commitAgentCurveDrag(JSONObject claim,SketchAgentCurveDrag.Plan plan,
+                                      SketchAgentCurveCanvas view,String owner,
+                                      SketchEditorSession origin,int generation,
+                                      int bookGeneration,long revision){
+        if(!stageGestureCurrent(owner,origin,generation,bookGeneration,revision)
+                ||agentCurveCanvas!=view){
+            clearAgentCurvePreview();
+            if(canvas!=null)canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+            settleAgentStage(claim,false,"Sketch changed before Bézier handle save");
+            return;
+        }
+        final JSONObject visual;
+        try{
+            if(!view.isShown()||!view.atTarget())
+                throw new IllegalStateException("The requested timing handle was not shown");
+            visual=plan.visualReceipt(view.actualDraws(),view.displayedCurve());
+        }catch(Exception invalid){
+            clearAgentCurvePreview();
+            canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+            settleAgentStage(claim,false,"Bézier preview not verified on the native canvas");
+            return;
+        }
+        agentGestureSaving=true;
+        if(agentStageIndicator!=null)
+            agentStageIndicator.setText("ChatGPT  ·  saving real Bézier key through Sketch Studio…");
+        io.execute(()->{
+            boolean persisted=false;
+            long revisionAfter=-1;
+            JSONObject stored=null;
+            String issue="";
+            String editId="";
+            try{
+                editId=SketchAgentGestureOps.deterministicEditId(claim);
+                JSONObject request=new JSONObject()
+                        .put("sketchId",owner).put("operationId",editId)
+                        .put("expectedRevision",revision)
+                        .put("operations",new JSONArray().put(plan.editOperation));
+                JSONObject receipt=SketchEditOps.execute(
+                        SketchStudioActivity.this,"sketch_edit",request);
+                persisted=receipt.optBoolean("persisted",false);
+                if(!persisted)throw new IllegalStateException("Native keyframe was not durably saved");
+                revisionAfter=receipt.getLong("revision");
+                try(SketchProjectStore store=new SketchProjectStore(SketchStudioActivity.this)){
+                    stored=store.get(owner);
+                }
+                if(stored==null||stored.getLong("revision")<revisionAfter)
+                    throw new IllegalStateException("Saved timing curve revision cannot be inspected");
+                JSONObject updated=plan.targetId.equals(plan.ownerId)&&
+                        "transform".equals(plan.mode)
+                        ?SketchDocument.layer(stored,plan.targetId)
+                        :SketchDocument.object(stored,plan.targetId);
+                JSONArray authored=updated.getJSONArray(
+                        "shape".equals(plan.mode)?"shapeKeys":"keys");
+                JSONArray storedCurve=null;
+                for(int i=0;i<authored.length();i++){
+                    JSONObject key=authored.getJSONObject(i);
+                    if(key.getInt("frame")==plan.frameIndex){
+                        storedCurve=key.optJSONArray("curve");break;
+                    }
+                }
+                if(!plan.matchesTarget(storedCurve))
+                    throw new IllegalStateException("Saved timing values do not match the visible handle target");
+            }catch(Exception error){
+                issue=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
+            }
+            final boolean saved=persisted;
+            final long savedRevision=revisionAfter;
+            final JSONObject newDocument=stored;
+            final String finalEditId=editId,finalIssue=issue;
+            postUi(()->{
+                agentGestureSaving=false;
+                clearAgentCurvePreview();
+                if(canvas!=null)canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&livePlayer==null);
+                boolean foreground=saved&&stageGestureCurrentForDisplay(
+                        owner,origin,generation,bookGeneration);
+                boolean adopted=false;
+                if(foreground&&newDocument!=null)try{
+                    adopted=session.adopt(newDocument);
+                    if(adopted){
+                        present(session.document());
+                        setFrame(plan.frameIndex);
+                        if(!plan.targetId.equals(plan.ownerId))
+                            agentChooseObject(plan.targetId);
+                        updateStatus();
+                    }
+                }catch(Exception error){
+                    adopted=false;
+                    if(status!=null)status.setText("Timing saved but source view changed: "+
+                            error.getMessage());
+                }
+                JSONObject evidence=new JSONObject();
+                try{
+                    java.util.Iterator<String> keys=visual.keys();
+                    while(keys.hasNext()){
+                        String key=keys.next();evidence.put(key,visual.opt(key));
+                    }
+                    evidence.put("documentModified",saved)
+                            .put("nativeEditId",finalEditId)
+                            .put("savedRevision",savedRevision)
+                            .put("savedAndDisplayed",adopted)
+                            .put("actualNativeKeyframeMutation",saved);
+                }catch(Exception ignored){}
+                settleAgentStage(claim,adopted,
+                        adopted?"Actual timing curve saved and displayed at revision "+savedRevision:
+                                saved?"Native timing saved, but foreground view changed; reload source":
+                                        "Bézier handle not saved: "+finalIssue,
+                        evidence);
+            });
+        });
     }
 
     /**
@@ -1993,6 +2213,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     }
 
     private void interruptAgentGesture(){
+        clearAgentCurvePreview();
         if(agentGestureAnimator!=null){
             android.animation.ValueAnimator active=agentGestureAnimator;
             agentGestureAnimator=null;
