@@ -55,7 +55,7 @@ public final class StudioProceduralVfxOverlay extends CanvasOverlay {
     public static void renderParticles(Canvas canvas,StudioLayer source,long localUs,Paint brush){
         if(canvas==null||source==null||brush==null||localUs<0)
             throw new IllegalArgumentException("Canvas, VFX and nonnegative local time required");
-        source.validate();
+        // The source is validated and snapshotted at overlay creation, not per output frame.
         int w=canvas.getWidth(),h=canvas.getHeight();
         if(w<=0||h<=0)return;
         double time=localUs/1_000_000d;
