@@ -104,7 +104,9 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private String brushColor = "#FF161C2B";
     private float brushWidth = .008f;
     private boolean brushFill;
-    private Button playButton,liveButton;private boolean canvasFocus;private final java.util.ArrayList<View> drawingChrome=new java.util.ArrayList<>();
+    private Button playButton,liveButton,agentWorkspaceButton;
+    private TextView agentWorkspaceBanner;
+    private boolean canvasFocus;private final java.util.ArrayList<View> drawingChrome=new java.util.ArrayList<>();
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -118,8 +120,19 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         LinearLayout projects = row(root);
         button(projects,"File",this::fileMenu);
         liveButton=button(projects,"Draw myself",this::toggleLiveWatch);liveButton.setLayoutParams(new LinearLayout.LayoutParams(0,-2,2));updateLiveControl();
+        agentWorkspaceButton=button(projects,"AI steps",this::toggleAgentWorkspace);
+        agentWorkspaceButton.setContentDescription("Pause or resume visible ChatGPT tool and timeline control");
         LinearLayout history = row(root);
         button(history,"Undo",()->history(false));button(history,"Redo",()->history(true));button(history,"Export",this::export);
+        agentWorkspaceBanner=new TextView(this);
+        agentWorkspaceBanner.setTextSize(12);
+        agentWorkspaceBanner.setTextColor(StudioUi.TEXT);
+        agentWorkspaceBanner.setPadding(dp(6),dp(4),dp(6),dp(4));
+        agentWorkspaceBanner.setBackgroundColor(0xff20372e);
+        agentWorkspaceBanner.setContentDescription("Real current ChatGPT Sketch Studio workspace action");
+        agentWorkspaceBanner.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        agentWorkspaceBanner.setVisibility(View.GONE);
+        root.addView(agentWorkspaceBanner,new LinearLayout.LayoutParams(-1,-2));
         layeredToolbar=row(root);layeredToolbar.setVisibility(View.GONE);
         layeredStageLabel=new TextView(this);layeredStageLabel.setTextColor(StudioUi.TEXT);layeredStageLabel.setContentDescription("Current drawing pass");layeredToolbar.addView(layeredStageLabel,new LinearLayout.LayoutParams(0,-2,1));
         button(layeredToolbar,"Stages",this::layeredDrawingDialog);button(layeredToolbar,"Reference",this::toggleLayeredReference);
@@ -261,6 +274,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         refreshLayeredDrawingControls();getPreferences(MODE_PRIVATE).edit().putString("lastSketchId",sketchId).putString("lastBookId",bookId).putInt("lastBookPage",bookPage).apply();updateBrush();updateStatus();
     }
     @Override public void onOperation(JSONObject operation) {
+        if(sketchId!=null){
+            SketchAgentWorkspace.ownerPause(this,sketchId,true);
+            updateAgentWorkspaceButton();
+        }
         try{apply(new JSONArray().put(operation));}catch(Exception error){onMessage(error.getMessage());}
     }
     private static boolean needsPreparedWorker(JSONArray operations){
@@ -1191,6 +1208,13 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        if(resumed&&sketchId!=null&&document!=null){
+            SketchAgentWorkspace.visible(SketchStudioActivity.this,sketchId,true);
+            try{applyNextAgentWorkspaceStep();}catch(Exception error){
+                if(agentWorkspaceBanner!=null)showAgentWorkspaceStatus(
+                        "AI workspace: "+error.getMessage());
+            }
+        }
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
             handler.postDelayed(this,250);
@@ -1212,6 +1236,159 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         handler.postDelayed(this,250);
     }};
 
+
+    /** Human approval remains authoritative: pause does not erase queued steps. */
+    private void toggleAgentWorkspace(){
+        if(sketchId==null)return;
+        boolean next=!SketchAgentWorkspace.ownerPaused(this,sketchId);
+        SketchAgentWorkspace.ownerPause(this,sketchId,next);
+        updateAgentWorkspaceButton();
+        showAgentWorkspaceStatus(next?"ChatGPT workspace paused · your canvas is in control":
+                "ChatGPT workspace resumed · only accepted native steps appear here");
+    }
+    private void updateAgentWorkspaceButton(){
+        if(agentWorkspaceButton==null||sketchId==null)return;
+        boolean paused=SketchAgentWorkspace.ownerPaused(this,sketchId);
+        agentWorkspaceButton.setText(paused?"Resume AI":"Pause AI");
+        agentWorkspaceButton.setContentDescription(paused?
+                "Resume ChatGPT stepwise native editor control":"Pause ChatGPT immediately before its next Sketch Studio UI action");
+    }
+    private void showAgentWorkspaceStatus(String message){
+        if(agentWorkspaceBanner==null)return;
+        if(message==null||message.isEmpty()){agentWorkspaceBanner.setVisibility(View.GONE);return;}
+        agentWorkspaceBanner.setText(message);
+        agentWorkspaceBanner.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * Executes at most one UI selection per 250 ms heartbeat, never on the
+     * private MCP thread. The command stays queued while the user draws,
+     * uses another sketch, or has a live stroke playback in progress.
+     */
+    private void applyNextAgentWorkspaceStep()throws Exception{
+        if(!resumed||document==null||session==null||sketchId==null||bookId!=null
+                ||loadingDrawing||livePlayer!=null||watchInFlight
+                ||canvas==null||canvas.isDrawing()||session.pending()>0
+                ||session.error()!=null||!watching
+                ||canvas.getWidth()<1||canvas.getHeight()<1)return;
+        JSONObject command=SketchAgentWorkspace.nextForUi(this,sketchId,document.getLong("revision"));
+        if(command==null)return;
+        String owner=command.getString("sketchId");
+        String operationId=command.getString("operationId");
+        int index=command.getInt("stepIndex"),total=command.getInt("stepCount");
+        JSONObject action=command.getJSONObject("step");
+        String kind=action.getString("type");
+        try{
+            switch(kind){
+                case "seek_frame":
+                    setFrame(action.getInt("frameIndex"));
+                    break;
+                case "select_layer":{
+                    String target=action.getString("layerId");
+                    SketchDocument.layer(document,target);
+                    canvas.setLayerId(target);
+                    updating=true;
+                    try{layers.setSelection(Math.max(0,layerIds.indexOf(target)));}
+                    finally{updating=false;}
+                    updateStatus();
+                    break;
+                }
+                case "select_tool":{
+                    String selected=action.getString("tool");
+                    int position=java.util.Arrays.asList(toolValues).indexOf(selected);
+                    if(position<0)throw new IllegalArgumentException("Native tool not installed");
+                    if(position==13&&paintCloneSource==null)
+                        throw new IllegalStateException("Choose an owned Clone source in the editor before using this brush");
+                    if(position>=11&&position<=13){
+                        // Selecting an already authored paint cel is visual UI
+                        // control only. Creating a paint cel goes through the
+                        // actual revision-safe sketch_edit pipeline.
+                        String paintId=canvas.getSelectedId();
+                        if(paintId==null||!"paint".equals(
+                                SketchDocument.object(document,paintId).optString("kind")))
+                            throw new IllegalStateException("Select an existing paint cel before using a paint brush");
+                        paintMode=position==12?"erase":position==13?"clone":"paint";
+                    }
+                    humanToolPosition=position;
+                    showAgentToolPosition(position);
+                    canvas.setTool(selected);
+                    updateBrush();updateStatus();
+                    break;
+                }
+                case "select_object":case "focus_object":{
+                    String objectId=action.getString("objectId");
+                    canvas.selectObjectForAgent(objectId);
+                    int selected=Math.max(0,layerIds.indexOf(canvas.getLayerId()));
+                    updating=true;
+                    try{layers.setSelection(selected);}finally{updating=false;}
+                    if("focus_object".equals(kind))canvas.focusSelection();
+                    updateStatus();
+                    break;
+                }
+                case "toggle_onion":
+                    onionEnabled=action.getBoolean("enabled");
+                    onionRange=action.optInt("range",onionRange);
+                    onionAlpha=action.optInt("alpha",onionAlpha);
+                    canvas.setOnion(onionEnabled);canvas.setOnionOptions(onionRange,onionAlpha);
+                    getPreferences(MODE_PRIVATE).edit().putBoolean("onionEnabled",onionEnabled)
+                            .putInt("onionRange",onionRange).putInt("onionAlpha",onionAlpha).apply();
+                    break;
+                case "set_guides":
+                    if(action.has("grid"))grid=action.getBoolean("grid");
+                    if(action.has("symmetry"))symmetry=action.getBoolean("symmetry");
+                    canvas.setGuides(grid,symmetry);
+                    getPreferences(MODE_PRIVATE).edit().putBoolean("grid",grid)
+                            .putBoolean("symmetry",symmetry).apply();
+                    break;
+                case "reset_view":
+                    canvas.resetView();break;
+                case "set_brush":
+                    if(action.has("color"))brushColor=action.getString("color");
+                    if(action.has("width"))brushWidth=(float)action.getDouble("width");
+                    updateBrush();break;
+                case "set_playback":{
+                    boolean requested=action.getBoolean("playing");
+                    if(requested!=playing)togglePlayback();
+                    break;
+                }
+                case "show_curve":
+                    if(action.has("frameIndex"))setFrame(action.getInt("frameIndex"));
+                    if(action.has("layerId")){
+                        String layer=action.getString("layerId");
+                        SketchDocument.layer(document,layer);
+                        canvas.setLayerId(layer);
+                        updating=true;
+                        try{layers.setSelection(Math.max(0,layerIds.indexOf(layer)));}
+                        finally{updating=false;}
+                    }
+                    if(action.has("objectId")){
+                        String objectId=action.getString("objectId");
+                        canvas.selectObjectForAgent(objectId);
+                    }
+                    transformDialog(); // the same native modal the human edits
+                    break;
+                default:throw new IllegalArgumentException("Unsupported visible editor step");
+            }
+            JSONObject actuallyVisible=new JSONObject()
+                    .put("action",kind)
+                    .put("frameIndex",canvas.getFrame())
+                    .put("layerId",canvas.getLayerId())
+                    .put("selectedObjectId",canvas.getSelectedId()==null?"":canvas.getSelectedId())
+                    .put("tool",toolValues[Math.max(0,Math.min(toolValues.length-1,
+                            toolPicker.getSelectedItemPosition()))]);
+            JSONObject result=SketchAgentWorkspace.acknowledged(
+                    this,owner,operationId,index,actuallyVisible);
+            showAgentWorkspaceStatus("ChatGPT · "+kind.replace('_',' ')+" · step "+(index+1)+
+                    "/"+total+(result.getBoolean("applied")?" · complete":" · editing"));
+        }catch(Exception failed){
+            SketchAgentWorkspace.failed(this,owner,operationId,
+                    failed.getMessage()==null?"Native UI action failed":failed.getMessage());
+            showAgentWorkspaceStatus("ChatGPT stopped at step "+(index+1)+
+                    " · "+failed.getMessage());
+            updateAgentWorkspaceButton();
+        }
+    }
+
     private void setFrame(int index) { stopPlayback(); if (document == null) return; int next = Math.max(0, Math.min(document.optInt("frameCount") - 1, index));if(canvas.getFrame()!=next)closeStillPngDialog(); canvas.setFrame(next); frames.setProgress(bookId==null?next:bookPage); updateStatus(); }
     private void togglePlayback() { if (playing) { stopPlayback(); return; } if (document == null) return; playing = true;++playbackGeneration;bookPlaybackInFlight=false;canvas.setEnabled(false); playStarted = SystemClock.uptimeMillis(); playFirst = canvas.getFrame();if(bookId!=null&&session.pending()>0){playing=false;afterSaves(()->postUi(this::togglePlayback));return;} canvas.setPlaybackPreview(true);playButton.setText("Pause");if(bookId==null)postUi(playTick);else {if(bookTimeline==null){stopPlayback();return;}bookPlayFirst=bookTimeline.firstFrame(bookPage);handler.postDelayed(playTick,1);} }
     private final Runnable playTick = new Runnable() { @Override public void run() {
@@ -1221,10 +1398,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     } };
     private void stopPlayback(){stopPlayback(true);}
     private void stopPlayback(boolean restoreBookPage) { boolean wasPlaying=playing;playing = false;++playbackGeneration;bookPlaybackInFlight=false;if(canvas!=null)canvas.setPlaybackPreview(false);android.graphics.Bitmap abandoned=pendingBookBitmap.getAndSet(null);if(abandoned!=null)abandoned.recycle();if(restoreBookPage&&wasPlaying&&bookId!=null&&session!=null&&!destroyed){openBookPage(bookId,bookPage);} handler.removeCallbacks(playTick); if(canvas!=null&&!destroyed)canvas.setEnabled(!loadingDrawing&&(!wasPlaying||bookId==null)&&session!=null&&livePlayer==null);if (playButton != null) playButton.setText("Play"); }
-    @Override protected void onPause() { closeStillPngDialog();resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
-    @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(localEditableReturn!=null&&localEditableReturn.ownsEditor())localEditableReturn.deferredResumeReload=true;else if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
+    @Override protected void onPause() { SketchAgentWorkspace.visible(this,sketchId,false);closeStillPngDialog();resumed=false;++liveLoadGeneration;if(livePlayer!=null||watchInFlight){loadingDrawing=true;if(notifiedSessionId!=null)notificationReplayPending=true;}stopLivePlayer();stopPlayback();canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onPause(); }
+    @Override protected void onResume() { super.onResume();if(canvas!=null)canvas.setPreviewActive(true);resumed=true;SketchAgentWorkspace.visible(this,sketchId,true);updateAgentWorkspaceButton();liveSessionId="";if(loadingDrawing&&session!=null&&!activeConstructions.containsKey(loadGeneration+":"+pageGeneration)){if(localEditableReturn!=null&&localEditableReturn.ownsEditor())localEditableReturn.deferredResumeReload=true;else if(session.pending()==0)reload();else afterSaves(()->postUi(this::reload));}handler.removeCallbacks(watchTick);handler.postDelayed(watchTick,250); }
     @Override protected void onStop(){resumed=false;stopPlayback();if(canvas!=null)canvas.setPreviewActive(false);handler.removeCallbacks(watchTick);super.onStop();}
-    @Override protected void onDestroy() { destroyed=true;closeStillPngDialog();if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
+    @Override protected void onDestroy() { SketchAgentWorkspace.visible(this,sketchId,false);destroyed=true;closeStillPngDialog();if(correctionDialog!=null)correctionDialog.close();if(referenceLayersDialog!=null)referenceLayersDialog.close();if(layeredDrawingDialog!=null)layeredDrawingDialog.close();if(layerGroupMotionDialog!=null)layerGroupMotionDialog.close();clearLayeredReference();activeConstructions.clear();stopLivePlayer();stopPlayback();handler.removeCallbacksAndMessages(null);if(session!=null)session.close();io.shutdown();transfers.shutdown();if(canvas!=null)canvas.dispose();super.onDestroy(); }
     @Override protected void onSaveInstanceState(Bundle state) { state.putString("bookId",bookId);state.putInt("bookPage",bookPage);state.putString("sketchId", sketchId); state.putInt("frame", canvas.getFrame());state.putString("notifiedSketchId",notifiedSketchId);state.putString("notifiedSessionId",notifiedSessionId); super.onSaveInstanceState(state); }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL);layout.setBackgroundColor(StudioUi.SURFACE);layout.setPadding(dp(6),dp(2),dp(6),dp(2));return layout; }
     private LinearLayout row(LinearLayout root) { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.HORIZONTAL);root.addView(layout,new LinearLayout.LayoutParams(-1,-2));return layout; }
