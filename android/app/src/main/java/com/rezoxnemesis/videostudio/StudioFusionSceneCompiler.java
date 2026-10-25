@@ -28,13 +28,14 @@ public final class StudioFusionSceneCompiler {
     private static final Set<String> OUTER=Set.of(
             "projectId","expectedUpdatedAt","operationId","name","nodes");
     private static final Set<String> TYPES=Set.of(
-            "title","shape","image","mask","motion_group","camera2d",
+            "title","shape","vfx","image","mask","motion_group","camera2d",
             "color_grade","audio_fx");
     private static final Set<String> VISUAL=Set.of(
             "id","type","text","shapeKind","style","assetId","startMs",
             "durationMs","fontSize","color","strokeColor","strokeWidth",
             "position","textAlign","x","y","width","height","rotation",
             "opacity","motionKeyframes","mask","glyphAnimation");
+    private static final Set<String> VFX_FIELDS=Set.of("id","type","kind","particleCount","seed","speed","particleSize","startMs","durationMs","x","y","width","height","rotation","opacity","color","motionKeyframes");
     private static final Set<String> CAMERA=Set.of("id","type","motionKeyframes");
     private static final Set<String> GROUP=Set.of(
             "id","type","children","motionKeyframes");
@@ -51,7 +52,7 @@ public final class StudioFusionSceneCompiler {
                 .put("schema","videostudio.fusion-scenes.v1")
                 .put("minimumNativeVersion","4.10.36")
                 .put("maxNodes",MAX_NODES)
-                .put("supportedNodes",new JSONArray().put("title").put("shape")
+                .put("supportedNodes",new JSONArray().put("title").put("shape").put("vfx")
                         .put("image").put("mask").put("motion_group")
                         .put("camera2d").put("color_grade").put("audio_fx"))
                 .put("planAction","fusion_scene_plan")
@@ -65,6 +66,10 @@ public final class StudioFusionSceneCompiler {
                 .put("nativeGlyphTitles",true)
                 .put("glyphModes",new JSONArray().put("scatter").put("assemble").put("cascade").put("wave"))
                 .put("glyphRequiresCandidateApk",true)
+                .put("nativeParticleVfx",true)
+                .put("particleVfxKinds",new JSONArray().put("rain").put("sparks").put("energy").put("embers").put("snow").put("confetti"))
+                .put("particleVfxMaxLayers",4)
+                .put("particleVfxRequiresCandidateApk",true)
                 .put("real3DTracking",false)
                 .put("arbitraryNestedPrecomp",false)
                 .put("onDeviceRenderedPreviewVerified",false)
@@ -165,6 +170,7 @@ public final class StudioFusionSceneCompiler {
             Set<String> fields=Set.of();
             switch(type){
                 case "title":case "shape":case "image":fields=VISUAL;break;
+                case "vfx":fields=VFX_FIELDS;break;
                 case "mask":fields=MASK;break;
                 case "motion_group":fields=GROUP;break;
                 case "camera2d":fields=CAMERA;break;
@@ -177,6 +183,21 @@ public final class StudioFusionSceneCompiler {
             String id=UUID.nameUUIDFromBytes(
                     (outputId+"/"+alias).getBytes(StandardCharsets.UTF_8)).toString();
             switch(type){
+                case "vfx":{
+                    StudioLayer layer=new StudioLayer();
+                    layer.id=id;layer.type=StudioLayer.VFX;
+                    layer.startMs=whole(node,"startMs",0,0,86_399_900);
+                    layer.durationMs=whole(node,"durationMs",2500,100,86_400_000);
+                    layer.vfxKind=node.optString("kind","rain");
+                    layer.particleCount=(int)whole(node,"particleCount",32,1,96);
+                    layer.particleSeed=(int)whole(node,"seed",7331,0,1_000_000);
+                    layer.particleSpeed=(float)scalar(node,"speed",1,.1,6);
+                    layer.particleSize=(float)scalar(node,"particleSize",.008,.001,.05);
+                    applyAppearance(layer,node);
+                    if(node.has("motionKeyframes"))layer.motionKeyframes=keys(node);
+                    layer.validate();copy.studioLayers.add(layer);
+                    named.put(alias,layer);created++;break;
+                }
                 case "shape":{
                     if(node.has("glyphAnimation"))throw new IllegalArgumentException("Glyph motion belongs to TITLE nodes");
                     long start=whole(node,"startMs",0,0,86_399_900);

@@ -34,7 +34,7 @@ final class StudioCompositionOverlayEffect implements GlEffect {
                 throw new IllegalArgumentException("Animated child has no valid motion group");
             if(StudioLayer.TITLE.equals(layer.type))snapshot.add(new Entry(layer,null,group));
             else if(StudioLayer.IMAGE.equals(layer.type))snapshot.add(new Entry(layer,project.asset(layer.assetId),group));
-            else if(StudioLayer.SHAPE.equals(layer.type))snapshot.add(new Entry(layer,null,group));
+            else if(StudioLayer.SHAPE.equals(layer.type)||StudioLayer.VFX.equals(layer.type))snapshot.add(new Entry(layer,null,group));
         }
         entries=Collections.unmodifiableList(snapshot);
     }
@@ -59,6 +59,8 @@ final class StudioCompositionOverlayEffect implements GlEffect {
                     }
                 }else if(StudioLayer.SHAPE.equals(entry.layer.type))
                     overlays.add(new StudioTimedShapeOverlay(entry.layer,entry.parent));
+                else if(StudioLayer.VFX.equals(entry.layer.type))
+                    overlays.add(new StudioProceduralVfxOverlay(entry.layer));
                 else overlays.add(new StudioTimedImageOverlay(context,entry.asset,entry.layer,entry.parent));
             }
             return overlays;

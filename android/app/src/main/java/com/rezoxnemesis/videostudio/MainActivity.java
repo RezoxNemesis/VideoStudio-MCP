@@ -1020,6 +1020,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             visuals.addView(video,new LinearLayout.LayoutParams(0,dp(48),1));box.addView(visuals);
             box.addView(body("Up to 2 silent video overlays. Source files stay owned by this project."));
             box.addView(studioButton("+ Animated Shape / Perspective Grid",this::chooseStudioShape));
+            box.addView(studioButton("+ Animated Atmosphere · Rain / Sparks / Energy",this::chooseStudioVfx));
             box.addView(studioButton("+ Parent Motion Group · move layers together",this::createStudioMotionGroup));
             box.addView(studioButton("+ 2D Camera · animate entire composition",this::chooseStudioCamera2D));
             studioWorkspaceActions(box,new String[]{"Choose video file","Retry saved video copy"},new Runnable[]{this::pickStudioVideoFile,this::retrySelectedVideoImport});
@@ -1545,6 +1546,11 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                 box.addView(studioButton("Change geometry",()->chooseStudioShapeGeometry(layer)));
                 box.addView(studioButton("Delete shape",()->removeStudioLayer(layer)));
                 box.addView(body("Native vector geometry is cached once and transformed with true timed keyframes on the edited composition. No source image is synthesized."));
+            }else if(StudioLayer.VFX.equals(layer.type)){
+                box.addView(studioButton("Change VFX preset",()->editStudioVfx(layer)));
+                box.addView(studioButton("Animate VFX placement",()->openStudioVfxMotion(layer)));
+                box.addView(studioButton("Delete VFX",()->removeStudioLayer(layer)));
+                box.addView(body("Original time-continuous native particles; no imported images or Gallery access."));
             }else if(StudioLayer.AUDIO.equals(layer.type)){
                 box.addView(studioButton("Fairlight · EQ / compressor / limiter",
                         ()->openStudioFairlightAudio(layer)));
@@ -1587,6 +1593,77 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     private static final String[] SHAPE_TYPES={"grid","ring","ellipse","rect","diamond","line"};
     private static final String[] SHAPE_MOTION={"drift","pulse","spin","slide","hold"};
+
+    private static final String[] VFX_TYPES={"rain","sparks","energy","embers","snow","confetti"};
+    private static final String[] VFX_NAMES={"Rain","Impact sparks","Energy orbit","Embers","Snow","Confetti"};
+
+    private void chooseStudioVfx(){
+        if(activeProject==null||activeProject.clips.isEmpty()||activeProject.outputDurationMs()<100){
+            onStudioNoTarget();return;
+        }
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        new AlertDialog.Builder(this).setTitle("Native procedural atmosphere")
+                .setItems(VFX_NAMES,(dialog,which)->{
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||revision!=activeProject.updatedAt){
+                        Toast.makeText(this,"Project changed; reopen atmosphere",Toast.LENGTH_LONG).show();return;
+                    }
+                    try{
+                        long film=activeProject.outputDurationMs();
+                        long start=Math.min(studioPlayheadMs,Math.max(0,film-100));
+                        StudioLayer fx=new StudioLayer();
+                        fx.type=StudioLayer.VFX;fx.vfxKind=VFX_TYPES[which];
+                        fx.startMs=start;fx.durationMs=Math.min(8000,film-start);
+                        fx.x=.5f;fx.y=.5f;fx.width=1f;fx.height=1f;
+                        fx.particleCount=fx.vfxKind.equals("sparks")?48:72;
+                        fx.particleSize=fx.vfxKind.equals("rain")?.004f:.008f;
+                        fx.particleSpeed=1.15f;fx.color=fx.vfxKind.equals("sparks")
+                                ?0xffffcd82:fx.vfxKind.equals("energy")?0xff78dbe8
+                                :fx.vfxKind.equals("embers")?0xffffa76e:0xffbed7e3;
+                        fx.validate();
+                        ArrayList<StudioLayer> updated=new ArrayList<>(activeProject.studioLayers);
+                        updated.add(fx);
+                        if(applyStudioLayerList(updated,revision)){
+                            studioSelectedLayerId=fx.id;
+                            if(studioWorkspace!=null)studioWorkspace.showPane("Inspector");
+                        }
+                    }catch(Exception err){Toast.makeText(this,
+                            "Atmosphere not added: "+err.getMessage(),Toast.LENGTH_LONG).show();}
+                }).show();
+    }
+
+    private void editStudioVfx(StudioLayer original){
+        if(activeProject==null||original==null)return;
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        new AlertDialog.Builder(this).setTitle("Choose procedural VFX")
+                .setItems(VFX_NAMES,(dialog,which)->{
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||revision!=activeProject.updatedAt)return;
+                    try{
+                        StudioLayer replacement=original.copy();
+                        replacement.vfxKind=VFX_TYPES[which];
+                        replacement.validate();saveStudioLayer(replacement,revision);
+                    }catch(Exception error){Toast.makeText(this,
+                            "VFX not changed: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+                }).show();
+    }
+
+    private void openStudioVfxMotion(StudioLayer source){
+        if(activeProject==null||source==null)return;
+        final String owner=activeProject.id;final long revision=activeProject.updatedAt;
+        new AlertDialog.Builder(this).setTitle("Animate "+source.vfxKind+" emitter")
+                .setItems(new String[]{"Drift","Pulse","Spin","Slide","Hold"},(dialog,which)->{
+                    if(activeProject==null||!owner.equals(activeProject.id)
+                            ||revision!=activeProject.updatedAt)return;
+                    try{
+                        StudioLayer replacement=source.copy();
+                        replacement.motionKeyframes=StudioShapePresets.motion(SHAPE_MOTION[which],
+                                replacement.durationMs);
+                        saveStudioLayer(replacement,revision);
+                    }catch(Exception error){Toast.makeText(this,
+                            "VFX motion not changed: "+error.getMessage(),Toast.LENGTH_LONG).show();}
+                }).show();
+    }
 
     private void chooseStudioShape(){
         if(activeProject==null||activeProject.clips.isEmpty()||activeProject.outputDurationMs()<100){
