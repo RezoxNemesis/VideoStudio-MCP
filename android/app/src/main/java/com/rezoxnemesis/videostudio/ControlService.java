@@ -55,6 +55,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_CINEMATIC_3D = "com.rezoxnemesis.videostudio.LOCAL_CINEMATIC_3D_RENDER";
     public static final String ACTION_LOCAL_SKETCH_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_SKETCH_EXPORT";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
+    public static final String ACTION_LOCAL_VIDEO_GENERATE = "com.rezoxnemesis.videostudio.LOCAL_NEURAL_VIDEO_GENERATE";
+    public static final String ACTION_LOCAL_VIDEO_INSTALL = "com.rezoxnemesis.videostudio.LOCAL_NEURAL_VIDEO_MODEL_INSTALL";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
     private static final int NOTIFICATION_ID = 6101;
@@ -443,6 +445,40 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         error.getMessage() == null ? "Could not queue animation" : error.getMessage(),
                         "failed", null, null, intent.getStringExtra("projectId"));
             }
+        } else if (ACTION_LOCAL_VIDEO_INSTALL.equals(action)) {
+            final String ownedProject=intent.getStringExtra("projectId");
+            final String ownedAsset=intent.getStringExtra("assetId");
+            directorSetupExecutor.execute(()->{
+                try{
+                    if(ownedProject==null||ownedAsset==null)
+                        throw new IllegalArgumentException("Selected owned ZIP required");
+                    JSONObject queued=queueModelPackInstall(new JSONObject()
+                            .put("projectId",ownedProject).put("assetId",ownedAsset));
+                    ActivityLog.add(this,"user","Offline model-pack install queued",
+                            "Native private job "+shortId(queued.optString("jobId")),
+                            "queued",0,null,ownedProject);
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","Offline model-pack install refused",
+                            error.getMessage()==null?"Invalid ZIP":error.getMessage(),
+                            "failed",null,null,ownedProject);
+                }
+            });
+        } else if (ACTION_LOCAL_VIDEO_GENERATE.equals(action)) {
+            final String json=intent.getStringExtra("requestJson");
+            directorSetupExecutor.execute(()->{
+                try{
+                    if(json==null||json.length()>16_384)
+                        throw new IllegalArgumentException("Bounded local video request required");
+                    JSONObject queued=queueNativeOfflineVideo(new JSONObject(json));
+                    ActivityLog.add(this,"user","Offline neural video queued",
+                            "Local temporal model • job "+shortId(queued.optString("jobId")),
+                            "queued",0,null,queued.optString("sourceProjectId"));
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","Native offline video not started",
+                            error.getMessage()==null?"Local model unavailable":error.getMessage(),
+                            "failed",null,null,null);
+                }
+            });
         } else if (ACTION_LOCAL_PROMPT_VIDEO.equals(action)) {
             try {
                 JSONObject p = new JSONObject();
@@ -981,6 +1017,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
+                    return;
+                case "native_offline_video_capabilities":
+                    SketchDocument.fields(p,"");
+                    complete(command,new NativeOfflineVideoGenerator(this).capabilities());
+                    return;
+                case "native_offline_video_plan":
+                    complete(command,new NativeOfflineVideoGenerator(this).plan(store,
+                            publicOperationParameters(p)));
+                    return;
+                case "native_offline_video_generate":
+                    complete(command,queueNativeOfflineVideo(p));
                     return;
                 case "generate_image":
                     complete(command, queueGenerateImage(p));
@@ -2282,6 +2329,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         break;
                     case "prompt_video":
                         queued = queuePromptVideo(parameters);
+                        break;
+                    case "native_offline_video_generate":
+                        queued = queueNativeOfflineVideo(parameters);
                         break;
                     case "generate_image":
                         queued = queueGenerateImage(parameters);
@@ -4347,6 +4397,42 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         out.put("photorealistic", false); return out;
     }
 
+    /** No job or new project is created until a locally installed neural model passes preflight. */
+    private JSONObject queueNativeOfflineVideo(JSONObject input)throws Exception {
+        JSONObject request=publicOperationParameters(input);
+        NativeOfflineVideoGenerator generator=new NativeOfflineVideoGenerator(this);
+        JSONObject plan=generator.plan(store,request);
+        String projectId=plan.getString("sourceProjectId");
+        final JSONObject frozen=new JSONObject(request.toString());
+        JSONObject durable=new JSONObject(request.toString());
+        if(input.has("_recoveryPlanId"))durable.put("_recoveryPlanId",input.get("_recoveryPlanId"));
+        if(input.has("_mcpCommandId"))durable.put("_mcpCommandId",input.get("_mcpCommandId"));
+        JobManager.Job job=submitRecoverableHeavy("native_offline_video_generate",
+                durable,projectId,"Offline neural video • "+plan.getString("operationId"),state->{
+                    checkpoint(state,"Offline video","Model verified; beginning local temporal inference",2,projectId);
+                    jobs.awaitSafeCheckpoint(state,"offline_video_preflight");
+                    JSONObject generated=generator.execute(store,frozen,(percent,detail)->{
+                        checkpoint(state,"Offline video",detail,Math.max(2,Math.min(94,percent)),projectId);
+                        jobs.awaitSafeCheckpoint(state,"offline_temporal_frame");
+                    });
+                    String outputId=generated.getString("projectId");
+                    ProjectStore.Project output=store.get(outputId);
+                    if(output==null||output.clips.isEmpty())
+                        throw new IllegalStateException("Generated native frames missing");
+                    checkpoint(state,"Offline video","New neural frames saved; encoding native MP4",95,outputId);
+                    jobs.awaitSafeCheckpoint(state,"offline_video_media3_export");
+                    runExportBlocking(output,"1:1","720p",
+                            "Native_Offline_Video_"+plan.getString("operationId")+".mp4",state);
+                    generated.put("encodedMp4",true);
+                    state.setResult(generated);
+                    checkpoint(state,"Offline video","Local MP4 finished",100,outputId);
+                    syncProtocolState();
+                });
+        return ok().put("queued",true).put("jobId",job.id).put("sourceProjectId",projectId)
+                .put("modelPackId",NativeOfflineVideoPlan.PACK_ID).put("durableRecovery",true)
+                .put("paidApiRequests",0).put("cloudInference",false);
+    }
+
     private JSONObject queuePromptVideo(JSONObject p) throws Exception {
         String prompt = p.optString("prompt", "").trim();
         if (prompt.isEmpty()) throw new IllegalArgumentException("Prompt is required");
@@ -5158,6 +5244,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("renderEngineReady", renderEngine != null);
             out.put("analysisEngineReady", mediaAnalyzer != null);
             out.put("promptVideoEngineReady", promptVideoEngine != null);
+            out.put("offlineNeuralVideo",new NativeOfflineVideoGenerator(this).capabilities());
             out.put("portraitAnimationEngineReady", portraitMotionAnalyzer != null);
             out.put("localSpeechEngineReady", speechEngine != null);
             out.put("motionScriptCompilerReady", motionScriptCompiler != null);
@@ -5195,6 +5282,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("cinematic3d",cinematic3DCapabilities());
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("offlineNeuralVideo",new NativeOfflineVideoGenerator(this).capabilities());
             out.put("kineticDirector",StudioKineticDirector.capabilities());
             out.put("motionGroupDirector",StudioMotionGroupOps.capabilities());
             out.put("compositionCamera2D",StudioCamera2DDirector.capabilities());
@@ -5278,6 +5366,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("neuralStoryboardModelAvailable", false);
             out.put("workbenchRelayCompatibility",NativeWorkbenchBridge.capabilities());
             out.put("studioEditing",StudioEditingCapabilities.capabilities());
+            out.put("offlineNeuralVideo",new NativeOfflineVideoGenerator(this).capabilities());
             out.put("audioAnalysis",NativeAudioEnvelope.capabilities());
             out.put("sketchStillExport",SketchStillExport.capabilities());
             out.put("localEngineOwnsProjects", true);
