@@ -9,6 +9,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import static org.junit.Assert.*;
 
 /**
@@ -17,6 +18,7 @@ import static org.junit.Assert.*;
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk=33, manifest=Config.NONE)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class StudioProceduralVfxTest {
     private StudioLayer emitter(String kind){
         StudioLayer fx=new StudioLayer();
