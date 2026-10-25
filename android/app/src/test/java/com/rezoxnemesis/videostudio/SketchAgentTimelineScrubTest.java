@@ -133,7 +133,7 @@ public final class SketchAgentTimelineScrubTest {
         assertFalse(cap.getBoolean("pixelOutputVerification"));
         assertFalse(cap.getBoolean("galleryAccess"));
         JSONObject stage=SketchAgentStageCommands.capabilities();
-        assertEquals("4.10.44",stage.getString("minimumNativeVersion"));
+        assertEquals("4.10.45",stage.getString("minimumNativeVersion"));
         assertEquals("scrub",stage.getJSONObject("visibleTimelineScrub").getString("stageAction"));
         assertTrue(stage.getJSONArray("availableSteps").toString().contains("scrub"));
     }
