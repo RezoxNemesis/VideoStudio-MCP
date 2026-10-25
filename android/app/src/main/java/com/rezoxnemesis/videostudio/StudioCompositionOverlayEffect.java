@@ -41,64 +41,137 @@ final class StudioCompositionOverlayEffect implements GlEffect {
 
     boolean isEmpty(){return entries.isEmpty();}
 
-    /** Each caller owns and must release this fresh generation's native overlays. */
-    List<TextureOverlay> createOverlays(){
-        ArrayList<TextureOverlay> overlays=new ArrayList<>();
-        try{
-            int glyphOverlays=0;
-            for(int index=0;index<entries.size();){
-                Entry entry=entries.get(index);
-                if(StudioLayer.TITLE.equals(entry.layer.type)
-                        &&entry.layer.glyphAnimation==null){
-                    // Preserve native z-order. Only merge consecutive TITLE rows
-                    // whose exact time windows cannot overlap. Each virtual slot
-                    // dynamically switches between their existing styled TextOverlays.
-                    ArrayList<StudioLayer> run=new ArrayList<>();
-                    ArrayList<StudioLayer> parents=new ArrayList<>();
-                    long end=-1;
-                    int next=index;
-                    while(next<entries.size()
-                            &&run.size()<StudioVirtualizedTitleOverlay.MAX_TITLES_PER_TEXTURE){
-                        Entry lane=entries.get(next);
-                        if(!StudioLayer.TITLE.equals(lane.layer.type)
-                                ||lane.layer.glyphAnimation!=null
-                                ||(!run.isEmpty()&&lane.layer.startMs<end))break;
-                        run.add(lane.layer);parents.add(lane.parent);
-                        end=Math.addExact(lane.layer.startMs,lane.layer.durationMs);
-                        next++;
-                    }
-                    if(run.size()>=4)overlays.add(new StudioVirtualizedTitleOverlay(run,parents));
-                    else for(int i=0;i<run.size();i++)
-                        overlays.add(new StudioTimedTitleOverlay(run.get(i),parents.get(i)));
-                    index=next;
-                    continue;
+    /**
+     * Conservative GLES 2.0 fragment texture budget: reserve input frame plus
+     * one spare slot. The GLES guaranteed minimum is eight texture image units.
+     * At no point do we compile 28 TITLE or 48 letter samplers into one shader.
+     */
+    static final int MAX_OVERLAYS_PER_SHADER=6;
+
+    private interface OverlayRecipe {
+        TextureOverlay create();
+    }
+
+    /**
+     * Compile source-order immutable recipes, not GPU textures. Each shader
+     * generation materializes fresh owned overlays, preserving the existing
+     * lifetime protection at cuts and scene/context rebuilds.
+     */
+    private List<OverlayRecipe> recipes(){
+        ArrayList<OverlayRecipe> out=new ArrayList<>();
+        int glyphOverlays=0;
+        for(int index=0;index<entries.size();){
+            Entry entry=entries.get(index);
+            if(StudioLayer.TITLE.equals(entry.layer.type)
+                    &&entry.layer.glyphAnimation==null){
+                ArrayList<StudioLayer> run=new ArrayList<>();
+                ArrayList<StudioLayer> parents=new ArrayList<>();
+                long end=-1;
+                int next=index;
+                while(next<entries.size()
+                        &&run.size()<StudioVirtualizedTitleOverlay.MAX_TITLES_PER_TEXTURE){
+                    Entry nextEntry=entries.get(next);
+                    if(!StudioLayer.TITLE.equals(nextEntry.layer.type)
+                            ||nextEntry.layer.glyphAnimation!=null
+                            ||(!run.isEmpty()&&nextEntry.layer.startMs<end))break;
+                    run.add(nextEntry.layer);parents.add(nextEntry.parent);
+                    end=Math.addExact(nextEntry.layer.startMs,nextEntry.layer.durationMs);
+                    next++;
                 }
-                if(StudioLayer.TITLE.equals(entry.layer.type)){
-                    int count=StudioGlyphAnimation.visibleGlyphCount(entry.layer.text);
-                    glyphOverlays+=count;
-                    if(glyphOverlays>StudioGlyphAnimation.MAX_COMPOSITION_GLYPHS)
-                        throw new IllegalArgumentException("Maximum 48 independently animated glyphs per composition");
-                    overlays.addAll(StudioTimedGlyphOverlay.expand(entry.layer,entry.parent));
-                }else if(StudioLayer.SHAPE.equals(entry.layer.type))
-                    overlays.add(new StudioTimedShapeOverlay(entry.layer,entry.parent));
-                else if(StudioLayer.VFX.equals(entry.layer.type))
-                    overlays.add(new StudioProceduralVfxOverlay(entry.layer));
-                else overlays.add(new StudioTimedImageOverlay(context,entry.asset,entry.layer,entry.parent));
-                index++;
+                if(run.size()>=4){
+                    final List<StudioLayer> c=Collections.unmodifiableList(new ArrayList<>(run));
+                    final List<StudioLayer> p=Collections.unmodifiableList(new ArrayList<>(parents));
+                    out.add(()->new StudioVirtualizedTitleOverlay(c,p));
+                }else{
+                    for(int i=0;i<run.size();i++){
+                        final StudioLayer caption=run.get(i),parent=parents.get(i);
+                        out.add(()->new StudioTimedTitleOverlay(caption,parent));
+                    }
+                }
+                index=next;
+                continue;
             }
-            return overlays;
+            if(StudioLayer.TITLE.equals(entry.layer.type)){
+                int codepoints=StudioGlyphAnimation.glyphCount(entry.layer.text);
+                for(int at=0;at<codepoints;at++){
+                    String codepoint=StudioGlyphAnimation.glyphAt(entry.layer.text,at);
+                    if(Character.isWhitespace(codepoint.codePointAt(0)))continue;
+                    if(++glyphOverlays>StudioGlyphAnimation.MAX_COMPOSITION_GLYPHS)
+                        throw new IllegalArgumentException("Maximum 48 independently animated glyphs per composition");
+                    final int letter=at;
+                    out.add(()->StudioTimedGlyphOverlay.single(entry.layer,entry.parent,letter));
+                }
+            }else if(StudioLayer.SHAPE.equals(entry.layer.type))
+                out.add(()->new StudioTimedShapeOverlay(entry.layer,entry.parent));
+            else if(StudioLayer.VFX.equals(entry.layer.type))
+                out.add(()->new StudioProceduralVfxOverlay(entry.layer));
+            else out.add(()->new StudioTimedImageOverlay(context,entry.asset,entry.layer,entry.parent));
+            index++;
+        }
+        return Collections.unmodifiableList(out);
+    }
+
+    /** Preserve the exact shader z-order with bounded sequential render passes. */
+    List<GlEffect> batchedEffects(){
+        List<OverlayRecipe> compiled=recipes();
+        ArrayList<GlEffect> passes=new ArrayList<>();
+        for(int i=0;i<compiled.size();i+=MAX_OVERLAYS_PER_SHADER){
+            int end=Math.min(compiled.size(),i+MAX_OVERLAYS_PER_SHADER);
+            passes.add(new Pass(new ArrayList<>(compiled.subList(i,end))));
+        }
+        return Collections.unmodifiableList(passes);
+    }
+
+    /** Metadata-only budget proof; GPU creation is deferred until playback/export. */
+    List<Integer> plannedPassSizes(){
+        int count=recipes().size();
+        ArrayList<Integer> sizes=new ArrayList<>();
+        for(int i=0;i<count;i+=MAX_OVERLAYS_PER_SHADER)
+            sizes.add(Math.min(MAX_OVERLAYS_PER_SHADER,count-i));
+        return sizes;
+    }
+
+    /** Regression/test helper; never caches a TextureOverlay across shader instances. */
+    List<TextureOverlay> createOverlays(){
+        return materialize(recipes());
+    }
+
+    private static List<TextureOverlay> materialize(List<OverlayRecipe> compiled){
+        ArrayList<TextureOverlay> owned=new ArrayList<>();
+        try{
+            for(OverlayRecipe source:compiled)owned.add(source.create());
+            return owned;
         }catch(RuntimeException|Error failure){
-            releaseNew(overlays,failure);throw failure;
+            releaseNew(owned,failure);throw failure;
         }
     }
 
     @Override public GlShaderProgram toGlShaderProgram(Context context,boolean useHdr)
             throws VideoFrameProcessingException {
-        List<TextureOverlay> overlays=createOverlays();
-        try{
-            return new OverlayEffect(overlays).toGlShaderProgram(context,useHdr);
+        return shader(context,useHdr,recipes());
+    }
+
+    private static GlShaderProgram shader(Context context,boolean useHdr,
+                                          List<OverlayRecipe> compiled)
+            throws VideoFrameProcessingException{
+        List<TextureOverlay> owned=materialize(compiled);
+        try {
+            return new OverlayEffect(owned).toGlShaderProgram(context,useHdr);
         }catch(VideoFrameProcessingException|RuntimeException|Error failure){
-            releaseNew(overlays,failure);throw failure;
+            releaseNew(owned,failure);throw failure;
+        }
+    }
+
+    private static final class Pass implements GlEffect {
+        final List<OverlayRecipe> compiled;
+        Pass(List<OverlayRecipe> entries){
+            if(entries.isEmpty()||entries.size()>MAX_OVERLAYS_PER_SHADER)
+                throw new IllegalArgumentException("Unsafe compositor sampler budget");
+            compiled=Collections.unmodifiableList(new ArrayList<>(entries));
+        }
+        @Override public GlShaderProgram toGlShaderProgram(Context context,boolean useHdr)
+                throws VideoFrameProcessingException{
+            return shader(context,useHdr,compiled);
         }
     }
 
