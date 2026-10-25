@@ -70,7 +70,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     // UI-thread counts scoped to the drawing load/page that owns each construction.
     private final java.util.HashMap<String,Integer> activeConstructions=new java.util.HashMap<>();
     private volatile boolean destroyed;
-    private boolean resumed,watching=true,watchInFlight,grid,symmetry;
+    private boolean resumed,watching=true,watchInFlight,grid,symmetry,liveViewerInFlight;
     private final java.util.concurrent.atomic.AtomicReference<android.graphics.Bitmap> pendingBookBitmap=new java.util.concurrent.atomic.AtomicReference<>();
     private JSONObject symmetrySettings;
     private String brushPreset="ink",bookId;
@@ -107,7 +107,10 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
     private String brushColor = "#FF161C2B";
     private float brushWidth = .008f;
     private boolean brushFill;
-    private Button playButton,liveButton;private boolean canvasFocus;private final java.util.ArrayList<View> drawingChrome=new java.util.ArrayList<>();
+    private Button playButton,liveButton,liveReplayPause,liveReplayNext,liveReplaySpeed;
+    private LinearLayout liveReplayHud;
+    private TextView liveReplayStatus;
+    private boolean canvasFocus;private final java.util.ArrayList<View> drawingChrome=new java.util.ArrayList<>();
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -149,6 +152,30 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.TOP);
         agentStagePosition.topMargin=dp(66);
         viewport.addView(agentStageIndicator,agentStagePosition);
+
+        // Real saved-stroke viewing controls, deliberately distinct from drawing
+        // tools. Buttons never call runAction(), which would take human ownership.
+        liveReplayHud=new LinearLayout(this);
+        liveReplayHud.setOrientation(LinearLayout.VERTICAL);
+        liveReplayHud.setPadding(dp(6),dp(5),dp(6),dp(5));
+        liveReplayHud.setBackgroundColor(0xe91c2c29);
+        liveReplayHud.setVisibility(View.GONE);
+        liveReplayStatus=new TextView(this);
+        liveReplayStatus.setTextColor(0xffe7f8ed);
+        liveReplayStatus.setTextSize(11);
+        liveReplayStatus.setMaxLines(2);
+        liveReplayStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        liveReplayStatus.setContentDescription("Current accepted ChatGPT stroke progress");
+        liveReplayHud.addView(liveReplayStatus,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout playbackRow=new LinearLayout(this);
+        playbackRow.setOrientation(LinearLayout.HORIZONTAL);
+        liveReplayPause=liveReplayButton(playbackRow,"Pause",this::toggleLiveReplayPause);
+        liveReplayNext=liveReplayButton(playbackRow,"Next stroke",this::stepLiveReplay);
+        liveReplaySpeed=liveReplayButton(playbackRow,"0.25×",this::showLiveReplaySpeed);
+        liveReplayHud.addView(playbackRow,new LinearLayout.LayoutParams(-1,-2));
+        android.widget.FrameLayout.LayoutParams replayPosition=
+                new android.widget.FrameLayout.LayoutParams(-1,-2,android.view.Gravity.BOTTOM);
+        viewport.addView(liveReplayHud,replayPosition);
         LinearLayout drawingArea=new LinearLayout(this);drawingArea.setOrientation(LinearLayout.HORIZONTAL);drawingArea.addView(viewport,new LinearLayout.LayoutParams(0,-1,2));
         layeredReferencePanel=column();layeredReferencePanel.setBackgroundColor(0xff273345);layeredReferencePanel.setVisibility(View.GONE);drawingArea.addView(layeredReferencePanel,new LinearLayout.LayoutParams(0,-1,1));
         TextView referenceTitle=new TextView(this);referenceTitle.setText("REFERENCE ONLY");referenceTitle.setTextColor(StudioUi.TEXT);referenceTitle.setTextSize(11);layeredReferencePanel.addView(referenceTitle);
@@ -1133,7 +1160,85 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             });
         }catch(Exception error){postUi(()->{if(generation!=playbackGeneration)return;bookPlaybackInFlight=false;stopPlayback();onMessage(error.getMessage());});}});
     }
-    private void stopLivePlayer(){if(livePlayer!=null){livePlayer.close();livePlayer=null;}canvas.hideAgentHand();agentGlobalTool=false;if(status!=null)status.setCompoundDrawables(null,null,null,null);showAgentToolPosition(humanToolPosition);canvas.setPresentation(null,1);canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&!destroyed);liveDrawingObject=null;}
+    private void stopLivePlayer(){if(livePlayer!=null){livePlayer.close();livePlayer=null;}updateLiveReplayControlState();canvas.hideAgentHand();agentGlobalTool=false;if(status!=null)status.setCompoundDrawables(null,null,null,null);showAgentToolPosition(humanToolPosition);canvas.setPresentation(null,1);canvas.setEnabled(session!=null&&!loadingDrawing&&!playing&&!destroyed);liveDrawingObject=null;}
+    private Button liveReplayButton(LinearLayout row,String title,Runnable action){
+        Button button=new Button(this);
+        button.setText(title);
+        button.setTextSize(11);
+        button.setSingleLine(true);
+        button.setMinHeight(dp(48));
+        StudioUi.styleButton(button,false);
+        button.setContentDescription("Watch actual ChatGPT stroke: "+title);
+        // The ordinary button helper intentionally invokes runAction()/human
+        // takeover. Replay controls bypass that gate and never edit a cel.
+        button.setOnClickListener(view->action.run());
+        row.addView(button,new LinearLayout.LayoutParams(0,dp(48),1));
+        return button;
+    }
+
+    private float replaySpeedPreference(){
+        float rate=getPreferences(MODE_PRIVATE).getFloat("nativeLiveReplaySpeed",.25f);
+        return SketchLivePlaybackClock.supported(rate)?rate:.25f;
+    }
+
+    private void updateLiveReplayControlState(){
+        if(liveReplayHud==null)return;
+        boolean active=livePlayer!=null;
+        liveReplayHud.setVisibility(active?View.VISIBLE:View.GONE);
+        if(!active)return;
+        boolean paused=livePlayer.isPaused();
+        liveReplayPause.setText(paused?"Resume":"Pause");
+        liveReplayPause.setContentDescription(paused?"Resume real saved stroke":"Pause current saved stroke");
+        liveReplayNext.setText("Next stroke");
+        float speed=livePlayer.playbackSpeed();
+        liveReplaySpeed.setText(String.format(java.util.Locale.ROOT,"%s×",
+                speed==(float)Math.round(speed)?Integer.toString(Math.round(speed)):
+                    Float.toString(speed)));
+    }
+
+    private void toggleLiveReplayPause(){
+        if(livePlayer==null)return;
+        if(livePlayer.isPaused())livePlayer.resumePlayback();
+        else livePlayer.pausePlayback();
+        updateLiveReplayControlState();
+        if(livePlayer.isPaused()&&liveReplayStatus!=null)
+            liveReplayStatus.setText("Paused at last displayed native pen position · original saved");
+    }
+
+    private void stepLiveReplay(){
+        if(livePlayer==null)return;
+        livePlayer.nextOperation();
+        updateLiveReplayControlState();
+        if(liveReplayStatus!=null)
+            liveReplayStatus.setText("Advancing one real accepted drawing operation…");
+    }
+
+    private void showLiveReplaySpeed(){
+        final float[] values=SketchLivePlaybackClock.PRESETS;
+        String[] names={"0.1× · inspect every line","0.25× · human-paced",
+                "0.5× · relaxed","1× · original","2× · quick",
+                "4× · catch up","8× · very fast"};
+        float selected=replaySpeedPreference();int current=1;
+        for(int i=0;i<values.length;i++)if(values[i]==selected)current=i;
+        new AlertDialog.Builder(this).setTitle("Visible native stroke replay speed")
+                .setSingleChoiceItems(names,current,(dialog,index)->{
+                    float speed=values[index];
+                    getPreferences(MODE_PRIVATE).edit()
+                            .putFloat("nativeLiveReplaySpeed",speed).apply();
+                    if(livePlayer!=null)livePlayer.setPlaybackSpeed(speed);
+                    updateLiveReplayControlState();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("Cancel",null).show();
+    }
+
+    private void showLiveStrokeProgress(String caption,float fraction,int frame){
+        if(livePlayer==null||liveReplayStatus==null)return;
+        int count=Math.max(0,Math.min(100,Math.round(fraction*100f)));
+        liveReplayStatus.setText("Frame "+(frame+1)+" · "+count+
+                "% of saved stroke · "+caption);
+    }
+
     private void showAgentToolPosition(int position){if(toolPicker==null||position<0||position>=toolValues.length||toolPicker.getSelectedItemPosition()==position)return;pendingAgentToolSelection=position;syncingAgentTool=true;try{toolPicker.setSelection(position);}finally{syncingAgentTool=false;}}
     private static int agentToolPosition(String label){
         switch(label){case "Brush":return 11;case "Eraser":return 12;case "Clone brush":return 13;case "Line":return 2;case "Rectangle":return 3;case "Ellipse":return 4;case "Path":return 9;case "Ink":case "Pen":case "Pencil":case "Marker":case "Airbrush":case "Charcoal":case "Calligraphy":return 0;default:return -1;}
@@ -1170,16 +1275,26 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         public void drawing(JSONObject drawing,String objectId,float fraction,String caption){showDrawing(drawing,null,objectId,fraction,caption);}
         public void preparedDrawing(SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){showDrawing(prepared.document,prepared,objectId,fraction,caption);}
         public void agentHand(SketchAgentHand.State state){if(currentLive(generation,active))canvas.setAgentHand(state);}
+        public void replayState(boolean paused,float speed,boolean stepping){
+            if(!currentLive(generation,active))return;
+            updateLiveReplayControlState();
+            if(paused&&liveReplayStatus!=null)
+                liveReplayStatus.setText("Paused on real native drawing · "+speed+"×");
+        }
         public void agentTool(String toolLabel,String caption){if(!currentLive(generation,active))return;agentGlobalTool=agentToolPosition(toolLabel)<0;showActualAgentTool(toolLabel);updateAgentToolIndicator();status.setText(liveMethodLabel()+" · "+caption);}
         public SketchPaintReplay.Viewport paintViewport(String objectId){return canvas.paintViewport(objectId);}
         public SketchPaintReplay.Viewport paintViewport(String objectId,int frameIndex){return canvas.paintViewport(objectId,frameIndex);}
         public void preparedPaintDrawing(SketchLivePreparation.Prepared prepared,SketchPaintReplay.Frame image,String objectId,float fraction,String caption){
             if(!currentLive(generation,active)){image.close();return;}
-            try{if(shownPaint!=prepared){canvas.setPreparedDocument(prepared);shownPaint=prepared;preparedShown=true;}paintShown=true;liveDrawingObject=objectId;liveCaption=caption;canvas.setFrame(prepared.frameIndex);canvas.setPaintPresentation(objectId,image);canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){image.close();failed(error.getMessage());}
+            try{if(shownPaint!=prepared){canvas.setPreparedDocument(prepared);shownPaint=prepared;preparedShown=true;}paintShown=true;liveDrawingObject=objectId;liveCaption=caption;canvas.setFrame(prepared.frameIndex);canvas.setPaintPresentation(objectId,image);canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);
+                showLiveStrokeProgress(caption,fraction,prepared.frameIndex);
+                status.setText(caption);}catch(Exception error){image.close();failed(error.getMessage());}
         }
         private void showDrawing(JSONObject drawing,SketchLivePreparation.Prepared prepared,String objectId,float fraction,String caption){if(!currentLive(generation,active))return;try{if(objectId==null||!objectId.equals(liveDrawingObject)||!caption.equals(liveCaption)){if(prepared==null)canvas.setDocument(drawing);else{canvas.setPreparedDocument(prepared);preparedShown=true;}liveDrawingObject=objectId;liveCaption=caption;}if(prepared!=null)canvas.setFrame(prepared.frameIndex);
             else if(objectId!=null)canvas.setFrame(SketchDocument.object(drawing,objectId).getInt("frame"));
-            canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);status.setText(caption);}catch(Exception error){failed(error.getMessage());}}
+            canvas.setPresentation(objectId,fraction);canvas.setEnabled(false);
+            showLiveStrokeProgress(caption,fraction,canvas.getFrame());
+            status.setText(caption);}catch(Exception error){failed(error.getMessage());}}
         public void committed(JSONObject drawing){if(!currentLive(generation,active))return;try{if(session.adopt(drawing)){if(paintShown){canvas.setCommittedPaintDocument(session.document());presentMetadata(session.document());paintShown=false;}else if(preparedShown)presentMetadata(session.document());else present(session.document());canvas.setPresentation(null,1);liveDrawingObject=null;liveDisplayedRevision=drawing.optLong("revision");}}catch(Exception error){failed(error.getMessage());}}
         public void finished(long cursor){
             if(!currentLive(generation,active))return;
@@ -1203,9 +1318,13 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             status.setText("Caught up with saved drawing · following newest work");
             if(session!=null&&session.pending()==0)reload();
         }
-        public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);status.setText(liveMethodLabel()+" · following active native sketch · waiting for next saved stroke");}
+        public void idle(){if(!currentLive(generation,active))return;canvas.setPresentation(null,1);canvas.setEnabled(false);
+            if(liveReplayStatus!=null)liveReplayStatus.setText("Caught up · waiting for next real native pen operation");
+            status.setText(liveMethodLabel()+" · following active native sketch · waiting for next saved stroke");}
         public void failed(String error){if(!currentLive(generation,active))return;loadingDrawing=true;stopLivePlayer();status.setText(error);onMessage(error);}
-    });livePlayer.start();}catch(Exception error){notificationReplayPending=false;onMessage(error.getMessage());}});}catch(Exception error){postUi(()->{watchInFlight=false;notificationReplayPending=false;onMessage(error.getMessage());});}});}
+    });livePlayer.setPlaybackSpeed(replaySpeedPreference());
+        updateLiveReplayControlState();
+        livePlayer.start();}catch(Exception error){notificationReplayPending=false;onMessage(error.getMessage());}});}catch(Exception error){postUi(()->{watchInFlight=false;notificationReplayPending=false;onMessage(error.getMessage());});}});}
     /**
      * Only the automatic Follow Current mode can be preempted by newer native work.
      * An intentionally tapped session notification or explicit saved replay stays
@@ -1238,6 +1357,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
 
     private final Runnable watchTick=new Runnable(){public void run(){
         if(destroyed)return;
+        pollLiveViewerCommands();
         pollAgentStage();
         if(localEditableReturn!=null&&localEditableReturn.ownsEditor()){handler.postDelayed(this,250);return;}
         if(followNewerNativeWork()){
@@ -1259,6 +1379,103 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         }
         handler.postDelayed(this,250);
     }};
+
+    /**
+     * A separate foreground-only channel for controls over the actual saved
+     * pen journal. This is intentionally NOT sketch_edit or stage navigation:
+     * pause, step and viewing speed cannot create pixels or move cel timing.
+     * The SQLite ACK is settled only after this on-screen player accepted it.
+     */
+    private void pollLiveViewerCommands(){
+        if(liveViewerInFlight||!resumed||destroyed||!watching||loadingDrawing
+                ||livePlayer==null||watchInFlight||session==null
+                ||localEditableReturn!=null&&localEditableReturn.ownsEditor()
+                ||liveSessionId==null||liveSessionId.isEmpty()||sketchId==null)return;
+        final SketchLivePlayer selected=livePlayer;
+        final String targetId=sketchId,targetSession=liveSessionId;
+        final int generation=liveLoadGeneration;
+        final SketchEditorSession selectedSession=session;
+        liveViewerInFlight=true;
+        io.execute(()->{
+            JSONObject claim=null;
+            try(SketchLiveViewerCommands queue=new SketchLiveViewerCommands(this)){
+                claim=queue.claim(targetId,targetSession);
+            }catch(Exception failure){
+                postUi(()->{liveViewerInFlight=false;
+                    if(status!=null)status.setText("Replay control queue: "+failure.getMessage());
+                });return;
+            }
+            final JSONObject accepted=claim;
+            postUi(()->{
+                if(destroyed||!resumed||!watching||selected!=livePlayer
+                        ||selectedSession!=session||generation!=liveLoadGeneration
+                        ||!targetId.equals(sketchId)||!targetSession.equals(liveSessionId)){
+                    liveViewerInFlight=false;
+                    if(accepted!=null)io.execute(()->{
+                        try(SketchLiveViewerCommands queue=new SketchLiveViewerCommands(this)){
+                            queue.release(accepted);
+                        }catch(Exception ignored){}
+                    });
+                    return;
+                }
+                if(accepted==null){liveViewerInFlight=false;return;}
+                boolean applied=false;
+                String note="";
+                try{
+                    JSONObject command=accepted.getJSONObject("program");
+                    switch(command.getString("command")){
+                        case "pause":
+                            selected.pausePlayback();
+                            applied=selected.isPaused();
+                            note="Paused at last published native stroke prefix";
+                            break;
+                        case "resume":
+                            selected.resumePlayback();
+                            applied=!selected.isPaused();
+                            note="Resumed playback of original saved journal";
+                            break;
+                        case "speed": {
+                            float rate=(float)command.getDouble("speed");
+                            selected.setPlaybackSpeed(rate);
+                            applied=selected.playbackSpeed()==rate;
+                            note="Native live viewer speed changed; actual sketch timing unchanged";
+                            if(applied)getPreferences(MODE_PRIVATE).edit()
+                                    .putFloat("nativeLiveReplaySpeed",rate).apply();
+                            break;
+                        }
+                        case "next_operation":
+                            selected.nextOperation();
+                            applied=true;
+                            // This is an on-screen step REQUEST; completed
+                            // original operation may still need preparation.
+                            note="Started exactly one accepted operation; awaiting native completion";
+                            break;
+                        default:throw new IllegalArgumentException("Unknown native viewer command");
+                    }
+                    updateLiveReplayControlState();
+                    if(liveReplayStatus!=null)
+                        liveReplayStatus.setText("ChatGPT · "+note);
+                }catch(Exception rejected){note="Foreground replay control rejected: "+rejected.getMessage();}
+                final boolean used=applied;
+                final String message=note==null?"":note;
+                final JSONObject evidence=new JSONObject();
+                try{
+                    evidence.put("note",message.length()>170?message.substring(0,170):message)
+                            .put("viewPaused",selected.isPaused())
+                            .put("viewRate",(double)selected.playbackSpeed());
+                }catch(Exception ignored){}
+                io.execute(()->{
+                    try(SketchLiveViewerCommands queue=new SketchLiveViewerCommands(this)){
+                        queue.finish(accepted,used,evidence);
+                    }catch(Exception failure){
+                        postUi(()->{if(status!=null)
+                            status.setText("Replay control receipt: "+failure.getMessage());
+                        });
+                    }finally{postUi(()->liveViewerInFlight=false);}
+                });
+            });
+        });
+    }
 
     /**
      * Actual Sketch Studio foreground executor. It never marks a remote step

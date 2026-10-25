@@ -453,6 +453,7 @@ public final class SketchCapabilities {
                         .put("separatesVoicesFromMusic",false)
                         .put("automaticallyMixesAudioIntoSketchExport",false)
                         .put("phonePlaybackVerified",false))
+                .put("nativeLiveViewer",SketchLiveViewerCommands.capabilities())
                 .put("nativeXsheet",new JSONObject().put("minimumNativeVersion","4.5.5")
                         .put("action","sketch_xsheet").put("readOnly",true)
                         .put("writableExposureEdit",SketchXsheetEdits.capabilities())

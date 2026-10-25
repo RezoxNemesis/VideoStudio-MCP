@@ -17,6 +17,8 @@ public final class SketchLivePlayer implements AutoCloseable {
         default SketchPaintReplay.Viewport paintViewport(String objectId,int frameIndex){return paintViewport(objectId);}
         default void agentHand(SketchAgentHand.State state){}
         default void agentTool(String toolLabel,String caption){}
+        /** State is display-only; the underlying durable sketch never changes. */
+        default void replayState(boolean paused,float speed,boolean stepping){}
         /** Transfers ownership of the immutable frame to the receiving native canvas. */
         default void preparedPaintDrawing(SketchLivePreparation.Prepared prepared,SketchPaintReplay.Frame frame,
                                          String objectId,float fraction,String caption){
@@ -38,6 +40,8 @@ public final class SketchLivePlayer implements AutoCloseable {
     private SketchLivePreparation.Prepared current;
     private String target;
     private long sequence, started;
+    private final SketchLivePlaybackClock clock=new SketchLivePlaybackClock(SystemClock.uptimeMillis());
+    private boolean stepOneOperation;
     private int eventIndex, operationIndex;
     private volatile boolean closed;
     private boolean fetching, preparing;
@@ -56,24 +60,69 @@ public final class SketchLivePlayer implements AutoCloseable {
         duration = baseline.getInt("strokeDurationMs");
         this.listener = listener;
     }
-    public void start() { listener.committed(document); main.post(tick); }
+    public void start() { listener.committed(document);notifyReplayState();main.post(tick); }
+
+    /** Local UI replay controls do not access or mutate source operations. */
+    public void setPlaybackSpeed(float rate) {
+        if(closed)return;
+        clock.setRate(rate,SystemClock.uptimeMillis());
+        notifyReplayState();
+        if(!clock.paused())wake();
+    }
+    public float playbackSpeed(){return clock.rate();}
+    public boolean isPaused(){return clock.paused();}
+    public void pausePlayback(){
+        if(closed||clock.paused())return;
+        clock.pause(SystemClock.uptimeMillis());
+        main.removeCallbacks(tick);
+        pauseHand("Replay paused · accepted drawing retained");
+        notifyReplayState();
+    }
+    public void resumePlayback(){
+        if(closed||!clock.paused())return;
+        stepOneOperation=false;
+        clock.resume(SystemClock.uptimeMillis());
+        notifyReplayState();
+        wake();
+    }
+    /** Advance through exactly the next accepted operation, then pause again. */
+    public void nextOperation(){
+        if(closed)return;
+        stepOneOperation=true;
+        if(clock.paused())clock.resume(SystemClock.uptimeMillis());
+        notifyReplayState();
+        wake();
+    }
+    private void wake(){main.removeCallbacks(tick);if(!closed)main.post(tick);}
+    private void notifyReplayState(){
+        if(!closed)listener.replayState(clock.paused(),clock.rate(),stepOneOperation);
+    }
+    private void pauseAfterOneOperation(){
+        if(!stepOneOperation||closed)return;
+        stepOneOperation=false;
+        clock.pause(SystemClock.uptimeMillis());
+        pauseHand("Paused after one real saved drawing operation");
+        notifyReplayState();
+        main.removeCallbacks(tick);
+    }
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
-            if (closed) return;
+            if (closed||clock.paused()) return;
             try {
                 if (current != null) {
                     if(current.isPaint()){
                         if(paintFraction<1){if(!paintPreparing)preparePaintPrefix();return;}
                         finishOperation();
                     }else{
-                    float fraction = Math.min(1, (SystemClock.uptimeMillis()-started)/(float)duration);
+                    float fraction = clock.fraction(SystemClock.uptimeMillis(),duration);
                     listener.preparedDrawing(current, target, fraction, "Live ChatGPT · drawing "+
                             (operationIndex+1)+"/"+operations.length()+" · r"+event.getLong("revision"));
                     if(closed)return;showHand(current.handTrack.at(fraction));
-                    if (fraction < 1) { main.postDelayed(this, 16); return; }
+                    if (fraction < 1) { if(!clock.paused())main.postDelayed(this, 16); return; }
                     finishOperation();
                     }
+                    if(clock.paused())return;
                 }
                 if (operations != null && operationIndex < operations.length()) {
                     if (!preparing) prepareOperation(operations.getJSONObject(operationIndex));
@@ -97,7 +146,11 @@ public final class SketchLivePlayer implements AutoCloseable {
         }
     };
 
-    private void finishOperation(){document=current.committedDocument();current.close();current=null;operationIndex++;}
+    private void finishOperation(){
+        document=current.committedDocument();
+        current.close();current=null;operationIndex++;
+        pauseAfterOneOperation();
+    }
     private String caption()throws Exception{return "Live ChatGPT · drawing "+(operationIndex+1)+"/"+operations.length()+" · r"+event.getLong("revision");}
     private void showHand(SketchAgentHand.State state){
         if(closed)return;handState=state;listener.agentHand(state);if(!closed)listener.agentTool(state.toolLabel,state.caption);
@@ -108,7 +161,7 @@ public final class SketchLivePlayer implements AutoCloseable {
     private void preparePaintPrefix()throws Exception{
         SketchLivePreparation.Prepared prepared=current;SketchPaintReplay.Viewport viewport=listener.paintViewport(target,prepared.frameIndex);
         // A slow worker may extend presentation, but it still exposes multiple real prefixes.
-        float elapsed=Math.min(1,(SystemClock.uptimeMillis()-started)/(float)duration);
+        float elapsed=clock.fraction(SystemClock.uptimeMillis(),duration);
         float fraction=Math.min(1,Math.min(paintFraction+.25f,Math.max(paintFraction+.01f,elapsed)));
         paintPreparing=true;String objectId=target;String label=caption();
         pauseHand("Preparing next brush step");
@@ -116,8 +169,8 @@ public final class SketchLivePlayer implements AutoCloseable {
             try{
                 SketchPaintReplay.Frame frame=prepared.renderPaint(fraction,viewport);
                 publish(frame,()->{
-                    paintPreparing=false;if(closed||current!=prepared){frame.close();return;}
-                    try{paintFraction=fraction;listener.preparedPaintDrawing(prepared,frame,objectId,fraction,label);if(!closed){showHand(prepared.handTrack.at(fraction));main.postDelayed(tick,fraction<1?16:0);}}
+                    paintPreparing=false;if(closed||current!=prepared||clock.paused()){frame.close();return;}
+                    try{paintFraction=fraction;listener.preparedPaintDrawing(prepared,frame,objectId,fraction,label);if(!closed){showHand(prepared.handTrack.at(fraction));if(!clock.paused())main.postDelayed(tick,fraction<1?16:0);}}
                     catch(Exception|OutOfMemoryError error){fail(error);}
                 });
             }catch(Exception|OutOfMemoryError error){main.post(()->{paintPreparing=false;fail(error);});}
@@ -172,17 +225,28 @@ public final class SketchLivePlayer implements AutoCloseable {
                     if (closed) { prepared.close(); return; }
                     try {
                         current = prepared; target = object;
+                        clock.resetOperation(SystemClock.uptimeMillis());
                         if(current.isPaint()){
                             paintFraction=0;paintPreparing=false;started=SystemClock.uptimeMillis();
                             SketchPaintReplay.Frame frame=current.takeInitialPaint();
                             listener.preparedPaintDrawing(current,frame,target,0,caption());
-                            if(!closed){showHand(prepared.handTrack.at(0));main.postDelayed(tick,16);}
-                        }else if (stroke && object != null) { started = SystemClock.uptimeMillis(); main.post(tick); }
+                            if(!closed){
+                                showHand(clock.paused()?prepared.handTrack.at(0).paused("Replay paused"):prepared.handTrack.at(0));
+                                if(!clock.paused())main.postDelayed(tick,16);
+                            }
+                        }else if (stroke && object != null) {
+                            started=SystemClock.uptimeMillis();
+                            if(clock.paused()){
+                                listener.preparedDrawing(current,target,0,caption());
+                                showHand(prepared.handTrack.at(0).paused("Replay paused"));
+                            } else main.post(tick);
+                        }
                         else {
                             listener.preparedDrawing(current,null,1,"Live ChatGPT · "+operation.optString("type"));
                             if(closed)return;showHand(prepared.handTrack.at(1));
                             document = current.document; current.close(); current = null;
-                            operationIndex++; main.post(tick);
+                            operationIndex++;pauseAfterOneOperation();
+                            if(!clock.paused())main.post(tick);
                         }
                     } catch (Exception | OutOfMemoryError error) { fail(error); }
                 });

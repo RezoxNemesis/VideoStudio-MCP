@@ -19,7 +19,7 @@ public final class NativeWorkbenchBridge {
             "resolve_color_capabilities","resolve_grade_plan","resolve_grade_apply",
             "fairlight_fx_capabilities","fairlight_fx_plan","fairlight_fx_apply",
             "fusion_scene_capabilities","fusion_scene_plan","fusion_scene_apply","import_mailbox_media","project_asset_info","project_import_asset","get_native_result_page","get_native_delivery_status","compact_native_delivery",
-            "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_quality_audit","sketch_edit","sketch_xsheet","sketch_path_nodes","sketch_stage_capabilities","sketch_stage_execute","sketch_stage_status","sketch_undo","sketch_redo",
+            "sketch_create","sketch_list","sketch_get","sketch_inspect","sketch_review","sketch_quality_audit","sketch_edit","sketch_xsheet","sketch_path_nodes","sketch_stage_capabilities","sketch_stage_execute","sketch_stage_status","sketch_live_view_capabilities","sketch_live_view_control","sketch_live_view_status","sketch_undo","sketch_redo",
             "sketch_animation_save","sketch_animation_get","sketch_animation_list","sketch_animation_bake","sketch_animation_place_in_book",
             "sketch_story_create","sketch_story_preview","sketch_story_audio_create","sketch_story_example",
             "sketch_correction_start","sketch_correction_get","sketch_correction_note","sketch_correction_propose","sketch_correction_preview","sketch_correction_apply","sketch_correction_options","sketch_correction_list","sketch_correction_close",
@@ -77,6 +77,7 @@ public final class NativeWorkbenchBridge {
                 .put("fusionSceneCompiler",StudioFusionSceneCompiler.capabilities())
                 .put("sketchStillExport",SketchStillExport.capabilities())
                 .put("sketchVisibleAgent",SketchAgentStageCommands.capabilities())
+                .put("sketchLiveViewer",SketchLiveViewerCommands.capabilities())
                 .put("encryptedMediaImportMinimumNativeVersion","4.2.0").put("encryptedMediaImportMaximumBytes",256L*1024*1024)
                 .put("drawingAssetImportMinimumNativeVersion","4.3.1").put("nativeResultPageMinimumNativeVersion","4.3.1")
                 .put("incrementalKeyframeMinimumNativeVersion","4.3.0").put("cameraEditMinimumNativeVersion","4.3.0")
