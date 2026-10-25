@@ -22,7 +22,7 @@ public final class StudioLayerContract {
         if(layers.length()>32)throw new IllegalArgumentException("Maximum 32 layers");
         ArrayList<StudioLayer> result=new ArrayList<>();
         Set<String> usedIds=new HashSet<>();
-        int images=0,videos=0,shapes=0,groups=0,cameras=0;
+        int images=0,videos=0,shapes=0,vfx=0,groups=0,cameras=0;
         java.util.HashMap<String,StudioLayer> byId=new java.util.HashMap<>();
         for(int i=0;i<layers.length();i++){
             JSONObject entry=layers.getJSONObject(i);
@@ -34,6 +34,7 @@ public final class StudioLayerContract {
             if(StudioLayer.IMAGE.equals(lane.type)&&++images>8)throw new IllegalArgumentException("Maximum 8 decoded image layers");
             if(StudioLayer.VIDEO.equals(lane.type)&&++videos>2)throw new IllegalArgumentException("Maximum 2 decoded video layers");
             if(StudioLayer.SHAPE.equals(lane.type)&&++shapes>12)throw new IllegalArgumentException("Maximum 12 cached original vector shapes");
+            if(StudioLayer.VFX.equals(lane.type)&&++vfx>4)throw new IllegalArgumentException("Maximum 4 live Canvas VFX overlays");
             if(StudioLayer.CAMERA.equals(lane.type)&&++cameras>1)
                 throw new IllegalArgumentException("Only one global composition camera is supported");
             if(StudioLayer.GROUP.equals(lane.type)&&++groups>8)
@@ -79,6 +80,9 @@ public final class StudioLayerContract {
         }
         if(StudioLayer.SHAPE.equals(lane.type)){
             if(!lane.assetId.isEmpty())throw new IllegalArgumentException("Native SHAPE cannot reference media sources");
+        }
+        if(StudioLayer.VFX.equals(lane.type)){
+            if(!lane.assetId.isEmpty())throw new IllegalArgumentException("Native VFX cannot reference media sources");
         }
         if(StudioLayer.IMAGE.equals(lane.type)){
             ProjectStore.Asset asset=project.asset(lane.assetId);
