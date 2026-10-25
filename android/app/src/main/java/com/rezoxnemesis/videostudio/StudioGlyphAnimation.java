@@ -94,30 +94,53 @@ public final class StudioGlyphAnimation {
         return p * p * (3 - 2 * p);
     }
 
+    /** Freeze all parsed fields once at overlay construction; per-frame sampling allocates nothing. */
+    public static final class Spec {
+        final int glyphs;
+        final long durationMs, stagger, enter, exit;
+        final double spacing, spread, wave;
+        final String mode;
+        private Spec(JSONObject program, String text, long durationMs) {
+            glyphs = glyphCount(text);
+            this.durationMs = durationMs;
+            stagger = numberInt(program, "staggerMs", 45, 0, 160);
+            enter = numberInt(program, "enterMs", 360, 80, 1600);
+            exit = numberInt(program, "exitMs", 260, 80, 1600);
+            spacing = number(program, "spacing", Math.min(.15, 1.4 / Math.max(1, glyphs - 1)), .035, .28);
+            spread = number(program, "spread", .31, 0, .75);
+            wave = number(program, "waveAmplitude", .07, 0, .3);
+            mode = program.optString("mode", "assemble");
+        }
+    }
+
+    public static Spec compile(JSONObject program, String text, long durationMs) {
+        return new Spec(validate(program, text, durationMs), text, durationMs);
+    }
+
     /** Exact, repeatable local-time sample. X/Y use Media3's centered [-1,1] frame space. */
     public static Frame sample(JSONObject program, String text, int index, long durationMs, long localMs) {
-        validate(program, text, durationMs);
-        int count = glyphCount(text);
-        if (index < 0 || index >= count) throw new IllegalArgumentException("Invalid glyph index");
-        String mode = program.optString("mode", "assemble");
-        long stagger = numberInt(program, "staggerMs", 45, 0, 160);
-        long enter = numberInt(program, "enterMs", 360, 80, 1600);
-        long exit = numberInt(program, "exitMs", 260, 80, 1600);
-        double spacing = number(program, "spacing", Math.min(.15, 1.4 / Math.max(1, count - 1)), .035, .28);
-        double spread = number(program, "spread", .31, 0, .75);
-        double wave = number(program, "waveAmplitude", .07, 0, .3);
-        double in = ease((localMs - (double)index * stagger) / enter);
-        double out = ease((durationMs - (double)localMs - (double)(count - 1 - index) * stagger) / exit);
+        return sample(compile(program, text, durationMs), index, localMs);
+    }
+
+    public static Frame sample(Spec program, int index, long localMs) {
+        if (program == null || index < 0 || index >= program.glyphs)
+            throw new IllegalArgumentException("Invalid compiled glyph or index");
+        double in = ease((localMs - (double)index * program.stagger) / program.enter);
+        double out = ease((program.durationMs - (double)localMs
+                - (double)(program.glyphs - 1 - index) * program.stagger) / program.exit);
         double alpha = in * out;
-        double center = index - (count - 1) / 2.0;
-        double x = center * spacing, y = 0, rotation = 0;
+        double center = index - (program.glyphs - 1) / 2.0;
+        double x = center * program.spacing, y = 0, rotation = 0;
         double direction = center < 0 ? -1 : (center > 0 ? 1 : (index % 2 == 0 ? -1 : 1));
-        switch (mode) {
+        switch (program.mode) {
             case "scatter": {
                 double theta = index * 2.399963229728653;
-                x += Math.cos(theta) * spread * (1 - in) + direction * spread * .8 * (1 - out);
-                y += Math.sin(theta) * spread * (1 - in) + Math.sin(theta + 1) * spread * (1 - out);
-                rotation = (index % 2 == 0 ? -28 : 28) * (1 - in) + direction * 33 * (1 - out);
+                x += Math.cos(theta) * program.spread * (1 - in)
+                        + direction * program.spread * .8 * (1 - out);
+                y += Math.sin(theta) * program.spread * (1 - in)
+                        + Math.sin(theta + 1) * program.spread * (1 - out);
+                rotation = (index % 2 == 0 ? -28 : 28) * (1 - in)
+                        + direction * 33 * (1 - out);
                 break;
             }
             case "cascade":
@@ -127,19 +150,20 @@ public final class StudioGlyphAnimation {
                 break;
             case "wave":
                 y -= .14 * (1 - in);
-                y += wave * Math.sin(localMs * .011 + index * .85) * in * out;
+                y += program.wave * Math.sin(localMs * .011 + index * .85) * in * out;
                 y += (1 - out) * .12;
                 break;
             case "assemble":
             default:
-                x += direction * spread * (1 - in);
+                x += direction * program.spread * (1 - in);
                 y += (index % 2 == 0 ? -.17 : .17) * (1 - in);
-                x += direction * spread * .42 * (1 - out);
+                x += direction * program.spread * .42 * (1 - out);
                 rotation = direction * (1 - in) * 14;
                 break;
         }
         double scale = (.58 + .42 * in) * (1 + .16 * (1 - out));
-        if (localMs < 0 || localMs >= durationMs) alpha = 0;
+        if (localMs < 0 || localMs >= program.durationMs) alpha = 0;
         return new Frame(x, y, scale, rotation, alpha);
     }
+
 }
