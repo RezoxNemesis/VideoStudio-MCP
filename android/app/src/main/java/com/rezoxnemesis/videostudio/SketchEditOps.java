@@ -458,6 +458,7 @@ public final class SketchEditOps {
                 SketchDocument.fields(op, "type,fps,frameCount");
                 if (op.has("fps")) doc.put("fps", op.get("fps")); if (op.has("frameCount")) doc.put("frameCount", op.get("frameCount")); break;
             }
+            case "set_exposure_cel": { SketchXsheetEdits.apply(doc,op); break; }
             case "set_exposure": {
                 SketchDocument.fields(op, "type,objectId,frame,exposure"); String id = SketchDocument.id(op, "objectId"); requireUnlocked(SketchDocument.owner(doc, id));
                 SketchDocument.object(doc, id).put("frame", op.get("frame")).put("exposure", op.get("exposure")); break;

@@ -131,6 +131,18 @@ public final class SketchLayeredDrawing {
         }
         else if("paint_stroke".equals(type)){
             JSONObject record=op.optJSONObject("stroke"),request=record==null?op:record.getJSONObject("request");JSONObject brush=request.optJSONObject("brush");if(request.has("cloneSource")||record!=null&&record.has("source")||brush==null||!Arrays.asList("paint","erase").contains(brush.optString("mode")))throw denied("Only native paint and erase brushes are allowed; clone copies reference pixels");try{layerId=SketchDocument.owner(doc,op.getString("objectId")).getString("id");}catch(IllegalArgumentException absent){if(absent.getMessage().contains("Unknown sketch object"))return;throw absent;}
+        }else if("set_exposure_cel".equals(type)){
+            SketchDocument.fields(op,"type,layerId,frameIndex,exposureFrames");
+            layerId=SketchDocument.id(op,"layerId");
+            JSONObject target=SketchDocument.layer(doc,layerId);
+            int source=(int)SketchDocument.integer(op,"frameIndex",0,doc.getInt("frameCount")-1);
+            JSONArray strokes=target.getJSONArray("objects");
+            boolean authoredCel=false;
+            for(int i=0;i<strokes.length();i++){
+                JSONObject object=strokes.getJSONObject(i);
+                if(object.getInt("frame")==source){authored(object,true);authoredCel=true;}
+            }
+            if(!authoredCel)throw denied("Choose the original authored drawing-start cell");
         }else if(Arrays.asList("append_points","update_object","delete_object","set_exposure","reorder_object").contains(type)){
             String id=op.getString("objectId");JSONObject object=SketchDocument.object(doc,id);layerId=SketchDocument.owner(doc,id).getString("id");authored(object,true);
             if("update_object".equals(type)){JSONObject candidate=SketchDocument.copy(object),patch=op.getJSONObject("patch");Iterator<String> keys=patch.keys();while(keys.hasNext()){String key=keys.next();candidate.put(key,patch.get(key));}authored(candidate,true);}
