@@ -28,24 +28,30 @@ public final class StudioKineticDirector {
                 .put("planAction", "kinetic_benchmark_plan")
                 .put("applyAction", "kinetic_benchmark_apply")
                 .put("mcpNativeActionBridge", "autonomous_request")
-                .put("templates", new JSONArray(Arrays.asList("editorial", "impact", "minimal")))
+                .put("templates", new JSONArray(Arrays.asList("editorial", "impact", "minimal", "glyph")))
                 .put("maxAuthoredTitles", KineticBeatPlanner.MAX_TITLES)
                 .put("maxProjectLayers", 32)
                 .put("inputs", new JSONArray(Arrays.asList(
                         "projectId", "expectedUpdatedAt", "titles", "style",
-                        "beatMarkersMs", "bpm", "tempoOffsetMs", "audioEnvelope", "shapeAccents", "operationId")))
+                        "beatMarkersMs", "bpm", "tempoOffsetMs", "audioEnvelope", "shapeAccents", "glyphMode", "operationId")))
                 .put("timingProvenance", new JSONArray(Arrays.asList(
                         "author_markers", "measured_audio_onset_candidates",
                         "manual_bpm_grid", "clip_boundaries")))
                 .put("renderedBy", "existing native Media3 composition title/keyframe effects")
                 .put("vectorAccentMinimumNativeVersion", "4.10.27")
                 .put("supportsSourceFreeShapeAccents", true)
+                .put("glyphAnimation", new JSONObject().put("modes",
+                        new JSONArray(Arrays.asList("assemble","scatter","cascade","wave")))
+                        .put("maxCodepointsPerTitle",StudioGlyphAnimation.MAX_GLYPHS)
+                        .put("maxCompositedGlyphOverlays",StudioGlyphAnimation.MAX_COMPOSITION_GLYPHS)
+                        .put("nativeRenderer","Media3 timed per-codepoint TextOverlay")
+                        .put("requiresCandidateApk",true))
                 .put("sourceUnchanged", true).put("createsIndependentEditableProject", true)
                 .put("autoExport", false).put("galleryAccess", false)
                 .put("actualBeatDetection", false)
                 .put("limitations", "Measured audio onsets are not guaranteed musical beats. "
-                        + "Whole-title 2D keyframes only; no automatic lyrics/word masks, "
-                        + "3D camera, optical flow, rotoscoping, motion blur or AE compatibility.");
+                        + "Whole-title 2D keys and optional bounded glyph transforms; no automatic lyric transcription, "
+                        + "tracked rotoscoping, volumetric 3D typography, optical-flow blur or AE compatibility.");
     }
 
     private static final class Draft {
@@ -126,7 +132,8 @@ public final class StudioKineticDirector {
         long outputMs = source.outputDurationMs();
         if (outputMs > 86_400_000L) throw new IllegalArgumentException("Only timelines up to 24h are supported");
         String style = request.optString("style", "editorial");
-        if (!"editorial".equals(style) && !"impact".equals(style) && !"minimal".equals(style))
+        if (!"editorial".equals(style) && !"impact".equals(style)
+                && !"minimal".equals(style) && !"glyph".equals(style))
             throw new IllegalArgumentException("Unknown kinetic template");
         JSONArray raw = request.getJSONArray("titles");
         if (raw.length() == 0 || raw.length() > KineticBeatPlanner.MAX_TITLES)
@@ -247,18 +254,26 @@ public final class StudioKineticDirector {
             title.startMs = cue.startMs;
             title.durationMs = cue.durationMs;
             title.fontFamily = "minimal".equals(style) ? "sans-serif" : "sans-serif-condensed";
-            title.fontSize = "impact".equals(style) ? 72 : "minimal".equals(style) ? 40 : 56;
+            title.fontSize = "impact".equals(style) ? 72 : "minimal".equals(style) ? 40 : "glyph".equals(style) ? 58 : 56;
             title.fontStyle = "bold";
             title.textAlign = "center";
             title.position = i % 3 == 0 ? 1 : (i % 3 == 1 ? 0 : 2);
             title.color = "impact".equals(style) ? 0xffffe99a : 0xffffffff;
             title.backgroundColor = 0;
-            title.motionKeyframes = titleKeys(style, i, cue.durationMs);
+            if("glyph".equals(style)){
+                JSONObject glyph=new JSONObject().put("mode",request.optString("glyphMode","scatter"));
+                title.glyphAnimation=StudioGlyphAnimation.validate(glyph,title.text,cue.durationMs);
+                // The per-letter entrance/exit is the authored motion, not a second global fade.
+                title.motionKeyframes=new JSONArray();
+            }else title.motionKeyframes=titleKeys(style, i, cue.durationMs);
             title.validate();
             output.studioLayers.add(title);
             JSONObject cueReceipt=new JSONObject().put("text", title.text)
                     .put("startMs", title.startMs).put("durationMs", title.durationMs)
                     .put("layerId", title.id).put("keyframeCount", title.motionKeyframes.length());
+            if(title.glyphAnimation!=null)cueReceipt
+                    .put("glyphAnimationMode",title.glyphAnimation.optString("mode","assemble"))
+                    .put("independentGlyphs",StudioGlyphAnimation.visibleGlyphCount(title.text));
             if(accent!=null)cueReceipt.put("nativeShapeLayerId",accent.id)
                     .put("nativeShapeKind",accent.shapeKind);
             cueReceipts.put(cueReceipt);
@@ -269,6 +284,7 @@ public final class StudioKineticDirector {
                 .put("schema", "videostudio.kinetic-director.plan.v1")
                 .put("sourceProjectId", source.id).put("sourceUpdatedAt", source.updatedAt)
                 .put("style", style).put("timingProvenance", origin)
+                .put("nativePerGlyphAnimation", "glyph".equals(style))
                 .put("musicalBeatCertainty", "none")
                 .put("titleCount", cues.size()).put("requestedTitles", titles.size())
                 .put("shapeAccentsRequested", includeAccents).put("shapeAccentsCreated", accentCount)
