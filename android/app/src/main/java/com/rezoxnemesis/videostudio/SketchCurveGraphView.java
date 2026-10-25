@@ -85,9 +85,10 @@ public final class SketchCurveGraphView extends View {
         canvas.drawLine(x(0),y(0),x(controls[0]),y(controls[1]),paint);
         canvas.drawLine(x(1),y(1),x(controls[2]),y(controls[3]),paint);
         Path curvePath=new Path();
+        JSONArray sampledHandles=curve();
         for(int i=0;i<=SAMPLES;i++){
             double time=i/(double)SAMPLES,progress=time;
-            try{progress=SketchEasing.sample("bezier",curve(),time);}
+            try{progress=SketchEasing.sample("bezier",sampledHandles,time);}
             catch(Exception invalid){progress=time;}
             if(i==0)curvePath.moveTo(x(time),y(progress));
             else curvePath.lineTo(x(time),y(progress));
