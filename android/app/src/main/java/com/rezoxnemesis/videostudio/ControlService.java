@@ -797,6 +797,13 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "self_test":
                     complete(command, nativeSelfTest());
                     return;
+                case "studio_preview_diagnostics":
+                    SketchDocument.fields(p,"");
+                    complete(command,new JSONObject().put("ok",true)
+                            .put("schema","videostudio.preview-safe-diagnostics.v1")
+                            .put("lastEditedPreviewFailure",StudioPreviewDiagnostics.last(this))
+                            .put("sourceModified",false).put("galleryAccess",false));
+                    return;
                 case "connection_health":
                     complete(command, connectionHealth());
                     return;
