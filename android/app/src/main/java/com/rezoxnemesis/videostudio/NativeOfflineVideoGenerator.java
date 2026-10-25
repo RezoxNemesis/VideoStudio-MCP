@@ -350,6 +350,9 @@ public final class NativeOfflineVideoGenerator {
                                 java.nio.FloatBuffer f=framesTensor.getFloatBuffer();
                                 decoded=new float[f.remaining()];f.get(decoded);
                             }
+                            JSONObject neuralMotionAudit=NativeOfflineVideoMotionAudit.inspect(decoded,
+                                    NativeOfflineVideoPlan.FRAMES_PER_SHOT,
+                                    NativeOfflineVideoPlan.WIDTH,NativeOfflineVideoPlan.HEIGHT);
                             int imageArea=128*128,sceneArea=3*imageArea;
                             for(int frame=0;frame<NativeOfflineVideoPlan.FRAMES_PER_SHOT;frame++){
                                 check();
@@ -361,36 +364,43 @@ public final class NativeOfflineVideoGenerator {
                                             LocalDrawingEngine.channel(decoded[offset+2*imageArea+i]));
                                 String fileName=String.format(java.util.Locale.ROOT,"scene_%02d_frame_%02d.png",shot,frame);
                                 File file=checkedFile(frames,fileName);
-                                if(!file.isFile()){
-                                    Bitmap bitmap=Bitmap.createBitmap(128,128,Bitmap.Config.ARGB_8888);
-                                    try{
-                                        bitmap.setPixels(argb,0,128,0,0,128,128);
-                                        File temp=checkedFile(frames,fileName+".partial");
-                                        try(FileOutputStream output=new FileOutputStream(temp)){
-                                            if(!bitmap.compress(Bitmap.CompressFormat.PNG,100,output))
-                                                throw new IllegalStateException("Could not encode native neural frame");
-                                            output.getFD().sync();
-                                        }
-                                        if(!temp.renameTo(file))throw new IllegalStateException("Cannot checkpoint generated frame");
-                                    }finally{bitmap.recycle();}
-                                }
+                                // Re-inference after interrupted jobs replaces partial/stale
+                                // frames atomically. A previously existing PNG is not trusted.
+                                Bitmap bitmap=Bitmap.createBitmap(128,128,Bitmap.Config.ARGB_8888);
+                                try{
+                                    bitmap.setPixels(argb,0,128,0,0,128,128);
+                                    java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();
+                                    if(!bitmap.compress(Bitmap.CompressFormat.PNG,100,bytes))
+                                        throw new IllegalStateException("Could not encode neural frame");
+                                    OpenPipelineArtifacts.writeAtomic(file,bytes.toByteArray(),1024*1024);
+                                }finally{bitmap.recycle();}
                                 ProjectStore.Asset result=new ProjectStore.Asset();
                                 result.id=UUID.nameUUIDFromBytes((outputId+"/"+fileName).getBytes(StandardCharsets.UTF_8)).toString();
                                 result.uri=Uri.fromFile(file).toString();result.name=fileName;
                                 result.mime="image/png";result.generated=true;result.role="neural_video_frame";
                                 result.sizeBytes=file.length();result.seekable=true;
-                                result.durationMs=frameDurationMs;
+                                long frameIndex=shot*NativeOfflineVideoPlan.FRAMES_PER_SHOT+frame;
+                                long nextMs=Math.round((frameIndex+1)*1000.0/NativeOfflineVideoPlan.FPS);
+                                long beforeMs=Math.round(frameIndex*1000.0/NativeOfflineVideoPlan.FPS);
+                                long actualFrameMs=nextMs-beforeMs;
+                                result.durationMs=actualFrameMs;
                                 result.generationMetadata=new JSONObject()
                                         .put("provider","videostudio.local_temporal_onnx")
                                         .put("planSha256",plan.getString("planSha256"))
                                         .put("shotIndex",shot).put("frameIndex",frame)
                                         .put("imagePromptUsed",anchor!=null)
                                         .put("sourceImageSha256",anchorHash)
+                                        .put("temporalMotionEvidence",neuralMotionAudit)
+                                        .put("neuralFrameIndex",frameIndex)
+                                        .put("neuralFps",NativeOfflineVideoPlan.FPS)
                                         .put("proceduralFallback",false);
                                 ProjectStore.Clip clip=new ProjectStore.Clip();
                                 clip.id=UUID.nameUUIDFromBytes((outputId+"/clip/"+fileName)
                                         .getBytes(StandardCharsets.UTF_8)).toString();
-                                clip.assetId=result.id;clip.inMs=0;clip.outMs=frameDurationMs;
+                                clip.assetId=result.id;clip.inMs=0;clip.outMs=actualFrameMs;
+                                clip.effects.put("nativeNeuralFrame",true)
+                                        .put("neuralFps",NativeOfflineVideoPlan.FPS)
+                                        .put("neuralFrameIndex",frameIndex);
                                 generated.add(result);clips.add(clip);
                                 if(progress!=null)progress.update(10+(int)(80d*(shot*9+frame+1)/(scenes*9)),
                                         "Decoding newly generated frame "+(shot*9+frame+1)+"/"+scenes*9);
