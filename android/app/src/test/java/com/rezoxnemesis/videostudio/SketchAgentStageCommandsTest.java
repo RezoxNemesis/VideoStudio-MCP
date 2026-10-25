@@ -76,7 +76,7 @@ public final class SketchAgentStageCommandsTest {
                 assertEquals(i==4?"applied":"queued",result.getString("state"));
             }
             assertNull(stage.claim(doc.getString("id")));
-            assertTrue(stage.status(request).getBoolean("applied"));
+            assertTrue(stage.status(new JSONObject().put("sketchId",doc.getString("id")).put("operationId",request.getString("operationId"))).getBoolean("applied"));
         }
         try(SketchProjectStore projects=new SketchProjectStore(app)){
             assertEquals(before,SketchDocument.canonical(projects.get(doc.getString("id"))));
@@ -94,8 +94,8 @@ public final class SketchAgentStageCommandsTest {
             assertEquals("running",stage.status(new JSONObject().put("sketchId",doc.getString("id"))
                     .put("operationId",program.getString("operationId")))).getString("state"));
             stage.release(claimed);
-            assertEquals("queued",stage.status(program).getString("state"));
-            assertEquals(0,stage.status(program).getInt("completedSteps"));
+            assertEquals("queued",stage.status(new JSONObject().put("sketchId",doc.getString("id")).put("operationId",program.getString("operationId"))).getString("state"));
+            assertEquals(0,stage.status(new JSONObject().put("sketchId",doc.getString("id")).put("operationId",program.getString("operationId"))).getInt("completedSteps"));
             assertNotNull(stage.claim(doc.getString("id")));
         }
     }
@@ -112,7 +112,7 @@ public final class SketchAgentStageCommandsTest {
             IllegalStateException error=assertThrows(IllegalStateException.class,
                     ()->stage.enqueue(app,conflicting));
             assertTrue(error.getMessage().contains("OPERATION_CONFLICT"));
-            assertEquals("queued",stage.status(program).getString("state"));
+            assertEquals("queued",stage.status(new JSONObject().put("sketchId",doc.getString("id")).put("operationId",program.getString("operationId"))).getString("state"));
         }
     }
 
