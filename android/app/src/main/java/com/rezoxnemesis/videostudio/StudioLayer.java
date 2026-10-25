@@ -13,7 +13,7 @@ import java.util.UUID;
  * EditedMediaItemSequences, with time offsets.
  */
 public final class StudioLayer {
-    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video", SHAPE="shape", GROUP="group", CAMERA="camera2d";
+    public static final String AUDIO="audio", TITLE="title", IMAGE="image", VIDEO="video", SHAPE="shape", VFX="vfx", GROUP="group", CAMERA="camera2d";
     public String id=UUID.randomUUID().toString();
     public String type=TITLE;
     public String assetId="";
@@ -45,8 +45,14 @@ public final class StudioLayer {
     public String shapeKind="rect";
     public int strokeColor=0xffffffff;
     public float strokeWidth=.02f;
+    /** Source-free timestamp-sampled atmosphere lane. */
+    public String vfxKind="rain";
+    public int particleCount=32,particleSeed=7331;
+    public float particleSpeed=1f,particleSize=.008f;
     private static final String[] CAPTION_FIELDS={"fontSize","fontFamily","fontStyle","textAlign","backgroundColor"};
     private static final Set<String> SHAPE_KINDS=Set.of("rect","ellipse","ring","diamond","line","grid");
+    private static final Set<String> VFX_KINDS=Set.of("rain","sparks","energy","embers","snow","confetti");
+    private static final Set<String> VFX_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","vfxKind","particleCount","particleSeed","particleSpeed","particleSize","motionKeyframes");
     private static final Set<String> SHAPE_FIELDS=Set.of("id","type","startMs","durationMs","x","y","width","height","rotation","opacity","color","shapeKind","strokeColor","strokeWidth","motionKeyframes","mask","parentId");
     private static final Set<String> GROUP_FIELDS=Set.of("id","type","startMs","durationMs","motionKeyframes");
     private static final Set<String> CAMERA_FIELDS=Set.of("id","type","startMs","durationMs","motionKeyframes");
@@ -57,8 +63,8 @@ public final class StudioLayer {
 
     public void validate(){
         if(id==null||id.isEmpty()||id.length()>128)throw new IllegalArgumentException("Layer ID must contain 1..128 characters");
-        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type)&&!CAMERA.equals(type))
-            throw new IllegalArgumentException("Only real audio, caption, image, video and native shape lanes are supported");
+        if(!AUDIO.equals(type)&&!TITLE.equals(type)&&!IMAGE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!VFX.equals(type)&&!GROUP.equals(type)&&!CAMERA.equals(type))
+            throw new IllegalArgumentException("Only real audio, caption, image, video, native shapes and VFX lanes are supported");
         if(VIDEO.equals(type)){
             if(!"silent".equals(audioMode))throw new IllegalArgumentException("Video lanes require audioMode:\"silent\"");
             if(text==null||!text.isEmpty()||gain!=1f||color!=0xffffffff||position!=1)
@@ -88,6 +94,16 @@ public final class StudioLayer {
                     ||position!=1||audioMode.length()!=0||mask!=null||!parentId.isEmpty())
                 throw new IllegalArgumentException("Motion GROUP must be source-free and cannot be nested");
             if(motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
+        }
+        if(VFX.equals(type)){
+            if((assetId!=null&&!assetId.isEmpty())||(text!=null&&!text.isEmpty())
+                    ||gain!=1f||position!=1||mask!=null||!parentId.isEmpty())
+                throw new IllegalArgumentException("VFX cannot own media, audio, masks or a motion parent");
+            if(!VFX_KINDS.contains(vfxKind)||particleCount<1||particleCount>96
+                    ||particleSeed<0||particleSeed>1_000_000
+                    ||!Float.isFinite(particleSpeed)||particleSpeed<.1f||particleSpeed>6f
+                    ||!Float.isFinite(particleSize)||particleSize<.001f||particleSize>.05f)
+                throw new IllegalArgumentException("Invalid VFX emitter parameters");
         }
         if(SHAPE.equals(type)){
             if((assetId!=null&&!assetId.isEmpty())||(text!=null&&!text.isEmpty())||gain!=1f||position!=1)
@@ -124,15 +140,15 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Caption styles are only supported on title layers");
         if(AUDIO.equals(type)&& (assetId==null||assetId.trim().isEmpty()))
             throw new IllegalArgumentException("Audio lane needs an imported audio asset");
-        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!GROUP.equals(type)&&!CAMERA.equals(type))
-            throw new IllegalArgumentException("motionKeyframes is only supported on image, title, shape or video layers");
+        if(motionKeyframes!=null&&!IMAGE.equals(type)&&!TITLE.equals(type)&&!VIDEO.equals(type)&&!SHAPE.equals(type)&&!VFX.equals(type)&&!GROUP.equals(type)&&!CAMERA.equals(type))
+            throw new IllegalArgumentException("motionKeyframes is only supported on visual motion layers");
         if(glyphAnimation!=null){
             if(!TITLE.equals(type))throw new IllegalArgumentException("Glyph animation requires a title layer");
             if(backgroundColor!=0)throw new IllegalArgumentException("Glyph animation cannot rasterize a legacy full-line background");
             StudioGlyphAnimation.validate(glyphAnimation,text,durationMs);
         }
         if(TITLE.equals(type)&&motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
-        if(IMAGE.equals(type)||VIDEO.equals(type)||SHAPE.equals(type)){
+        if(IMAGE.equals(type)||VIDEO.equals(type)||SHAPE.equals(type)||VFX.equals(type)){
             String name=VIDEO.equals(type)?"Video":"Image";
             if(!SHAPE.equals(type)&&(assetId==null||assetId.trim().isEmpty()))throw new IllegalArgumentException(name+" lane needs an imported "+type+" asset");
             if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1
@@ -149,6 +165,7 @@ public final class StudioLayer {
     public JSONObject toJson(){
         if(VIDEO.equals(type))return videoJson();
         if(SHAPE.equals(type))return shapeJson();
+        if(VFX.equals(type))return vfxJson();
         if(GROUP.equals(type))return groupJson();
         if(CAMERA.equals(type))return cameraJson();
         JSONObject obj=new JSONObject();
@@ -193,6 +210,7 @@ public final class StudioLayer {
             throw new IllegalArgumentException("Glyph animation only belongs on title layers");
         if(VIDEO.equals(l.type))return videoFromJson(o,l);
         if(SHAPE.equals(l.type))return shapeFromJson(o,l);
+        if(VFX.equals(l.type))return vfxFromJson(o,l);
         if(GROUP.equals(l.type))return groupFromJson(o,l);
         if(CAMERA.equals(l.type))return cameraFromJson(o,l);
         if(o.has("shapeKind")||o.has("strokeColor")||o.has("strokeWidth"))
@@ -301,6 +319,50 @@ public final class StudioLayer {
             catch(org.json.JSONException error){throw new IllegalArgumentException("Could not read shape motion keys",error);}
         }
         l.validate();return l;
+    }
+
+    /** New VFX encoding does not alter legacy title/image/shape/audio JSON. */
+    private JSONObject vfxJson(){
+        validate();
+        JSONObject o=new JSONObject();
+        try{
+            o.put("id",id).put("type",VFX).put("startMs",startMs).put("durationMs",durationMs);
+            o.put("x",x).put("y",y).put("width",width==.01f?.01:(double)width)
+                    .put("height",height==.01f?.01:(double)height).put("rotation",rotation)
+                    .put("opacity",opacity).put("color",color);
+            o.put("vfxKind",vfxKind).put("particleCount",particleCount)
+                    .put("particleSeed",particleSeed).put("particleSpeed",particleSpeed)
+                    .put("particleSize",particleSize);
+            if(motionKeyframes!=null)o.put("motionKeyframes",new JSONArray(motionKeyframes.toString()));
+        }catch(org.json.JSONException error){throw new IllegalArgumentException("Could not serialize VFX",error);}
+        return o;
+    }
+
+    private static StudioLayer vfxFromJson(JSONObject o,StudioLayer lane){
+        java.util.Iterator<String> fields=o.keys();
+        while(fields.hasNext())if(!VFX_FIELDS.contains(fields.next()))
+            throw new IllegalArgumentException("Unsupported VFX field");
+        lane.type=VFX;
+        lane.startMs=o.has("startMs")?StudioClipKeyframes.integer(o,"startMs",0,86_400_000):0;
+        lane.durationMs=o.has("durationMs")?StudioClipKeyframes.integer(o,"durationMs",100,86_400_000):2500;
+        lane.x=(float)StudioClipKeyframes.number(o,"x",.5,0,1);
+        lane.y=(float)StudioClipKeyframes.number(o,"y",.5,0,1);
+        lane.width=(float)StudioClipKeyframes.number(o,"width",.35,.01,2);
+        lane.height=(float)StudioClipKeyframes.number(o,"height",.35,.01,2);
+        lane.rotation=(float)StudioClipKeyframes.number(o,"rotation",0,-360,360);
+        lane.opacity=(float)StudioClipKeyframes.number(o,"opacity",1,0,1);
+        lane.color=o.optInt("color",0xffffffff);
+        lane.vfxKind=o.optString("vfxKind","rain");
+        lane.particleCount=o.has("particleCount")?(int)StudioClipKeyframes.integer(o,"particleCount",1,96):32;
+        lane.particleSeed=o.has("particleSeed")?(int)StudioClipKeyframes.integer(o,"particleSeed",0,1_000_000):7331;
+        lane.particleSpeed=(float)StudioClipKeyframes.number(o,"particleSpeed",1,.1,6);
+        lane.particleSize=(float)StudioClipKeyframes.number(o,"particleSize",.008,.001,.05);
+        if(o.has("motionKeyframes")){
+            if(!(o.opt("motionKeyframes") instanceof JSONArray))
+                throw new IllegalArgumentException("VFX motion keys must be an array");
+            lane.motionKeyframes=o.optJSONArray("motionKeyframes");
+        }
+        lane.validate();return lane;
     }
 
     /** Source-free non-rendering group with exact local motion keys. */
