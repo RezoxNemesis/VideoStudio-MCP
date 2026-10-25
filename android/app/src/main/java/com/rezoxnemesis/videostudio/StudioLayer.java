@@ -150,7 +150,7 @@ public final class StudioLayer {
         if(TITLE.equals(type)&&motionKeyframes!=null)StudioLayerMotion.fromLayer(this);
         if(IMAGE.equals(type)||VIDEO.equals(type)||SHAPE.equals(type)||VFX.equals(type)){
             String name=VIDEO.equals(type)?"Video":"Image";
-            if(!SHAPE.equals(type)&&(assetId==null||assetId.trim().isEmpty()))throw new IllegalArgumentException(name+" lane needs an imported "+type+" asset");
+            if(!SHAPE.equals(type)&&!VFX.equals(type)&&(assetId==null||assetId.trim().isEmpty()))throw new IllegalArgumentException(name+" lane needs an imported "+type+" asset");
             if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1
                     ||!Float.isFinite(width)||!Float.isFinite(height)||width<.01f||width>2||height<.01f||height>2
                     ||!Float.isFinite(rotation)||rotation<-360||rotation>360||!Float.isFinite(opacity)||opacity<0||opacity>1)
