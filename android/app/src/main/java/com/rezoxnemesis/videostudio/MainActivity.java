@@ -1552,6 +1552,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             }
             else{box.addView(studioButton("Animate title",()->openStudioTitleMotion(layer)));box.addView(studioButton("Edit caption",()->editStudioTitle(layer)));box.addView(studioButton("Delete caption",()->removeStudioLayer(layer)));}
         }else if(selectedClip!=null){
+            box.addView(studioButton("Color Studio · GPU nodes and presets",this::openStudioResolveColor));
             ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);box.addView(body((asset==null?"Missing media":asset.name)+" · "+StudioEditCursor.timecode(selectedClip.outputDurationMs())));
             String[] tools={"Crop","Keyframes","Trim","Slow Motion","Volume","Exact Transform","Colour","Adjust","Blur","Opacity","Green Screen","Mask","Glow","Effects","Motion","Shake","Duplicate","Delete Clip","Move Left","Move Right"};
             Runnable[] callbacks=new Runnable[tools.length];for(int i=0;i<tools.length;i++){String tool=tools[i];callbacks[i]=()->{if("Trim".equals(tool))trimDialog();else if("Duplicate".equals(tool))applyTool("Duplicate");else performStudioTool(tool);};}
@@ -2515,6 +2516,30 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                     retained.removeIf(x->x.id.equals(lane.id));applyStudioLayerList(retained,revision);
                 })
                 .setNegativeButton("Cancel",null).show();
+    }
+
+    /** Native DaVinci-inspired Color page, with same revision guards as ChatGPT MCP. */
+    private void openStudioResolveColor(){
+        if(activeProject==null||selectedClip==null){
+            onStudioNoTarget();return;
+        }
+        final String currentId=selectedClip.id;
+        final ProjectStore.Project before=ProjectStore.Project.fromJson(activeProject.toJson());
+        try{
+            StudioResolveColorDialog.show(this,store,activeProject,currentId,changed->{
+                // One color edit is one undo checkpoint. Original owned media
+                // and all other clip/layer data are unchanged by this operation.
+                editHistory.checkpoint(before);
+                activeProject=changed;selectedClip=null;
+                for(ProjectStore.Clip clip:changed.clips)if(currentId.equals(clip.id)){
+                    selectedClip=clip;break;
+                }
+                syncProtocolState();
+                showEditor();
+            });
+        }catch(Exception error){
+            Toast.makeText(this,"Color page unavailable: "+error.getMessage(),Toast.LENGTH_LONG).show();
+        }
     }
 
     private void studioAdvancedAdjustDialog(boolean transform){
