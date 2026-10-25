@@ -98,7 +98,10 @@ public final class SketchAgentStageCommands implements AutoCloseable {
                 .put("humanGestureControls",SketchAgentGestureOps.capabilities())
                 .put("mutatingGesturesTerminalOnly",true)
                 .put("persistedWithoutBackgroundUI",true)
-                .put("originalDocumentUnchanged",true)
+                .put("navigationStepsSourceUnchanged",true)
+                .put("sourceChangingGestureSteps",new JSONArray().put("object_drag").put("node_drag"))
+                .put("sourceChangesOnlyAfterForegroundCommit",true)
+                .put("originalDocumentUnchanged",false)
                 .put("galleryAccess",false);
     }
 
