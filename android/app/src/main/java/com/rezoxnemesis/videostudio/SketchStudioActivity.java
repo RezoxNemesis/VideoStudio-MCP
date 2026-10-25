@@ -465,8 +465,21 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
             timing.setSelection(Math.max(0,java.util.Arrays.asList(modes).indexOf(mode)));form.addView(timing);
             String controlValues=authored!=null&&authored.has("curve")?commaValues(authored.getJSONArray("curve")):"0.42, 0, 1, 1";
             EditText curve=input("Bezier timing: x1, y1, x2, y2",controlValues,false);form.addView(curve);
+            SketchTimelineCurveView curveGraph=new SketchTimelineCurveView(this);
+            curveGraph.setCurve(new JSONArray("["+controlValues+"]"));
+            curveGraph.setListener(handles->{try{
+                curve.setText(commaValues(handles));timing.setSelection(5);
+            }catch(Exception ignored){}});
+            form.addView(curveGraph,new LinearLayout.LayoutParams(-1,dp(205)));
+            button(row(form),"Update curve graph from numeric handles",()->{try{
+                curveGraph.setCurve(new JSONArray("["+curve.getText().toString()+"]"));
+            }catch(Exception bad){onMessage(bad.getMessage());}});
             curve.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){curve.setVisibility(position==5?View.VISIBLE:View.GONE);}});
+            curveGraph.setVisibility("bezier".equals(mode)?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int position){
+                curve.setVisibility(position==5?View.VISIBLE:View.GONE);
+                curveGraph.setVisibility(position==5?View.VISIBLE:View.GONE);
+            }});
             new AlertDialog.Builder(this).setTitle(objectId == null ? "Layer transform" : "Object transform").setView(form).setNegativeButton("Cancel", null)
                     .setNeutralButton("Remove key", (d,w) -> { try { onOperation(targetOperation("set_keyframe", objectId).put("frame", canvas.getFrame()).put("remove", true)); } catch (Exception e) { onMessage(e.getMessage()); } })
                     .setPositiveButton("Apply", (d,w) -> { try { JSONObject transform = new JSONObject(); for (int i = 0; i < keys.length; i++) { double value = Double.parseDouble(values[i].getText().toString()); if (i == 0) value /= document.getInt("width"); if (i == 1) value /= document.getInt("height"); transform.put(keys[i], value); }
@@ -498,8 +511,21 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     new String[]{"Linear","Smooth","Hold","Ease in","Ease out","Ease in/out","Bezier"}));
             timing.setSelection(prior==null?0:Math.max(0,java.util.Arrays.asList(modes).indexOf(prior.getString("interpolation"))));form.addView(timing);
             EditText curve=input("Bezier timing: x1, y1, x2, y2",prior!=null&&prior.has("curve")?commaValues(prior.getJSONArray("curve")):"0.42, 0, 1, 1",false);form.addView(curve);
+            SketchTimelineCurveView curveGraph=new SketchTimelineCurveView(this);
+            curveGraph.setCurve(new JSONArray("["+curve.getText().toString()+"]"));
+            curveGraph.setListener(handles->{try{
+                curve.setText(commaValues(handles));timing.setSelection(6);
+            }catch(Exception ignored){}});
+            form.addView(curveGraph,new LinearLayout.LayoutParams(-1,dp(205)));
+            button(row(form),"Update curve graph from numeric handles",()->{try{
+                curveGraph.setCurve(new JSONArray("["+curve.getText().toString()+"]"));
+            }catch(Exception bad){onMessage(bad.getMessage());}});
             curve.setVisibility(timing.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
-            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){curve.setVisibility(index==6?View.VISIBLE:View.GONE);}});
+            curveGraph.setVisibility(timing.getSelectedItemPosition()==6?View.VISIBLE:View.GONE);
+            timing.setOnItemSelectedListener(new SimpleSelection(){@Override public void selected(int index){
+                curve.setVisibility(index==6?View.VISIBLE:View.GONE);
+                curveGraph.setVisibility(index==6?View.VISIBLE:View.GONE);
+            }});
             button(row(form),"Clear shape animation",()->{try{onOperation(new JSONObject().put("type","update_object").put("objectId",id).put("patch",new JSONObject().put("shapeKeys",new JSONArray())));}catch(Exception failure){onMessage(failure.getMessage());}});
             new AlertDialog.Builder(this).setTitle("Shape key · frame "+(frame+1)).setView(form).setNegativeButton("Cancel",null)
                 .setNeutralButton("Remove key",(dialog,which)->{try{onOperation(new JSONObject().put("type","set_shape_key").put("objectId",id).put("frame",frame).put("remove",true));}catch(Exception failure){onMessage(failure.getMessage());}})
