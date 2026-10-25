@@ -44,6 +44,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
     public static final String ACTION_RETRY_RECOVERY = "com.rezoxnemesis.videostudio.RETRY_HELD_RECOVERY";
+    public static final String ACTION_ALLOW_FRESH_RENDER = "com.rezoxnemesis.videostudio.ALLOW_FRESH_RENDER_WHILE_OLD_HELD";
     public static final String ACTION_SYNC = "com.rezoxnemesis.videostudio.SYNC_STATE";
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
@@ -215,6 +216,20 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     "info",null,null,null);
             scheduleDeferredRecovery(4_000L);
             updateNotification("Native recovery retry requested");
+        } else if (ACTION_ALLOW_FRESH_RENDER.equals(action)) {
+            try {
+                if(startupGuard==null)throw new IllegalStateException("Native startup guard unavailable");
+                startupGuard.allowFreshHeavyAfterOwnerCheck(System.currentTimeMillis());
+                ActivityLog.add(this,"user","New renders explicitly unlocked",
+                        "Fresh heavy jobs allowed for 30 minutes; interrupted old jobs remain held",
+                        "info",null,null,null);
+                updateNotification("New rendering permitted; old interrupted work stays held");
+                syncProtocolState();
+            }catch(Exception rejected){
+                ActivityLog.add(this,"system","New render unlock rejected",
+                        rejected.getMessage()==null?"Open VideoStudio first":rejected.getMessage(),
+                        "info",null,null,null);
+            }
         } else if (ACTION_RECONNECT.equals(action)) {
             syncProtocolState();
             protocol.forceReconnect();
@@ -638,11 +653,16 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             return;
         }
 
-        if(startupGuard!=null&&startupGuard.held()&&NativeStartupGuard.heavy(action)){
+        boolean oldRecovery= p!=null && !p.optString("_recoveryPlanId","").isEmpty();
+        boolean unsafeHeavy=startupGuard!=null&&startupGuard.held()&&NativeStartupGuard.heavy(action)
+                &&(oldRecovery||!startupGuard.mayStartFreshHeavy(action,System.currentTimeMillis()));
+        if(unsafeHeavy){
             JSONObject refused=new JSONObject();
             try{
                 refused.put("ok",false).put("code","NATIVE_RECOVERY_HELD");
-                refused.put("error","Previous render interrupted startup; project preserved. Retry only after the app opens safely.");
+                refused.put("error","Previous render interrupted startup. Old work is preserved. "
+                        +"To start a NEW render only, open VideoStudio and explicitly allow fresh rendering "
+                        +"for this session; old recovery remains protected.");
                 refused.put("projectId",projectId);
             }catch(Exception ignored){}
             commandJournal.finish(command,refused,"failed");
