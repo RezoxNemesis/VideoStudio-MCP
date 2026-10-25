@@ -21,6 +21,7 @@ final class NativeAgentMailboxActions {
   "sketch_archive",
   "sketch_restore_archive",
   "sketch_stage_capabilities","sketch_stage_execute","sketch_stage_status",
+  "sketch_live_view_capabilities","sketch_live_view_control","sketch_live_view_status",
   "sketch_xsheet",
   "sketch_path_nodes",
   "sketch_edit",
