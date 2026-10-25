@@ -1958,7 +1958,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
         if(agentStageIndicator!=null)
             agentStageIndicator.setText("ChatGPT  ·  saving real Bézier key through Sketch Studio…");
         io.execute(()->{
-            boolean persisted=false;
+            boolean persisted=false,verifiedStorage=false;
             long revisionAfter=-1;
             JSONObject stored=null;
             String issue="";
@@ -1994,10 +1994,12 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 }
                 if(!plan.matchesTarget(storedCurve))
                     throw new IllegalStateException("Saved timing values do not match the visible handle target");
+                verifiedStorage=true;
             }catch(Exception error){
                 issue=error.getMessage()==null?error.getClass().getSimpleName():error.getMessage();
             }
-            final boolean saved=persisted;
+            final boolean saved=persisted&&verifiedStorage;
+            final boolean sourceWasWritten=persisted;
             final long savedRevision=revisionAfter;
             final JSONObject newDocument=stored;
             final String finalEditId=editId,finalIssue=issue;
@@ -2028,7 +2030,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                     while(keys.hasNext()){
                         String key=keys.next();evidence.put(key,visual.opt(key));
                     }
-                    evidence.put("documentModified",saved)
+                    evidence.put("documentModified",sourceWasWritten)
                             .put("nativeEditId",finalEditId)
                             .put("savedRevision",savedRevision)
                             .put("savedAndDisplayed",adopted)
@@ -2036,7 +2038,7 @@ public final class SketchStudioActivity extends Activity implements SketchCanvas
                 }catch(Exception ignored){}
                 settleAgentStage(claim,adopted,
                         adopted?"Actual timing curve saved and displayed at revision "+savedRevision:
-                                saved?"Native timing saved, but foreground view changed; reload source":
+                                sourceWasWritten?"Timing was saved, but could not be verified in the foreground; reload source":
                                         "Bézier handle not saved: "+finalIssue,
                         evidence);
             });
