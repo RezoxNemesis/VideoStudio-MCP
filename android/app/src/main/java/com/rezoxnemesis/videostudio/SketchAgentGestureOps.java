@@ -20,7 +20,8 @@ public final class SketchAgentGestureOps {
     private SketchAgentGestureOps(){}
 
     public static final class Plan {
-        public final String action,objectId,layerId;
+        public final String action,objectId,layerId,sourceSketchId;
+        public final long sourceRevision;
         public final int frameIndex,durationMs;
         public final JSONObject sourceTransform,targetTransform,editOperation,sourceObject;
         public final JSONArray sourceCommands;
@@ -33,6 +34,8 @@ public final class SketchAgentGestureOps {
              JSONObject before,JSONObject after,JSONArray commands,int commandIndex,int pairIndex,
              double x0,double y0,double x1,double y1)throws Exception{
             this.drawing=SketchDocument.copy(drawing);
+            sourceSketchId=drawing.getString("id");
+            sourceRevision=drawing.getLong("revision");
             this.owner=SketchDocument.copy(owner);
             sourceObject=SketchDocument.copy(object);
             editOperation=SketchDocument.copy(edit);
