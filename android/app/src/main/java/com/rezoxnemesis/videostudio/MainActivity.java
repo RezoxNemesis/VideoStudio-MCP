@@ -2133,6 +2133,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                         showStudioPreviewError(error);
                     });
             player().setContextIds("",selectedClip==null?"":selectedClip.id);
+            // Candidate allocation/preparation is not proof of a live edited player.
+            // Never clear the visible error if the native graph failed admission.
+            if(!player().isEditedPreview()){
+                timelinePreviewRunning=false;
+                if(studioPreviewError.isEmpty())showStudioPreviewError(
+                        "Edited preview is still unavailable: the Media3 composition could not be activated.");
+                updateStudioPlayToggle();
+                return false;
+            }
             if(studioStillPreview!=null)studioStillPreview.setVisibility(View.GONE);
             if(studioCaptionPreview!=null)studioCaptionPreview.setVisibility(View.GONE);
             if(stillTimelineNext!=null){ui.removeCallbacks(stillTimelineNext);stillTimelineNext=null;}
