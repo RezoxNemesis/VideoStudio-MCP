@@ -148,11 +148,12 @@ public final class StudioResolveColorGraph {
         JSONArray v=node.optJSONArray(key);
         if(v==null){
             if(node.has(key))throw new IllegalArgumentException(key+" needs exactly 3 numeric channels");
-            return new JSONArray().put(def).put(def).put(def);
+            return new JSONArray().put((Object)Double.valueOf(def))
+                    .put((Object)Double.valueOf(def)).put((Object)Double.valueOf(def));
         }
         if(v.length()!=3)throw new IllegalArgumentException(key+" must contain three channels");
         JSONArray rgb=new JSONArray();
-        for(int i=0;i<3;i++)rgb.put(numberAtRgb(v,i,key,lo,hi));
+        for(int i=0;i<3;i++)rgb.put((Object)Double.valueOf(numberAtRgb(v,i,key,lo,hi)));
         return rgb;
     }
     private static double numberAtRgb(JSONArray values,int i,String label,double lo,double hi) {
