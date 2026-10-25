@@ -25,18 +25,22 @@ public final class StudioTimedShapeOverlay extends BitmapOverlay {
     private final StudioLayer layer;
     private final StudioLayerMotion motion;
     private final StudioParentGroupTransform parent;
+    private final StudioLayer matte;
     private Bitmap raster;
     private boolean released;
     private int frameWidth = 1, frameHeight = 1;
 
-    public StudioTimedShapeOverlay(StudioLayer incoming){this(incoming,null);}
-    public StudioTimedShapeOverlay(StudioLayer incoming,StudioLayer group) {
+    public StudioTimedShapeOverlay(StudioLayer incoming){this(incoming,null,null);}
+    public StudioTimedShapeOverlay(StudioLayer incoming,StudioLayer group){this(incoming,group,null);}
+    public StudioTimedShapeOverlay(StudioLayer incoming,StudioLayer group,StudioLayer matteSource) {
         if (incoming == null || !StudioLayer.SHAPE.equals(incoming.type))
             throw new IllegalArgumentException("A native original shape lane is required");
         incoming.validate();
         layer = incoming.copy();
         motion = StudioLayerMotion.fromLayer(layer);
         parent=group==null?null:new StudioParentGroupTransform(group);
+        if(matteSource!=null)StudioTrackMatteRasterizer.validatePair(layer,matteSource);
+        matte=matteSource==null?null:matteSource.copy();
     }
 
     @Override public void configure(Size frame) {
@@ -57,6 +61,7 @@ public final class StudioTimedShapeOverlay extends BitmapOverlay {
             try {
                 raster = drawOriginalShape(layer);
                 if(layer.mask!=null)StudioMaskRasterizer.apply(raster,layer.mask);
+                if(matte!=null)StudioTrackMatteRasterizer.apply(raster,layer,matte);
             } catch (RuntimeException | OutOfMemoryError error) {
                 throw new VideoFrameProcessingException("Could not construct native shape geometry", error);
             }
