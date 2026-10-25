@@ -112,7 +112,7 @@ public class SketchAgentStageControlTest {
         assertThrows(IllegalArgumentException.class,()->
                 SketchAgentStageControl.stage(context,request));
         request.put("steps",new JSONArray().put(new JSONObject()
-                .put("type","viewport").put("x",Double.NaN).put("y",.3).put("zoom",2)));
+                .put("type","viewport").put("x","NaN").put("y",.3).put("zoom",2)));
         assertThrows(Exception.class,()->SketchAgentStageControl.stage(context,request));
         request.put("steps",new JSONArray().put(new JSONObject()
                 .put("type","frame").put("frame",99999)));
@@ -121,10 +121,10 @@ public class SketchAgentStageControlTest {
         request.put("steps",new JSONArray().put(new JSONObject()
                 .put("type","object").put("objectId","another-user-private-object")));
         assertThrows(Exception.class,()->SketchAgentStageControl.stage(context,request));
-        request=request(doc);
-        request.put("expectedRevision",doc.getLong("revision")+1);
+        JSONObject stale=request(doc);
+        stale.put("expectedRevision",doc.getLong("revision")+1);
         assertThrows(IllegalStateException.class,()->
-                SketchAgentStageControl.stage(context,request));
+                SketchAgentStageControl.stage(context,stale));
     }
 
     @Test public void ownershipAndRevisionGuardRejectWrongVisibleCanvas()throws Exception{
