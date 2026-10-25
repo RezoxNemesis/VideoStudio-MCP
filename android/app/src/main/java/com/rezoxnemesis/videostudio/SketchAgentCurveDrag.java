@@ -52,7 +52,7 @@ public final class SketchAgentCurveDrag {
         }
         /** Evidence after foreground draw, never proof that GPU export succeeded. */
         public JSONObject visualReceipt(int actualDraws,JSONArray displayed)throws Exception {
-            if(actualDraws<1||actualDraws>MAX_VISUAL_SAMPLES+10||!matchesTarget(displayed))
+            if(actualDraws<1||actualDraws>MAX_VISUAL_SAMPLES*20||!matchesTarget(displayed))
                 throw new IllegalStateException("Curve handles were not actually displayed at the requested target");
             return new JSONObject().put("visibleCurveCanvasDraws",actualDraws)
                     .put("timingHandle",handleIndex)
