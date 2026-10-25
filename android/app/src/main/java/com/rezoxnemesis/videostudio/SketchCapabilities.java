@@ -456,6 +456,7 @@ public final class SketchCapabilities {
                 .put("nativeXsheet",new JSONObject().put("minimumNativeVersion","4.5.5")
                         .put("action","sketch_xsheet").put("readOnly",true)
                         .put("writableExposureEdit",SketchXsheetEdits.capabilities())
+                .put("exactNodeControl",SketchPathNodeOps.capabilities())
                         .put("maximumRowsPerPage",48).put("columns","authored layer order")
                         .put("states",new JSONArray(new String[]{"drawing","hold","blank"}))
                         .put("transformKeyMarkers",true).put("exposureParityWithRenderer",true))

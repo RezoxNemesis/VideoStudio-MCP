@@ -723,6 +723,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "sketch_xsheet":
                     complete(command,SketchEditOps.execute(this,"sketch_xsheet",p));return;
+                case "sketch_path_nodes":
+                    complete(command,SketchEditOps.execute(this,"sketch_path_nodes",p));return;
                 case "sketch_edit": complete(command,SketchAgentLiveBridge.edit(this,p));return;
                 case "sketch_create": case "sketch_list": case "sketch_get": case "sketch_inspect": case "sketch_review": case "sketch_quality_audit":
                 case "sketch_paint_journal": case "sketch_sample_color":

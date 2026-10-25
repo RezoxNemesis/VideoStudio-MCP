@@ -24,7 +24,7 @@ public final class SketchEditOps {
         // A hidden guide is preparatory data, not a request to change the
         // foreground drawing. Actual edits and live sessions still follow.
         boolean hiddenGuideImport="sketch_import_reference".equals(action)&&!args.optBoolean("guideVisible",true);
-        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_layered_drawing_preview","sketch_reference_layers_preview","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_paint_journal","sketch_sample_color","sketch_master_preview").contains(action)){
+        if(result.has("sketchId")&&!hiddenGuideImport&&!java.util.Arrays.asList("sketch_get","sketch_layered_drawing_preview","sketch_reference_layers_preview","sketch_preview","sketch_review","sketch_quality_audit","sketch_list","sketch_live_events","sketch_inspect","sketch_xsheet","sketch_path_nodes","sketch_paint_journal","sketch_sample_color","sketch_master_preview").contains(action)){
             signalChanged(context,action,result);
         }
         return result;
@@ -66,6 +66,10 @@ public final class SketchEditOps {
             }
             if("sketch_inspect".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit,characterLayerIds,contourObjectIds,paintMeshPreparation");JSONObject doc=store.get(id);if(args.has("expectedRevision"))SketchProjectStore.requireRevision(doc,SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));JSONObject result=SketchInspection.inspect(doc,args);if(args.has("paintMeshPreparation")){JSONObject prep=args.getJSONObject("paintMeshPreparation");SketchDocument.fields(prep,"objectId,columns,rows,focusToInk");JSONObject request=SketchDocument.copy(prep).put("sketchId",id).put("expectedRevision",SketchDocument.integer(args,"expectedRevision",1,Long.MAX_VALUE-1));result.put("paintMeshPreparation",SketchPaintMeshPrepare.prepare(context,request));}return result;
+            }
+            if("sketch_path_nodes".equals(action)){
+                JSONObject doc=store.get(id);
+                return SketchPathNodeOps.inspect(doc,args);
             }
             if("sketch_xsheet".equals(action)){
                 SketchDocument.fields(args,"sketchId,expectedRevision,frameOffset,frameLimit");
@@ -477,6 +481,7 @@ public final class SketchEditOps {
                 JSONArray keys=reference.getJSONArray("keys");for(int n=0;n<keys.length();n++)referenceOpacity(keys.getJSONObject(n).getJSONObject("transform"),visible);
                 break;
             }
+            case "move_path_node": { SketchPathNodeOps.apply(doc,op);break; }
             case "set_shape_key": {
                 JSONObject item=target(doc,op);if(item.has("masterLink"))throw SketchDocument.bad("Use master_patch for linked path geometry");SketchShapeKeys.apply(item,op,doc.getInt("frameCount"));break;
             }

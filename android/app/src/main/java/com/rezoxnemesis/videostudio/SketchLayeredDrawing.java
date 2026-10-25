@@ -143,6 +143,11 @@ public final class SketchLayeredDrawing {
                 if(object.getInt("frame")==source){authored(object,true);authoredCel=true;}
             }
             if(!authoredCel)throw denied("Choose the original authored drawing-start cell");
+        }else if("move_path_node".equals(type)){
+            SketchDocument.fields(op,"type,objectId,frameIndex,commandIndex,pairIndex,x,y");
+            JSONObject object=SketchDocument.object(doc,SketchDocument.id(op,"objectId"));
+            layerId=SketchDocument.owner(doc,object.getString("id")).getString("id");
+            authored(object,true);
         }else if(Arrays.asList("append_points","update_object","delete_object","set_exposure","reorder_object").contains(type)){
             String id=op.getString("objectId");JSONObject object=SketchDocument.object(doc,id);layerId=SketchDocument.owner(doc,id).getString("id");authored(object,true);
             if("update_object".equals(type)){JSONObject candidate=SketchDocument.copy(object),patch=op.getJSONObject("patch");Iterator<String> keys=patch.keys();while(keys.hasNext()){String key=keys.next();candidate.put(key,patch.get(key));}authored(candidate,true);}
