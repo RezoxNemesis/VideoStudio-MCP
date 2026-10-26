@@ -66,6 +66,37 @@ public class StudioKeyframeManagerTest {
         dialog.dismiss();close(store);
     }
 
+    @Test public void curvePresetsEditClipMotionAndOpacityWithNativeBezierHandles()throws Exception{
+        MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();
+        final JSONObject[] effects={new JSONObject()};
+        final int[] saves={0};
+        AlertDialog dialog=StudioKeyframeEditor.show(activity,effects[0],1000,0,fragment->{
+            try{
+                effects[0]=StudioKeyframeEdits.apply(effects[0],1000,fragment.getJSONArray("keyframeEdits"));
+                saves[0]++;return true;
+            }catch(Exception error){throw new AssertionError(error);}
+        },ignored->{});
+        View form=dialog.getWindow().getDecorView();
+        assertNotNull("Native editable curve must be visible",find(form,StudioBezierCurveView.class));
+        assertNotNull(input(form,"Exact cubic Bezier handles x1,y1,x2,y2"));
+        button(form,"Smooth").performClick();
+        assertEquals("cubic_bezier",spinner(form).getSelectedItem());
+        assertEquals("Preset is draft-only until key is explicitly saved",0,saves[0]);
+        input(form,"Keyframe opacity").setText("0.5");
+        button(form,"Add / update key").performClick();
+        assertEquals(1,saves[0]);
+        JSONObject saved=effects[0].getJSONArray("keyframes").getJSONObject(0);
+        assertEquals("cubic_bezier",saved.getString("easing"));
+        assertEquals(4,saved.getJSONArray("bezier").length());
+        assertEquals(.5,saved.getDouble("opacity"),0);
+        button(form,"Linear").performClick();
+        button(form,"Add / update key").performClick();
+        saved=effects[0].getJSONArray("keyframes").getJSONObject(0);
+        assertEquals("linear",saved.getString("easing"));
+        assertFalse("Switching from custom easing must remove stale curve handles",saved.has("bezier"));
+        dialog.dismiss();
+    }
+
     @Test public void finishedActivityCannotSaveSeekOrConfirmQueuedClear()throws Exception{
         MainActivity activity=Robolectric.buildActivity(MainActivity.class).get();int[] saves={0},seeks={0};
         AlertDialog dialog=StudioKeyframeEditor.show(activity,new JSONObject(),1000,0,fragment->{saves[0]++;return true;},at->seeks[0]++);
@@ -101,5 +132,6 @@ public class StudioKeyframeManagerTest {
     private static EditText input(View v,String description){if(v instanceof EditText&&description.contentEquals(v.getContentDescription()))return (EditText)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){EditText e=input(g.getChildAt(i),description);if(e!=null)return e;}}return null;}
     private static TextView text(View v,String title){if(v instanceof TextView&&title.contentEquals(((TextView)v).getText()))return (TextView)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){TextView t=text(g.getChildAt(i),title);if(t!=null)return t;}}return null;}
     private static Button button(View v,String title){TextView t=text(v,title);return t instanceof Button?(Button)t:null;}
+    private static <T> T find(View v,Class<T> type){if(type.isInstance(v))return type.cast(v);if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){T result=find(g.getChildAt(i),type);if(result!=null)return result;}}return null;}
     private static Spinner spinner(View v){if(v instanceof Spinner)return (Spinner)v;if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount();i++){Spinner s=spinner(g.getChildAt(i));if(s!=null)return s;}}return null;}
 }
