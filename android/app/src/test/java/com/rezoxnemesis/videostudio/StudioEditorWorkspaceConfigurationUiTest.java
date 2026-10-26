@@ -44,6 +44,9 @@ public class StudioEditorWorkspaceConfigurationUiTest {
             String before=SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson());long playhead=(long)field(fixture.activity,"studioPlayheadMs");
             for(int[] viewport:new int[][]{{853,480},{480,853}}){
                 fixture.configure(viewport[0],viewport[1],1f);
+                assertEquals("Editor hierarchy must match the current orientation after returning from landscape",
+                        viewport[0]>viewport[1],
+                        ((StudioEditorWorkspace)field(fixture.activity,"studioWorkspace")).isWideWorkspace());
                 assertSame("Configuration reflow must retain the native preview frame",preview,field(fixture.activity,"studioPreviewFrame"));
                 assertSame("Configuration reflow must retain the admitted native player",live,field(fixture.activity,"livePlayer"));
                 assertEquals(selected,((ProjectStore.Clip)field(fixture.activity,"selectedClip")).id);assertEquals(playhead,(long)field(fixture.activity,"studioPlayheadMs"));assertTrue(history.canUndo());
@@ -53,6 +56,29 @@ public class StudioEditorWorkspaceConfigurationUiTest {
                 assertReachable(fixture,button(fixture.root,"Export"),"Rotated Export remains reachable");
                 for(String pane:new String[]{"Media","Timeline","Inspector"})assertReachable(fixture,button(fixture.root,pane),"Rotated pane remains reachable: "+pane);
             }
+        }
+    }
+
+    @Test public void restoreVerticalResetsLayoutAndCanvasWithoutRewritingOwnedProject()throws Exception{
+        try(Fixture fixture=new Fixture(480,853)){
+            fixture.configure(853,480,1f);
+            StudioEditorWorkspace workspace=(StudioEditorWorkspace)field(fixture.activity,"studioWorkspace");
+            assertTrue(workspace.isWideWorkspace());
+            set(fixture.activity,"studioPreviewAspect","16:9");
+            android.content.SharedPreferences preferences=(android.content.SharedPreferences)field(fixture.activity,"prefs");
+            preferences.edit().putInt("studio_orientation_choice",2)
+                    .putString("studio_preview_canvas_aspect","16:9").commit();
+            String before=SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson());
+            Object preview=field(fixture.activity,"studioPreviewFrame");
+            invoke(fixture.activity,"restoreStudioVerticalEditor");
+            assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,fixture.activity.getRequestedOrientation());
+            assertEquals("9:16",field(fixture.activity,"studioPreviewAspect"));
+            assertEquals(1,preferences.getInt("studio_orientation_choice",0));
+            assertEquals("9:16",preferences.getString("studio_preview_canvas_aspect",""));
+            fixture.configure(480,853,1f);
+            assertFalse(workspace.isWideWorkspace());
+            assertSame(preview,field(fixture.activity,"studioPreviewFrame"));
+            assertEquals(before,SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson()));
         }
     }
 

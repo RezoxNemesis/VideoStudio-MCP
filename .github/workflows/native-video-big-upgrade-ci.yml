@@ -2,9 +2,9 @@ name: Native VideoStudio Integrated Upgrade CI
 
 on:
   push:
-    branches: [integration/videostudio-offline-big-upgrade-20261026]
+    branches: [integration/videostudio-offline-big-upgrade-20261026, fix/editor-portrait-return-and-curves-20261026]
   pull_request:
-    branches: [integration/native-edit-preview-large-upgrade-20261025]
+    branches: [integration/native-edit-preview-large-upgrade-20261025, integration/videostudio-offline-big-upgrade-20261026]
 
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --tests com.rezoxnemesis.videostudio.StudioVirtualizedTitleOverlayTest --tests com.rezoxnemesis.videostudio.NativeOfflineVideoPlanTest --tests com.rezoxnemesis.videostudio.NativeFreshRenderRecoveryTest --tests com.rezoxnemesis.videostudio.StudioProceduralVfxTest --tests com.rezoxnemesis.videostudio.StudioGlyphAnimationTest --tests com.rezoxnemesis.videostudio.StudioCamera2DDirectorTest --no-daemon --stacktrace --console=plain
+          gradle :app:compileDebugJavaWithJavac :app:testDebugUnitTest --tests com.rezoxnemesis.videostudio.StudioVirtualizedTitleOverlayTest --tests com.rezoxnemesis.videostudio.NativeOfflineVideoPlanTest --tests com.rezoxnemesis.videostudio.NativeFreshRenderRecoveryTest --tests com.rezoxnemesis.videostudio.StudioProceduralVfxTest --tests com.rezoxnemesis.videostudio.StudioGlyphAnimationTest --tests com.rezoxnemesis.videostudio.StudioCamera2DDirectorTest --tests com.rezoxnemesis.videostudio.StudioEditorWorkspaceConfigurationUiTest --tests com.rezoxnemesis.videostudio.StudioEditorWorkspaceUiTest --tests com.rezoxnemesis.videostudio.StudioKeyframeManagerTest --tests com.rezoxnemesis.videostudio.StudioKeyframeAuthoringTest --tests com.rezoxnemesis.videostudio.EditorPreviewUiTest --tests com.rezoxnemesis.videostudio.NativeOfflineVideoMotionTest --no-daemon --stacktrace --console=plain
       - name: Full native Android regression suite
         working-directory: android
         run: |
@@ -74,7 +74,7 @@ jobs:
       - name: Upload owner-compatible candidate (not installed)
         uses: actions/upload-artifact@v4
         with:
-          name: VideoStudio-integrated-offline-candidate
+          name: VideoStudio-v4.10.44-editor-and-offline-candidate
           retention-days: 7
           if-no-files-found: error
           path: |

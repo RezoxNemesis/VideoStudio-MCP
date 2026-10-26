@@ -17,6 +17,12 @@ public final class NativeOfflineVideoMotionAudit {
         int frameSize=Math.multiplyExact(pixels,3);
         if(rgb==null||rgb.length!=Math.multiplyExact(frameSize,frames))
             throw new IllegalArgumentException("Temporal frame tensor size differs from model ABI");
+        // Validate every tensor element, not only the motion/luma samples:
+        // corrupted or non-finite pixels may fall between sampled offsets.
+        // No raw pixels are retained after this bounded in-memory scan.
+        for(float value:rgb)
+            if(!Float.isFinite(value)||value<-1.25f||value>1.25f)
+                throw new IllegalArgumentException("Invalid model video tensor value");
         double sum=0,max=0;
         int moving=0,blank=0,thresholdSamples=0;
         // Sample evenly across the frame to avoid allocating bitmaps for
@@ -27,10 +33,7 @@ public final class NativeOfflineVideoMotionAudit {
             double totalLuma=0;int lumaSamples=0;
             for(int i=0;i<pixels;i+=stride){
                 for(int c=0;c<3;c++){
-                    float value=rgb[offset+c*pixels+i];
-                    if(!Float.isFinite(value)||value<-1.25f||value>1.25f)
-                        throw new IllegalArgumentException("Invalid model video tensor value");
-                    totalLuma+=value;
+                    totalLuma+=rgb[offset+c*pixels+i];
                     lumaSamples++;
                 }
             }

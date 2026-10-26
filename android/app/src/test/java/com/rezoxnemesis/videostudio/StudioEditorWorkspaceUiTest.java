@@ -106,6 +106,26 @@ public class StudioEditorWorkspaceUiTest {
         }
     }
 
+    @Test public void inspectorGroupsAdvancedToolsWithoutHidingExistingPrecisionActions()throws Exception{
+        try(Fixture fixture=new Fixture(480,853)){
+            String before=SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson());
+            click(fixture,"Inspector");fixture.layout();
+            assertReachable(fixture,button(fixture.root,"Crop"),"Crop stays a first-class precision action");
+            assertReachable(fixture,button(fixture.root,"Keyframes"),"Curve editor stays immediately reachable");
+            Button slow=button(fixture.root,"Slow Motion");
+            assertNotNull("Advanced timing tool is retained",slow);
+            View category=(View)slow.getParent().getParent();
+            assertEquals("Advanced section starts collapsed",View.GONE,category.getVisibility());
+            Button toggle=button(fixture.root,"▸  Motion & Timing");
+            assertNotNull(toggle);toggle.performClick();fixture.layout();
+            assertEquals(View.VISIBLE,category.getVisibility());
+            assertEquals("▾  Motion & Timing",toggle.getText().toString());
+            toggle.performClick();fixture.layout();
+            assertEquals(View.GONE,category.getVisibility());
+            assertEquals(before,SketchDocument.canonical(fixture.store.get(fixture.project.id).toJson()));
+        }
+    }
+
     @Test public void selectingImageTrackExposesImageMotionInsteadOfBaseClipCrop()throws Exception{
         try(Fixture fixture=new Fixture(480,853)){
             click(fixture,"Timeline");fixture.layout();StudioTracksView tracks=(StudioTracksView)field(fixture.activity,"studioTracks");assertReachable(fixture,tracks,"Image track must be visible before selecting it");

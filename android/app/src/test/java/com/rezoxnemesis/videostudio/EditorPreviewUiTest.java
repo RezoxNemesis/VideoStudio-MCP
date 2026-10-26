@@ -58,7 +58,11 @@ public class EditorPreviewUiTest {
         try(Fixture f=new Fixture(false,10000)){
             LiveEditPlayerRecoveryTest.failPlayback((androidx.media3.common.Player)get(f.live(),"editPlayer"));
             TextView error=f.content.findViewWithTag("studio-preview-error");
-            assertEquals(View.VISIBLE,error.getVisibility());assertTrue(error.getText().toString().contains("decoder rejected"));
+            assertEquals(View.VISIBLE,error.getVisibility());
+            assertTrue("Owner should see an actionable edited-preview error without leaking decoder source details",
+                    error.getText().toString().contains("Edited preview unavailable"));
+            assertFalse("Raw SDK decoder errors should remain in diagnostics, not the on-screen title",
+                    error.getText().toString().contains("decoder rejected source"));
             View retry=f.content.findViewWithTag("studio-preview-retry");assertEquals(View.VISIBLE,retry.getVisibility());
             retry.performClick();
             // If the fake decoder fails to admit another graph, the error must

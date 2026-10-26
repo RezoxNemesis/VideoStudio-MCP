@@ -828,7 +828,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         project.setEllipsize(android.text.TextUtils.TruncateAt.END);project.setContentDescription("Open project "+activeProject.name);
         header.addView(project,new LinearLayout.LayoutParams(0,dp(48),1));
         Button orientation=studioButton("↔",this::chooseEditorOrientation);
-        orientation.setTextSize(18);orientation.setContentDescription("Editor orientation: auto, portrait or landscape");
+        orientation.setTextSize(18);orientation.setContentDescription("Editor orientation: auto, portrait, landscape, or restore original vertical and 9:16 canvas");
         header.addView(orientation,new LinearLayout.LayoutParams(dp(42),dp(48)));
         JSONObject nativeState=NativeWorkMonitor.snapshot(this);boolean connected=nativeState.optBoolean("nativeServiceOnline",false);
         TextView nativeStatus=accent(connected?"●":"○",connected?C_CYAN:C_MUTED);nativeStatus.setGravity(Gravity.CENTER);
@@ -927,8 +927,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                                             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                             dialog.dismiss();
                         })
+                .setPositiveButton("Restore vertical 9:16",(d,w)->restoreStudioVerticalEditor())
                 .setNeutralButton("Preview canvas", (d,w)->chooseStudioPreviewCanvas())
                 .setNegativeButton("Cancel",null).show();
+    }
+
+    /**
+     * One-tap recovery from a horizontal editor/canvas. These are preferences
+     * and view state, never project edits; no owned media or keyframes change.
+     */
+    private void restoreStudioVerticalEditor(){
+        prefs.edit().putInt("studio_orientation_choice",1).apply();
+        if(getRequestedOrientation()!=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        applyStudioPreviewCanvas("9:16");
     }
 
     /** Canvas aspect is independent of the physical screen rotation. */
@@ -942,28 +954,33 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         new AlertDialog.Builder(this).setTitle("Preview canvas · 720p")
                 .setSingleChoiceItems(labels,selected,(dialog,which)->{
                     dialog.dismiss();
-                    String chosen=StudioPreviewCanvas.coerce(values[which]);
-                    if(chosen.equals(studioPreviewAspect))return;
-                    studioPreviewAspect=chosen;
-                    prefs.edit().putString("studio_preview_canvas_aspect",chosen).apply();
-                    stopStudioDirectTouch();
-                    // The old player revision key also includes aspect, but an
-                    // explicit rebuild is needed to avoid the quick reuse path.
-                    studioEditedProjectId="";
-                    studioEditedRevision=-1;
-                    studioPendingEditedSeek=true;
-                    if("editor".equals(currentScreen)&&activeProject!=null
-                            &&!activeProject.clips.isEmpty())
-                        beginStudioEditPreview(false);
+                    applyStudioPreviewCanvas(values[which]);
                 })
                 .setNegativeButton("Cancel",null).show();
     }
 
+    /** Rebuild the preview consistently in both the ratio picker and Restore. */
+    private void applyStudioPreviewCanvas(String requestedAspect){
+        String chosen=StudioPreviewCanvas.coerce(requestedAspect);
+        if(chosen.equals(studioPreviewAspect))return;
+        studioPreviewAspect=chosen;
+        prefs.edit().putString("studio_preview_canvas_aspect",chosen).apply();
+        stopStudioDirectTouch();
+        // Media3 may reuse the previous composition despite an aspect change.
+        studioEditedProjectId="";
+        studioEditedRevision=-1;
+        studioPendingEditedSeek=true;
+        if("editor".equals(currentScreen)&&activeProject!=null
+                &&!activeProject.clips.isEmpty())
+            beginStudioEditPreview(false);
+    }
+
     @Override public void onConfigurationChanged(Configuration next) {
         super.onConfigurationChanged(next);
-        // The existing media3 player and native timeline survive a rotation.
-        // StudioEditorWorkspace receives the same configuration and reflows in place.
-        if("editor".equals(currentScreen)&&studioWorkspace!=null)studioWorkspace.requestLayout();
+        // The Media3 player and native timeline survive a rotation. Explicit
+        // hierarchy sync is required when returning from landscape to portrait.
+        if("editor".equals(currentScreen)&&studioWorkspace!=null)
+            studioWorkspace.syncOrientation(next);
     }
 
     private void setStudioPlayerControls(boolean visible){
@@ -1529,6 +1546,28 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             for(int i=first;i<Math.min(names.length,first+2);i++)row.addView(studioButton(names[i],actions[i]),new LinearLayout.LayoutParams(0,dp(48),1));box.addView(row);}
     }
 
+    /** Compact, expandable native actions replace the old twenty-button inspector wall. */
+    private void studioWorkspaceCollapsedTools(LinearLayout parent,String groupName,String[] tools){
+        LinearLayout content=column();content.setVisibility(View.GONE);
+        Runnable[] callbacks=new Runnable[tools.length];
+        for(int i=0;i<tools.length;i++){
+            final String tool=tools[i];
+            callbacks[i]=()->performStudioTool(tool);
+        }
+        studioWorkspaceActions(content,tools,callbacks);
+        Button toggle=studioButton("▸  "+groupName,()->{});
+        toggle.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);
+        toggle.setContentDescription("Expand "+groupName+" editing tools");
+        toggle.setOnClickListener(view->{
+            boolean expand=content.getVisibility()!=View.VISIBLE;
+            content.setVisibility(expand?View.VISIBLE:View.GONE);
+            toggle.setText((expand?"▾  ":"▸  ")+groupName);
+            toggle.setContentDescription((expand?"Collapse ":"Expand ")+groupName+" editing tools");
+        });
+        parent.addView(toggle,new LinearLayout.LayoutParams(-1,dp(48)));
+        parent.addView(content);
+    }
+
     private StudioLayer selectedStudioLayer(){
         if(activeProject!=null&&studioSelectedLayerId!=null)for(StudioLayer layer:activeProject.studioLayers)if(studioSelectedLayerId.equals(layer.id))return layer;
         studioSelectedLayerId=null;return null;
@@ -1608,9 +1647,23 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }else if(selectedClip!=null){
             box.addView(studioButton("Color Studio · GPU nodes and presets",this::openStudioResolveColor));
             ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);box.addView(body((asset==null?"Missing media":asset.name)+" · "+StudioEditCursor.timecode(selectedClip.outputDurationMs())));
-            String[] tools={"Crop","Keyframes","Trim","Slow Motion","Volume","Exact Transform","Colour","Adjust","Blur","Opacity","Green Screen","Mask","Glow","Effects","Motion","Shake","Duplicate","Delete Clip","Move Left","Move Right"};
-            Runnable[] callbacks=new Runnable[tools.length];for(int i=0;i<tools.length;i++){String tool=tools[i];callbacks[i]=()->{if("Trim".equals(tool))trimDialog();else if("Duplicate".equals(tool))applyTool("Duplicate");else performStudioTool(tool);};}
-            studioWorkspaceActions(box,tools,callbacks);
+            box.addView(title("PRECISION  /  CURVES",13));
+            String[] quick={"Crop","Keyframes","Trim","Exact Transform","Opacity","Adjust"};
+            Runnable[] quickActions=new Runnable[quick.length];
+            for(int i=0;i<quick.length;i++){
+                final String tool=quick[i];
+                quickActions[i]=()->{
+                    if("Trim".equals(tool))trimDialog();
+                    else performStudioTool(tool);
+                };
+            }
+            studioWorkspaceActions(box,quick,quickActions);
+            studioWorkspaceCollapsedTools(box,"Motion & Timing",
+                    new String[]{"Slow Motion","Motion","Shake","Move Left","Move Right","Duplicate","Delete Clip"});
+            studioWorkspaceCollapsedTools(box,"Colour & Effects",
+                    new String[]{"Colour","Blur","Green Screen","Mask","Glow","Effects"});
+            studioWorkspaceCollapsedTools(box,"Audio",
+                    new String[]{"Volume"});
             studioSplitButton=studioButton("Split Here",this::splitClip);studioSplitButton.setEnabled(canSplitStudioAtCursor());box.addView(studioSplitButton);
             studioWorkspaceActions(box,new String[]{"Set In Here","Set Out Here"},new Runnable[]{()->trimStudioAtCursor(true),()->trimStudioAtCursor(false)});
         }else{box.addView(body("Select a timeline clip or image/audio/title layer. Media import and existing tools remain available."));}

@@ -45,6 +45,10 @@ public final class StudioKeyframeEdits {
                     if(!patch.has("scaleX"))key.remove("scaleX");
                     if(!patch.has("scaleY"))key.remove("scaleY");
                 }
+                // A previous custom curve cannot accompany a non-cubic easing.
+                // Remove obsolete handles before validating the merged key.
+                if(patch.has("easing")&&!"cubic_bezier".equals(patch.optString("easing")))
+                    key.remove("bezier");
                 names=patch.keys();while(names.hasNext()){String name=names.next();key.put(name,patch.get(name));}
                 key.put("timeMs",authored);ordered.add(key);
             }
