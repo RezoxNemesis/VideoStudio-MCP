@@ -98,6 +98,22 @@ public class StudioKeyframeAuthoringTest {
         assertEquals(before,effects.toString());
     }
 
+    @Test public void changingCubicEasingBackToLinearDropsResidualHandles()throws Exception{
+        JSONObject fx=new JSONObject().put("keyframes",new JSONArray()
+                .put(key(0,0,"linear")).put(key(1000,1,"linear")));
+        JSONObject bezier=new JSONObject().put("timeMs",0).put("easing","cubic_bezier")
+                .put("bezier",StudioBezierEasing.fromText("0.42,0,0.58,1"));
+        fx=StudioKeyframeEdits.apply(fx,1000,new JSONArray().put(upsert(bezier)));
+        assertEquals("cubic_bezier",fx.getJSONArray("keyframes").getJSONObject(0).getString("easing"));
+        assertTrue(Math.abs(StudioClipKeyframes.fromEffects(fx,1000).at(250).x-.25)>.01);
+        fx=StudioKeyframeEdits.apply(fx,1000,new JSONArray().put(upsert(
+                new JSONObject().put("timeMs",0).put("easing","linear"))));
+        JSONObject first=fx.getJSONArray("keyframes").getJSONObject(0);
+        assertEquals("linear",first.getString("easing"));
+        assertFalse(first.has("bezier"));
+        assertEquals(.25,StudioClipKeyframes.fromEffects(fx,1000).at(250).x,.000001);
+    }
+
     @Test public void uniformScalePatchReplacesIndependentAxesAndReplacementCannotMixWithPatches()throws Exception{
         ProjectStore store=store();ProjectStore.Project p=project(store);
         p.clips.get(0).effects.put("keyframes",new JSONArray().put(new JSONObject().put("timeMs",0).put("scaleX",2).put("scaleY",3)));store.save(p);
