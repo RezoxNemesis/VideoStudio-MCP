@@ -1902,17 +1902,15 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     }
 
     private void sharePairing() {
+        // Always show the share chooser so the user picks the AI app (Claude, ChatGPT or any other)
+        // with one tap. The pairing message itself is unchanged.
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
         send.putExtra(Intent.EXTRA_TEXT, protocol.pairingMessage());
-        if (getPackageManager().getLaunchIntentForPackage("com.openai.chatgpt") != null) {
-            send.setPackage("com.openai.chatgpt");
-        }
         try {
-            startActivity(send);
+            startActivity(Intent.createChooser(send, "Connect VideoStudio to Claude or ChatGPT"));
         } catch (Exception error) {
-            send.setPackage(null);
-            startActivity(Intent.createChooser(send, "Connect VideoStudio to ChatGPT"));
+            Toast.makeText(this, "No app available to receive the connection", Toast.LENGTH_LONG).show();
         }
     }
 
