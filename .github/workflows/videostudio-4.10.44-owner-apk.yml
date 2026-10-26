@@ -1,8 +1,8 @@
-name: VideoStudio 4.10.44 Owner-Signed Editor APK Candidate
+name: VideoStudio 4.10.44 ARM64 Owner-Signed APK Candidate
 
 on:
   push:
-    branches: [ release/videostudio-v4.10.44-editor-candidate-20261026 ]
+    branches: [ release/videostudio-v4.10.44-arm64-20261026 ]
 
 permissions:
   contents: read
@@ -71,11 +71,16 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep -E "^package:|^sdkVersion:|^targetSdkVersion:" > app/build/outputs/apk/debug/apk-package-proof.txt
           grep "versionName='4.10.44'" app/build/outputs/apk/debug/apk-package-proof.txt
           grep "versionCode='547'" app/build/outputs/apk/debug/apk-package-proof.txt
+          # Every embedded shared library must be for the device's arm64-v8a ABI.
+          abi_list="$(unzip -Z1 "$apk" | awk -F/ '/^lib\// {print $2}' | sort -u)"
+          test "$abi_list" = "arm64-v8a" || {
+            echo "::error::Unexpected native ABI packaging: $abi_list"; exit 1;
+          }
           (cd app/build/outputs/apk/debug && sha256sum app-debug.apk > app-debug.apk.sha256)
       - name: Upload APK candidate and verification
         uses: actions/upload-artifact@v4
         with:
-          name: VideoStudio-v4.10.44-build547-owner-signed
+          name: VideoStudio-v4.10.44-build547-arm64-owner-signed
           retention-days: 7
           if-no-files-found: error
           path: |
