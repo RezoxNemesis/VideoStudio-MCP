@@ -961,9 +961,10 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
 
     @Override public void onConfigurationChanged(Configuration next) {
         super.onConfigurationChanged(next);
-        // The existing media3 player and native timeline survive a rotation.
-        // StudioEditorWorkspace receives the same configuration and reflows in place.
-        if("editor".equals(currentScreen)&&studioWorkspace!=null)studioWorkspace.requestLayout();
+        // The Media3 player and native timeline survive a rotation. Explicit
+        // hierarchy sync is required when returning from landscape to portrait.
+        if("editor".equals(currentScreen)&&studioWorkspace!=null)
+            studioWorkspace.syncOrientation(next);
     }
 
     private void setStudioPlayerControls(boolean visible){
