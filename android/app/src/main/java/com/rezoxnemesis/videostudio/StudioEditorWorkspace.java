@@ -89,11 +89,21 @@ public final class StudioEditorWorkspace extends LinearLayout {
         addView(editingToolsView,new LayoutParams(-1,-2));
     }
 
-    @Override protected void onConfigurationChanged(Configuration configuration){
-        super.onConfigurationChanged(configuration);
+    /**
+     * Explicitly reflow the *existing* editor when Android changes orientation.
+     * MainActivity may receive configChanges without recreation; requestLayout()
+     * alone does not switch the old landscape hierarchy back to portrait.
+     */
+    public void syncOrientation(Configuration configuration){
+        if(configuration==null)return;
         boolean nextLandscape=configuration.orientation==Configuration.ORIENTATION_LANDSCAPE;
         if(nextLandscape!=landscape){landscape=nextLandscape;arrangeExistingViews();}
         requestLayout();
+    }
+
+    @Override protected void onConfigurationChanged(Configuration configuration){
+        super.onConfigurationChanged(configuration);
+        syncOrientation(configuration);
     }
 
     @Override protected void onMeasure(int widthSpec,int heightSpec){
