@@ -56,8 +56,8 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private static final int PICK_MEDIA = 1201;
     private static final int PICK_CLOUD_WORKSPACE = 1202;
     private static final int C_BG = Color.rgb(5, 8, 18);
-    private static final int C_CARD = Color.rgb(13, 20, 37);
-    private static final int C_CARD_2 = Color.rgb(17, 27, 48);
+    private static final int C_CARD = GlassTheme.GLASS_FILL;
+    private static final int C_CARD_2 = GlassTheme.GLASS_FILL_STRONG;
     private static final int C_TEXT = Color.rgb(246, 248, 255);
     private static final int C_MUTED = Color.rgb(157, 170, 196);
     private static final int C_CYAN = Color.rgb(34, 220, 255);
@@ -163,7 +163,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private View buildShell() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(C_BG);
+        root.setBackground(GlassTheme.backdrop());
 
         content = new FrameLayout(this);
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
@@ -2580,7 +2580,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
     private ScrollView baseScroll() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(C_BG);
+        scroll.setBackgroundColor(Color.TRANSPARENT);
         return scroll;
     }
 
