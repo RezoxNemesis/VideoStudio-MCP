@@ -58,22 +58,20 @@ jobs:
           }
       - name: Build signed 4.10.44 native candidate
         working-directory: android
-        env:
-          VIDEOSTUDIO_SIGNING_KEYSTORE: ${{ github.workspace }}/.github-signing-placeholder
         run: |
           set -euo pipefail
           export VIDEOSTUDIO_SIGNING_KEYSTORE="$HOME/.android/debug.keystore"
           gradle :app:assembleDebug --no-daemon --console=plain
           apk="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$apk"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" > apk-signature-proof.txt
-          digest="$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' apk-signature-proof.txt | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" > app/build/outputs/apk/debug/apk-signature-proof.txt
+          digest="$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' app/build/outputs/apk/debug/apk-signature-proof.txt | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
           test "$digest" = "7e0187470356616be2a45bc7f41445894085185db110edfdc0cdfd232942a6dd"
           python3 ../scripts/verify-android-apk.py --apk "$apk" --aapt "$ANDROID_HOME/build-tools/35.0.0/aapt" --apksigner "$ANDROID_HOME/build-tools/35.0.0/apksigner"
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep -E "^package:|^sdkVersion:|^targetSdkVersion:" > apk-package-proof.txt
-          grep "versionName='4.10.44'" apk-package-proof.txt
-          grep "versionCode='547'" apk-package-proof.txt
-          sha256sum "$apk" > app-debug.apk.sha256
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk" | grep -E "^package:|^sdkVersion:|^targetSdkVersion:" > app/build/outputs/apk/debug/apk-package-proof.txt
+          grep "versionName='4.10.44'" app/build/outputs/apk/debug/apk-package-proof.txt
+          grep "versionCode='547'" app/build/outputs/apk/debug/apk-package-proof.txt
+          (cd app/build/outputs/apk/debug && sha256sum app-debug.apk > app-debug.apk.sha256)
       - name: Upload APK candidate and verification
         uses: actions/upload-artifact@v4
         with:
@@ -82,9 +80,9 @@ jobs:
           if-no-files-found: error
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
-            android/app/app-debug.apk.sha256
-            android/app/apk-package-proof.txt
-            android/app/apk-signature-proof.txt
+            android/app/build/outputs/apk/debug/app-debug.apk.sha256
+            android/app/build/outputs/apk/debug/apk-package-proof.txt
+            android/app/build/outputs/apk/debug/apk-signature-proof.txt
       - name: Upload focused Android test reports
         if: always()
         uses: actions/upload-artifact@v4
