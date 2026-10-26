@@ -8,6 +8,7 @@ import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -21,16 +22,17 @@ import java.util.function.Predicate;
 /** Native authoring surface; its save fragments are the public precision_edit operations. */
 public final class StudioKeyframeEditor {
     private static final String[] FIELDS={"x","y","scaleX","scaleY","rotate","anchorX","anchorY","opacity"};
-    private static final String[] EASINGS={"linear","ease_in","ease_out","ease_in_out","hold"};
+    private static final String[] EASINGS={"linear","ease_in","ease_out","ease_in_out","hold","cubic_bezier"};
     private final Context context;
     private final long duration;
     private final Predicate<JSONObject> save;
     private final LongConsumer seek;
     private final LinearLayout content,keyList;
     private final TextView status,selection;
-    private final EditText time;
+    private final EditText time,bezier;
     private final EditText[] values=new EditText[FIELDS.length];
     private final Spinner easing;
+    private final StudioBezierCurveView curve;
     private JSONObject effects;
     private JSONArray localKeys;
     private long loadedTime;
@@ -63,10 +65,39 @@ public final class StudioKeyframeEditor {
         for(int i=0;i<FIELDS.length;i++){label(FIELDS[i]);values[i]=number("Keyframe "+FIELDS[i]);content.addView(values[i]);}
         label("Interpolation from this key to the next");easing=new Spinner(context);
         easing.setContentDescription("Keyframe easing");easing.setAdapter(new ArrayAdapter<>(context,android.R.layout.simple_spinner_dropdown_item,EASINGS));content.addView(easing);
+        label("Motion curves · drag the handles to shape transitions between keys. The saved curve drives position, scale, rotation, anchor and opacity during native preview and export.");
+        LinearLayout presets=new LinearLayout(context);presets.setOrientation(LinearLayout.HORIZONTAL);
+        HorizontalScrollView rail=new HorizontalScrollView(context);rail.setHorizontalScrollBarEnabled(false);
+        rail.addView(presets);content.addView(rail,new LinearLayout.LayoutParams(-1,-2));
+        for(String[] preset:new String[][]{
+                {"Linear","0,0,1,1"},{"Smooth","0.42,0,0.58,1"},
+                {"Ease in","0.42,0,1,1"},{"Ease out","0,0,0.58,1"},
+                {"Film","0.22,1,0.36,1"}}){
+            Button choice=new Button(context);choice.setText(preset[0]);StudioUi.styleButton(choice,false);
+            choice.setOnClickListener(view->setCurvePreset(preset[1],"Linear".equals(preset[0])));
+            presets.addView(choice,new LinearLayout.LayoutParams(dp(104),dp(48)));
+        }
+        bezier=new EditText(context);bezier.setSingleLine(true);
+        bezier.setContentDescription("Exact cubic Bezier handles x1,y1,x2,y2");
+        bezier.setInputType(InputType.TYPE_CLASS_TEXT);bezier.setText(StudioBezierEasing.PRESET_FILM);
+        content.addView(bezier);
+        curve=new StudioBezierCurveView(context);
+        curve.setOnHandlesChanged(handles->{
+            bezier.setText(StudioBezierCurveView.format(handles));
+            easing.setSelection(EASINGS.length-1);
+        });
+        content.addView(curve,new LinearLayout.LayoutParams(-1,dp(220)));
+        addButton(content,"Plot numeric handles",()->{
+            try{
+                curve.setHandles(StudioBezierEasing.fromText(bezier.getText().toString()));
+                easing.setSelection(EASINGS.length-1);
+                bezier.setError(null);
+            }catch(Exception error){bezier.setError(error.getMessage());invalid(error);}
+        });
         addButton(content,"Add / update key",this::upsert);
         addButton(content,"Delete key at entered time",this::delete);
         addButton(content,"Reset entered values",()->{
-            double[] defaults={0,0,1,1,0,.5,.5,1};for(int i=0;i<values.length;i++)values[i].setText(Double.toString(defaults[i]));easing.setSelection(0);
+            double[] defaults={0,0,1,1,0,.5,.5,1};for(int i=0;i<values.length;i++)values[i].setText(Double.toString(defaults[i]));setCurvePreset("0,0,1,1",true);
         });
         addButton(content,"Clear all keys",()->new AlertDialog.Builder(context).setTitle("Clear all transform keys?")
                 .setMessage("This also removes keys retained outside this split clip. Static transform values remain.")
@@ -88,12 +119,19 @@ public final class StudioKeyframeEditor {
 
     private void load(long at)throws Exception{
         JSONObject sampled=StudioKeyframeEdits.values(StudioClipKeyframes.fromEffects(effects,duration).at(at));
-        String selectedEasing="linear";boolean exact=false;
-        for(int i=0;i<localKeys.length();i++)if(localKeys.getJSONObject(i).getLong("timeMs")==at){selectedEasing=localKeys.getJSONObject(i).optString("easing","linear");exact=true;break;}
+        String selectedEasing="linear",selectedCurve=StudioBezierEasing.PRESET_FILM;boolean exact=false;
+        for(int i=0;i<localKeys.length();i++)if(localKeys.getJSONObject(i).getLong("timeMs")==at){
+            JSONObject key=localKeys.getJSONObject(i);selectedEasing=key.optString("easing","linear");
+            if("cubic_bezier".equals(selectedEasing)&&key.optJSONArray("bezier")!=null)
+                selectedCurve=StudioBezierCurveView.format(key.getJSONArray("bezier"));
+            exact=true;break;
+        }
         loadedTime=at;time.setText(Long.toString(at));
         for(int i=0;i<FIELDS.length;i++)values[i].setText(Double.toString(sampled.getDouble(FIELDS[i])));
+        bezier.setText(selectedCurve);curve.setHandles(StudioBezierEasing.fromText(selectedCurve));
         easing.setSelection(Math.max(0,java.util.Arrays.asList(EASINGS).indexOf(selectedEasing)));
-        time.setError(null);selection.setText((exact?"Selected key at ":"Sampled transform at ")+at+" ms"+(exact?"":" · new key"));
+        time.setError(null);bezier.setError(null);
+        selection.setText((exact?"Selected key at ":"Sampled transform at ")+at+" ms"+(exact?"":" · new key"));
         for(int i=0;i<keyList.getChildCount();i++)if(keyList.getChildAt(i) instanceof Button){
             Button button=(Button)keyList.getChildAt(i);boolean selected=button.getText().toString().equals("Key at "+at+" ms");
             button.setSelected(selected);StudioUi.styleButton(button,selected);
@@ -112,9 +150,19 @@ public final class StudioKeyframeEditor {
         }catch(Exception error){invalid(error);}
     }
 
+    private void setCurvePreset(String coordinates,boolean linear){
+        JSONArray handles=StudioBezierEasing.fromText(coordinates);
+        bezier.setText(StudioBezierCurveView.format(handles));
+        curve.setHandles(handles);
+        bezier.setError(null);
+        easing.setSelection(linear?0:EASINGS.length-1);
+    }
+
     private void upsert(){
         try{
             long at=enteredTime();JSONObject key=new JSONObject().put("timeMs",at).put("easing",easing.getSelectedItem().toString());
+            if("cubic_bezier".equals(key.getString("easing")))
+                key.put("bezier",StudioBezierEasing.fromText(bezier.getText().toString()));
             for(int i=0;i<FIELDS.length;i++)key.put(FIELDS[i],Double.parseDouble(values[i].getText().toString().trim()));
             JSONArray edits=new JSONArray().put(new JSONObject().put("action","upsert").put("keyframe",key));
             persist(edits,at);
