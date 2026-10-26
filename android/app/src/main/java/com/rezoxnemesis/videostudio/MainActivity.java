@@ -828,7 +828,7 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         project.setEllipsize(android.text.TextUtils.TruncateAt.END);project.setContentDescription("Open project "+activeProject.name);
         header.addView(project,new LinearLayout.LayoutParams(0,dp(48),1));
         Button orientation=studioButton("↔",this::chooseEditorOrientation);
-        orientation.setTextSize(18);orientation.setContentDescription("Editor orientation: auto, portrait or landscape");
+        orientation.setTextSize(18);orientation.setContentDescription("Editor orientation: auto, portrait, landscape, or restore original vertical and 9:16 canvas");
         header.addView(orientation,new LinearLayout.LayoutParams(dp(42),dp(48)));
         JSONObject nativeState=NativeWorkMonitor.snapshot(this);boolean connected=nativeState.optBoolean("nativeServiceOnline",false);
         TextView nativeStatus=accent(connected?"●":"○",connected?C_CYAN:C_MUTED);nativeStatus.setGravity(Gravity.CENTER);
@@ -927,8 +927,20 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
                                             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                             dialog.dismiss();
                         })
+                .setPositiveButton("Restore vertical 9:16",(d,w)->restoreStudioVerticalEditor())
                 .setNeutralButton("Preview canvas", (d,w)->chooseStudioPreviewCanvas())
                 .setNegativeButton("Cancel",null).show();
+    }
+
+    /**
+     * One-tap recovery from a horizontal editor/canvas. These are preferences
+     * and view state, never project edits; no owned media or keyframes change.
+     */
+    private void restoreStudioVerticalEditor(){
+        prefs.edit().putInt("studio_orientation_choice",1).apply();
+        if(getRequestedOrientation()!=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        applyStudioPreviewCanvas("9:16");
     }
 
     /** Canvas aspect is independent of the physical screen rotation. */
@@ -942,21 +954,25 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         new AlertDialog.Builder(this).setTitle("Preview canvas · 720p")
                 .setSingleChoiceItems(labels,selected,(dialog,which)->{
                     dialog.dismiss();
-                    String chosen=StudioPreviewCanvas.coerce(values[which]);
-                    if(chosen.equals(studioPreviewAspect))return;
-                    studioPreviewAspect=chosen;
-                    prefs.edit().putString("studio_preview_canvas_aspect",chosen).apply();
-                    stopStudioDirectTouch();
-                    // The old player revision key also includes aspect, but an
-                    // explicit rebuild is needed to avoid the quick reuse path.
-                    studioEditedProjectId="";
-                    studioEditedRevision=-1;
-                    studioPendingEditedSeek=true;
-                    if("editor".equals(currentScreen)&&activeProject!=null
-                            &&!activeProject.clips.isEmpty())
-                        beginStudioEditPreview(false);
+                    applyStudioPreviewCanvas(values[which]);
                 })
                 .setNegativeButton("Cancel",null).show();
+    }
+
+    /** Rebuild the preview consistently in both the ratio picker and Restore. */
+    private void applyStudioPreviewCanvas(String requestedAspect){
+        String chosen=StudioPreviewCanvas.coerce(requestedAspect);
+        if(chosen.equals(studioPreviewAspect))return;
+        studioPreviewAspect=chosen;
+        prefs.edit().putString("studio_preview_canvas_aspect",chosen).apply();
+        stopStudioDirectTouch();
+        // Media3 may reuse the previous composition despite an aspect change.
+        studioEditedProjectId="";
+        studioEditedRevision=-1;
+        studioPendingEditedSeek=true;
+        if("editor".equals(currentScreen)&&activeProject!=null
+                &&!activeProject.clips.isEmpty())
+            beginStudioEditPreview(false);
     }
 
     @Override public void onConfigurationChanged(Configuration next) {
