@@ -24,6 +24,9 @@ android {
         targetSdk = 35
         versionCode = 547
         versionName = "4.10.44"
+        // Phone-specific candidate: include all native editor/generator features,
+        // but package only 64-bit ARM libraries rather than four CPU architectures.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     testOptions { unitTests.isIncludeAndroidResources = true }
