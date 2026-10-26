@@ -2,9 +2,9 @@ name: Native VideoStudio Integrated Upgrade CI
 
 on:
   push:
-    branches: [integration/videostudio-offline-big-upgrade-20261026]
+    branches: [integration/videostudio-offline-big-upgrade-20261026, fix/editor-portrait-return-and-curves-20261026]
   pull_request:
-    branches: [integration/native-edit-preview-large-upgrade-20261025]
+    branches: [integration/native-edit-preview-large-upgrade-20261025, integration/videostudio-offline-big-upgrade-20261026]
 
 permissions:
   contents: read
