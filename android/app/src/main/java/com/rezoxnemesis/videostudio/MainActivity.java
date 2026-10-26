@@ -1546,6 +1546,28 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
             for(int i=first;i<Math.min(names.length,first+2);i++)row.addView(studioButton(names[i],actions[i]),new LinearLayout.LayoutParams(0,dp(48),1));box.addView(row);}
     }
 
+    /** Compact, expandable native actions replace the old twenty-button inspector wall. */
+    private void studioWorkspaceCollapsedTools(LinearLayout parent,String groupName,String[] tools){
+        LinearLayout content=column();content.setVisibility(View.GONE);
+        Runnable[] callbacks=new Runnable[tools.length];
+        for(int i=0;i<tools.length;i++){
+            final String tool=tools[i];
+            callbacks[i]=()->performStudioTool(tool);
+        }
+        studioWorkspaceActions(content,tools,callbacks);
+        Button toggle=studioButton("▸  "+groupName,()->{});
+        toggle.setGravity(Gravity.CENTER_VERTICAL|Gravity.START);
+        toggle.setContentDescription("Expand "+groupName+" editing tools");
+        toggle.setOnClickListener(view->{
+            boolean expand=content.getVisibility()!=View.VISIBLE;
+            content.setVisibility(expand?View.VISIBLE:View.GONE);
+            toggle.setText((expand?"▾  ":"▸  ")+groupName);
+            toggle.setContentDescription((expand?"Collapse ":"Expand ")+groupName+" editing tools");
+        });
+        parent.addView(toggle,new LinearLayout.LayoutParams(-1,dp(48)));
+        parent.addView(content);
+    }
+
     private StudioLayer selectedStudioLayer(){
         if(activeProject!=null&&studioSelectedLayerId!=null)for(StudioLayer layer:activeProject.studioLayers)if(studioSelectedLayerId.equals(layer.id))return layer;
         studioSelectedLayerId=null;return null;
@@ -1625,9 +1647,23 @@ public class MainActivity extends Activity implements AppProtocol.Callback {
         }else if(selectedClip!=null){
             box.addView(studioButton("Color Studio · GPU nodes and presets",this::openStudioResolveColor));
             ProjectStore.Asset asset=activeProject.asset(selectedClip.assetId);box.addView(body((asset==null?"Missing media":asset.name)+" · "+StudioEditCursor.timecode(selectedClip.outputDurationMs())));
-            String[] tools={"Crop","Keyframes","Trim","Slow Motion","Volume","Exact Transform","Colour","Adjust","Blur","Opacity","Green Screen","Mask","Glow","Effects","Motion","Shake","Duplicate","Delete Clip","Move Left","Move Right"};
-            Runnable[] callbacks=new Runnable[tools.length];for(int i=0;i<tools.length;i++){String tool=tools[i];callbacks[i]=()->{if("Trim".equals(tool))trimDialog();else if("Duplicate".equals(tool))applyTool("Duplicate");else performStudioTool(tool);};}
-            studioWorkspaceActions(box,tools,callbacks);
+            box.addView(title("PRECISION  /  CURVES",13));
+            String[] quick={"Crop","Keyframes","Trim","Exact Transform","Opacity","Adjust"};
+            Runnable[] quickActions=new Runnable[quick.length];
+            for(int i=0;i<quick.length;i++){
+                final String tool=quick[i];
+                quickActions[i]=()->{
+                    if("Trim".equals(tool))trimDialog();
+                    else performStudioTool(tool);
+                };
+            }
+            studioWorkspaceActions(box,quick,quickActions);
+            studioWorkspaceCollapsedTools(box,"Motion & Timing",
+                    new String[]{"Slow Motion","Motion","Shake","Move Left","Move Right","Duplicate","Delete Clip"});
+            studioWorkspaceCollapsedTools(box,"Colour & Effects",
+                    new String[]{"Colour","Blur","Green Screen","Mask","Glow","Effects"});
+            studioWorkspaceCollapsedTools(box,"Audio",
+                    new String[]{"Volume"});
             studioSplitButton=studioButton("Split Here",this::splitClip);studioSplitButton.setEnabled(canSplitStudioAtCursor());box.addView(studioSplitButton);
             studioWorkspaceActions(box,new String[]{"Set In Here","Set Out Here"},new Runnable[]{()->trimStudioAtCursor(true),()->trimStudioAtCursor(false)});
         }else{box.addView(body("Select a timeline clip or image/audio/title layer. Media import and existing tools remain available."));}
