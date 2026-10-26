@@ -7,6 +7,7 @@ import android.text.InputType;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -111,6 +112,19 @@ public final class StudioGroupMotionDialog {
         easing.setContentDescription("Group motion keyframe easing");
         easing.setAdapter(new ArrayAdapter<>(context,android.R.layout.simple_spinner_dropdown_item,EASINGS));
         column.addView(easing);
+        label("Curve presets · shape the saved transition between keys");
+        HorizontalScrollView presetRail=new HorizontalScrollView(context);
+        presetRail.setHorizontalScrollBarEnabled(false);
+        LinearLayout presetRow=new LinearLayout(context);presetRow.setOrientation(LinearLayout.HORIZONTAL);
+        presetRail.addView(presetRow);column.addView(presetRail,new LinearLayout.LayoutParams(-1,-2));
+        for(String[] preset:new String[][]{
+                {"Linear","0,0,1,1"},{"Smooth","0.42,0,0.58,1"},
+                {"Ease in","0.42,0,1,1"},{"Ease out","0,0,0.58,1"},
+                {"Film","0.22,1,0.36,1"}}){
+            Button choice=new Button(context);choice.setText(preset[0]);StudioUi.styleButton(choice,false);
+            choice.setOnClickListener(view->setCurvePreset(preset[1],"Linear".equals(preset[0])));
+            presetRow.addView(choice,new LinearLayout.LayoutParams(StudioUi.dp(context,104),StudioUi.dp(context,48)));
+        }
         label("Cubic Bézier handles: x1,y1,x2,y2");
         bezier=new EditText(context);bezier.setSingleLine(true);
         bezier.setContentDescription("Custom group Bézier control handles");
@@ -135,6 +149,13 @@ public final class StudioGroupMotionDialog {
         });
         label("Apply commits the entire group once; Cancel discards every draft change. "
                 +"Preview and export then use the same saved animation curves.");
+    }
+
+    private void setCurvePreset(String coordinates,boolean linear){
+        JSONArray handles=StudioBezierEasing.fromText(coordinates);
+        bezier.setText(StudioBezierCurveView.format(handles));
+        curve.setHandles(handles);
+        easing.setSelection(linear?0:EASINGS.length-1);
     }
 
     private void upsert(){
