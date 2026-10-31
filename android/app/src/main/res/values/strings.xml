@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VideoStudio</string>
+    <string name="title_activity_main">VideoStudio</string>
+    <string name="package_name">com.rezoxnemesis.studio</string>
+    <string name="custom_url_scheme">com.rezoxnemesis.studio</string>
+</resources>

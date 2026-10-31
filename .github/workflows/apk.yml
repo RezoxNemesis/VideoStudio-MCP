@@ -1,0 +1,138 @@
+name: VideoStudio APK
+
+on:
+  push:
+    branches: [studio5]
+    tags: ["studio-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      VERSION_NAME: "5.0.${{ github.run_number }}"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Accept Android SDK licences
+        run: yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx cap sync android
+
+      # Signing key: a repository secret if one is set (permanent), otherwise a key generated once and kept in the
+      # Actions cache under a fixed name so every build is signed by the same key and installs as an update.
+      - name: Restore signing key
+        id: keycache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.videostudio-signing
+          key: videostudio-signing-v1
+
+      - name: Prepare signing key
+        env:
+          KS_B64: ${{ secrets.STUDIO_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.STUDIO_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.STUDIO_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          d="$HOME/.videostudio-signing"
+          mkdir -p "$d"
+          if [ -n "${KS_B64:-}" ]; then
+            echo "$KS_B64" | base64 -d > "$d/release.jks"
+            printf '%s' "$KS_PASS" > "$d/pass"
+            printf '%s' "${KS_ALIAS:-videostudio}" > "$d/alias"
+            echo "Using the signing key from repository secrets."
+          elif [ ! -s "$d/release.jks" ]; then
+            pass="$(openssl rand -base64 36 | tr -dc 'A-Za-z0-9' | head -c 32)"
+            keytool -genkeypair -keystore "$d/release.jks" -storetype PKCS12 -alias videostudio -keyalg RSA -keysize 4096 \
+              -validity 36500 -storepass "$pass" -keypass "$pass" -dname "CN=VideoStudio, O=RezoxNemesis" >/dev/null
+            printf '%s' "$pass" > "$d/pass"
+            printf 'videostudio' > "$d/alias"
+            echo "::warning::Generated a new signing key (first build or cache expired)."
+          else
+            echo "Using the cached signing key."
+          fi
+          echo "STUDIO_KEYSTORE=$d/release.jks" >> "$GITHUB_ENV"
+          echo "STUDIO_KEYSTORE_PASSWORD=$(cat "$d/pass")" >> "$GITHUB_ENV"
+          echo "STUDIO_KEY_ALIAS=$(cat "$d/alias")" >> "$GITHUB_ENV"
+          echo "STUDIO_KEY_PASSWORD=$(cat "$d/pass")" >> "$GITHUB_ENV"
+          echo "::add-mask::$(cat "$d/pass")"
+
+      - name: Save signing key
+        if: steps.keycache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.videostudio-signing
+          key: videostudio-signing-v1
+
+      - name: Build signed release APK
+        working-directory: android
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon --stacktrace -PversionCode=${{ github.run_number }} -PversionName=$VERSION_NAME 2>&1 | tee "$RUNNER_TEMP/gradle.log"
+
+      - name: Summarise build failure
+        if: failure()
+        run: |
+          if [ -f "$RUNNER_TEMP/gradle.log" ]; then
+            tail -n 60 "$RUNNER_TEMP/gradle.log" | while IFS= read -r line; do echo "::error::${line//%/%25}"; done
+          fi
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$bt/apksigner" verify --print-certs "$apk" | tee signature.txt
+          "$bt/aapt2" dump badging "$apk" | grep -E "^package:|sdkVersion|targetSdkVersion|uses-permission" | tee package.txt
+          if grep -Eq "READ_MEDIA|READ_EXTERNAL_STORAGE" package.txt; then echo "::error::Gallery read permission found"; exit 1; fi
+          mkdir -p out
+          cp "$apk" "out/VideoStudio-$VERSION_NAME.apk"
+          (cd out && sha256sum "VideoStudio-$VERSION_NAME.apk" > "VideoStudio-$VERSION_NAME.apk.sha256")
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoStudio-${{ env.VERSION_NAME }}
+          path: |
+            out/*
+            signature.txt
+            package.txt
+          retention-days: 30
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: studio-v${{ env.VERSION_NAME }}
+          name: VideoStudio ${{ env.VERSION_NAME }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            VideoStudio ${{ env.VERSION_NAME }} — editor, 2D animation workstation, VolTune voices and agent control.
+            Install `VideoStudio-${{ env.VERSION_NAME }}.apk` on an arm64 Android phone (Android 7+, recent Android System WebView).
+          files: |
+            out/VideoStudio-${{ env.VERSION_NAME }}.apk
+            out/VideoStudio-${{ env.VERSION_NAME }}.apk.sha256
