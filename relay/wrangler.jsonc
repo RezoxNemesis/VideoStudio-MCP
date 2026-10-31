@@ -1,0 +1,10 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "videostudio-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "d1_databases": [
+    { "binding": "DB", "database_name": "videostudio-relay", "database_id": "6495e7ce-6696-4901-9fd0-ebb93551d237" }
+  ],
+  "observability": { "enabled": true }
+}
