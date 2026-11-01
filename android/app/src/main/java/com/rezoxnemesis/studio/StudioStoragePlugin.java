@@ -61,14 +61,20 @@ public class StudioStoragePlugin extends Plugin {
     @PluginMethod
     public void write(PluginCall call) {
         String id = call.getString("id");
-        Long position = call.getLong("position");
+        // JSON numbers arrive as Integer, Long or Double; PluginCall.getLong only accepts Long.
+        Object pv = call.getData().opt("position");
+        long position = pv instanceof Number ? ((Number) pv).longValue() : -1L;
         String data = call.getString("data");
         RandomAccessFile raf;
         synchronized (open) {
             raf = open.get(id);
         }
-        if (raf == null || position == null || data == null) {
+        if (raf == null) {
             call.reject("Unknown or closed file");
+            return;
+        }
+        if (position < 0 || data == null) {
+            call.reject("Bad write: position " + pv + ", data " + (data == null ? "missing" : data.length() + " chars"));
             return;
         }
         try {
