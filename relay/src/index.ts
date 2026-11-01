@@ -51,7 +51,8 @@ const TOOLS = [
       "Run a batch of VideoStudio commands on the person's phone and return the results. Commands are objects like " +
       '{"op":"clip.add","text":"Hello"}. Strings like "$0.id" refer to the result of an earlier command in the same batch. ' +
       'Start with [{"op":"help"}] for the full command list and [{"op":"state"}] for the project. ' +
-      "Covers editing (clip.*, track.*), drawing and animation (anim.*), voices (voice.speak), media links (media.importUrl) and rendering (render.start). " +
+      "Covers editing (clip.*, track.*), drawing and animation (anim.*), anime characters (char.create/char.act/char.say, scene.backdrop), voices (voice.speak), media links (media.importUrl) and rendering (render.start). " +
+      'Fastest path for a whole animated video: one {"op":"shot", ...} command (see help). ' +
       "The app must be open with the remote link connected. Long jobs (voices, renders) keep running after the wait; fetch them with studio_result.",
     inputSchema: {
       type: "object",
@@ -96,7 +97,7 @@ async function waitFor(env: Env, device: string, id: string, seconds: number) {
     const row = await env.DB.prepare("SELECT status, results, state FROM jobs WHERE id = ? AND device = ?").bind(id, device).first<{ status: string; results: string | null; state: string | null }>();
     if (!row) return { job_id: id, status: "unknown" };
     if (row.status === "done") return { job_id: id, status: "done", results: JSON.parse(row.results ?? "[]"), app: row.state ? JSON.parse(row.state) : undefined };
-    if (Date.now() >= until) return { job_id: id, status: row.status, note: row.status === "queued" ? "The app has not picked this up yet. Is VideoStudio open with the remote link on?" : "Still running on the phone. Call studio_result later." };
+    if (Date.now() >= until) return { job_id: id, status: row.status, progress: row.status === "running" && row.state ? JSON.parse(row.state) : undefined, note: row.status === "queued" ? "The app has not picked this up yet. Is VideoStudio open with the remote link on?" : "Still running on the phone. Call studio_result later." };
     await sleep(delay);
     delay = Math.min(1500, delay * 1.4);
   }
@@ -150,7 +151,7 @@ async function mcp(req: Request, env: Env, device: string): Promise<Response> {
         return ok({
           protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "videostudio", version: "5.0.0" },
+          serverInfo: { name: "videostudio", version: "5.1.0" },
           instructions: "Controls the VideoStudio app on the person's phone. Use studio_run with [{\"op\":\"help\"}] first. Gallery browsing is not possible by design.",
         });
       case "ping":
@@ -252,16 +253,33 @@ export default {
     if (parts[0] === "mcp") return mcp(req, env, device);
 
     if (parts[0] === "device" && parts[2] === "next" && req.method === "GET") {
-      const now = Date.now();
-      const { results } = await env.DB.prepare("SELECT id, commands, cont FROM jobs WHERE device = ? AND status = 'queued' ORDER BY created LIMIT 5").bind(device).all<{ id: string; commands: string; cont: number }>();
-      // Refresh "last seen" at most every 20 s so idle polling stays far under D1's free write quota.
-      const seen = await env.DB.prepare("SELECT last_seen FROM devices WHERE id = ?").bind(device).first<{ last_seen: number }>();
-      const writes: D1PreparedStatement[] = [];
-      if (!seen || now - seen.last_seen > 20_000) writes.push(env.DB.prepare("INSERT INTO devices (id, last_seen) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen").bind(device, now));
-      for (const j of results) writes.push(env.DB.prepare("UPDATE jobs SET status = 'running', updated = ? WHERE id = ?").bind(now, j.id));
-      if (writes.length) await env.DB.batch(writes);
-      if (!results.length) return new Response(null, { status: 204, headers: CORS });
-      return json({ jobs: results.map((j) => ({ id: j.id, commands: JSON.parse(j.commands), continueOnError: !!j.cont })) });
+      // Long poll: newer apps pass ?wait=N and get a job the moment it is queued (older apps get an instant answer).
+      const wait = Math.max(0, Math.min(25, Number(url.searchParams.get("wait") ?? 0) || 0));
+      const until = Date.now() + wait * 1000;
+      let first = true;
+      for (;;) {
+        const now = Date.now();
+        const { results } = await env.DB.prepare("SELECT id, commands, cont FROM jobs WHERE device = ? AND status = 'queued' ORDER BY created LIMIT 5").bind(device).all<{ id: string; commands: string; cont: number }>();
+        const writes: D1PreparedStatement[] = [];
+        if (first) {
+          // Refresh "last seen" at most every 20 s so idle polling stays far under D1's free write quota.
+          const seen = await env.DB.prepare("SELECT last_seen FROM devices WHERE id = ?").bind(device).first<{ last_seen: number }>();
+          if (!seen || now - seen.last_seen > 20_000) writes.push(env.DB.prepare("INSERT INTO devices (id, last_seen) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen").bind(device, now));
+          first = false;
+        }
+        for (const j of results) writes.push(env.DB.prepare("UPDATE jobs SET status = 'running', updated = ? WHERE id = ? AND status = 'queued'").bind(now, j.id));
+        if (writes.length) await env.DB.batch(writes);
+        if (results.length) return json({ jobs: results.map((j) => ({ id: j.id, commands: JSON.parse(j.commands), continueOnError: !!j.cont })) });
+        if (Date.now() + 700 >= until) return new Response(null, { status: 204, headers: CORS });
+        await sleep(650);
+      }
+    }
+
+    if (parts[0] === "device" && parts[2] === "progress" && req.method === "POST") {
+      const body = (await req.json().catch(() => null)) as { id?: string; state?: unknown } | null;
+      if (!body?.id) return json({ error: "id required" }, 400);
+      await env.DB.prepare("UPDATE jobs SET state = ?, updated = ? WHERE id = ? AND device = ? AND status = 'running'").bind(JSON.stringify(body.state ?? null), Date.now(), body.id, device).run();
+      return json({ ok: true });
     }
 
     if (parts[0] === "device" && parts[2] === "files") {

@@ -1,6 +1,6 @@
 {
   "name": "videostudio",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "private": true,
   "description": "VideoStudio: professional editor, 2D animation workstation and VolTune voices, with an agent command API.",
   "license": "MIT",

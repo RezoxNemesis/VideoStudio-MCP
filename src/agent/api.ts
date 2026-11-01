@@ -8,6 +8,8 @@ import type { Studio } from "../app/studio";
 import * as ops from "../core/ops";
 import * as anim from "../anim/ops";
 import * as rig from "../anim/rig";
+import * as puppet from "../anim/puppet";
+import { flattenPath } from "../anim/svgpath";
 import { exposedKey, findAsset, projectDuration, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
 import { fetchToBlob, importBlob } from "../media/library";
 import { ExportJob, type ExportOptions } from "../render/export";
@@ -531,6 +533,210 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     },
   },
 
+  /* ---------------- characters, backdrops and one-command shots ---------------- */
+  "char.help": {
+    help: "Channels, actions, expressions, stances, backdrops and palettes for characters.",
+    run: () => ({
+      channels: puppet.CHANNELS,
+      actions: puppet.ACTIONS,
+      expressions: Object.keys(puppet.EXPRESSIONS),
+      stances: Object.keys(puppet.STANCES),
+      backdrops: puppet.BACKDROPS,
+      palettes: Object.keys(puppet.PALETTES),
+      handPoses: "0 relaxed, 1 open, 2 pinch, 3 fist, 4 in pocket, 5 point",
+      notes: "Times in actions are seconds. Hand targets are relative to the shoulder in head units (1 u = height/7.6).",
+    }),
+  },
+  "char.create": {
+    help: "{sceneId, name?, x?, y? (ground px), height? (px), hair?: messy|short|long|spiky, jacket?: leather|hoodie|coat|none, shirt?: turtleneck|tee|shirt, chain?, props?: [cigarette], propHand?: R|L, palette?: black|white|red|navy|brown, colors?:{skin,hair,eyes,jacket,...}, stance?, expr?} Add a fully drawn, rigged anime character (curves, cel shading, face rig, auto blink, hair follow-through).",
+    run: (s, a) =>
+      s.mutate("add character", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const spec = puppet.makeSpec({
+          x: a.num("x", sc.width / 2),
+          y: a.num("y", sc.height * 0.9),
+          height: a.num("height", sc.height * 0.66),
+          hair: a.optStr("hair") as never,
+          jacket: a.optStr("jacket") as never,
+          shirt: a.optStr("shirt") as never,
+          chain: a.any("chain") === undefined ? undefined : a.bool("chain"),
+          props: (a.any("props") as string[] | undefined) ?? [],
+          propHand: (a.optStr("propHand") as "L" | "R" | undefined) ?? "R",
+          palette: a.optStr("palette"),
+          colorOverrides: (a.any("colors") as Partial<puppet.PuppetPalette> | undefined) ?? {},
+          seed: a.num("seed", Math.floor(Math.random() * 1000)),
+        });
+        const top = sc.layers.find((l) => l.kind === "draw");
+        const l = anim.addLayer(sc, a.str("name", "Character"), "puppet", top?.id);
+        l.puppet = spec;
+        l.chan = {};
+        const steps: puppet.ActionStep[] = [];
+        if (a.optStr("stance")) steps.push({ at: 0, do: "stance", name: a.str("stance"), dur: 0.001 });
+        if (a.optStr("expr")) steps.push({ at: 0, do: "expr", name: a.str("expr"), dur: 0.001 });
+        if (steps.length) puppet.applyActions(l, sc.fps, steps);
+        return { layerId: l.id };
+      }),
+  },
+  "char.act": {
+    help: "{sceneId, layerId, actions:[{at (s), do: stance|expr|look|smoke|exhale|nod|shake|tilt|shrug|wave|point|gesture|lean|turn|laugh|breathe|set, ...}]} Animate a character with high-level actions (keys every channel for you). Run char.help for options.",
+    run: (s, a) =>
+      s.mutate("character actions", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = anim.getLayer(sc, a.str("layerId"));
+        if (l.kind !== "puppet") throw new ops.OpError("That layer is not a character.");
+        const steps = a.any("actions");
+        if (!Array.isArray(steps)) throw new ops.OpError(`"actions" must be a list.`);
+        const end = puppet.applyActions(l, sc.fps, steps as puppet.ActionStep[]);
+        sc.frames = Math.max(sc.frames, Math.ceil(end * sc.fps) + 1);
+        return { end: r3(end), frames: sc.frames };
+      }),
+  },
+  "char.key": {
+    help: "{sceneId, layerId, at (s) | frame, values:{channel:value,...}, ease?} Key raw channels (pose, face, smoke).",
+    run: (s, a) =>
+      s.mutate("character keys", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = anim.getLayer(sc, a.str("layerId"));
+        const f = a.optNum("frame") ?? Math.round(a.num("at", 0) * sc.fps);
+        for (const [k, val] of Object.entries(a.obj("values"))) puppet.setChannelKey(l, k, f, Number(val), a.str("ease", "inOut") as Ease);
+        return true;
+      }),
+  },
+  "char.set": {
+    help: "{sceneId, layerId, x?, y?, height?, hair?, jacket?, shirt?, chain?, props?, propHand?, colors?} Change a character's look.",
+    run: (s, a) =>
+      s.mutate("character look", (p) => {
+        const l = anim.getLayer(anim.getScene(p, a.str("sceneId")), a.str("layerId"));
+        if (!l.puppet) throw new ops.OpError("That layer is not a character.");
+        const sp = l.puppet;
+        for (const k of ["x", "y", "height"] as const) if (a.optNum(k) !== undefined) sp[k] = a.num(k);
+        for (const k of ["hair", "jacket", "shirt", "propHand"] as const) if (a.optStr(k)) (sp as unknown as Record<string, string>)[k] = a.str(k);
+        if (a.any("chain") !== undefined) sp.chain = a.bool("chain");
+        if (Array.isArray(a.any("props"))) sp.props = a.any("props") as string[];
+        if (a.any("colors")) sp.colors = { ...sp.colors, ...(a.obj("colors") as Partial<puppet.PuppetPalette>) };
+        return true;
+      }),
+  },
+  "char.lipsync": {
+    help: "{sceneId, layerId, assetId (voice), at? (s in the scene)} Mouth follows a VolTune voice.",
+    run: (s, a) =>
+      s.mutate("character lip sync", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = anim.getLayer(sc, a.str("layerId"));
+        const asset = findAsset(p, a.str("assetId"));
+        if (!asset?.mouth) throw new ops.OpError("That asset has no lip-sync data (make it with voice.speak).");
+        return { keys: puppet.puppetLipSync(l, sc.fps, asset.mouth, a.num("at", 0)) };
+      }),
+  },
+  "char.say": {
+    help: "{sceneId, layerId, text, at? (s), voice?, speed?, clipStart? (timeline s where the scene starts, default 0)} VolTune speaks the line, puts it on the timeline and lip-syncs the character.",
+    run: async (s, a) => {
+      const at = a.num("at", 0);
+      const { result, asset } = await s.speak({ text: a.str("text"), voice: a.optStr("voice"), speed: a.optNum("speed") });
+      return s.mutate("character line", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = anim.getLayer(sc, a.str("layerId"));
+        const clip = ops.addClip(p, { assetId: asset.id, start: a.num("clipStart", 0) + at });
+        if (asset.mouth) puppet.puppetLipSync(l, sc.fps, asset.mouth, at);
+        sc.frames = Math.max(sc.frames, Math.ceil((at + result.seconds) * sc.fps) + 1);
+        return { assetId: asset.id, clipId: clip.id, seconds: r3(result.seconds) };
+      });
+    },
+  },
+  "scene.backdrop": {
+    help: `{sceneId, type: ${puppet.BACKDROPS.join("|")}, seed?, sky?:[top,bottom], moon?} Painted background layer (bottom of the stack). Animate parallax with char.key on it: values {camX}.`,
+    run: (s, a) =>
+      s.mutate("backdrop", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        let l = sc.layers.find((x) => x.kind === "backdrop");
+        if (!l) {
+          l = anim.addLayer(sc, "Backdrop", "backdrop");
+          sc.layers.splice(sc.layers.indexOf(l), 1);
+          sc.layers.push(l);
+        }
+        const type = a.str("type", "night-city") as puppet.BackdropSpec["type"];
+        if (!puppet.BACKDROPS.includes(type)) throw new ops.OpError(`type must be one of ${puppet.BACKDROPS.join(", ")}`);
+        l.backdrop = { type, seed: a.num("seed", 3), sky: a.any("sky") as [string, string] | undefined, moon: a.any("moon") === undefined ? undefined : a.bool("moon") };
+        l.chan ??= {};
+        return { layerId: l.id };
+      }),
+  },
+  "anim.path": {
+    help: "{sceneId, layerId, frame?, d (SVG path data), fill?, color?, size?, tool?: pen|ink|brush|marker} Draw clean vector art from SVG path data (curves, arcs). Closed subpaths with a fill are filled.",
+    run: (s, a) =>
+      s.mutate("path", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const polys = flattenPath(a.str("d"));
+        const fill = a.optStr("fill");
+        const ids: string[] = [];
+        for (const poly of polys) {
+          const pts: number[] = [];
+          for (let i = 0; i < poly.length; i += 2) pts.push(poly[i]!, poly[i + 1]!, 0.8);
+          const closed = !!fill && poly.length >= 6;
+          const st: Omit<Stroke, "id"> = { tool: (a.optStr("tool") as Stroke["tool"]) ?? (closed ? "pen" : "ink"), color: a.str("color", "#111111"), size: a.num("size", closed ? 3 : 4), opacity: a.num("opacity", 1), pts, closed, fill };
+          ids.push(anim.addStroke(sc, a.str("layerId"), Math.round(a.num("frame", 0)), st).id);
+        }
+        return { strokes: ids.length };
+      }),
+  },
+  shot: {
+    help:
+      "{name?, seconds?=10, fps?=24, width?=1080, height?=1920, backdrop?:{type,...}|type, character?:{...char.create args}, actions?:[...char.act steps], say?:[{at,text,voice?,speed?}], camera?:{scale:[from,to], y:[from,to]}, look?: 'night'|'warm'|'clean', fade?=true, render?:{quality?,height?}|false} " +
+      "One command: new project → scene → backdrop → character → animation → voices + lip sync → grade → camera → render.",
+    run: async (s, a) => {
+      const secs = a.num("seconds", 10);
+      const fps = a.num("fps", 24);
+      const W = a.num("width", 1080);
+      const H = a.num("height", 1920);
+      const cmds: Command[] = [];
+      cmds.push({ op: "project.new", name: a.str("name", "Shot"), width: W, height: H, fps });
+      cmds.push({ op: "anim.scene.new", name: a.str("name", "Shot"), width: W, height: H, fps, frames: Math.round(secs * fps), background: "#101018" });
+      const bd = a.any("backdrop");
+      if (bd !== undefined && bd !== false) cmds.push({ op: "scene.backdrop", sceneId: "$1.id", ...(typeof bd === "string" ? { type: bd } : (bd as object)) });
+      const ch = a.any("character");
+      let charIdx = -1;
+      if (ch) {
+        charIdx = cmds.length;
+        cmds.push({ op: "char.create", sceneId: "$1.id", ...(ch as object) });
+        const acts = a.any("actions");
+        if (Array.isArray(acts) && acts.length) cmds.push({ op: "char.act", sceneId: "$1.id", layerId: `$${charIdx}.layerId`, actions: acts });
+      }
+      const clipIdx = cmds.length;
+      cmds.push({ op: "anim.toTimeline", sceneId: "$1.id", start: 0, dur: secs });
+      const look = a.str("look", "night");
+      if (look === "night") {
+        cmds.push({ op: "clip.fx", id: `$${clipIdx}.id`, values: { glow: 0.55, glowThreshold: 0.8, glowRadius: 26 } });
+        cmds.push({ op: "clip.grade", id: `$${clipIdx}.id`, values: { contrast: 1.06, saturation: 1.02, vignette: 0.4, grain: 0.08 } });
+        cmds.push({ op: "clip.wheels", id: `$${clipIdx}.id`, lift: "#2e2a6e", gain: "#ffc08a", strength: 0.25 });
+      } else if (look === "warm") {
+        cmds.push({ op: "clip.grade", id: `$${clipIdx}.id`, values: { contrast: 1.05, temperature: 0.25, vignette: 0.3, grain: 0.06 } });
+      }
+      const cam = a.any("camera") as { scale?: number[]; y?: number[]; x?: number[] } | undefined;
+      for (const prop of ["scale", "x", "y"] as const) {
+        const r = cam?.[prop];
+        if (Array.isArray(r) && r.length >= 2) cmds.push({ op: "clip.keys", id: `$${clipIdx}.id`, prop, keys: [[0, r[0], "inOut"], [secs, r[1], "inOut"]] });
+      }
+      if (a.bool("fade", true)) cmds.push({ op: "clip.transition", id: `$${clipIdx}.id`, in: "fade", out: "dip", dur: 0.5 });
+      const say = a.any("say");
+      if (Array.isArray(say) && charIdx >= 0)
+        for (const line of say as Record<string, unknown>[]) cmds.push({ op: "char.say", sceneId: "$1.id", layerId: `$${charIdx}.layerId`, ...line });
+      cmds.push({ op: "project.save" });
+      const render = a.any("render");
+      if (render !== false) cmds.push({ op: "render.start", quality: "very-high", codec: "avc", name: a.str("name", "Shot"), to: secs, ...(typeof render === "object" && render ? render : {}) });
+      const results = await runBatch(s, cmds, false);
+      const failed = results.find((r) => !r.ok);
+      if (failed) throw new ops.OpError(`${failed.op} failed: ${failed.error}`);
+      return {
+        project: s.project.id,
+        sceneId: (results[1]?.result as { id?: string })?.id,
+        characterLayerId: charIdx >= 0 ? (results[charIdx]?.result as { layerId?: string })?.layerId : undefined,
+        clipId: (results[clipIdx]?.result as { id?: string })?.id,
+        render: results[results.length - 1]?.op === "render.start" ? results[results.length - 1]?.result : undefined,
+        steps: results.length,
+      };
+    },
+  },
+
   "voice.list": { help: "Voices: stock, character presets and your Voice Lab voices.", run: (s) => s.voice.list() },
   "voice.speak": {
     help: "{text, mode?: speak|dialogue, voice?, speed?, cast?:{Name:voice}, add?=true, start?} VolTune speech → audio asset (+lip-sync). Dialogue: 'Name: line', '(whispering)', '[pause 1s]'.",
@@ -598,9 +804,10 @@ export async function runCommand(s: Studio, cmd: Command, previous: CommandResul
 }
 
 /** Run commands in order. Stops at the first error unless `continueOnError`. */
-export async function runBatch(s: Studio, cmds: Command[], continueOnError = false): Promise<CommandResult[]> {
+export async function runBatch(s: Studio, cmds: Command[], continueOnError = false, onProgress?: (done: number, op: string) => void): Promise<CommandResult[]> {
   const results: CommandResult[] = [];
   for (const c of cmds) {
+    onProgress?.(results.length, String(c.op ?? ""));
     const r = await runCommand(s, c, results);
     results.push(r);
     if (!r.ok && !continueOnError) break;

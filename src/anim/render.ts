@@ -1,6 +1,7 @@
 /** Draws animation scenes with Canvas 2D. Strokes are vectors, so any frame renders sharp at any size. */
 import { valueAt } from "../core/keyframes";
 import { worldMatrix } from "./rig";
+import { drawBackdrop, drawPuppet } from "./puppet";
 import { TRANSFORM_DEFAULTS, exposedKey, type AnimLayer, type AnimScene, type BlendMode, type Cel, type Stroke } from "../core/model";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -281,16 +282,19 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
   const layer = scratchCanvas(W, H);
   const lc = ctx2d(layer);
   const drawLayerAt = (l: AnimLayer, fr: number, tint: string | null, alpha: number, cel?: Cel) => {
+    const proc = l.kind === "puppet" || l.kind === "backdrop";
     const key = exposedKey(l, fr);
     const use = cel ?? (key ? l.cels[key] : undefined);
-    if (!use) return;
+    if (!use && !proc) return;
     lc.setTransform(1, 0, 0, 1, 0, 0);
     lc.globalCompositeOperation = "source-over";
     lc.globalAlpha = 1;
     lc.clearRect(0, 0, W, H);
     lc.setTransform(scale, 0, 0, scale, 0, 0);
     layerTransform(lc, l, fr, s);
-    drawCel(lc, use, o.onReady);
+    if (l.kind === "puppet") drawPuppet(lc, l, s, fr);
+    else if (l.kind === "backdrop") drawBackdrop(lc, l, s, fr);
+    if (use) drawCel(lc, use, o.onReady);
     if (tint) {
       lc.setTransform(1, 0, 0, 1, 0, 0);
       lc.globalCompositeOperation = "source-atop";

@@ -1,0 +1,1737 @@
+/**
+ * Procedural anime characters ("puppets") and painted backdrops for the animation workstation.
+ *
+ * A puppet layer stores a small spec (look, outfit, props) plus animation channels (pose, face, smoke) keyed
+ * by frame. Every frame is drawn from curves: limbs are continuous tapered tubes through the joints (no seams at
+ * elbows or knees), everything is cel shaded with a key light, line weight varies, hands reach targets by IK,
+ * hair and jacket follow through, eyes blink on their own, and smoke is a particle system. This is what lets
+ * an agent describe a whole shot in a few hundred bytes instead of tens of thousands of hand strokes.
+ */
+import { valueAt } from "../core/keyframes";
+import type { Animatable, AnimLayer, AnimScene, Ease } from "../core/model";
+
+type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+interface V {
+  x: number;
+  y: number;
+}
+
+/* ---------------------------------- spec ---------------------------------- */
+
+export interface PuppetPalette {
+  skin: string;
+  skinShade: string;
+  skinLine: string;
+  hair: string;
+  hairShade: string;
+  hairHi: string;
+  eyes: string;
+  jacket: string;
+  jacketShade: string;
+  jacketHi: string;
+  shirt: string;
+  shirtShade: string;
+  pants: string;
+  pantsShade: string;
+  boots: string;
+  line: string;
+  rim: string;
+  metal: string;
+}
+
+export interface PuppetSpec {
+  /** Ground point between the feet, scene px. */
+  x: number;
+  y: number;
+  /** Sole to top of head, px. */
+  height: number;
+  hair: "messy" | "short" | "long" | "spiky";
+  jacket: "leather" | "hoodie" | "coat" | "none";
+  shirt: "turtleneck" | "tee" | "shirt";
+  chain: boolean;
+  props: string[];
+  /** Which hand holds props: R (screen right) or L. */
+  propHand: "R" | "L";
+  colors: PuppetPalette;
+  seed: number;
+}
+
+export const PALETTES: Record<string, Partial<PuppetPalette>> = {
+  black: {},
+  white: { jacket: "#e9e8ee", jacketShade: "#b9b7c8", jacketHi: "#ffffff", shirt: "#2b2b33", shirtShade: "#1d1d24" },
+  red: { jacket: "#7d1622", jacketShade: "#4d0c14", jacketHi: "#c4404e" },
+  navy: { jacket: "#1e2a4a", jacketShade: "#121a30", jacketHi: "#3f5590" },
+  brown: { jacket: "#5a3a26", jacketShade: "#3a2416", jacketHi: "#94643f" },
+};
+
+export const DEFAULT_PALETTE: PuppetPalette = {
+  skin: "#f7e2d4",
+  skinShade: "#e2b2a6",
+  skinLine: "#7b4640",
+  hair: "#1b1b25",
+  hairShade: "#0c0c13",
+  hairHi: "#56648f",
+  eyes: "#d12c43",
+  jacket: "#26272f",
+  jacketShade: "#15151b",
+  jacketHi: "#5a5f78",
+  shirt: "#34343f",
+  shirtShade: "#22222b",
+  pants: "#1f1f27",
+  pantsShade: "#121218",
+  boots: "#121216",
+  line: "#07070a",
+  rim: "#a497ff",
+  metal: "#c9ccd6",
+};
+
+export function makeSpec(o: Partial<PuppetSpec> & { palette?: string; colorOverrides?: Partial<PuppetPalette> } = {}): PuppetSpec {
+  const colors: PuppetPalette = { ...DEFAULT_PALETTE, ...(PALETTES[o.palette ?? "black"] ?? {}), ...(o.colors ?? {}), ...(o.colorOverrides ?? {}) };
+  return {
+    x: o.x ?? 540,
+    y: o.y ?? 1700,
+    height: o.height ?? 1250,
+    hair: o.hair ?? "messy",
+    jacket: o.jacket ?? "leather",
+    shirt: o.shirt ?? "turtleneck",
+    chain: o.chain ?? true,
+    props: o.props ?? [],
+    propHand: o.propHand ?? "R",
+    colors,
+    seed: o.seed ?? 7,
+  };
+}
+
+/* -------------------------------- channels -------------------------------- */
+
+/**
+ * Animation channels and their rest values. Hand targets are relative to the shoulder in torso space, in head
+ * units (1 u = height / 7.6). Feet are relative to the hip joints. Face values are 0..1 unless noted.
+ */
+export const CHANNELS: Record<string, number> = {
+  rootX: 0, // u
+  rootY: 0, // u (positive = down / crouch)
+  lean: 0, // deg, torso (positive = clockwise)
+  hipTilt: 0, // deg
+  headTilt: 0, // deg
+  headNod: 0, // -1 look down .. 1 look up
+  headTurn: 0, // -1 .. 1 (three-quarter)
+  shrugL: 0,
+  shrugR: 0,
+  handLx: -0.22,
+  handLy: 2.5,
+  handLrot: 0,
+  handLpose: 0, // 0 relaxed, 1 open, 2 pinch, 3 fist, 4 pocket, 5 point
+  handRx: 0.22,
+  handRy: 2.5,
+  handRrot: 0,
+  handRpose: 0,
+  footLx: -0.06,
+  footLy: 3.55,
+  footRx: 0.06,
+  footRy: 3.55,
+  blink: -1, // -1 = automatic blinking; otherwise 0 open .. 1 closed
+  lid: 0.12, // resting upper lid (0.4 = cool half-lidded)
+  browL: 0, // -1 angry .. 1 raised
+  browR: 0,
+  lookX: 0,
+  lookY: 0,
+  mouthOpen: 0,
+  mouthSmile: 0, // -1 .. 1
+  mouthSmirk: 0, // -1 .. 1 (one corner)
+  mouthRound: 0, // 0 .. 1 ("o")
+  blush: 0,
+  cigToMouth: 0, // 0 .. 1 cigarette filter turns to the lips
+  drag: 0, // ember brightness boost while inhaling
+  exhale: 0, // smoke from the mouth
+  breath: 1, // breathing amplitude
+  wind: 0.3,
+};
+
+export type Channels = Record<string, Animatable>;
+
+export function chan(l: AnimLayer, name: string, frame: number): number {
+  return valueAt(l.chan?.[name], frame, CHANNELS[name] ?? 0);
+}
+
+export function setChannelKey(l: AnimLayer, name: string, frame: number, v: number, kind: Ease = "inOut"): void {
+  if (!(name in CHANNELS)) throw new Error(`Unknown channel "${name}". Channels: ${Object.keys(CHANNELS).join(", ")}`);
+  l.chan ??= {};
+  const cur = l.chan[name];
+  const list = typeof cur === "number" ? [{ t: 0, v: cur, ease: kind }] : Array.isArray(cur) ? cur.map((k) => ({ ...k })) : [];
+  const i = list.findIndex((k) => Math.abs(k.t - frame) < 1e-4);
+  if (i >= 0) list[i] = { t: frame, v, ease: kind };
+  else list.push({ t: frame, v, ease: kind });
+  list.sort((a, b) => a.t - b.t);
+  l.chan[name] = list;
+}
+
+/* --------------------------------- math ----------------------------------- */
+
+const D2R = Math.PI / 180;
+const v = (x: number, y: number): V => ({ x, y });
+const add = (a: V, b: V): V => ({ x: a.x + b.x, y: a.y + b.y });
+const sub = (a: V, b: V): V => ({ x: a.x - b.x, y: a.y - b.y });
+const mul = (a: V, k: number): V => ({ x: a.x * k, y: a.y * k });
+const len = (a: V) => Math.hypot(a.x, a.y);
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const lerpV = (a: V, b: V, t: number): V => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) });
+const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
+function rot(p: V, deg: number): V {
+  const c = Math.cos(deg * D2R);
+  const s = Math.sin(deg * D2R);
+  return { x: p.x * c - p.y * s, y: p.x * s + p.y * c };
+}
+const angleOf = (a: V) => Math.atan2(a.y, a.x) / D2R;
+function hash(n: number): number {
+  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+function noise1(x: number, seed = 0): number {
+  const i = Math.floor(x);
+  const f = x - i;
+  const u = f * f * (3 - 2 * f);
+  return lerp(hash(i + seed * 57), hash(i + 1 + seed * 57), u) * 2 - 1;
+}
+
+/** Two-bone IK. Picks the elbow/knee solution that points along `pref`. */
+function ik(a: V, target: V, l1: number, l2: number, pref: V): { mid: V; end: V } {
+  const d0 = sub(target, a);
+  let d = len(d0);
+  const maxR = (l1 + l2) * 0.999;
+  const minR = Math.abs(l1 - l2) + 1e-3;
+  const dir = d > 1e-6 ? mul(d0, 1 / d) : v(0, 1);
+  d = clamp(d, minR, maxR);
+  const end = add(a, mul(dir, d));
+  const cosA = clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
+  const ang = Math.acos(cosA) / D2R;
+  const m1 = add(a, mul(rot(dir, ang), l1));
+  const m2 = add(a, mul(rot(dir, -ang), l1));
+  const mid = lerpV(a, end, 0.5);
+  const s1 = (m1.x - mid.x) * pref.x + (m1.y - mid.y) * pref.y;
+  const s2 = (m2.x - mid.x) * pref.x + (m2.y - mid.y) * pref.y;
+  return { mid: s1 >= s2 ? m1 : m2, end };
+}
+
+/* -------------------------------- skeleton -------------------------------- */
+
+export interface Skeleton {
+  u: number;
+  pelvis: V;
+  neck: V;
+  torsoA: number;
+  headA: number;
+  head: V; // head origin (neck top) for drawing
+  shoulderL: V;
+  shoulderR: V;
+  elbowL: V;
+  elbowR: V;
+  wristL: V;
+  wristR: V;
+  handLA: number;
+  handRA: number;
+  hipL: V;
+  hipR: V;
+  kneeL: V;
+  kneeR: V;
+  ankleL: V;
+  ankleR: V;
+  /** Face feature offset for head turn and nod (head-local u). */
+  turn: number;
+  nod: number;
+  mouth: V; // world
+  grip: V; // world, where the prop hand holds things
+  ember: V; // world, burning tip of the cigarette (if any)
+  filter: V;
+}
+
+const UPPER_ARM = 1.36;
+const FORE_ARM = 1.24;
+const THIGH = 1.84;
+const SHIN = 1.74;
+const PELVIS_H = 3.82;
+
+function breathAt(l: AnimLayer, f: number, fps: number): number {
+  return Math.sin(((f / fps) * 2 * Math.PI) / 3.8) * 0.022 * chan(l, "breath", f);
+}
+
+/** Head drawing scale relative to the body (anime heads read a little larger). */
+export const HS = 1.12;
+/** Total figure height in head units (sole to top of hair). */
+const FIG = 7.75;
+
+export function skeleton(l: AnimLayer, spec: PuppetSpec, f: number, fps: number): Skeleton {
+  const u = spec.height / FIG;
+  const c = (n: string) => chan(l, n, f);
+  const br = breathAt(l, f, fps);
+  const ground = v(spec.x + c("rootX") * u, spec.y);
+  const pelvis = v(ground.x, ground.y - PELVIS_H * u + c("rootY") * u);
+  const torsoA = c("lean") + c("hipTilt") * 0.35;
+  const T = (p: V) => add(pelvis, rot(mul(p, u), torsoA));
+  const neck = T(v(0, -2.1 - br * 0.6));
+  const shoulderL = T(v(-0.86, -1.92 - br - c("shrugL") * 0.25));
+  const shoulderR = T(v(0.86, -1.92 - br - c("shrugR") * 0.25));
+  const headA = torsoA + c("headTilt");
+  const turn = c("headTurn");
+  const nod = c("headNod");
+  const H = (p: V) => add(neck, rot(mul(p, u * HS), headA));
+  const mouth = H(v(turn * 0.1, -0.5 - nod * 0.04));
+  const ph = spec.propHand;
+  const k = spec.props.includes("cigarette") ? clamp(c("cigToMouth"), 0, 1) : 0;
+  const out = (side: "L" | "R") => (side === "L" ? -1 : 1);
+  const gripOff = (side: "L" | "R") => v(-out(side) * 0.05 * u, 0.4 * u);
+  const fd0 = norm(v(-out(ph) * 0.62, -0.78)); // grip → lips when the cigarette is at the mouth
+  const hand = (side: "L" | "R", sh: V) => {
+    let t = add(sh, rot(v(c(`hand${side}x`) * u, c(`hand${side}y`) * u), torsoA));
+    const pref = rot(v(out(side) * 0.75, 0.6), torsoA);
+    let r = ik(sh, t, UPPER_ARM * u, FORE_ARM * u, pref);
+    if (side === ph && k > 0) {
+      // Bring the filter exactly to the lips: solve for the wrist that puts grip + filter at the mouth.
+      const grip = sub(mouth, mul(fd0, 0.14 * u));
+      for (let i = 0; i < 3; i++) {
+        const ha = angleOf(sub(r.end, r.mid)) - 90 + c(`hand${side}rot`);
+        const want = sub(grip, rot(gripOff(side), ha));
+        const e = k * k * (3 - 2 * k);
+        r = ik(sh, lerpV(t, want, e), UPPER_ARM * u, FORE_ARM * u, pref);
+      }
+      t = r.end;
+    }
+    return r;
+  };
+  const aL = hand("L", shoulderL);
+  const aR = hand("R", shoulderR);
+  const hipA = c("hipTilt");
+  const hipL = add(pelvis, rot(v(-0.4 * u, 0.12 * u), hipA));
+  const hipR = add(pelvis, rot(v(0.4 * u, 0.12 * u), hipA));
+  // Feet are planted relative to the ground under each hip (not the tilted pelvis).
+  const footL = v(spec.x + c("rootX") * u - 0.4 * u + c("footLx") * u, pelvis.y + 0.12 * u + c("footLy") * u - c("rootY") * u);
+  const footR = v(spec.x + c("rootX") * u + 0.4 * u + c("footRx") * u, pelvis.y + 0.12 * u + c("footRy") * u - c("rootY") * u);
+  const lL = ik(hipL, footL, THIGH * u, SHIN * u, v(-0.04, -1));
+  const lR = ik(hipR, footR, THIGH * u, SHIN * u, v(0.04, -1));
+  const handLA = angleOf(sub(aL.end, aL.mid)) - 90 + c("handLrot");
+  const handRA = angleOf(sub(aR.end, aR.mid)) - 90 + c("handRrot");
+  const wrist = ph === "R" ? aR.end : aL.end;
+  const ha = ph === "R" ? handRA : handLA;
+  const grip = add(wrist, rot(gripOff(ph), ha));
+  // Cigarette rests across the fingers and turns so the filter meets the lips when raised.
+  const restDir = rot(v(out(ph), 0.2), ha);
+  const fd = norm(lerpV(mul(restDir, -1), fd0, k));
+  const filter = add(grip, mul(fd, 0.14 * u));
+  const ember = sub(grip, mul(fd, 0.52 * u));
+  return {
+    u,
+    pelvis,
+    neck,
+    torsoA,
+    headA,
+    head: neck,
+    shoulderL,
+    shoulderR,
+    elbowL: aL.mid,
+    elbowR: aR.mid,
+    wristL: aL.end,
+    wristR: aR.end,
+    handLA,
+    handRA,
+    hipL,
+    hipR,
+    kneeL: lL.mid,
+    kneeR: lR.mid,
+    ankleL: lL.end,
+    ankleR: lR.end,
+    turn,
+    nod,
+    mouth,
+    grip,
+    ember,
+    filter,
+  };
+}
+
+/* ------------------------------- drawing kit ------------------------------- */
+
+interface Kit {
+  c: Ctx;
+  u: number;
+  lw: number; // outer line width
+  pal: PuppetPalette;
+  light: V; // unit vector toward the key light (screen space)
+}
+
+/** Smooth closed path through points (Catmull-Rom → Bézier). */
+function smoothClosed(pts: V[], tension = 0.5): Path2D {
+  const p = new Path2D();
+  const n = pts.length;
+  if (n < 3) return p;
+  p.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n]!;
+    const p1 = pts[i]!;
+    const p2 = pts[(i + 1) % n]!;
+    const p3 = pts[(i + 2) % n]!;
+    const t = tension / 3;
+    p.bezierCurveTo(p1.x + (p2.x - p0.x) * t, p1.y + (p2.y - p0.y) * t, p2.x - (p3.x - p1.x) * t, p2.y - (p3.y - p1.y) * t, p2.x, p2.y);
+  }
+  p.closePath();
+  return p;
+}
+
+/** Path from a list of points where a point marked `sharp` is a corner. */
+function shape(pts: (V & { s?: boolean })[], tension = 0.5): Path2D {
+  // Duplicate sharp points so the spline passes through them with a corner.
+  const out: V[] = [];
+  for (const q of pts) {
+    out.push(q);
+    if (q.s) out.push({ x: q.x + 0.01, y: q.y + 0.01 });
+  }
+  return smoothClosed(out, tension);
+}
+
+function smoothOpen(pts: V[], tension = 0.5): Path2D {
+  const p = new Path2D();
+  if (pts.length < 2) return p;
+  p.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)]!;
+    const p1 = pts[i]!;
+    const p2 = pts[i + 1]!;
+    const p3 = pts[Math.min(pts.length - 1, i + 2)]!;
+    const t = tension / 3;
+    p.bezierCurveTo(p1.x + (p2.x - p0.x) * t, p1.y + (p2.y - p0.y) * t, p2.x - (p3.x - p1.x) * t, p2.y - (p3.y - p1.y) * t, p2.x, p2.y);
+  }
+  return p;
+}
+
+/** Tapered ink line: filled ribbon whose width follows `w(t)`. */
+function inkLine(k: Kit, pts: V[], width: number, color: string, taper: [number, number] = [0.25, 0.25]): void {
+  if (pts.length < 2) return;
+  // Resample along a Catmull-Rom spline.
+  const samp: V[] = [];
+  const N = Math.max(8, pts.length * 6);
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * (pts.length - 1);
+    const j = Math.min(pts.length - 2, Math.floor(t));
+    const f = t - j;
+    const p0 = pts[Math.max(0, j - 1)]!;
+    const p1 = pts[j]!;
+    const p2 = pts[j + 1]!;
+    const p3 = pts[Math.min(pts.length - 1, j + 2)]!;
+    const f2 = f * f;
+    const f3 = f2 * f;
+    samp.push({
+      x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * f + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * f2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * f3),
+      y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * f + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * f2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * f3),
+    });
+  }
+  const L: V[] = [];
+  const R: V[] = [];
+  for (let i = 0; i < samp.length; i++) {
+    const a = samp[Math.max(0, i - 1)]!;
+    const b = samp[Math.min(samp.length - 1, i + 1)]!;
+    let d = sub(b, a);
+    d = mul(d, 1 / (len(d) || 1));
+    const t = i / (samp.length - 1);
+    const tw = Math.min(1, taper[0] > 0 ? t / taper[0] : 1, taper[1] > 0 ? (1 - t) / taper[1] : 1);
+    const w = (width / 2) * (0.15 + 0.85 * Math.sqrt(Math.max(0, tw)));
+    L.push(add(samp[i]!, v(-d.y * w, d.x * w)));
+    R.push(add(samp[i]!, v(d.y * w, -d.x * w)));
+  }
+  const p = new Path2D();
+  p.moveTo(L[0]!.x, L[0]!.y);
+  for (const q of L) p.lineTo(q.x, q.y);
+  for (let i = R.length - 1; i >= 0; i--) p.lineTo(R[i]!.x, R[i]!.y);
+  p.closePath();
+  k.c.fillStyle = color;
+  k.c.fill(p);
+}
+
+function shifted(p: Path2D, dx: number, dy: number): Path2D {
+  const q = new Path2D();
+  q.addPath(p, new DOMMatrix([1, 0, 0, 1, dx, dy]));
+  return q;
+}
+
+/**
+ * Cel-shaded fill: base colour, a hard shadow band on the side away from the light, an optional highlight band
+ * on the lit edge, then the outline.
+ */
+function cel(k: Kit, p: Path2D, base: string, shadow: string, opts: { sh?: number; hi?: string; hiW?: number; line?: string; lw?: number; rim?: boolean } = {}): void {
+  const c = k.c;
+  const sh = (opts.sh ?? 0.16) * k.u;
+  c.save();
+  c.fillStyle = base;
+  c.fill(p);
+  c.clip(p);
+  // Shadow = shape minus shape pushed toward the light.
+  const s = new Path2D();
+  s.addPath(p);
+  s.addPath(shifted(p, k.light.x * sh, k.light.y * sh));
+  c.fillStyle = shadow;
+  c.fill(s, "evenodd");
+  if (opts.hi) {
+    const hw = (opts.hiW ?? 0.06) * k.u;
+    const h = new Path2D();
+    h.addPath(p);
+    h.addPath(shifted(p, -k.light.x * hw, -k.light.y * hw));
+    c.fillStyle = opts.hi;
+    c.fill(h, "evenodd");
+  }
+  if (opts.rim !== false) {
+    // Soft cool rim from the moon on the far side.
+    const rw = 0.035 * k.u;
+    const r = new Path2D();
+    r.addPath(p);
+    r.addPath(shifted(p, k.light.x * rw * -1 * -1 + rw, -rw * 0.2));
+    c.globalAlpha = 0.18;
+    c.fillStyle = k.pal.rim;
+    c.fill(r, "evenodd");
+    c.globalAlpha = 1;
+  }
+  c.restore();
+  if (opts.line !== "none") {
+    c.lineWidth = opts.lw ?? k.lw;
+    c.lineJoin = "round";
+    c.lineCap = "round";
+    c.strokeStyle = opts.line ?? k.pal.line;
+    c.stroke(p);
+  }
+}
+
+/** Continuous tapered tube through joints (sleeves, legs). */
+function tube(pts: V[], widths: number[], capStart = true, capEnd = true): Path2D {
+  const N = 28;
+  const samp: { p: V; w: number }[] = [];
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * (pts.length - 1);
+    const j = Math.min(pts.length - 2, Math.floor(t));
+    const f = t - j;
+    // Quadratic-ish blend for a rounded bend at the joint.
+    const p0 = pts[Math.max(0, j - 1)]!;
+    const p1 = pts[j]!;
+    const p2 = pts[j + 1]!;
+    const p3 = pts[Math.min(pts.length - 1, j + 2)]!;
+    const f2 = f * f;
+    const f3 = f2 * f;
+    const p = {
+      x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * f + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * f2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * f3),
+      y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * f + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * f2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * f3),
+    };
+    samp.push({ p, w: lerp(widths[j]!, widths[j + 1]!, f) });
+  }
+  const L: V[] = [];
+  const R: V[] = [];
+  for (let i = 0; i < samp.length; i++) {
+    const a = samp[Math.max(0, i - 1)]!.p;
+    const b = samp[Math.min(samp.length - 1, i + 1)]!.p;
+    let d = sub(b, a);
+    d = mul(d, 1 / (len(d) || 1));
+    const w = samp[i]!.w / 2;
+    L.push(add(samp[i]!.p, v(-d.y * w, d.x * w)));
+    R.push(add(samp[i]!.p, v(d.y * w, -d.x * w)));
+  }
+  const p = new Path2D();
+  p.moveTo(L[0]!.x, L[0]!.y);
+  for (let i = 1; i < L.length; i++) p.lineTo(L[i]!.x, L[i]!.y);
+  const e = samp[samp.length - 1]!;
+  if (capEnd) {
+    const a0 = angleOf(sub(L[L.length - 1]!, e.p)) * D2R;
+    p.arc(e.p.x, e.p.y, e.w / 2, a0, a0 - Math.PI, true);
+  } else p.lineTo(R[R.length - 1]!.x, R[R.length - 1]!.y);
+  for (let i = R.length - 2; i >= 0; i--) p.lineTo(R[i]!.x, R[i]!.y);
+  const s0 = samp[0]!;
+  if (capStart) {
+    const a0 = angleOf(sub(R[0]!, s0.p)) * D2R;
+    p.arc(s0.p.x, s0.p.y, s0.w / 2, a0, a0 - Math.PI, true);
+  }
+  p.closePath();
+  return p;
+}
+
+/* ------------------------------- the puppet -------------------------------- */
+
+export function drawPuppet(c: Ctx, l: AnimLayer, s: AnimScene, f: number): void {
+  const spec = l.puppet;
+  if (!spec) return;
+  const sk = skeleton(l, spec, f, s.fps);
+  lastSk = sk;
+  const u = sk.u;
+  const k: Kit = { c, u, lw: Math.max(1.2, 0.036 * u), pal: spec.colors, light: norm(v(0.75, -0.66)) };
+  const ch = (n: string) => chan(l, n, f);
+  // Velocities for follow-through (hair, jacket).
+  const prev = skeleton(l, spec, Math.max(0, f - 3), s.fps);
+  const swing = {
+    head: (sk.headA - prev.headA) * 0.9 + noise1(f / s.fps / 1.7, spec.seed) * 2.5 * ch("wind"),
+    body: (sk.pelvis.x - prev.pelvis.x) / u,
+  };
+
+  // Ground shadow.
+  c.save();
+  const gs = c.createRadialGradient(spec.x, spec.y, 0, spec.x, spec.y, 1.9 * u);
+  gs.addColorStop(0, "rgba(0,0,0,0.45)");
+  gs.addColorStop(1, "rgba(0,0,0,0)");
+  c.fillStyle = gs;
+  c.setTransform(c.getTransform().multiply(new DOMMatrix([1, 0, 0, 0.18, 0, spec.y * (1 - 0.18)])));
+  c.beginPath();
+  c.arc(spec.x + ch("rootX") * u, spec.y, 1.9 * u, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+
+  drawHairBack(k, sk, spec, swing.head, f / s.fps);
+  drawLegs(k, sk, spec);
+  drawTorso(k, sk, spec, swing.body);
+  drawHead(k, l, sk, spec, f, s.fps, swing.head);
+  // Arms: the one crossing the body goes last.
+  const crossR = sk.wristR.x < sk.shoulderR.x - 0.6 * u;
+  const crossL = sk.wristL.x > sk.shoulderL.x + 0.6 * u;
+  const order: ("L" | "R")[] = crossR && !crossL ? ["L", "R"] : crossL && !crossR ? ["R", "L"] : ["L", "R"];
+  for (const side of order) drawArm(k, l, sk, spec, side, f);
+  drawSmoke(c, l, spec, s, f);
+}
+
+function norm(a: V): V {
+  const n = len(a) || 1;
+  return v(a.x / n, a.y / n);
+}
+
+function drawLegs(k: Kit, sk: Skeleton, spec: PuppetSpec): void {
+  const u = k.u;
+  const P = k.pal;
+  // Pelvis / crotch block joins the legs.
+  const pv = sk.pelvis;
+  const crotch = shape([add(pv, v(-0.66 * u, -0.45 * u)), add(pv, v(0.66 * u, -0.45 * u)), add(pv, v(0.7 * u, 0.25 * u)), add(pv, v(0.1 * u, 0.62 * u)), add(pv, v(-0.1 * u, 0.62 * u)), add(pv, v(-0.7 * u, 0.25 * u))], 0.4);
+  cel(k, crotch, P.pants, P.pantsShade, { sh: 0.12, line: "none" });
+  for (const side of ["L", "R"] as const) {
+    const hip = side === "L" ? sk.hipL : sk.hipR;
+    const knee = side === "L" ? sk.kneeL : sk.kneeR;
+    const ankle = side === "L" ? sk.ankleL : sk.ankleR;
+    const out = side === "L" ? -1 : 1;
+    const top = add(hip, v(-out * 0.04 * u, -0.25 * u));
+    const leg = tube([top, knee, add(ankle, v(0, 0.05 * u))], [0.8 * u, 0.58 * u, 0.52 * u], false, false);
+    cel(k, leg, P.pants, P.pantsShade, { sh: 0.14, hi: shadeMix(P.pants, "#ffffff", 0.08), hiW: 0.04 });
+    // Knee crease and hem fold.
+    const kd = norm(sub(ankle, knee));
+    inkLine(k, [add(knee, v(-out * 0.08 * u, -0.06 * u)), add(knee, add(mul(kd, 0.1 * u), v(-out * 0.02 * u, 0))), add(knee, v(out * 0.05 * u, 0.2 * u))], 0.02 * u, P.line);
+    // Boot.
+    const b = ankle;
+    const boot = shape(
+      [
+        add(b, v(-0.24 * u, -0.22 * u)),
+        add(b, v(0.24 * u, -0.22 * u)),
+        { ...add(b, v(0.27 * u + out * 0.06 * u, 0.2 * u)), s: true },
+        add(b, v(out * 0.22 * u + 0.08 * u * out, 0.36 * u)),
+        { ...add(b, v(out * 0.3 * u, 0.42 * u)), s: true },
+        { ...add(b, v(-out * 0.26 * u, 0.42 * u)), s: true },
+        add(b, v(-0.28 * u, 0.18 * u)),
+      ],
+      0.6,
+    );
+    cel(k, boot, P.boots, "#050507", { sh: 0.1, hi: "#3a3d4c", hiW: 0.05 });
+    inkLine(k, [add(b, v(-out * 0.27 * u, 0.36 * u)), add(b, v(out * 0.3 * u, 0.36 * u))], 0.05 * u, "#2c2d36", [0, 0]);
+    // Trouser hem over the boot.
+    const hem = shape([add(b, v(-0.25 * u, -0.28 * u)), add(b, v(0.25 * u, -0.28 * u)), add(b, v(0.27 * u, -0.08 * u)), add(b, v(0, -0.02 * u)), add(b, v(-0.27 * u, -0.08 * u))], 0.5);
+    cel(k, hem, P.pants, P.pantsShade, { sh: 0.1 });
+  }
+  // Belt.
+  const belt = shape([add(pv, v(-0.68 * u, -0.42 * u)), add(pv, v(0.68 * u, -0.42 * u)), add(pv, v(0.69 * u, -0.25 * u)), add(pv, v(-0.69 * u, -0.25 * u))], 0.2);
+  cel(k, belt, "#17171c", "#0b0b0e", { sh: 0.05, hi: "#3d3e48", hiW: 0.03 });
+  const buckle = shape([add(pv, v(-0.11 * u, -0.43 * u)), add(pv, v(0.11 * u, -0.43 * u)), add(pv, v(0.11 * u, -0.24 * u)), add(pv, v(-0.11 * u, -0.24 * u))], 0.1);
+  cel(k, buckle, k.pal.metal, "#7f8494", { sh: 0.06, hi: "#ffffff", hiW: 0.03, lw: k.lw * 0.7 });
+  void spec;
+}
+
+function drawTorso(k: Kit, sk: Skeleton, spec: PuppetSpec, bodyVel: number): void {
+  const u = k.u;
+  const P = k.pal;
+  const T = (x: number, y: number) => add(sk.pelvis, rot(v(x * u, y * u), sk.torsoA));
+  const flare = clamp(-bodyVel * 0.6, -0.15, 0.15);
+  const neckY = (sk.neck.y - sk.pelvis.y) / u;
+  // Inner shirt (turtleneck) visible in the jacket opening.
+  const shirt = shape([T(-0.42, neckY + 0.06), T(0.42, neckY + 0.06), T(0.6, -1.2), T(0.62, -0.2), T(-0.62, -0.2), T(-0.6, -1.2)], 0.5);
+  cel(k, shirt, P.shirt, P.shirtShade, { sh: 0.22, hi: shadeMix(P.shirt, "#ffffff", 0.1), hiW: 0.05 });
+  // Ribbing lines.
+  for (let i = -2; i <= 2; i++) inkLine(k, [T(i * 0.1, -1.5), T(i * 0.1 + 0.01, -0.6), T(i * 0.1, -0.25)], 0.012 * u, shadeMix(P.shirt, "#000000", 0.35), [0.3, 0.3]);
+  if (spec.jacket === "none") return;
+  const sw = 0.93;
+  const jacketSide = (side: -1 | 1) =>
+    shape(
+      [
+        { ...T(side * 0.36, neckY + 0.02), s: true },
+        T(side * 0.62, neckY + 0.1),
+        T(side * sw, -2.02),
+        T(side * 0.97, -1.66),
+        T(side * 0.86, -1.15),
+        T(side * 0.86, -0.4),
+        { ...T(side * (0.95 + flare * side), 0.42), s: true },
+        T(side * 0.55, 0.47),
+        { ...T(side * 0.16, 0.44), s: true },
+        T(side * 0.2, -0.5),
+        T(side * 0.27, -1.3),
+      ],
+      0.45,
+    );
+  for (const side of [-1, 1] as const) {
+    const p = jacketSide(side);
+    cel(k, p, P.jacket, P.jacketShade, { sh: side === -1 ? 0.3 : 0.16, hi: P.jacketHi, hiW: 0.045 });
+    // Leather specular streak.
+    k.c.save();
+    k.c.clip(p);
+    inkLine(k, [T(side * 0.62, -1.75), T(side * 0.7, -1.1), T(side * 0.66, -0.3)], 0.07 * u, side === 1 ? withA(P.jacketHi, 0.55) : withA(P.jacketHi, 0.18), [0.4, 0.4]);
+    k.c.restore();
+    // Zipper edge.
+    inkLine(k, [T(side * 0.24, -1.45), T(side * 0.2, -0.5), T(side * 0.17, 0.4)], 0.018 * u, withA(P.metal, 0.55), [0.1, 0.1]);
+    // Pocket and seam.
+    inkLine(k, [T(side * 0.42, -0.35), T(side * 0.68, -0.15)], 0.022 * u, P.line, [0.2, 0.2]);
+    inkLine(k, [T(side * 0.86, -1.5), T(side * 0.64, -1.62), T(side * 0.38, -1.5)], 0.016 * u, P.line, [0.3, 0.3]);
+    // Lapel.
+    const lapel = shape([{ ...T(side * 0.36, neckY + 0.02), s: true }, T(side * 0.66, neckY + 0.12), { ...T(side * 0.6, -1.6), s: true }, { ...T(side * 0.3, -1.25), s: true }], 0.3);
+    cel(k, lapel, shadeMix(P.jacket, "#ffffff", 0.06), P.jacketShade, { sh: 0.08, hi: P.jacketHi, hiW: 0.03, lw: k.lw * 0.8 });
+  }
+  // Waistband.
+  for (const side of [-1, 1] as const) {
+    const wb = shape([T(side * 0.17, 0.3), T(side * (0.94 + flare * side), 0.3), T(side * (0.95 + flare * side), 0.44), T(side * 0.16, 0.44)], 0.2);
+    cel(k, wb, shadeMix(P.jacket, "#000000", 0.2), "#050507", { sh: 0.05, lw: k.lw * 0.7 });
+  }
+  if (spec.chain) {
+    const a = T(-0.2, neckY + 0.12);
+    const b = T(0.2, neckY + 0.12);
+    const m = T(0.02, -1.38);
+    inkLine(k, [a, lerpV(a, m, 0.55), m, lerpV(b, m, 0.55), b], 0.028 * u, P.metal, [0.05, 0.05]);
+    const pend = T(0.02, -1.3);
+    const pp = shape([add(pend, v(0, -0.09 * u)), add(pend, v(0.06 * u, 0)), add(pend, v(0, 0.12 * u)), add(pend, v(-0.06 * u, 0))], 0.1);
+    cel(k, pp, P.metal, "#7c8090", { sh: 0.05, hi: "#ffffff", hiW: 0.025, lw: k.lw * 0.6 });
+  }
+}
+
+function drawArm(k: Kit, l: AnimLayer, sk: Skeleton, spec: PuppetSpec, side: "L" | "R", f: number): void {
+  const u = k.u;
+  const P = k.pal;
+  const sh = side === "L" ? sk.shoulderL : sk.shoulderR;
+  const el = side === "L" ? sk.elbowL : sk.elbowR;
+  const wr = side === "L" ? sk.wristL : sk.wristR;
+  const ha = side === "L" ? sk.handLA : sk.handRA;
+  const pose = Math.round(chan(l, `hand${side}pose`, f));
+  const out = side === "L" ? -1 : 1;
+  const top = add(sh, rot(v(-out * 0.02 * u, 0.02 * u), sk.torsoA));
+  const sleeveEnd = add(wr, rot(v(0, -0.08 * u), ha));
+  const sleeve = tube([top, el, sleeveEnd], [0.54 * u, 0.44 * u, 0.4 * u], true, false);
+  const jacket = spec.jacket !== "none";
+  cel(k, sleeve, jacket ? P.jacket : P.shirt, jacket ? P.jacketShade : P.shirtShade, { sh: side === "L" ? 0.2 : 0.14, hi: jacket ? P.jacketHi : undefined, hiW: 0.04 });
+  // Elbow wrinkles.
+  const ed = norm(sub(wr, el));
+  const en = v(-ed.y, ed.x);
+  inkLine(k, [add(el, add(mul(en, 0.16 * u), mul(ed, -0.05 * u))), add(el, mul(ed, 0.04 * u)), add(el, add(mul(en, -0.08 * u), mul(ed, 0.12 * u)))], 0.022 * u, P.line, [0.3, 0.3]);
+  // Cuff.
+  const cuff = tube([add(wr, rot(v(0, -0.22 * u), ha)), add(wr, rot(v(0, -0.03 * u), ha))], [0.42 * u, 0.4 * u], false, false);
+  cel(k, cuff, shadeMix(jacket ? P.jacket : P.shirt, "#000000", 0.25), "#050507", { sh: 0.06, lw: k.lw * 0.8 });
+  if (pose !== 4) drawHand(k, wr, ha, side, pose, spec, l, f);
+  else {
+    // Hand in pocket: a little fold where the wrist disappears.
+    inkLine(k, [add(wr, v(-0.18 * u, 0)), add(wr, v(0, 0.06 * u)), add(wr, v(0.18 * u, 0))], 0.03 * u, P.line);
+  }
+}
+
+function drawHand(k: Kit, wr: V, ang: number, side: "L" | "R", pose: number, spec: PuppetSpec, l: AnimLayer, f: number): void {
+  const u = k.u;
+  const P = k.pal;
+  const m = (x: number, y: number) => add(wr, rot(v((side === "L" ? -x : x) * u, y * u), ang));
+  const holds = spec.props.includes("cigarette") && side === spec.propHand;
+  const skin = (p: Path2D, lw = k.lw * 0.75) => cel(k, p, P.skin, P.skinShade, { sh: 0.06, line: P.skinLine, lw, rim: false });
+  const finger = (bx: number, by: number, tx: number, ty: number, w: number) => {
+    const b = m(bx, by);
+    const t = m(tx, ty);
+    const mid = lerpV(b, t, 0.5);
+    return tube([b, mid, t], [w * u, w * 0.95 * u, w * 0.8 * u]);
+  };
+  if (holds && (pose === 0 || pose === 3)) pose = 2;
+  const palm = shape([m(-0.15, -0.02), m(0.16, -0.02), m(0.19, 0.16), m(0.15, 0.31), m(-0.14, 0.32), m(-0.18, 0.14)], 0.6);
+  const thumb = finger(-0.15, 0.06, -0.22, 0.25, 0.1);
+  const fingers: Path2D[] = [];
+  let front: Path2D[] = [];
+  if (pose === 1) {
+    for (let i = 0; i < 4; i++) fingers.push(finger(-0.1 + i * 0.075, 0.27, -0.13 + i * 0.1, 0.58 - Math.abs(i - 1.3) * 0.05, 0.08));
+    front = [finger(-0.14, 0.08, -0.32, 0.22, 0.095)];
+  } else if (pose === 5) {
+    fingers.push(finger(0.11, 0.27, 0.13, 0.62, 0.08));
+    for (let i = 0; i < 3; i++) front.push(finger(-0.1 + i * 0.07, 0.27, -0.1 + i * 0.07, 0.38, 0.085));
+    front.push(thumb);
+  } else if (pose === 2) {
+    // Index and middle hold the cigarette; ring and pinky curl in.
+    for (let i = 0; i < 2; i++) fingers.push(finger(0.02 + i * 0.075, 0.27, 0.04 + i * 0.09, 0.5, 0.08));
+    front = [finger(-0.1, 0.27, -0.1, 0.38, 0.085), finger(-0.03, 0.27, -0.03, 0.39, 0.085), thumb];
+  } else {
+    // Relaxed / fist: curled fingers show as a knuckle row.
+    front = [0, 1, 2, 3].map((i) => finger(-0.1 + i * 0.075, 0.26, -0.11 + i * 0.075, pose === 3 ? 0.36 : 0.42, 0.085));
+    front.push(thumb);
+  }
+  for (const fp of fingers) skin(fp, k.lw * 0.6);
+  skin(palm);
+  if (pose === 2 && holds) drawCigarette(k, l, spec, f);
+  for (const fp of front) skin(fp, k.lw * 0.6);
+  // Knuckle hints.
+  if (pose === 0 || pose === 3) inkLine(k, [m(-0.08, 0.3), m(0.02, 0.31), m(0.12, 0.29)], 0.012 * u, P.skinLine, [0.3, 0.3]);
+}
+
+function drawCigarette(k: Kit, l: AnimLayer, spec: PuppetSpec, f: number): void {
+  const c = k.c;
+  const u = k.u;
+  const sk = lastSk;
+  if (!sk) return;
+  const a = sk.filter;
+  const b = sk.ember;
+  const d = norm(sub(b, a));
+  const n = v(-d.y, d.x);
+  const w = 0.075 * u;
+  const filterEnd = add(a, mul(d, 0.17 * u));
+  const body = (p0: V, p1: V, col: string) => {
+    const p = new Path2D();
+    p.moveTo(p0.x + n.x * w * 0.5, p0.y + n.y * w * 0.5);
+    p.lineTo(p1.x + n.x * w * 0.5, p1.y + n.y * w * 0.5);
+    p.lineTo(p1.x - n.x * w * 0.5, p1.y - n.y * w * 0.5);
+    p.lineTo(p0.x - n.x * w * 0.5, p0.y - n.y * w * 0.5);
+    p.closePath();
+    c.fillStyle = col;
+    c.fill(p);
+    c.lineWidth = k.lw * 0.5;
+    c.strokeStyle = "#3a2a22";
+    c.stroke(p);
+  };
+  const ashLen = 0.06 * u;
+  body(a, filterEnd, "#d9925a");
+  body(filterEnd, sub(b, mul(d, ashLen)), "#f4f1ea");
+  body(sub(b, mul(d, ashLen)), b, "#8d8a86");
+  // Ember with glow; brighter while dragging.
+  const drag = chan(l, "drag", f);
+  const flick = 0.85 + 0.15 * noise1(f * 0.7, spec.seed + 3);
+  const g = c.createRadialGradient(b.x, b.y, 0, b.x, b.y, (0.35 + drag * 0.4) * u);
+  g.addColorStop(0, `rgba(255,170,90,${0.55 * flick + drag * 0.35})`);
+  g.addColorStop(0.35, `rgba(255,90,40,${0.25 * flick + drag * 0.2})`);
+  g.addColorStop(1, "rgba(255,60,20,0)");
+  c.save();
+  c.globalCompositeOperation = "lighter";
+  c.fillStyle = g;
+  c.beginPath();
+  c.arc(b.x, b.y, (0.35 + drag * 0.4) * u, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+  c.fillStyle = drag > 0.3 ? "#ffd27a" : "#ff6a2a";
+  c.beginPath();
+  c.arc(b.x, b.y, w * 0.55, 0, Math.PI * 2);
+  c.fill();
+}
+
+let lastSk: Skeleton | null = null;
+
+/** Map head-local units (scaled by HS) to the world. */
+function headMap(sk: Skeleton, dx = 0, dy = 0) {
+  const u = sk.u * HS;
+  return (x: number, y: number) => add(sk.head, rot(v((x + dx) * u, (y + dy) * u), sk.headA));
+}
+
+/** Messy anime hair silhouette behind the head: spiky crown and nape. */
+function drawHairBack(k: Kit, sk: Skeleton, spec: PuppetSpec, swing: number, t: number): void {
+  const H = headMap(sk);
+  const P = k.pal;
+  const long = spec.hair === "long";
+  const pts: (V & { s?: boolean })[] = [];
+  const cx = 0;
+  const cy = -1.12;
+  const tips = spec.hair === "short" ? 6 : 8;
+  // Sweep from the left nape, over the crown, to the right nape; clumps lean with the hair flow.
+  const a0 = 160;
+  const a1 = 380;
+  for (let i = 0; i <= tips; i++) {
+    const aDeg = lerp(a0, a1, i / tips);
+    const a = (aDeg * Math.PI) / 180;
+    const top = Math.max(0, -Math.sin(a)); // 1 at the crown
+    const tipR = 0.74 + hash(spec.seed + i) * 0.08 + (1 - top) * 0.06 - (spec.hair === "short" ? 0.05 : 0);
+    const lean = (Math.cos(a) >= 0 ? 1 : -1) * (14 + 10 * (1 - top));
+    const ta = ((aDeg + lean) * Math.PI) / 180;
+    const sw = swing * 0.012 * (1 - top * 0.5);
+    pts.push({ ...H(cx + Math.cos(ta) * tipR + sw, cy + Math.sin(ta) * tipR), s: true });
+    if (i < tips) {
+      const am = (lerp(a0, a1, (i + 0.5) / tips) * Math.PI) / 180;
+      pts.push(H(cx + Math.cos(am) * 0.66, cy + Math.sin(am) * 0.68));
+    }
+  }
+  // Nape: hangs lower for long hair.
+  const nape = long ? 0.35 : -0.5;
+  pts.push({ ...H(0.54 + swing * 0.012, nape), s: true });
+  pts.push(H(0.34, nape - 0.1));
+  pts.push({ ...H(0.16 + swing * 0.012, nape + 0.04), s: true });
+  pts.push(H(0, nape - 0.08));
+  pts.push({ ...H(-0.16 + swing * 0.012, nape + 0.04), s: true });
+  pts.push(H(-0.34, nape - 0.1));
+  pts.push({ ...H(-0.54 + swing * 0.012, nape), s: true });
+  const p = shape(pts, 0.42);
+  cel(k, p, P.hair, P.hairShade, { sh: 0.22, hi: shadeMix(P.hair, P.hairHi, 0.35), hiW: 0.04 });
+  void t;
+}
+
+/** Front locks: [rootX, rootY, tipX, tipY, width, bend]. */
+function lockSet(spec: PuppetSpec): number[][] {
+  if (spec.hair === "spiky")
+    return [
+      [-0.46, -1.42, -0.62, -0.74, 0.2, -0.12],
+      [-0.3, -1.6, -0.44, -1.0, 0.24, -0.1],
+      [-0.12, -1.68, -0.18, -0.96, 0.24, -0.06],
+      [0.06, -1.7, 0.08, -0.98, 0.24, 0.04],
+      [0.22, -1.64, 0.32, -1.0, 0.24, 0.08],
+      [0.46, -1.42, 0.62, -0.74, 0.2, 0.12],
+    ];
+  return [
+    [-0.47, -1.36, -0.55, -0.6, 0.2, -0.1], // left side lock framing the cheek
+    [-0.36, -1.58, -0.42, -0.98, 0.25, -0.12],
+    [-0.2, -1.68, -0.29, -0.9, 0.26, -0.08],
+    [-0.03, -1.72, -0.05, -0.97, 0.2, -0.02], // centre lock
+    [0.12, -1.7, 0.2, -0.88, 0.25, 0.05],
+    [0.28, -1.64, 0.36, -0.96, 0.25, 0.1],
+    [0.47, -1.36, 0.56, -0.6, 0.2, 0.12], // right side lock
+  ];
+}
+
+function lockPath(H: (x: number, y: number) => V, l: number[], swing: number): Path2D {
+  const [rx, ry, tx0, ty, w, bend] = l as [number, number, number, number, number, number];
+  const tx = tx0 + swing * 0.008 * (1 + Math.abs(rx));
+  const mx = (rx + tx) / 2 + bend;
+  const my = (ry + ty) / 2;
+  // Leaf: wide near the root, curving to a sharp tip.
+  const pts: (V & { s?: boolean })[] = [
+    H(rx - w * 0.55, ry + 0.02),
+    H(mx - w * 0.42, my - 0.06),
+    { ...H(tx, ty), s: true },
+    H(mx + w * 0.42, my - 0.12),
+    H(rx + w * 0.55, ry - 0.02),
+    H(rx, ry - 0.1),
+  ];
+  return shape(pts, 0.55);
+}
+
+function drawHead(k: Kit, l: AnimLayer, sk: Skeleton, spec: PuppetSpec, f: number, fps: number, swing: number): void {
+  const u = k.u * HS;
+  const P = k.pal;
+  const c = k.c;
+  const tn = sk.turn * 0.1;
+  const nd = -sk.nod * 0.04;
+  const H = headMap(sk);
+  const F = headMap(sk, tn, nd); // face features follow turn / nod
+  const kh: Kit = { ...k, u, lw: k.lw * 1.05 };
+  // Neck.
+  const neck = shape([H(-0.16, 0.14), H(-0.15, -0.5), H(0.15, -0.5), H(0.16, 0.14)], 0.3);
+  cel(kh, neck, P.skin, P.skinShade, { sh: 0.1, line: P.skinLine, lw: k.lw * 0.8 });
+  c.save();
+  c.clip(neck);
+  c.fillStyle = P.skinShade;
+  c.fill(shape([H(-0.4, -0.7), H(0.4, -0.7), H(0.3, -0.36), H(0, -0.16), H(-0.3, -0.36)], 0.6));
+  c.restore();
+  if (spec.shirt === "turtleneck") {
+    const col = shape([H(-0.27, 0.18), H(-0.24, -0.28), H(0, -0.24), H(0.24, -0.28), H(0.27, 0.18)], 0.5);
+    cel(kh, col, P.shirt, P.shirtShade, { sh: 0.12 });
+    inkLine(kh, [H(-0.22, -0.12), H(0, -0.08), H(0.22, -0.12)], 0.016 * u, P.line, [0.3, 0.3]);
+    inkLine(kh, [H(-0.23, 0.02), H(0, 0.06), H(0.23, 0.02)], 0.016 * u, P.line, [0.3, 0.3]);
+  }
+  // Ears.
+  for (const sx of [-1, 1] as const) {
+    const ex = sx * 0.39 - tn * 0.6;
+    const ear = shape([H(ex, -1.0), H(ex + sx * 0.09, -0.98), H(ex + sx * 0.1, -0.8), H(ex + sx * 0.03, -0.7), H(ex - sx * 0.02, -0.74)], 0.6);
+    cel(kh, ear, P.skin, P.skinShade, { sh: 0.05, line: P.skinLine, lw: k.lw * 0.7 });
+  }
+  // Face: slim, cheekbones high, sharp chin.
+  const face = shape(
+    [
+      F(-0.4, -1.34),
+      F(-0.41, -1.0),
+      F(-0.37, -0.76),
+      F(-0.25, -0.52),
+      F(-0.09, -0.36),
+      { ...F(0, -0.32), s: true },
+      F(0.09, -0.36),
+      F(0.25, -0.52),
+      F(0.37, -0.76),
+      F(0.41, -1.0),
+      F(0.4, -1.34),
+      F(0, -1.5),
+    ],
+    0.5,
+  );
+  cel(kh, face, P.skin, P.skinShade, { sh: 0.07, line: P.skinLine, lw: k.lw * 0.9, rim: false });
+  const locks = lockSet(spec);
+  c.save();
+  c.clip(face);
+  // Hair shadow cast on the forehead (locks pushed down), and a soft cheek shadow on the far side.
+  const Hs = headMap(sk, 0.02, 0.07);
+  c.fillStyle = P.skinShade;
+  for (const lk of locks) c.fill(lockPath(Hs, lk, swing));
+  c.fill(shape([Hs(-0.62, -1.3), Hs(0, -1.85), Hs(0.62, -1.3), Hs(0.3, -1.38), Hs(-0.3, -1.38)], 0.4));
+  const blush = chan(l, "blush", f);
+  if (blush > 0.02) {
+    for (const sx of [-1, 1]) {
+      const p = F(sx * 0.24, -0.72);
+      const g = c.createRadialGradient(p.x, p.y, 0, p.x, p.y, 0.14 * u);
+      g.addColorStop(0, `rgba(240,110,120,${0.5 * blush})`);
+      g.addColorStop(1, "rgba(240,110,120,0)");
+      c.fillStyle = g;
+      c.fillRect(p.x - 0.2 * u, p.y - 0.2 * u, 0.4 * u, 0.4 * u);
+    }
+  }
+  c.restore();
+  drawEyes(kh, l, sk, f, fps, F);
+  // Nose: a small shadow on the far side and a tip line.
+  inkLine(kh, [F(0.035, -0.74), F(0.05, -0.66), F(0.01, -0.635)], 0.02 * u, P.skinLine, [0.5, 0.2]);
+  drawMouth(kh, l, f, F);
+  // Front hair cap over the hairline, then the locks from the sides to the centre.
+  const cap = shape([H(-0.6, -1.22), H(-0.48, -1.6), H(0, -1.82), H(0.48, -1.6), H(0.6, -1.22), H(0.3, -1.4), H(0, -1.46), H(-0.3, -1.4)], 0.4);
+  cel(kh, cap, P.hair, P.hairShade, { sh: 0.12, line: "none" });
+  const order = locks.map((_, i) => i).sort((a, b) => Math.abs(locks[b]![0]!) - Math.abs(locks[a]![0]!));
+  for (const i of order) {
+    const lk = locks[i]!;
+    const lp = lockPath(H, lk, swing);
+    cel(kh, lp, P.hair, P.hairShade, { sh: 0.1, lw: k.lw * 0.85 });
+    // Glossy streak near the root on the lit side.
+    c.save();
+    c.clip(lp);
+    const [rx, ry, tx, ty] = lk as [number, number, number, number];
+    inkLine(kh, [H(lerp(rx, tx, 0.12) + 0.04, lerp(ry, ty, 0.12)), H(lerp(rx, tx, 0.3) + 0.03, lerp(ry, ty, 0.3)), H(lerp(rx, tx, 0.45) + 0.02, lerp(ry, ty, 0.45))], 0.045 * u, withA(P.hairHi, 0.8), [0.3, 0.6]);
+    c.restore();
+  }
+  // A couple of loose strands.
+  inkLine(kh, [H(-0.1, -1.62), H(-0.02, -1.95), H(0.12, -2.02)], 0.03 * u, P.hair, [0.1, 0.8]);
+  inkLine(kh, [H(0.3, -1.58), H(0.42, -1.86), H(0.55, -1.9)], 0.028 * u, P.hair, [0.1, 0.8]);
+}
+
+/** Bangs outline (kept for compatibility with older callers). */
+function bangsPath(sk: Skeleton, spec: PuppetSpec, swing: number, drop: number): Path2D {
+  const H = headMap(sk, 0, drop);
+  const p = new Path2D();
+  for (const lk of lockSet(spec)) p.addPath(lockPath(H, lk, swing));
+  return p;
+}
+
+function drawEyes(k: Kit, l: AnimLayer, sk: Skeleton, f: number, fps: number, F: (x: number, y: number) => V): void {
+  const u = k.u;
+  const c = k.c;
+  const P = k.pal;
+  let blink = chan(l, "blink", f);
+  if (blink < 0) blink = autoBlink(f, fps, l.puppet?.seed ?? 1);
+  const lid = chan(l, "lid", f);
+  const closed = clamp(Math.max(blink, lid * 0.72), 0, 1);
+  const lx = chan(l, "lookX", f) * 0.045;
+  const ly = chan(l, "lookY", f) * 0.025;
+  for (const sx of [-1, 1] as const) {
+    const cx = sx * 0.19;
+    const cy = -0.9;
+    const brow = chan(l, sx === -1 ? "browL" : "browR", f);
+    const inner = F(cx - sx * 0.12, cy + 0.025);
+    const outer = F(cx + sx * 0.15, cy - 0.015);
+    const topOpen = F(cx + sx * 0.02, cy - 0.105);
+    const bottom = F(cx + sx * 0.03, cy + 0.07);
+    const topNow = lerpV(topOpen, F(cx + sx * 0.03, cy + 0.06), closed);
+    if (closed > 0.9) {
+      inkLine(k, [inner, F(cx, cy + 0.055), outer, F(cx + sx * 0.19, cy - 0.01)], 0.05 * u, P.line, [0.15, 0.35]);
+      inkLine(k, [F(cx - sx * 0.02, cy + 0.075), F(cx + sx * 0.08, cy + 0.07)], 0.015 * u, P.skinLine, [0.4, 0.4]);
+    } else {
+      const eye = new Path2D();
+      eye.moveTo(inner.x, inner.y);
+      eye.bezierCurveTo(lerpV(inner, topNow, 0.4).x, topNow.y - 0.01 * u, topNow.x, topNow.y, lerpV(topNow, outer, 0.5).x, lerpV(topNow, outer, 0.35).y);
+      eye.lineTo(outer.x, outer.y);
+      eye.quadraticCurveTo(bottom.x, bottom.y + 0.015 * u, inner.x, inner.y);
+      eye.closePath();
+      c.save();
+      c.fillStyle = "#fbf8f6";
+      c.fill(eye);
+      c.clip(eye);
+      const ic = F(cx + lx + sx * 0.01, cy - 0.015 + ly);
+      const ir = 0.078 * u;
+      const g = c.createLinearGradient(ic.x, ic.y - ir * 1.3, ic.x, ic.y + ir * 1.3);
+      g.addColorStop(0, shadeMix(P.eyes, "#000000", 0.78));
+      g.addColorStop(0.5, shadeMix(P.eyes, "#000000", 0.2));
+      g.addColorStop(1, shadeMix(P.eyes, "#ffd6dc", 0.3));
+      c.fillStyle = g;
+      c.beginPath();
+      c.ellipse(ic.x, ic.y, ir, ir * 1.28, sk.headA * D2R, 0, Math.PI * 2);
+      c.fill();
+      c.lineWidth = 0.012 * u;
+      c.strokeStyle = shadeMix(P.eyes, "#000000", 0.8);
+      c.stroke();
+      // Pupil slit-ish and iris ring detail.
+      c.fillStyle = shadeMix(P.eyes, "#000000", 0.88);
+      c.beginPath();
+      c.ellipse(ic.x, ic.y + 0.004 * u, ir * 0.38, ir * 0.62, sk.headA * D2R, 0, Math.PI * 2);
+      c.fill();
+      c.strokeStyle = withA(shadeMix(P.eyes, "#ffffff", 0.4), 0.6);
+      c.lineWidth = 0.008 * u;
+      c.beginPath();
+      c.arc(ic.x, ic.y + ir * 0.35, ir * 0.62, Math.PI * 0.15, Math.PI * 0.85);
+      c.stroke();
+      // Upper-lid shadow on the eyeball.
+      const sg = c.createLinearGradient(topNow.x, topNow.y, topNow.x, topNow.y + 0.07 * u);
+      sg.addColorStop(0, "rgba(50,20,50,0.6)");
+      sg.addColorStop(1, "rgba(50,20,50,0)");
+      c.fillStyle = sg;
+      c.fillRect(ic.x - 0.25 * u, topNow.y - 0.03 * u, 0.5 * u, 0.12 * u);
+      c.fillStyle = "#ffffff";
+      c.beginPath();
+      c.ellipse(ic.x + 0.025 * u, ic.y - 0.04 * u, 0.024 * u, 0.03 * u, 0, 0, Math.PI * 2);
+      c.fill();
+      c.globalAlpha = 0.75;
+      c.beginPath();
+      c.arc(ic.x - 0.025 * u, ic.y + 0.045 * u, 0.012 * u, 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+      // Heavy upper lash line with an outer flick, plus the crease above.
+      inkLine(k, [lerpV(inner, topNow, 0.05), lerpV(inner, topNow, 0.55), topNow, lerpV(topNow, outer, 0.55), outer, F(cx + sx * 0.2, cy - 0.055)], 0.058 * u, P.line, [0.1, 0.25]);
+      inkLine(k, [F(cx - sx * 0.06, cy - 0.12 + closed * 0.08), F(cx + sx * 0.05, cy - 0.15 + closed * 0.1), F(cx + sx * 0.14, cy - 0.11 + closed * 0.1)], 0.014 * u, P.skinLine, [0.4, 0.4]);
+      inkLine(k, [F(cx + sx * 0.03, cy + 0.08), F(cx + sx * 0.1, cy + 0.06), F(cx + sx * 0.145, cy + 0.01)], 0.017 * u, P.skinLine, [0.4, 0.3]);
+    }
+    const bIn = F(cx - sx * 0.13, cy - 0.2 - brow * 0.05 + (brow < 0 ? -brow * 0.06 : 0));
+    const bMid = F(cx + sx * 0.02, cy - 0.255 - brow * 0.06);
+    const bOut = F(cx + sx * 0.18, cy - 0.21 - brow * 0.03);
+    inkLine(k, [bIn, bMid, bOut], 0.034 * u, P.hairShade, [0.1, 0.6]);
+  }
+}
+
+function autoBlink(f: number, fps: number, seed: number): number {
+  const t = f / fps;
+  // Blinks every 2.6–4.6 s, 0.16 s long.
+  let at = 1.1 + hash(seed) * 1.5;
+  let i = 0;
+  while (at < t + 0.2 && i < 400) {
+    const d = t - at;
+    if (d >= 0 && d < 0.16) return Math.sin((d / 0.16) * Math.PI);
+    at += 2.6 + hash(seed + ++i) * 2;
+  }
+  return 0;
+}
+
+function drawMouth(k: Kit, l: AnimLayer, f: number, F: (x: number, y: number) => V): void {
+  const u = k.u;
+  const c = k.c;
+  const P = k.pal;
+  const open = clamp(chan(l, "mouthOpen", f), 0, 1);
+  const smile = chan(l, "mouthSmile", f);
+  const smirk = chan(l, "mouthSmirk", f);
+  const round = clamp(chan(l, "mouthRound", f), 0, 1);
+  const y = -0.5;
+  const hw = 0.085 * (1 - round * 0.55) * (1 + smile * 0.15);
+  const lc = F(-hw, y - smile * 0.03 + smirk * 0.0);
+  const rc = F(hw, y - smile * 0.03 - smirk * 0.05);
+  if (open < 0.06) {
+    const mid = F(0, y + smile * 0.012 + 0.005);
+    inkLine(k, [lc, mid, rc], 0.024 * u, P.skinLine, [0.3, 0.3]);
+    if (smirk > 0.3) inkLine(k, [rc, F(hw + 0.03, y - 0.075 * smirk)], 0.016 * u, P.skinLine, [0.2, 0.6]);
+    return;
+  }
+  const top = F(0, y - 0.01 - open * 0.015);
+  const bot = F(0, y + 0.03 + open * (0.1 + round * 0.04));
+  const m = new Path2D();
+  m.moveTo(lc.x, lc.y);
+  m.quadraticCurveTo(top.x, top.y - 0.01 * u, rc.x, rc.y);
+  m.quadraticCurveTo(bot.x + (rc.x - lc.x) * 0.05, bot.y + 0.02 * u, lc.x, lc.y);
+  m.closePath();
+  c.save();
+  c.fillStyle = "#2c1216";
+  c.fill(m);
+  c.clip(m);
+  // Tongue and upper teeth.
+  c.fillStyle = "#9a4650";
+  c.beginPath();
+  c.ellipse(bot.x, bot.y + 0.01 * u, hw * u * 0.8, 0.05 * u, 0, 0, Math.PI * 2);
+  c.fill();
+  if (open > 0.3 && round < 0.5) {
+    c.fillStyle = "#fbf6f2";
+    c.fillRect(lc.x, top.y - 0.03 * u, rc.x - lc.x, 0.045 * u);
+  }
+  c.restore();
+  c.lineWidth = 0.02 * u;
+  c.strokeStyle = P.skinLine;
+  c.lineJoin = "round";
+  c.stroke(m);
+}
+
+/* ---------------------------------- smoke ---------------------------------- */
+
+function drawSmoke(c: Ctx, l: AnimLayer, spec: PuppetSpec, s: AnimScene, f: number): void {
+  if (!spec.props.includes("cigarette")) return;
+  const fps = s.fps;
+  const u = spec.height / FIG;
+  c.save();
+  // Ember wisp: particles born every 2 frames, each lives 3 s.
+  const life = Math.round(3.2 * fps);
+  const wisp: { p: V; a: number; r: number; age: number }[] = [];
+  for (let b = Math.max(0, f - life); b <= f; b += 1) {
+    if (b % 2) continue;
+    const age = (f - b) / fps;
+    const sk = skeleton(l, spec, b, fps);
+    const seed = b * 1.37 + spec.seed;
+    const sway = noise1(age * 1.3 + seed, 2) * 0.35 * Math.pow(age, 1.25) + noise1(f / fps * 0.6 + age, 9) * 0.12 * age;
+    const rise = 0.5 * age + 0.12 * age * age;
+    const p = add(sk.ember, v((sway + 0.1 * age) * u, -rise * u));
+    const a = 0.32 * Math.pow(Math.max(0, 1 - age / 3.2), 1.6) * Math.min(1, age * 6);
+    wisp.push({ p, a, r: (0.03 + 0.22 * age) * u, age });
+  }
+  // Thin curling line near the source.
+  const young = wisp.filter((w) => w.age < 1.1).sort((x, y) => x.age - y.age);
+  if (young.length > 2) {
+    c.lineCap = "round";
+    c.lineJoin = "round";
+    for (let i = 1; i < young.length; i++) {
+      const w0 = young[i - 1]!;
+      const w1 = young[i]!;
+      if (len(sub(w1.p, w0.p)) > 0.22 * u) continue;
+      c.strokeStyle = `rgba(220,222,235,${Math.min(0.55, w1.a * 1.6)})`;
+      c.lineWidth = Math.max(1, (0.025 + w1.age * 0.05) * u);
+      c.beginPath();
+      c.moveTo(w0.p.x, w0.p.y);
+      c.lineTo(w1.p.x, w1.p.y);
+      c.stroke();
+    }
+  }
+  for (const w of wisp) {
+    if (w.age < 0.6) continue;
+    blob(c, w.p, w.r, w.a * 0.7);
+  }
+  // Exhaled smoke from the mouth.
+  const life2 = Math.round(2.6 * fps);
+  for (let b = Math.max(0, f - life2); b <= f; b++) {
+    const e = chan(l, "exhale", b);
+    if (e < 0.04) continue;
+    const age = (f - b) / fps;
+    const sk = skeleton(l, spec, b, fps);
+    for (let j = 0; j < 2; j++) {
+      const seed = b * 3.1 + j * 17 + spec.seed;
+      const dir = rot(v(0.8, -0.75), (hash(seed) - 0.5) * 40 + chan(l, "headTilt", b) * 0.8);
+      const spd = 1.9 * (0.6 + hash(seed + 1) * 0.6);
+      const dist = (spd * (1 - Math.exp(-age * 2.2))) / 2.2;
+      const drift = noise1(age * 1.1 + seed, 4) * 0.4 * age;
+      const p = add(sk.mouth, add(mul(dir, dist * u), v(drift * u + 0.15 * age * u, -0.25 * age * age * u)));
+      const a = e * 0.14 * Math.pow(Math.max(0, 1 - age / 2.6), 1.6) * Math.min(1, age * 8);
+      blob(c, p, (0.05 + 0.3 * Math.pow(age, 0.85)) * u, a);
+    }
+  }
+  c.restore();
+}
+
+function blob(c: Ctx, p: V, r: number, a: number): void {
+  if (a <= 0.003 || r <= 0.5) return;
+  const g = c.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+  g.addColorStop(0, `rgba(214,216,228,${a})`);
+  g.addColorStop(0.5, `rgba(200,202,216,${a * 0.55})`);
+  g.addColorStop(1, "rgba(190,192,210,0)");
+  c.fillStyle = g;
+  c.beginPath();
+  c.arc(p.x, p.y, r, 0, Math.PI * 2);
+  c.fill();
+}
+
+/* --------------------------------- colours --------------------------------- */
+
+function hexRgb(h: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(h.trim());
+  const n = m ? parseInt(m[1]!, 16) : 0;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+export function shadeMix(a: string, b: string, t: number): string {
+  const x = hexRgb(a);
+  const y = hexRgb(b);
+  const q = (i: number) => Math.round(lerp(x[i]!, y[i]!, t)).toString(16).padStart(2, "0");
+  return `#${q(0)}${q(1)}${q(2)}`;
+}
+function withA(h: string, a: number): string {
+  const [r, g, b] = hexRgb(h);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+/* -------------------------------- backdrops -------------------------------- */
+
+export interface BackdropSpec {
+  type: "night-city" | "night-rooftop" | "sunset-city" | "studio" | "gradient";
+  seed: number;
+  sky?: [string, string];
+  moon?: boolean;
+}
+
+export const BACKDROPS = ["night-city", "night-rooftop", "sunset-city", "studio", "gradient"] as const;
+
+export function drawBackdrop(c: Ctx, l: AnimLayer, s: AnimScene, f: number): void {
+  const b = l.backdrop;
+  if (!b) return;
+  const W = s.width;
+  const H = s.height;
+  const t = f / s.fps;
+  const cam = valueAt(l.chan?.camX, f, 0);
+  const night = b.type.startsWith("night");
+  const sunset = b.type === "sunset-city";
+  const sky = b.sky ?? (night ? ["#0d0b24", "#3b2f72"] : sunset ? ["#2b1b4f", "#ff9a62"] : b.type === "studio" ? ["#2a2a33", "#0e0e12"] : ["#1b1b2f", "#4a3f7a"]);
+  const g = c.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, sky[0]);
+  g.addColorStop(0.75, sky[1]);
+  g.addColorStop(1, sky[1]);
+  c.fillStyle = g;
+  c.fillRect(0, 0, W, H);
+  if (b.type === "studio" || b.type === "gradient") {
+    if (b.type === "studio") {
+      const v2 = c.createRadialGradient(W / 2, H * 0.45, 0, W / 2, H * 0.45, H * 0.7);
+      v2.addColorStop(0, "rgba(255,255,255,0.10)");
+      v2.addColorStop(1, "rgba(0,0,0,0.35)");
+      c.fillStyle = v2;
+      c.fillRect(0, 0, W, H);
+    }
+    return;
+  }
+  const rnd = (i: number) => hash(i * 13.7 + b.seed * 101);
+  if (night) {
+    // Stars.
+    for (let i = 0; i < 140; i++) {
+      const x = rnd(i) * W;
+      const y = rnd(i + 500) * H * 0.55;
+      const tw = 0.5 + 0.5 * Math.sin(t * (1 + rnd(i + 900) * 2) + i);
+      c.fillStyle = `rgba(255,255,255,${(0.25 + rnd(i + 300) * 0.55) * (0.6 + 0.4 * tw)})`;
+      c.fillRect(x, y, 1.6 + rnd(i + 77) * 1.8, 1.6 + rnd(i + 77) * 1.8);
+    }
+  }
+  if (b.moon !== false) {
+    const mx = W * 0.76 - cam * 0.05;
+    const my = H * (sunset ? 0.52 : 0.17);
+    const mr = W * (sunset ? 0.16 : 0.085);
+    const halo = c.createRadialGradient(mx, my, mr * 0.8, mx, my, mr * 5);
+    halo.addColorStop(0, sunset ? "rgba(255,190,120,0.55)" : "rgba(190,180,255,0.35)");
+    halo.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = halo;
+    c.fillRect(0, 0, W, H);
+    const disc = c.createRadialGradient(mx - mr * 0.3, my - mr * 0.3, mr * 0.1, mx, my, mr);
+    disc.addColorStop(0, sunset ? "#fff1c9" : "#fffdf3");
+    disc.addColorStop(1, sunset ? "#ffb36b" : "#d9d3ee");
+    c.fillStyle = disc;
+    c.beginPath();
+    c.arc(mx, my, mr, 0, Math.PI * 2);
+    c.fill();
+    if (!sunset) {
+      c.fillStyle = "rgba(150,140,190,0.25)";
+      for (const [dx, dy, r] of [
+        [-0.3, -0.2, 0.18],
+        [0.25, 0.15, 0.12],
+        [0.05, 0.4, 0.1],
+      ] as const) {
+        c.beginPath();
+        c.arc(mx + dx * mr, my + dy * mr, r * mr, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  }
+  // Drifting clouds.
+  for (let i = 0; i < 4; i++) {
+    const y = H * (0.12 + i * 0.09);
+    const x = ((rnd(i + 40) * W * 1.6 + t * (8 + i * 4)) % (W * 1.6)) - W * 0.3;
+    const cg = c.createRadialGradient(x, y, 0, x, y, W * 0.35);
+    const col = sunset ? "255,170,140" : "120,110,190";
+    cg.addColorStop(0, `rgba(${col},0.18)`);
+    cg.addColorStop(1, `rgba(${col},0)`);
+    c.save();
+    c.translate(x, y);
+    c.scale(1, 0.22);
+    c.translate(-x, -y);
+    c.fillStyle = cg;
+    c.beginPath();
+    c.arc(x, y, W * 0.35, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+  }
+  // Three layers of buildings with parallax and lit windows.
+  const layers = [
+    { base: H * 0.62, hMin: 0.06, hMax: 0.2, col: night ? "#2a2552" : "#5b3a6e", win: 0.05, par: 0.1, w: [40, 90], a: 0.35 },
+    { base: H * 0.7, hMin: 0.1, hMax: 0.3, col: night ? "#1a1636" : "#3a2347", win: 0.1, par: 0.25, w: [60, 130], a: 0.5 },
+    { base: H * 0.8, hMin: 0.12, hMax: 0.42, col: night ? "#0f0d20" : "#22142c", win: 0.16, par: 0.45, w: [90, 180], a: 0.7 },
+  ];
+  layers.forEach((L, li) => {
+    let x = -200 - ((cam * L.par) % 400);
+    let i = 0;
+    // Haze between layers.
+    const hz = c.createLinearGradient(0, L.base - H * 0.25, 0, L.base);
+    hz.addColorStop(0, "rgba(0,0,0,0)");
+    hz.addColorStop(1, night ? "rgba(90,70,170,0.18)" : "rgba(255,150,120,0.2)");
+    c.fillStyle = hz;
+    c.fillRect(0, L.base - H * 0.25, W, H * 0.25);
+    while (x < W + 200) {
+      const seed = li * 1000 + i++;
+      const bw = L.w[0]! + rnd(seed) * (L.w[1]! - L.w[0]!);
+      const bh = H * (L.hMin + rnd(seed + 1) * (L.hMax - L.hMin));
+      const top = L.base - bh;
+      c.fillStyle = L.col;
+      c.fillRect(x, top, bw, H - top);
+      // Roof details.
+      if (rnd(seed + 2) > 0.6) c.fillRect(x + bw * 0.2, top - bh * 0.06, bw * 0.25, bh * 0.06);
+      if (rnd(seed + 3) > 0.75) {
+        c.fillRect(x + bw * 0.7, top - bh * 0.18, 3, bh * 0.18);
+        if (night) {
+          const blink = Math.sin(t * 3 + seed) > 0.3;
+          c.fillStyle = blink ? "#ff4a5a" : "#5a1a22";
+          c.fillRect(x + bw * 0.7 - 2, top - bh * 0.18 - 4, 7, 7);
+        }
+      }
+      // Windows.
+      const cols = Math.max(2, Math.floor(bw / 18));
+      const rows = Math.floor(bh / 26);
+      for (let r = 1; r < rows; r++)
+        for (let q = 0; q < cols; q++) {
+          const wseed = seed * 97 + r * 13 + q;
+          if (rnd(wseed) > L.win) continue;
+          const lit = night ? (rnd(wseed + 5) > 0.25 ? "#ffd27a" : "#9ad4ff") : "#ffcf9a";
+          c.globalAlpha = L.a * (0.4 + rnd(wseed + 9) * 0.6);
+          c.fillStyle = lit;
+          c.fillRect(x + 6 + q * ((bw - 10) / cols), top + r * 26, (bw - 10) / cols - 6, 12);
+          c.globalAlpha = 1;
+        }
+      x += bw + rnd(seed + 4) * 10;
+    }
+  });
+  if (b.type === "night-rooftop") {
+    // Rooftop floor and railing in the foreground.
+    const fy = H * 0.86;
+    const fl = c.createLinearGradient(0, fy, 0, H);
+    fl.addColorStop(0, "#1d1a2c");
+    fl.addColorStop(1, "#0b0a12");
+    c.fillStyle = fl;
+    c.fillRect(0, fy, W, H - fy);
+    c.fillStyle = "#2c2842";
+    c.fillRect(0, fy - 6, W, 8);
+    // Railing.
+    const ry = H * 0.74;
+    c.strokeStyle = "#3a3556";
+    c.lineWidth = 7;
+    c.beginPath();
+    c.moveTo(0, ry);
+    c.lineTo(W, ry);
+    c.moveTo(0, ry + 60);
+    c.lineTo(W, ry + 60);
+    c.stroke();
+    c.lineWidth = 6;
+    for (let x = -((cam * 0.9) % 90); x < W; x += 90) {
+      c.beginPath();
+      c.moveTo(x, ry - 4);
+      c.lineTo(x, fy);
+      c.stroke();
+    }
+    // Moonlight sheen on the rail.
+    c.strokeStyle = "rgba(180,170,255,0.35)";
+    c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(0, ry - 3);
+    c.lineTo(W, ry - 3);
+    c.stroke();
+  }
+  // Atmospheric depth at the bottom.
+  const fog = c.createLinearGradient(0, H * 0.55, 0, H);
+  fog.addColorStop(0, "rgba(0,0,0,0)");
+  fog.addColorStop(1, night ? "rgba(8,6,20,0.55)" : "rgba(30,10,30,0.45)");
+  c.fillStyle = fog;
+  c.fillRect(0, H * 0.55, W, H * 0.45);
+}
+
+/* ------------------------------ action library ----------------------------- */
+
+export type Expression = "neutral" | "smirk" | "cool" | "angry" | "surprised" | "smile" | "sad" | "closed" | "laugh" | "serious";
+
+export const EXPRESSIONS: Record<Expression, Record<string, number>> = {
+  neutral: { lid: 0.12, browL: 0, browR: 0, mouthSmile: 0, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0, blink: -1 },
+  cool: { lid: 0.42, browL: -0.2, browR: -0.1, mouthSmile: 0, mouthSmirk: 0.2, mouthOpen: 0, mouthRound: 0, blink: -1 },
+  smirk: { lid: 0.3, browL: -0.1, browR: 0.25, mouthSmile: 0.2, mouthSmirk: 0.85, mouthOpen: 0, mouthRound: 0, blink: -1 },
+  angry: { lid: 0.2, browL: -1, browR: -1, mouthSmile: -0.5, mouthSmirk: 0, mouthOpen: 0.1, mouthRound: 0, blink: -1 },
+  surprised: { lid: 0, browL: 1, browR: 1, mouthSmile: 0, mouthSmirk: 0, mouthOpen: 0.45, mouthRound: 0.7, blink: -1 },
+  smile: { lid: 0.18, browL: 0.3, browR: 0.3, mouthSmile: 0.8, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0, blink: -1 },
+  sad: { lid: 0.3, browL: 0.7, browR: 0.7, mouthSmile: -0.6, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0, blink: -1 },
+  closed: { lid: 0.12, blink: 1, browL: 0.15, browR: 0.15, mouthSmile: 0, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0 },
+  laugh: { lid: 0.12, blink: 1, browL: 0.5, browR: 0.5, mouthSmile: 1, mouthSmirk: 0, mouthOpen: 0.6, mouthRound: 0 },
+  serious: { lid: 0.25, browL: -0.45, browR: -0.45, mouthSmile: -0.1, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0, blink: -1 },
+};
+
+/** Hand placements relative to the shoulders (head units, torso space). */
+export const STANCES: Record<string, Record<string, number>> = {
+  relaxed: { handLx: -0.2, handLy: 2.5, handLpose: 0, handRx: 0.2, handRy: 2.5, handRpose: 0 },
+  pocket: { handLx: 0.28, handLy: 2.42, handLpose: 4, handRx: 0.2, handRy: 2.5, handRpose: 0 },
+  pockets: { handLx: 0.28, handLy: 2.42, handLpose: 4, handRx: -0.28, handRy: 2.42, handRpose: 4 },
+  hip: { handLx: 0.02, handLy: 1.62, handLpose: 3, handLrot: 70, handRx: 0.2, handRy: 2.5, handRpose: 0 },
+  crossed: { handLx: 1.35, handLy: 0.95, handLpose: 3, handRx: -1.3, handRy: 0.85, handRpose: 3 },
+};
+
+export interface ActionStep {
+  at: number; // seconds
+  do: string;
+  dur?: number;
+  [k: string]: unknown;
+}
+
+export const ACTIONS = ["stance", "expr", "look", "smoke", "exhale", "nod", "shake", "tilt", "shrug", "wave", "point", "gesture", "lean", "breathe", "turn", "laugh", "set"] as const;
+
+type Key = (name: string, sec: number, val: number, ease?: Ease) => void;
+
+/** Bake a list of high-level actions into channel keys. Returns the end time in seconds. */
+export function applyActions(l: AnimLayer, fps: number, steps: ActionStep[]): number {
+  const key: Key = (name, sec, val, ease = "inOut") => setChannelKey(l, name, Math.round(sec * fps), val, ease);
+  const at = (name: string, sec: number) => chan(l, name, Math.round(sec * fps));
+  let end = 0;
+  const sorted = [...steps].sort((a, b) => a.at - b.at);
+  for (const st of sorted) {
+    const t = st.at;
+    const num = (k: string, d: number) => (typeof st[k] === "number" ? (st[k] as number) : d);
+    const str = (k: string, d: string) => (typeof st[k] === "string" ? (st[k] as string) : d);
+    switch (st.do) {
+      case "set": {
+        // Raw channel keys: {do:"set", values:{headTilt:5}, ease?}
+        const vals = (st.values ?? {}) as Record<string, number>;
+        for (const [n, val] of Object.entries(vals)) key(n, t, Number(val), str("ease", "inOut") as Ease);
+        end = Math.max(end, t);
+        break;
+      }
+      case "stance": {
+        const s = STANCES[str("name", "relaxed")] ?? STANCES.relaxed!;
+        const d = num("dur", 0.6);
+        for (const [n, val] of Object.entries(s)) {
+          if (n.endsWith("pose")) {
+            key(n, t, at(n, t), "hold");
+            key(n, t + d * 0.5, val, "hold");
+          } else {
+            key(n, t, at(n, t));
+            key(n, t + d, val);
+          }
+        }
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "expr": {
+        const e = EXPRESSIONS[str("name", "neutral") as Expression] ?? EXPRESSIONS.neutral;
+        const d = num("dur", 0.25);
+        for (const [n, val] of Object.entries(e)) {
+          if (n === "blink") {
+            key(n, t, at(n, t), "hold");
+            key(n, t + d * 0.5, val, "hold");
+            continue;
+          }
+          key(n, t, at(n, t));
+          key(n, t + d, val);
+        }
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "look": {
+        const d = num("dur", 0.3);
+        key("lookX", t, at("lookX", t));
+        key("lookY", t, at("lookY", t));
+        key("lookX", t + d, num("x", 0), "out");
+        key("lookY", t + d, num("y", 0), "out");
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "turn": {
+        const d = num("dur", 0.5);
+        key("headTurn", t, at("headTurn", t));
+        key("headTurn", t + d, num("to", 0));
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "tilt": {
+        const d = num("dur", 0.5);
+        key("headTilt", t, at("headTilt", t));
+        key("headTilt", t + d, num("to", 6));
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "lean": {
+        const d = num("dur", 0.6);
+        key("lean", t, at("lean", t));
+        key("lean", t + d, num("to", 3));
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "nod":
+      case "shake": {
+        const d = num("dur", 0.7);
+        const ch = st.do === "nod" ? "headNod" : "headTurn";
+        const amp = num("amount", st.do === "nod" ? 0.6 : 0.35);
+        const base = at(ch, t);
+        key(ch, t, base);
+        key(ch, t + d * 0.25, base - amp, "inOut");
+        key(ch, t + d * 0.55, base + amp * 0.5);
+        key(ch, t + d, base);
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "shrug": {
+        const d = num("dur", 0.9);
+        for (const n of ["shrugL", "shrugR"]) {
+          key(n, t, at(n, t));
+          key(n, t + d * 0.35, 1, "out");
+          key(n, t + d, 0);
+        }
+        key("headTilt", t, at("headTilt", t));
+        key("headTilt", t + d * 0.35, at("headTilt", t) + 5);
+        key("headTilt", t + d, at("headTilt", t));
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "wave":
+      case "point":
+      case "gesture": {
+        const side = str("hand", "L") === "R" ? "R" : "L";
+        const out = side === "L" ? -1 : 1;
+        const d = num("dur", st.do === "wave" ? 2 : 1.4);
+        const x0 = at(`hand${side}x`, t);
+        const y0 = at(`hand${side}y`, t);
+        const p0 = at(`hand${side}pose`, t);
+        key(`hand${side}x`, t, x0);
+        key(`hand${side}y`, t, y0);
+        key(`hand${side}pose`, t, p0, "hold");
+        if (st.do === "wave") {
+          key(`hand${side}x`, t + 0.35, out * 0.95, "back");
+          key(`hand${side}y`, t + 0.35, -1.3, "back");
+          key(`hand${side}pose`, t + 0.2, 1, "hold");
+          for (let i = 0; i < 4; i++) key(`hand${side}rot`, t + 0.45 + i * 0.25, i % 2 ? 18 * out : -18 * out);
+          key(`hand${side}rot`, t + d - 0.3, 0);
+        } else if (st.do === "point") {
+          key(`hand${side}x`, t + 0.3, out * 1.9, "back");
+          key(`hand${side}y`, t + 0.3, 0.2, "back");
+          key(`hand${side}pose`, t + 0.15, 5, "hold");
+        } else {
+          key(`hand${side}x`, t + 0.3, out * 0.55, "out");
+          key(`hand${side}y`, t + 0.3, 1.2, "out");
+          key(`hand${side}pose`, t + 0.15, 1, "hold");
+          key(`hand${side}x`, t + 0.7, out * 0.75);
+          key(`hand${side}y`, t + 0.7, 1.05);
+        }
+        key(`hand${side}x`, t + d - 0.35, at(`hand${side}x`, t + d - 0.35));
+        key(`hand${side}x`, t + d, x0);
+        key(`hand${side}y`, t + d, y0);
+        key(`hand${side}pose`, t + d - 0.15, p0, "hold");
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "smoke": {
+        // Raise → drag (eyes close, ember flares) → lower → exhale with a cool look.
+        const side = l.puppet?.propHand ?? "R";
+        const out = side === "L" ? -1 : 1;
+        const d = num("dur", 4.2);
+        const x0 = at(`hand${side}x`, t);
+        const y0 = at(`hand${side}y`, t);
+        const s = d / 4.2;
+        const hx = `hand${side}x`;
+        const hy = `hand${side}y`;
+        // Anticipation: a small dip before the lift.
+        key(hx, t, x0);
+        key(hy, t, y0);
+        key(hy, t + 0.18 * s, y0 + 0.08, "out");
+        // Up to the lips (target set relative to the shoulder: inward and up).
+        key(hx, t + 0.95 * s, -out * 0.92, "inOut");
+        key(hy, t + 0.95 * s, -0.12, "inOut");
+        key(`hand${side}rot`, t, at(`hand${side}rot`, t));
+        key(`hand${side}rot`, t + 0.95 * s, out * -25);
+        key("cigToMouth", t + 0.55 * s, 0);
+        key("cigToMouth", t + 0.95 * s, 1, "out");
+        key("headTilt", t + 0.6 * s, at("headTilt", t));
+        key("headTilt", t + 1.0 * s, at("headTilt", t) - out * 4);
+        key("headNod", t + 0.7 * s, at("headNod", t));
+        key("headNod", t + 1.05 * s, -0.25);
+        // Drag.
+        key("blink", t + 0.95 * s, at("blink", t + 0.9 * s) < 0 ? 0 : at("blink", t), "hold");
+        key("blink", t + 1.0 * s, 0, "inOut");
+        key("blink", t + 1.15 * s, 1, "inOut");
+        key("drag", t + 1.0 * s, 0);
+        key("drag", t + 1.25 * s, 1, "out");
+        key("drag", t + 1.75 * s, 1);
+        key("drag", t + 2.0 * s, 0);
+        key("lid", t + 1.0 * s, at("lid", t));
+        key(hx, t + 1.8 * s, -out * 0.95);
+        key(hy, t + 1.8 * s, -0.1);
+        // Lower to chest height.
+        key("cigToMouth", t + 1.85 * s, 1);
+        key("cigToMouth", t + 2.25 * s, 0);
+        key(hx, t + 2.45 * s, out * -0.1, "inOut");
+        key(hy, t + 2.45 * s, 1.35, "inOut");
+        key(`hand${side}rot`, t + 2.45 * s, out * 15);
+        // Exhale: head lifts, eyes half open, mouth rounds.
+        key("blink", t + 2.1 * s, 1);
+        key("blink", t + 2.35 * s, 0);
+        key("blink", t + 2.4 * s, -1, "hold");
+        key("lid", t + 2.35 * s, 0.48);
+        key("headNod", t + 2.1 * s, -0.25);
+        key("headNod", t + 2.5 * s, 0.35);
+        key("headTilt", t + 2.5 * s, at("headTilt", t) + out * 5);
+        key("mouthOpen", t + 2.2 * s, 0);
+        key("mouthOpen", t + 2.4 * s, 0.28);
+        key("mouthRound", t + 2.2 * s, 0);
+        key("mouthRound", t + 2.4 * s, 0.85);
+        key("exhale", t + 2.3 * s, 0);
+        key("exhale", t + 2.45 * s, 1, "out");
+        key("exhale", t + 3.4 * s, 0.7);
+        key("exhale", t + 3.8 * s, 0);
+        key("mouthOpen", t + 3.6 * s, 0.25);
+        key("mouthOpen", t + 3.9 * s, 0);
+        key("mouthRound", t + 3.9 * s, 0);
+        key("headNod", t + 4.1 * s, 0);
+        key("headTilt", t + 4.1 * s, at("headTilt", t));
+        key(hx, t + d, x0);
+        key(hy, t + d, y0);
+        key(`hand${side}rot`, t + d, 0);
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "exhale": {
+        const d = num("dur", 1.4);
+        key("mouthOpen", t, at("mouthOpen", t));
+        key("mouthRound", t, at("mouthRound", t));
+        key("mouthOpen", t + 0.2, 0.28);
+        key("mouthRound", t + 0.2, 0.85);
+        key("exhale", t, 0);
+        key("exhale", t + 0.2, 1, "out");
+        key("exhale", t + d, 0);
+        key("mouthOpen", t + d, 0);
+        key("mouthRound", t + d, 0);
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "laugh": {
+        const d = num("dur", 1.2);
+        key("rootY", t, at("rootY", t));
+        for (let i = 0; i < 4; i++) {
+          key("rootY", t + 0.15 + i * 0.25, i % 2 ? 0 : 0.06);
+          key("shrugL", t + 0.15 + i * 0.25, i % 2 ? 0 : 0.4);
+          key("shrugR", t + 0.15 + i * 0.25, i % 2 ? 0 : 0.4);
+        }
+        key("rootY", t + d, 0);
+        key("shrugL", t + d, 0);
+        key("shrugR", t + d, 0);
+        end = Math.max(end, t + d);
+        break;
+      }
+      case "breathe": {
+        key("breath", t, num("amount", 1.6));
+        end = Math.max(end, t);
+        break;
+      }
+      default:
+        throw new Error(`Unknown action "${st.do}". Actions: ${ACTIONS.join(", ")}`);
+    }
+  }
+  return end;
+}
+
+/** Lip sync on a puppet: the mouth opens with the voice envelope (0..1 at envFps). */
+export function puppetLipSync(l: AnimLayer, fps: number, envelope: readonly number[], startSec: number, envFps = 30): number {
+  const frames = Math.ceil((envelope.length / envFps) * fps);
+  const f0 = Math.round(startSec * fps);
+  // Clear existing mouth keys in the range.
+  for (const n of ["mouthOpen", "mouthRound"]) {
+    const a = l.chan?.[n];
+    if (Array.isArray(a)) l.chan![n] = a.filter((k) => k.t < f0 || k.t > f0 + frames);
+  }
+  setChannelKey(l, "mouthOpen", f0, 0, "linear");
+  let made = 0;
+  for (let i = 0; i < frames; i += 2) {
+    const e = envelope[Math.min(envelope.length - 1, Math.floor((i / fps) * envFps))] ?? 0;
+    const val = clamp(Math.pow(e, 0.75) * 0.85, 0, 0.75);
+    setChannelKey(l, "mouthOpen", f0 + i, val < 0.06 ? 0 : val, "linear");
+    // Rounder on louder vowels for variety.
+    setChannelKey(l, "mouthRound", f0 + i, e > 0.6 && (i / 2) % 3 === 0 ? 0.4 : 0, "linear");
+    made++;
+  }
+  setChannelKey(l, "mouthOpen", f0 + frames + 1, 0, "inOut");
+  setChannelKey(l, "mouthRound", f0 + frames + 1, 0, "inOut");
+  return made;
+}

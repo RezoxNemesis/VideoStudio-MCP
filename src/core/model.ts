@@ -284,7 +284,7 @@ export interface Cel {
 export interface AnimLayer {
   id: string;
   name: string;
-  kind: "draw" | "reference";
+  kind: "draw" | "reference" | "puppet" | "backdrop";
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -304,6 +304,12 @@ export interface AnimLayer {
   /** Rig: body part name (hips, torso, head, upperArmF, ...), and which rig it belongs to. */
   part?: string;
   rig?: string;
+  /** Procedural character (kind "puppet"). */
+  puppet?: import("../anim/puppet").PuppetSpec;
+  /** Painted backdrop (kind "backdrop"). */
+  backdrop?: import("../anim/puppet").BackdropSpec;
+  /** Animation channels for puppets/backdrops, keyed by frame. */
+  chan?: Record<string, Animatable>;
 }
 
 export interface AnimScene {

@@ -6,11 +6,14 @@
 import type { Studio } from "../app/studio";
 import { runBatch, type Command } from "./api";
 import { kvGet, kvSet } from "../core/storage";
+import { keepAwake } from "../native/storage";
 
 export interface RemoteConfig {
   relay: string;
   key: string;
   enabled: boolean;
+  /** Keep the screen on while the link is on, so jobs never wait for the phone to wake. */
+  awake?: boolean;
 }
 
 export type RemoteState = "off" | "connecting" | "online" | "error";
@@ -23,8 +26,29 @@ export class RemoteLink {
   onState: () => void = () => {};
   private timer = 0;
   private running = false;
+  private awakeOn = false;
+  private abort: AbortController | null = null;
 
-  constructor(private readonly studio: Studio) {}
+  constructor(private readonly studio: Studio) {
+    // Back in the foreground: check for work right away instead of waiting out a slow background poll.
+    document.addEventListener("visibilitychange", () => {
+      if (!this.config.enabled) return;
+      this.syncAwake();
+      if (!document.hidden) {
+        this.abort?.abort();
+        this.loop(0);
+      }
+    });
+  }
+
+  /** Hold the screen on while linked and visible (the setting can switch this off). */
+  private syncAwake() {
+    const want = this.config.enabled && this.config.awake !== false && !document.hidden;
+    if (want !== this.awakeOn) {
+      this.awakeOn = want;
+      void keepAwake(want);
+    }
+  }
 
   async load(): Promise<void> {
     const c = await kvGet<RemoteConfig>("remote").catch(() => undefined);
@@ -49,14 +73,23 @@ export class RemoteLink {
     this.config.enabled = true;
     void this.save();
     this.set("connecting");
+    this.syncAwake();
     this.loop(0);
   }
 
   stop(): void {
     window.clearTimeout(this.timer);
+    this.abort?.abort();
     this.config.enabled = false;
     void this.save();
+    this.syncAwake();
     this.set("off");
+  }
+
+  setAwake(on: boolean): void {
+    this.config.awake = on;
+    void this.save();
+    this.syncAwake();
   }
 
   async rotateKey(): Promise<void> {
@@ -79,31 +112,48 @@ export class RemoteLink {
     if (!this.config.enabled || this.running) return;
     const base = this.config.relay.replace(/\/+$/, "");
     this.running = true;
-    let next = document.hidden ? 15_000 : 2_500;
+    // In the foreground the relay holds the request open until a job arrives (long poll), so jobs start
+    // within a second. In the background the WebView is throttled, so fall back to a slow check.
+    const hidden = document.hidden;
+    let next = hidden ? 15_000 : 0;
     try {
-      const res = await fetch(`${base}/device/${this.config.key}/next`, { method: "GET", cache: "no-store" });
+      this.abort = new AbortController();
+      const res = await fetch(`${base}/device/${this.config.key}/next${hidden ? "" : "?wait=20"}`, { method: "GET", cache: "no-store", signal: this.abort.signal });
       if (res.status === 204) {
         this.set("online");
       } else if (res.ok) {
         this.set("online");
         const body = (await res.json()) as { jobs?: { id: string; commands: Command[]; continueOnError?: boolean }[] };
         for (const job of body.jobs ?? []) {
-          this.studio.setStatus(`Agent: running ${job.commands.length} command${job.commands.length > 1 ? "s" : ""}…`);
-          const results = await runBatch(this.studio, job.commands, !!job.continueOnError);
+          const n = job.commands.length;
+          this.studio.setStatus(`Agent: running ${n} command${n > 1 ? "s" : ""}…`);
+          let lastSent = 0;
+          const progress = (done: number, op: string) => {
+            const now = Date.now();
+            if (now - lastSent < 2000) return;
+            lastSent = now;
+            void fetch(`${base}/device/${this.config.key}/progress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, state: { done, total: n, op, status: this.studio.status } }) }).catch(() => {});
+          };
+          const results = await runBatch(this.studio, job.commands, !!job.continueOnError, progress);
           await fetch(`${base}/device/${this.config.key}/result`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, results, state: summaryLite(this.studio) }) });
           this.jobsRun++;
           this.studio.setStatus(`Agent: ${results.every((r) => r.ok) ? "done" : "finished with an error"}`);
         }
-        next = 300;
+        next = 0;
       } else {
         throw new Error(`Relay answered ${res.status}`);
       }
       this.lastError = "";
     } catch (e) {
-      this.lastError = e instanceof Error ? e.message : String(e);
-      this.set("error");
-      next = 10_000;
+      if (e instanceof DOMException && e.name === "AbortError") {
+        next = 0;
+      } else {
+        this.lastError = e instanceof Error ? e.message : String(e);
+        this.set("error");
+        next = 5_000;
+      }
     } finally {
+      this.abort = null;
       this.running = false;
       if (this.config.enabled) this.loop(next);
     }

@@ -69,6 +69,7 @@ const P: Record<string, string> = {
   adjust: "M12 3a9 9 0 100 18V3z",
   rect: "M4 6h16v12H4z",
   bone: "M12 5a2 2 0 100-.01M12 7v6M12 13l-4 6M12 13l4 6M12 9l-5 3M12 9l5 3",
+  user: "M12 12a4 4 0 100-8 4 4 0 000 8zM4 21a8 8 0 0116 0",
 };
 
 export function icon(name: keyof typeof P | string, size = 22): SVGSVGElement {

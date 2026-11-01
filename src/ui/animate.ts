@@ -8,6 +8,7 @@ import * as A from "../anim/ops";
 import { bucketFill, ctx2d, drawStroke, makeCanvas, renderScene } from "../anim/render";
 import * as ops from "../core/ops";
 import * as R from "../anim/rig";
+import * as PU from "../anim/puppet";
 import { valueAt } from "../core/keyframes";
 import { saveBlob } from "../native/storage";
 import { btn, colorInput, confirmBox, h, icon, pickFiles, select, sheet, slider, toast, toggle } from "./dom";
@@ -260,6 +261,7 @@ export class AnimateView {
       sc ? btn("Scene settings", "sliders", () => this.sceneSettings(), "icon-only ghost") : null,
       sc ? btn("Layers", "layers", () => this.layersSheet(), "ghost") : null,
       sc ? btn("Rig", "bone", () => this.rigSheet(), "ghost") : null,
+      sc ? btn("Character", "user", () => this.characterSheet(), "ghost") : null,
       h("div", { class: "grow" }),
       btn("Undo", "undo", () => s.undo(), "icon-only ghost"),
       btn("Redo", "redo", () => s.redo(), "icon-only ghost"),
@@ -914,6 +916,88 @@ export class AnimateView {
       );
     }
     sheet("Rig", body, { tall: true });
+  }
+
+  /** Procedural anime characters and painted backdrops: one tap per action, keyed at the current frame. */
+  private characterSheet() {
+    const s = this.s;
+    const sc = this.scene();
+    if (!sc) return;
+    const sid = sc.id;
+    const body = h("div", { class: "stack" });
+    const look = { hair: "messy", jacket: "leather", palette: "black", cig: true, eyes: PU.DEFAULT_PALETTE.eyes, hairColor: PU.DEFAULT_PALETTE.hair };
+    let charId = sc.layers.find((l) => l.kind === "puppet")?.id ?? null;
+    const run = (label: string, fn: (S: AnimScene) => unknown) => {
+      try {
+        s.mutate(label, (p) => fn(A.getScene(p, sid)));
+        this.drawStrip();
+        this.queue();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error");
+      }
+    };
+    const act = (step: Omit<PU.ActionStep, "at">) =>
+      charId
+        ? run(`character ${step.do}`, (S) => {
+            const l = A.getLayer(S, charId!);
+            const end = PU.applyActions(l, S.fps, [{ at: this.frame / S.fps, ...step } as PU.ActionStep]);
+            S.frames = Math.max(S.frames, Math.ceil(end * S.fps) + 1);
+          })
+        : toast("Add a character first", "error");
+    const draw = () => {
+      const chars = this.scene()?.layers.filter((l) => l.kind === "puppet") ?? [];
+      body.replaceChildren(
+        h("p", { class: "hint" }, "A fully drawn anime character: curved limbs, cel shading, face rig, blinking, hair follow-through. Tap an action to key it from the current frame; scrub to see it."),
+        h("h3", {}, "New character"),
+        select("Hair", [["messy", "Messy"], ["spiky", "Spiky"], ["short", "Short"], ["long", "Long"]] as const, "messy", (v) => (look.hair = v)),
+        select("Outfit", [["leather", "Leather jacket"], ["none", "Turtleneck only"]] as const, "leather", (v) => (look.jacket = v)),
+        select("Jacket colour", Object.keys(PU.PALETTES).map((k) => [k, k] as const), "black", (v) => (look.palette = v)),
+        h("div", { class: "row wrap" }, colorInput("Eyes", look.eyes, (v) => (look.eyes = v)), colorInput("Hair colour", look.hairColor, (v) => (look.hairColor = v))),
+        toggle("Cigarette in hand", look.cig, (v) => (look.cig = v)),
+        btn("Add character", "plus", () => {
+          run("add character", (S) => {
+            const top = S.layers.find((l) => l.kind === "draw");
+            const l = A.addLayer(S, "Character", "puppet", top?.id);
+            l.puppet = PU.makeSpec({ x: S.width / 2, y: S.height * 0.92, height: S.height * 0.68, hair: look.hair as never, jacket: look.jacket as never, palette: look.palette, props: look.cig ? ["cigarette"] : [], colorOverrides: { eyes: look.eyes, hair: look.hairColor }, seed: Math.floor(Math.random() * 1000) });
+            l.chan = {};
+            charId = l.id;
+          });
+          draw();
+        }, "primary"),
+        h("h3", {}, "Backdrop"),
+        h("div", { class: "chips" }, ...PU.BACKDROPS.map((b) => h("button", { class: "chip", type: "button", onclick: () => run("backdrop", (S) => {
+          let l = S.layers.find((x) => x.kind === "backdrop");
+          if (!l) {
+            l = A.addLayer(S, "Backdrop", "backdrop");
+            S.layers.splice(S.layers.indexOf(l), 1);
+            S.layers.push(l);
+          }
+          l.backdrop = { type: b, seed: 3 };
+        }) }, b))),
+        chars.length
+          ? h("div", { class: "stack" },
+              chars.length > 1 ? select("Character", chars.map((c) => [c.id, c.name] as const), charId ?? chars[0]!.id, (v) => (charId = v)) : h("span"),
+              h("h3", {}, "Actions (from this frame)"),
+              h("div", { class: "chips" },
+                ...([["smoke", "Smoke"], ["exhale", "Exhale"], ["nod", "Nod"], ["shake", "Shake head"], ["shrug", "Shrug"], ["laugh", "Laugh"], ["wave", "Wave"], ["point", "Point"], ["gesture", "Talk gesture"]] as const).map(([d, label]) => h("button", { class: "chip", type: "button", onclick: () => act({ do: d }) }, label)),
+              ),
+              h("h3", {}, "Expression"),
+              h("div", { class: "chips" }, ...Object.keys(PU.EXPRESSIONS).map((e) => h("button", { class: "chip", type: "button", onclick: () => act({ do: "expr", name: e }) }, e))),
+              h("h3", {}, "Stance"),
+              h("div", { class: "chips" }, ...Object.keys(PU.STANCES).map((e) => h("button", { class: "chip", type: "button", onclick: () => act({ do: "stance", name: e }) }, e))),
+              h("h3", {}, "Look"),
+              h("div", { class: "chips" },
+                ...([["Left", -0.8, 0], ["Centre", 0, 0], ["Right", 0.8, 0], ["Up", 0, -0.8], ["Down", 0, 0.8]] as const).map(([n, x, y]) => h("button", { class: "chip", type: "button", onclick: () => act({ do: "look", x, y }) }, n)),
+                h("button", { class: "chip", type: "button", onclick: () => act({ do: "tilt", to: 6 }) }, "Tilt head"),
+                h("button", { class: "chip", type: "button", onclick: () => act({ do: "tilt", to: 0 }) }, "Straighten"),
+              ),
+              btn("Clear this character's animation", "trash", () => charId && run("clear character animation", (S) => (A.getLayer(S, charId!).chan = {})), "ghost"),
+            )
+          : h("p", { class: "hint" }, "Add a character to animate it."),
+      );
+    };
+    draw();
+    sheet("Character", body, { tall: true });
   }
 
   /* -------------------------------- selection ------------------------------- */

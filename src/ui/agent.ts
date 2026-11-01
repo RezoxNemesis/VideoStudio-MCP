@@ -133,6 +133,12 @@ export class AgentView {
           prompt("MCP connector URL", mcp);
         }
       })) : h("p", { class: "hint" }, "Deploy the relay in /relay of the repo (one Cloudflare Worker), paste its address here, then add the MCP URL in Claude → Settings → Connectors."),
+      (() => {
+        const cb = h("input", { type: "checkbox", "aria-label": "Keep the screen on while linked" }) as HTMLInputElement;
+        cb.checked = r.config.awake !== false;
+        cb.addEventListener("change", () => r.setAwake(cb.checked));
+        return h("label", { class: "frow" }, cb, h("span", {}, " Keep screen on while linked (jobs start instantly)"));
+      })(),
       h("div", { class: "row wrap" },
         r.state === "off" ? btn("Connect", "link", () => (r.config.relay ? r.start() : toast("Enter the relay address first", "error")), "primary") : btn("Disconnect", "close", () => r.stop(), "ghost"),
         btn("New key", "key", async () => {
