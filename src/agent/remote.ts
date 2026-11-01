@@ -118,3 +118,36 @@ function newKey(): string {
   const b = crypto.getRandomValues(new Uint8Array(24));
   return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+
+export interface InboxFile {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  complete: boolean;
+  created: number;
+}
+
+async function relayBase(): Promise<{ base: string; key: string }> {
+  const c = await kvGet<RemoteConfig>("remote").catch(() => undefined);
+  if (!c?.relay || !c.key) throw new Error("Set up the remote link (Agent tab) first.");
+  return { base: `${c.relay.replace(/\/+$/, "")}/device/${c.key}`, key: c.key };
+}
+
+/** Files waiting in the relay inbox (shared in chat, uploaded by an agent). */
+export async function listInbox(): Promise<InboxFile[]> {
+  const { base } = await relayBase();
+  const r = await fetch(`${base}/files`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`Inbox unavailable (${r.status})`);
+  return ((await r.json()) as { files: InboxFile[] }).files;
+}
+
+/** Download an inbox file; it is removed from the relay once it is safely in the project. */
+export async function fetchInbox(id: string): Promise<{ blob: Blob; name: string; done: () => Promise<void> }> {
+  const { base } = await relayBase();
+  const r = await fetch(`${base}/files/${encodeURIComponent(id)}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(r.status === 409 ? "That file is still uploading." : `Download failed (${r.status})`);
+  const name = decodeURIComponent(r.headers.get("x-file-name") ?? "file");
+  const blob = await r.blob();
+  return { blob, name, done: async () => void (await fetch(`${base}/files/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {})) };
+}

@@ -1,7 +1,8 @@
 /** Agent tab: run JSON command batches by hand, browse the command list, and link a remote AI through the relay. */
 import type { Studio } from "../app/studio";
 import { commandList, runBatch, type Command } from "../agent/api";
-import type { RemoteLink } from "../agent/remote";
+import { listInbox, type RemoteLink } from "../agent/remote";
+import { fmtBytes } from "./dom";
 import { btn, h, toast } from "./dom";
 
 const EXAMPLES: [string, Command[]][] = [
@@ -35,6 +36,7 @@ export class AgentView {
   private input: HTMLTextAreaElement;
   private log: HTMLElement;
   private remoteBox: HTMLElement;
+  private inbox: HTMLElement;
 
   constructor(
     private readonly s: Studio,
@@ -43,6 +45,7 @@ export class AgentView {
     this.input = h("textarea", { class: "code", rows: 8, spellcheck: "false", "aria-label": "Commands (JSON)" }, JSON.stringify(EXAMPLES[0]![1], null, 1)) as HTMLTextAreaElement;
     this.log = h("pre", { class: "log" });
     this.remoteBox = h("div", { class: "remote" });
+    this.inbox = h("div", { class: "inbox" });
     const ref = h("details", { class: "ref" }, h("summary", {}, `Command reference (${commandList().length})`), h("dl", {}, ...commandList().flatMap((c) => [h("dt", {}, c.op), h("dd", {}, c.help)])));
     this.el = h(
       "div",
@@ -51,6 +54,7 @@ export class AgentView {
         h("h2", {}, "Agent control"),
         h("p", { class: "muted small" }, "Everything in the app is a JSON command. Claude and any AI you link can drive editing, drawing, voices and rendering. No command can open your gallery."),
         this.remoteBox,
+        this.inbox,
         h("h3", {}, "Run commands"),
         h("div", { class: "chips" }, ...EXAMPLES.map(([name, cmds]) => h("button", { class: "chip", type: "button", onclick: () => (this.input.value = JSON.stringify(cmds, null, 1)) }, name))),
         this.input,
@@ -61,6 +65,36 @@ export class AgentView {
     );
     remote.onState = () => this.drawRemote();
     this.drawRemote();
+    void this.drawInbox();
+  }
+
+  async drawInbox(): Promise<void> {
+    if (!this.remote.config.relay) {
+      this.inbox.replaceChildren();
+      return;
+    }
+    let files: Awaited<ReturnType<typeof listInbox>> = [];
+    try {
+      files = await listInbox();
+    } catch {
+      this.inbox.replaceChildren();
+      return;
+    }
+    this.inbox.replaceChildren(
+      h("h3", {}, `Inbox (${files.length})`, btn("Refresh", "redo", () => void this.drawInbox(), "icon-only ghost")),
+      files.length
+        ? h("div", { class: "stack" }, ...files.map((f) =>
+            h("div", { class: "proj" },
+              h("div", { class: "proj-open" }, h("b", {}, f.name), h("span", { class: "muted small" }, `${fmtBytes(f.size)}${f.complete ? "" : " · uploading…"}`)),
+              f.complete ? btn("Import", "download", async () => {
+                const [r] = await runBatch(this.s, [{ op: "media.importInbox", fileId: f.id }]);
+                if (r?.ok) toast(`Imported ${f.name}`, "ok");
+                else toast(r?.error ?? "Import failed", "error");
+                void this.drawInbox();
+              }, "primary small") : h("span", {}),
+            )))
+        : h("p", { class: "hint" }, "Files shared with Claude in chat arrive here, ready to import."),
+    );
   }
 
   private async run() {
@@ -84,6 +118,7 @@ export class AgentView {
       r.config.relay = url.value.trim();
       void r.save();
       this.drawRemote();
+      void this.drawInbox();
     });
     const mcp = r.mcpUrl();
     const dot = h("span", { class: `dot ${r.state}` });

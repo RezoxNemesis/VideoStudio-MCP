@@ -4,6 +4,10 @@
  *   POST /mcp/<key>              MCP (Streamable HTTP, JSON responses). Tools: studio_run, studio_result, studio_status, studio_help
  *   GET  /device/<key>/next      the app collects queued command batches (204 when none)
  *   POST /device/<key>/result    the app posts results
+ *   POST /device/<key>/files            start an upload {name, mime, size} → {id, chunkSize}
+ *   PUT  /device/<key>/files/<id>/<n>   upload chunk n (raw bytes, ≤ 1.5 MB)
+ *   GET  /device/<key>/files            inbox: files waiting to be imported
+ *   GET  /device/<key>/files/<id>       download (the app imports it), DELETE removes it
  *
  * Storage is D1 only (no Durable Objects). The key in the URL is the credential; only its SHA-256 is stored.
  */
@@ -14,7 +18,7 @@ export interface Env {
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
   "access-control-allow-headers": "content-type, mcp-session-id, mcp-protocol-version",
 };
 
@@ -30,7 +34,11 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, device TEXT NOT NULL, commands TEXT NOT NULL, cont INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, results TEXT, state TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS jobs_device_status ON jobs (device, status, created)`,
   `CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, last_seen INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, device TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, chunks INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS file_chunks (file TEXT NOT NULL, idx INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (file, idx))`,
 ];
+const CHUNK = 1_500_000;
+const MAX_FILE = 300 * 1024 * 1024;
 let ready: Promise<void> | null = null;
 function migrate(env: Env): Promise<void> {
   return (ready ??= env.DB.batch(SCHEMA.map((s) => env.DB.prepare(s))).then(() => undefined));
@@ -59,6 +67,18 @@ const TOOLS = [
     name: "studio_result",
     description: "Get the status and results of a job queued with studio_run (when it was still running).",
     inputSchema: { type: "object", properties: { job_id: { type: "string" }, wait_seconds: { type: "number" } }, required: ["job_id"] },
+  },
+  {
+    name: "studio_files",
+    description:
+      "List files in the phone's inbox (uploaded through the relay, e.g. files the person shared in chat). Import one with studio_run " +
+      '[{"op":"media.importInbox","fileId":"<id>"}]. Small files (≤ 1 MB) can also be sent with studio_upload.',
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "studio_upload",
+    description: "Put a small file (base64, ≤ 1 MB decoded) into the phone's inbox. Returns its file id for media.importInbox.",
+    inputSchema: { type: "object", properties: { name: { type: "string" }, mime: { type: "string" }, data_base64: { type: "string" } }, required: ["name", "data_base64"] },
   },
   {
     name: "studio_status",
@@ -98,6 +118,15 @@ async function callTool(env: Env, device: string, name: string, args: Record<str
     }
     case "studio_result":
       return await waitFor(env, device, String(args.job_id ?? ""), typeof args.wait_seconds === "number" ? args.wait_seconds : 20);
+    case "studio_files":
+      return { files: await listFiles(env, device) };
+    case "studio_upload": {
+      const bin = Uint8Array.from(atob(String(args.data_base64 ?? "")), (c) => c.charCodeAt(0));
+      if (!bin.length || bin.length > 1_048_576) throw new Error("data must be 1 byte to 1 MB");
+      const id = await createFile(env, device, String(args.name ?? "file"), String(args.mime ?? "application/octet-stream"), bin.length);
+      await putChunk(env, device, id, 0, bin);
+      return { file_id: id, size: bin.length };
+    }
     case "studio_status": {
       const d = await env.DB.prepare("SELECT last_seen FROM devices WHERE id = ?").bind(device).first<{ last_seen: number }>();
       const q = await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs WHERE device = ? AND status IN ('queued','running')").bind(device).first<{ n: number }>();
@@ -146,6 +175,69 @@ async function mcp(req: Request, env: Env, device: string): Promise<Response> {
   }
 }
 
+async function listFiles(env: Env, device: string) {
+  const { results } = await env.DB.prepare("SELECT id, name, mime, size, chunks, received, created FROM files WHERE device = ? ORDER BY created DESC LIMIT 50").bind(device).all<{ id: string; name: string; mime: string; size: number; chunks: number; received: number; created: number }>();
+  return results.map((f) => ({ id: f.id, name: f.name, mime: f.mime, size: f.size, complete: f.received >= f.chunks, created: f.created }));
+}
+
+async function createFile(env: Env, device: string, name: string, mime: string, size: number): Promise<string> {
+  if (!(size > 0) || size > MAX_FILE) throw new Error(`size must be 1 byte to ${MAX_FILE} bytes`);
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const old = await env.DB.prepare("SELECT id FROM files WHERE created < ?").bind(now - 2 * 86_400_000).all<{ id: string }>();
+  const stmts = [env.DB.prepare("INSERT INTO files (id, device, name, mime, size, chunks, created) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, device, name.slice(0, 200), mime.slice(0, 100), size, Math.ceil(size / CHUNK), now)];
+  for (const o of old.results) stmts.push(env.DB.prepare("DELETE FROM file_chunks WHERE file = ?").bind(o.id), env.DB.prepare("DELETE FROM files WHERE id = ?").bind(o.id));
+  await env.DB.batch(stmts);
+  return id;
+}
+
+async function putChunk(env: Env, device: string, id: string, idx: number, data: Uint8Array): Promise<void> {
+  const f = await env.DB.prepare("SELECT chunks FROM files WHERE id = ? AND device = ?").bind(id, device).first<{ chunks: number }>();
+  if (!f) throw new Error("unknown file");
+  if (!(idx >= 0 && idx < f.chunks) || data.length === 0 || data.length > CHUNK) throw new Error("bad chunk");
+  const r = await env.DB.prepare("INSERT OR IGNORE INTO file_chunks (file, idx, data) VALUES (?, ?, ?)").bind(id, idx, data).run();
+  if (r.meta.changes) await env.DB.prepare("UPDATE files SET received = received + 1 WHERE id = ?").bind(id).run();
+}
+
+async function deleteFile(env: Env, device: string, id: string): Promise<void> {
+  const f = await env.DB.prepare("SELECT id FROM files WHERE id = ? AND device = ?").bind(id, device).first();
+  if (!f) return;
+  await env.DB.batch([env.DB.prepare("DELETE FROM file_chunks WHERE file = ?").bind(id), env.DB.prepare("DELETE FROM files WHERE id = ?").bind(id)]);
+}
+
+async function files(req: Request, env: Env, device: string, parts: string[]): Promise<Response> {
+  const id = parts[3];
+  if (!id) {
+    if (req.method === "GET") return json({ files: await listFiles(env, device) });
+    if (req.method === "POST") {
+      const b = (await req.json().catch(() => null)) as { name?: string; mime?: string; size?: number } | null;
+      if (!b?.name || !b.size) return json({ error: "name and size required" }, 400);
+      return json({ id: await createFile(env, device, b.name, b.mime || "application/octet-stream", Number(b.size)), chunkSize: CHUNK });
+    }
+  } else if (parts[4] !== undefined && req.method === "PUT") {
+    await putChunk(env, device, id, Number(parts[4]), new Uint8Array(await req.arrayBuffer()));
+    return json({ ok: true });
+  } else if (req.method === "DELETE") {
+    await deleteFile(env, device, id);
+    return json({ ok: true });
+  } else if (req.method === "GET") {
+    const f = await env.DB.prepare("SELECT name, mime, size, chunks, received FROM files WHERE id = ? AND device = ?").bind(id, device).first<{ name: string; mime: string; size: number; chunks: number; received: number }>();
+    if (!f) return json({ error: "not found" }, 404);
+    if (f.received < f.chunks) return json({ error: "upload not finished" }, 409);
+    let i = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(ctrl) {
+        if (i >= f.chunks) return ctrl.close();
+        const row = await env.DB.prepare("SELECT data FROM file_chunks WHERE file = ? AND idx = ?").bind(id, i++).first<{ data: ArrayBuffer | number[] }>();
+        if (!row) return ctrl.error(new Error("missing chunk"));
+        ctrl.enqueue(row.data instanceof ArrayBuffer ? new Uint8Array(row.data) : Uint8Array.from(row.data));
+      },
+    });
+    return new Response(body, { headers: { "content-type": f.mime, "content-length": String(f.size), "x-file-name": encodeURIComponent(f.name), "access-control-expose-headers": "x-file-name", ...CORS } });
+  }
+  return json({ error: "not found" }, 404);
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -170,6 +262,14 @@ export default {
       if (writes.length) await env.DB.batch(writes);
       if (!results.length) return new Response(null, { status: 204, headers: CORS });
       return json({ jobs: results.map((j) => ({ id: j.id, commands: JSON.parse(j.commands), continueOnError: !!j.cont })) });
+    }
+
+    if (parts[0] === "device" && parts[2] === "files") {
+      try {
+        return await files(req, env, device, parts);
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : String(e) }, 400);
+      }
     }
 
     if (parts[0] === "device" && parts[2] === "result" && req.method === "POST") {

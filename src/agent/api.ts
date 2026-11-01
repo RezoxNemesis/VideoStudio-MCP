@@ -10,6 +10,7 @@ import * as anim from "../anim/ops";
 import { exposedKey, findAsset, projectDuration, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
 import { fetchToBlob, importBlob } from "../media/library";
 import { ExportJob, type ExportOptions } from "../render/export";
+import { fetchInbox, listInbox } from "./remote";
 
 export type Command = { op: string } & Record<string, unknown>;
 export interface CommandResult {
@@ -162,6 +163,20 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         const clip = a.bool("add", true) ? ops.addClip(p, { assetId: asset.id, start: a.optNum("start") }) : undefined;
         return { id: asset.id, clipId: clip?.id, kind: asset.kind, duration: asset.duration };
       });
+    },
+  },
+  "media.inbox": { help: "Files waiting in the relay inbox (things shared in chat).", run: () => listInbox() },
+  "media.importInbox": {
+    help: "{fileId, add?=true, start?, keep?=false} Import a file from the relay inbox into the project.",
+    run: async (s, a) => {
+      const f = await fetchInbox(a.str("fileId"));
+      const r = await s.mutateAsync("import inbox", async (p) => {
+        const asset = await importBlob(p, f.blob, a.str("name", f.name), "agent");
+        const clip = a.bool("add", true) ? ops.addClip(p, { assetId: asset.id, start: a.optNum("start") }) : undefined;
+        return { id: asset.id, clipId: clip?.id, kind: asset.kind, duration: asset.duration, width: asset.width, height: asset.height };
+      });
+      if (!a.bool("keep")) await f.done();
+      return r;
     },
   },
   "media.list": { help: "Assets in this project.", run: (s) => summary(s.project).assets },
