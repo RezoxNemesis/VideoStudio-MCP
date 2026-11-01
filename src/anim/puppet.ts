@@ -37,6 +37,7 @@ export interface PuppetPalette {
   line: string;
   rim: string;
   metal: string;
+  tie: string;
 }
 
 export interface PuppetSpec {
@@ -62,6 +63,7 @@ export const PALETTES: Record<string, Partial<PuppetPalette>> = {
   red: { jacket: "#7d1622", jacketShade: "#4d0c14", jacketHi: "#c4404e" },
   navy: { jacket: "#1e2a4a", jacketShade: "#121a30", jacketHi: "#3f5590" },
   brown: { jacket: "#5a3a26", jacketShade: "#3a2416", jacketHi: "#94643f" },
+  suit: { jacket: "#18181d", jacketShade: "#0b0b0e", jacketHi: "#4d5163", shirt: "#ecebf2", shirtShade: "#b8b7c9", pants: "#16161b", pantsShade: "#0c0c10" },
 };
 
 export const DEFAULT_PALETTE: PuppetPalette = {
@@ -83,6 +85,7 @@ export const DEFAULT_PALETTE: PuppetPalette = {
   line: "#07070a",
   rim: "#a497ff",
   metal: "#c9ccd6",
+  tie: "#b3121f",
 };
 
 export function makeSpec(o: Partial<PuppetSpec> & { palette?: string; colorOverrides?: Partial<PuppetPalette> } = {}): PuppetSpec {
@@ -578,7 +581,7 @@ export function drawPuppet(c: Ctx, l: AnimLayer, s: AnimScene, f: number): void 
 
   drawHairBack(k, sk, spec, swing.head, f / s.fps);
   drawLegs(k, sk, spec);
-  drawTorso(k, sk, spec, swing.body);
+  drawTorso(k, sk, spec, swing.body, chan(l, "wind", f), f / s.fps);
   drawHead(k, l, sk, spec, f, s.fps, swing.head);
   // Arms: the one crossing the body goes last.
   const crossR = sk.wristR.x < sk.shoulderR.x - 0.6 * u;
@@ -639,7 +642,7 @@ function drawLegs(k: Kit, sk: Skeleton, spec: PuppetSpec): void {
   void spec;
 }
 
-function drawTorso(k: Kit, sk: Skeleton, spec: PuppetSpec, bodyVel: number): void {
+function drawTorso(k: Kit, sk: Skeleton, spec: PuppetSpec, bodyVel: number, wind = 0.3, time = 0): void {
   const u = k.u;
   const P = k.pal;
   const T = (x: number, y: number) => add(sk.pelvis, rot(v(x * u, y * u), sk.torsoA));
@@ -648,10 +651,20 @@ function drawTorso(k: Kit, sk: Skeleton, spec: PuppetSpec, bodyVel: number): voi
   // Inner shirt (turtleneck) visible in the jacket opening.
   const shirt = shape([T(-0.42, neckY + 0.06), T(0.42, neckY + 0.06), T(0.6, -1.2), T(0.62, -0.2), T(-0.62, -0.2), T(-0.6, -1.2)], 0.5);
   cel(k, shirt, P.shirt, P.shirtShade, { sh: 0.22, hi: shadeMix(P.shirt, "#ffffff", 0.1), hiW: 0.05 });
-  // Ribbing lines.
-  for (let i = -2; i <= 2; i++) inkLine(k, [T(i * 0.1, -1.5), T(i * 0.1 + 0.01, -0.6), T(i * 0.1, -0.25)], 0.012 * u, shadeMix(P.shirt, "#000000", 0.35), [0.3, 0.3]);
+  if (spec.shirt === "turtleneck") {
+    // Ribbing lines.
+    for (let i = -2; i <= 2; i++) inkLine(k, [T(i * 0.1, -1.5), T(i * 0.1 + 0.01, -0.6), T(i * 0.1, -0.25)], 0.012 * u, shadeMix(P.shirt, "#000000", 0.35), [0.3, 0.3]);
+  } else {
+    // Button placket and buttons.
+    inkLine(k, [T(0.0, neckY + 0.2), T(0.01, -1.0), T(0.0, -0.25)], 0.014 * u, shadeMix(P.shirt, "#000000", 0.3), [0.1, 0.1]);
+  }
+  if (spec.shirt === "shirt") drawTie(k, sk, spec, T, neckY, wind, time);
   if (spec.jacket === "none") return;
   const sw = 0.93;
+  if (spec.jacket === "coat") {
+    drawCoat(k, sk, spec, T, neckY, flare, wind, time);
+    return;
+  }
   const jacketSide = (side: -1 | 1) =>
     shape(
       [
@@ -699,6 +712,75 @@ function drawTorso(k: Kit, sk: Skeleton, spec: PuppetSpec, bodyVel: number): voi
     const pend = T(0.02, -1.3);
     const pp = shape([add(pend, v(0, -0.09 * u)), add(pend, v(0.06 * u, 0)), add(pend, v(0, 0.12 * u)), add(pend, v(-0.06 * u, 0))], 0.1);
     cel(k, pp, P.metal, "#7c8090", { sh: 0.05, hi: "#ffffff", hiW: 0.025, lw: k.lw * 0.6 });
+  }
+}
+
+/** Shirt collar and a necktie that flutters in the wind. */
+function drawTie(k: Kit, sk: Skeleton, spec: PuppetSpec, T: (x: number, y: number) => V, neckY: number, wind: number, time: number): void {
+  const u = k.u;
+  const P = k.pal;
+  const flut = wind * (noise1(time * 2.3, spec.seed + 21) * 0.18 + 0.06);
+  const knotTop = neckY + 0.1;
+  const knot = shape([T(-0.07, knotTop), T(0.07, knotTop), T(0.05, knotTop + 0.16), T(-0.05, knotTop + 0.16)], 0.3);
+  const blade = shape(
+    [
+      T(-0.05, knotTop + 0.14),
+      T(0.05, knotTop + 0.14),
+      T(0.12 + flut * 0.5, -1.05),
+      { ...T(0.02 + flut, -0.55 - Math.abs(flut) * 0.4), s: true },
+      T(-0.1 + flut * 0.5, -1.05),
+    ],
+    0.35,
+  );
+  cel(k, blade, P.tie, shadeMix(P.tie, "#000000", 0.45), { sh: 0.08, hi: shadeMix(P.tie, "#ffffff", 0.3), hiW: 0.03, lw: k.lw * 0.8 });
+  cel(k, knot, P.tie, shadeMix(P.tie, "#000000", 0.45), { sh: 0.05, lw: k.lw * 0.8 });
+  // Collar points either side of the knot.
+  for (const sd of [-1, 1] as const) {
+    const col = shape([{ ...T(sd * 0.05, neckY + 0.04), s: true }, T(sd * 0.3, neckY + 0.02), { ...T(sd * 0.2, neckY + 0.3), s: true }, { ...T(sd * 0.06, neckY + 0.18), s: true }], 0.2);
+    cel(k, col, P.shirt, P.shirtShade, { sh: 0.05, lw: k.lw * 0.75 });
+  }
+}
+
+/** Long open coat to the knees: wide lapels, tied back belt, hem and tails that blow in the wind. */
+function drawCoat(k: Kit, sk: Skeleton, spec: PuppetSpec, T: (x: number, y: number) => V, neckY: number, flare: number, wind: number, time: number): void {
+  const u = k.u;
+  const P = k.pal;
+  for (const side of [-1, 1] as const) {
+    const gust = wind * (0.5 + 0.5 * noise1(time * 1.6 + side * 3, spec.seed + 5));
+    const flap = side * (0.1 * gust + flare * 0.6);
+    const lift = -0.35 * gust;
+    const hemY = 2.15 + lift;
+    const p = shape(
+      [
+        { ...T(side * 0.34, neckY + 0.02), s: true },
+        T(side * 0.62, neckY + 0.1),
+        T(side * 0.93, -2.0),
+        T(side * 0.98, -1.64),
+        T(side * 0.88, -1.1),
+        T(side * 0.86, -0.3),
+        T(side * (0.98 + flap * 0.5), 0.8),
+        { ...T(side * (1.1 + flap), hemY + 0.05 * Math.sin(time * 5 + side)), s: true },
+        T(side * (0.62 + flap * 0.6), hemY + 0.08),
+        { ...T(side * (0.2 + flap * 0.3), hemY - 0.02), s: true },
+        T(side * (0.15 + flap * 0.1), 0.6),
+        T(side * 0.2, -0.5),
+        T(side * 0.27, -1.3),
+      ],
+      0.45,
+    );
+    cel(k, p, P.jacket, P.jacketShade, { sh: side === -1 ? 0.32 : 0.16, hi: P.jacketHi, hiW: 0.04 });
+    // Folds that run down the tails.
+    k.c.save();
+    k.c.clip(p);
+    inkLine(k, [T(side * 0.55, 0.35), T(side * (0.6 + flap * 0.4), 1.2), T(side * (0.66 + flap * 0.7), hemY - 0.05)], 0.02 * u, withA(P.line, 0.8), [0.4, 0.2]);
+    inkLine(k, [T(side * 0.7, -1.6), T(side * 0.74, -0.8), T(side * (0.82 + flap * 0.4), 0.9)], 0.06 * u, side === 1 ? withA(P.jacketHi, 0.35) : withA(P.jacketHi, 0.12), [0.4, 0.4]);
+    k.c.restore();
+    // Wide notched lapel.
+    const lapel = shape([{ ...T(side * 0.34, neckY + 0.02), s: true }, T(side * 0.72, neckY + 0.14), { ...T(side * 0.66, -1.62), s: true }, T(side * 0.56, -1.45), { ...T(side * 0.24, -1.05), s: true }], 0.3);
+    cel(k, lapel, shadeMix(P.jacket, "#ffffff", 0.07), P.jacketShade, { sh: 0.08, hi: P.jacketHi, hiW: 0.03, lw: k.lw * 0.8 });
+    // Belt loop and pocket flap.
+    const pk = shape([T(side * 0.42, 0.15), T(side * 0.74, 0.12), T(side * 0.75, 0.24), T(side * 0.43, 0.27)], 0.2);
+    cel(k, pk, shadeMix(P.jacket, "#000000", 0.15), P.jacketShade, { sh: 0.04, lw: k.lw * 0.6 });
   }
 }
 
@@ -923,6 +1005,12 @@ function drawHead(k: Kit, l: AnimLayer, sk: Skeleton, spec: PuppetSpec, f: numbe
   c.fillStyle = P.skinShade;
   c.fill(shape([H(-0.4, -0.7), H(0.4, -0.7), H(0.3, -0.36), H(0, -0.16), H(-0.3, -0.36)], 0.6));
   c.restore();
+  if (spec.shirt === "shirt") {
+    // Stand collar hugging the neck.
+    const band = shape([H(-0.24, 0.16), H(-0.2, -0.2), H(0, -0.16), H(0.2, -0.2), H(0.24, 0.16)], 0.4);
+    cel(kh, band, P.shirt, P.shirtShade, { sh: 0.08, lw: k.lw * 0.8 });
+    inkLine(kh, [H(0, -0.16), H(0, 0.14)], 0.014 * u, P.skinLine, [0.2, 0.2]);
+  }
   if (spec.shirt === "turtleneck") {
     const col = shape([H(-0.27, 0.18), H(-0.24, -0.28), H(0, -0.24), H(0.24, -0.28), H(0.27, 0.18)], 0.5);
     cel(kh, col, P.shirt, P.shirtShade, { sh: 0.12 });
@@ -1243,17 +1331,22 @@ function withA(h: string, a: number): string {
 /* -------------------------------- backdrops -------------------------------- */
 
 export interface BackdropSpec {
-  type: "night-city" | "night-rooftop" | "sunset-city" | "studio" | "gradient";
+  type: "night-city" | "night-rooftop" | "sunset-city" | "studio" | "gradient" | "river-bridge" | "bridge-deck" | "river-pov" | "railing";
   seed: number;
   sky?: [string, string];
   moon?: boolean;
+  /** Time of day for the river scenes: dusk (default) or night. */
+  time?: "dusk" | "night";
+  /** Railing / horizon height as a fraction of the frame (railing, bridge-deck). */
+  y?: number;
 }
 
-export const BACKDROPS = ["night-city", "night-rooftop", "sunset-city", "studio", "gradient"] as const;
+export const BACKDROPS = ["night-city", "night-rooftop", "sunset-city", "studio", "gradient", "river-bridge", "bridge-deck", "river-pov", "railing"] as const;
 
 export function drawBackdrop(c: Ctx, l: AnimLayer, s: AnimScene, f: number): void {
   const b = l.backdrop;
   if (!b) return;
+  if (b.type === "river-bridge" || b.type === "bridge-deck" || b.type === "river-pov" || b.type === "railing") return drawRiverScene(c, l, s, f, b);
   const W = s.width;
   const H = s.height;
   const t = f / s.fps;
@@ -1426,6 +1519,435 @@ export function drawBackdrop(c: Ctx, l: AnimLayer, s: AnimScene, f: number): voi
   c.fillRect(0, H * 0.55, W, H * 0.45);
 }
 
+/* ------------------------------- river scenes ------------------------------- */
+
+interface Light {
+  x: number;
+  y: number;
+  col: string;
+  a: number;
+}
+
+function skyGrad(c: Ctx, W: number, H: number, horizon: number, dusk: boolean) {
+  const g = c.createLinearGradient(0, 0, 0, horizon);
+  if (dusk) {
+    g.addColorStop(0, "#0e1330");
+    g.addColorStop(0.45, "#2b2b5c");
+    g.addColorStop(0.78, "#8a4a6a");
+    g.addColorStop(1, "#f08a5a");
+  } else {
+    g.addColorStop(0, "#05060f");
+    g.addColorStop(0.7, "#141a3a");
+    g.addColorStop(1, "#2a2d55");
+  }
+  c.fillStyle = g;
+  c.fillRect(0, 0, W, horizon + 2);
+}
+
+/** City skyline standing on `base`; returns lit windows so water can reflect them. */
+function cityBlock(c: Ctx, x0: number, x1: number, base: number, H: number, scale: number, seed: number, t: number, dusk: boolean, depth: number): Light[] {
+  const lights: Light[] = [];
+  const rnd = (i: number) => hash(i * 13.7 + seed * 101);
+  let x = x0;
+  let i = 0;
+  const shade = dusk ? ["#3a2f55", "#271f40", "#17132a"][depth]! : ["#1e2140", "#141631", "#0b0c1d"][depth]!;
+  while (x < x1) {
+    const sd = seed * 1000 + i++;
+    const bw = (50 + rnd(sd) * 110) * scale;
+    const bh = (0.1 + Math.pow(rnd(sd + 1), 1.6) * 0.38) * H * scale;
+    const top = base - bh;
+    // Body with a subtle vertical gradient and a lit edge facing the sunset.
+    const g = c.createLinearGradient(0, top, 0, base);
+    g.addColorStop(0, shadeMix(shade, dusk ? "#f08a5a" : "#5060a0", 0.12 / (depth + 1)));
+    g.addColorStop(1, shade);
+    c.fillStyle = g;
+    c.fillRect(x, top, bw, bh + 2);
+    c.fillStyle = dusk ? "rgba(255,170,120,0.18)" : "rgba(140,150,255,0.12)";
+    c.fillRect(x + bw - 3 * scale, top, 3 * scale, bh);
+    if (rnd(sd + 2) > 0.55) {
+      c.fillStyle = shade;
+      c.fillRect(x + bw * 0.3, top - bh * 0.07, bw * 0.3, bh * 0.07);
+    }
+    if (rnd(sd + 3) > 0.7) {
+      c.fillStyle = shade;
+      c.fillRect(x + bw * 0.5, top - bh * 0.22, 2.5 * scale, bh * 0.22);
+      const on = Math.sin(t * 2.5 + sd) > 0;
+      c.fillStyle = on ? "#ff3b4e" : "#4a1218";
+      c.beginPath();
+      c.arc(x + bw * 0.5 + scale, top - bh * 0.22, 3 * scale, 0, Math.PI * 2);
+      c.fill();
+    }
+    // Windows: rows of warm and cool lights.
+    const cw = 9 * scale;
+    const chh = 12 * scale;
+    const cols = Math.max(1, Math.floor((bw - 8 * scale) / (cw + 6 * scale)));
+    const rows = Math.floor((bh - 10 * scale) / (chh + 9 * scale));
+    const density = dusk ? 0.32 : 0.45;
+    for (let r = 0; r < rows; r++)
+      for (let q = 0; q < cols; q++) {
+        const ws = sd * 97 + r * 13 + q;
+        if (rnd(ws) > density) continue;
+        const wx = x + 6 * scale + q * (cw + 6 * scale);
+        const wy = top + 10 * scale + r * (chh + 9 * scale);
+        const col = rnd(ws + 5) > 0.3 ? "#ffcf7a" : "#a9d8ff";
+        const a = (0.35 + rnd(ws + 9) * 0.6) * (1 - depth * 0.2);
+        c.globalAlpha = a;
+        c.fillStyle = col;
+        c.fillRect(wx, wy, cw, chh);
+        c.globalAlpha = 1;
+        if (rnd(ws + 11) > 0.6) lights.push({ x: wx + cw / 2, y: wy, col, a });
+      }
+    x += bw + (2 + rnd(sd + 4) * 14) * scale;
+  }
+  return lights;
+}
+
+/** River surface between y0 and y1 with reflections of the given lights, shimmering over time. */
+function riverSurface(c: Ctx, W: number, y0: number, y1: number, lights: Light[], mirrorY: number, t: number, dusk: boolean, seed: number) {
+  const g = c.createLinearGradient(0, y0, 0, y1);
+  g.addColorStop(0, dusk ? "#3b2f55" : "#121633");
+  g.addColorStop(0.15, dusk ? "#22223f" : "#0b0e24");
+  g.addColorStop(1, dusk ? "#0c0d1c" : "#04050c");
+  c.fillStyle = g;
+  c.fillRect(0, y0, W, y1 - y0);
+  // Sunset glow on the water near the horizon.
+  if (dusk) {
+    const sg = c.createRadialGradient(W * 0.55, y0, 0, W * 0.55, y0, W * 0.7);
+    sg.addColorStop(0, "rgba(255,140,90,0.35)");
+    sg.addColorStop(1, "rgba(255,140,90,0)");
+    c.fillStyle = sg;
+    c.fillRect(0, y0, W, (y1 - y0) * 0.6);
+  }
+  // Reflected lights: broken vertical streaks that wobble.
+  c.save();
+  c.globalCompositeOperation = "lighter";
+  for (let i = 0; i < lights.length; i++) {
+    const L = lights[i]!;
+    const ry = mirrorY + (mirrorY - L.y);
+    if (ry < y0 || ry > y1) continue;
+    const len = (y1 - ry) * 0.5 + 30;
+    const segs = 9;
+    for (let k = 0; k < segs; k++) {
+      const yy = ry + (k / segs) * len;
+      if (yy > y1) break;
+      const wob = Math.sin(t * 2.2 + yy * 0.05 + i) * (2 + k * 1.2);
+      const w = 4 + k * 0.8;
+      c.globalAlpha = L.a * 0.32 * (1 - k / segs) * (0.6 + 0.4 * Math.sin(t * 3 + i * 1.7 + k));
+      c.fillStyle = L.col;
+      c.fillRect(L.x + wob - w / 2, yy, w, len / segs * 0.55);
+    }
+  }
+  c.restore();
+  // Ripple lines drifting downstream.
+  c.save();
+  const n = 46;
+  for (let i = 0; i < n; i++) {
+    const r = hash(i * 7.3 + seed);
+    const yy = y0 + Math.pow(r, 1.7) * (y1 - y0);
+    const depth = (yy - y0) / (y1 - y0);
+    const len = 30 + depth * 260 * hash(i + 3);
+    const xx = ((hash(i * 3.1 + seed) * W * 1.4 + t * (12 + depth * 40)) % (W * 1.4)) - W * 0.2;
+    c.globalAlpha = 0.08 + 0.18 * depth;
+    c.strokeStyle = dusk ? "#c99ab8" : "#7c86c8";
+    c.lineWidth = 1 + depth * 2.5;
+    c.beginPath();
+    c.moveTo(xx, yy);
+    c.quadraticCurveTo(xx + len / 2, yy - 2 - depth * 3, xx + len, yy);
+    c.stroke();
+  }
+  c.restore();
+}
+
+function streetLamp(c: Ctx, x: number, base: number, h: number, t: number, i: number) {
+  c.strokeStyle = "#141522";
+  c.lineWidth = Math.max(2, h * 0.035);
+  c.beginPath();
+  c.moveTo(x, base);
+  c.lineTo(x, base - h);
+  c.quadraticCurveTo(x, base - h * 1.08, x + h * 0.14, base - h * 1.06);
+  c.stroke();
+  const lx = x + h * 0.14;
+  const ly = base - h * 1.03;
+  const glow = c.createRadialGradient(lx, ly, 0, lx, ly, h * 0.9);
+  const fl = 0.85 + 0.15 * Math.sin(t * 7 + i * 3);
+  glow.addColorStop(0, `rgba(255,214,150,${0.55 * fl})`);
+  glow.addColorStop(1, "rgba(255,214,150,0)");
+  c.save();
+  c.globalCompositeOperation = "lighter";
+  c.fillStyle = glow;
+  c.fillRect(lx - h, ly - h, h * 2, h * 2);
+  c.restore();
+  c.fillStyle = "#fff1cf";
+  c.beginPath();
+  c.ellipse(lx, ly, h * 0.05, h * 0.03, 0, 0, Math.PI * 2);
+  c.fill();
+}
+
+function railing(c: Ctx, W: number, top: number, bottom: number, cam: number, dusk: boolean) {
+  const rail = Math.max(10, (bottom - top) * 0.09);
+  // Balusters.
+  c.fillStyle = "#121320";
+  const step = (bottom - top) * 0.32;
+  for (let x = -((cam * 1.2) % step); x < W + step; x += step) {
+    c.fillRect(x - rail * 0.35, top, rail * 0.7, bottom - top);
+  }
+  // Mid rail and top rail with a metallic sheen.
+  c.fillRect(0, top + (bottom - top) * 0.55, W, rail * 0.5);
+  const g = c.createLinearGradient(0, top - rail * 0.6, 0, top + rail);
+  g.addColorStop(0, dusk ? "#b9879a" : "#6c74b8");
+  g.addColorStop(0.3, "#2a2a3d");
+  g.addColorStop(1, "#0b0b13");
+  c.fillStyle = g;
+  c.fillRect(0, top - rail * 0.6, W, rail * 1.6);
+  // Concrete parapet at the bottom.
+  const pg = c.createLinearGradient(0, bottom, 0, bottom + rail * 4);
+  pg.addColorStop(0, "#2a2838");
+  pg.addColorStop(1, "#0f0e18");
+  c.fillStyle = pg;
+  c.fillRect(0, bottom, W, rail * 4);
+}
+
+function drawRiverScene(c: Ctx, l: AnimLayer, s: AnimScene, f: number, b: BackdropSpec): void {
+  const W = s.width;
+  const H = s.height;
+  const t = f / s.fps;
+  const cam = valueAt(l.chan?.camX, f, 0);
+  const dusk = (b.time ?? "dusk") === "dusk";
+  if (b.type === "railing") {
+    const top = H * (b.y ?? 0.62);
+    railing(c, W, top, top + H * 0.2, cam, dusk);
+    return;
+  }
+  if (b.type === "river-pov") {
+    // Looking straight down from the railing at moving water.
+    const g = c.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, dusk ? "#3e3a66" : "#141a3a");
+    g.addColorStop(0.5, dusk ? "#2a2c52" : "#0c1130");
+    g.addColorStop(1, dusk ? "#141633" : "#05071a");
+    c.fillStyle = g;
+    c.fillRect(0, 0, W, H);
+    // The sky's glow mirrored on the surface: one big soft warm reflection that drifts.
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    const rx = W * 0.5 + Math.sin(t * 0.4) * 40;
+    const ry = H * 0.34 + Math.sin(t * 0.3) * 20;
+    c.translate(rx, ry);
+    c.scale(1, 0.55);
+    const rg = c.createRadialGradient(0, 0, 0, 0, 0, W * 0.75);
+    rg.addColorStop(0, dusk ? "rgba(255,150,110,0.32)" : "rgba(130,140,255,0.2)");
+    rg.addColorStop(0.5, dusk ? "rgba(200,110,140,0.12)" : "rgba(90,100,200,0.08)");
+    rg.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = rg;
+    c.beginPath();
+    c.arc(0, 0, W * 0.75, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+    // Flowing wave lines: brighter where they cross the reflection.
+    c.save();
+    c.lineCap = "round";
+    for (let i = 0; i < 70; i++) {
+      const y0 = ((i / 70) * H * 1.1 + t * 32) % (H * 1.1) - H * 0.05;
+      const near = Math.exp(-Math.pow((y0 - ry) / (H * 0.25), 2));
+      c.strokeStyle = dusk ? `rgba(255,${170 + near * 50},${150 + near * 30},${0.05 + near * 0.22})` : `rgba(150,160,255,${0.04 + near * 0.15})`;
+      c.lineWidth = 1.5 + near * 2.5;
+      c.beginPath();
+      const x0 = hash(i * 2.3) * W * 0.6 - W * 0.1;
+      const len = W * (0.25 + hash(i * 5.1) * 0.6);
+      for (let k = 0; k <= 24; k++) {
+        const x = x0 + (k / 24) * len;
+        const y = y0 + Math.sin(x * 0.012 + t * 1.8 + i) * 7 + Math.sin(x * 0.031 - t * 1.1 + i * 2) * 3;
+        if (k === 0) c.moveTo(x, y);
+        else c.lineTo(x, y);
+      }
+      c.stroke();
+    }
+    c.restore();
+    // City lights reflected as dancing glints.
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 55; i++) {
+      const x = hash(i * 5.1 + b.seed) * W;
+      const y = (hash(i * 9.7 + b.seed) * H * 1.2 + t * (28 + hash(i) * 20)) % (H * 1.2) - H * 0.1;
+      const col = hash(i + 2) > 0.35 ? "255,205,130" : "160,205,255";
+      const w = 16 + hash(i + 4) * 36;
+      const a = 0.1 + 0.2 * (0.5 + 0.5 * Math.sin(t * 3 + i));
+      for (let k = 0; k < 6; k++) {
+        const wob = Math.sin(t * 2.4 + i + k * 1.3) * (8 + k * 3);
+        const gw = w * (1 - k * 0.12) * (0.6 + 0.4 * Math.sin(t * 4 + k + i));
+        c.fillStyle = `rgba(${col},${a * (1 - k / 6)})`;
+        c.beginPath();
+        c.ellipse(x + wob, y + k * 13, Math.max(2, gw / 2), 2.2, 0, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+    for (let i = 0; i < 120; i++) {
+      const x = hash(i * 3.3 + 7) * W;
+      const y = (hash(i * 4.1 + 9) * H + t * 40) % H;
+      const a = Math.max(0, Math.sin(t * 6 + i * 2.1)) * 0.45;
+      c.fillStyle = `rgba(255,240,220,${a})`;
+      c.beginPath();
+      c.ellipse(x, y, 4, 1.4, 0, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
+    // Ripple arcs.
+    c.strokeStyle = dusk ? "rgba(220,170,200,0.12)" : "rgba(140,150,220,0.1)";
+    c.lineWidth = 2;
+    for (let i = 0; i < 40; i++) {
+      const x = hash(i * 2.9) * W;
+      const y = (hash(i * 6.7) * H + t * 35) % H;
+      const r = 30 + hash(i * 1.3) * 120;
+      c.beginPath();
+      c.ellipse(x, y, r, r * 0.35, 0, Math.PI * 1.05, Math.PI * 1.95);
+      c.stroke();
+    }
+    // The bridge edge at the bottom of the view and his shadow on the water.
+    const ed = H * 0.86;
+    const sh = c.createRadialGradient(W * 0.52, H * 0.55, 0, W * 0.52, H * 0.55, W * 0.25);
+    sh.addColorStop(0, "rgba(0,0,0,0.35)");
+    sh.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = sh;
+    c.fillRect(0, 0, W, H);
+    const eg = c.createLinearGradient(0, ed, 0, H);
+    eg.addColorStop(0, "#3a3550");
+    eg.addColorStop(0.15, "#1d1b2b");
+    eg.addColorStop(1, "#08080f");
+    c.fillStyle = eg;
+    c.beginPath();
+    c.moveTo(0, ed + 40);
+    c.lineTo(W, ed - 10);
+    c.lineTo(W, H);
+    c.lineTo(0, H);
+    c.closePath();
+    c.fill();
+    c.strokeStyle = dusk ? "rgba(255,180,150,0.45)" : "rgba(150,160,255,0.4)";
+    c.lineWidth = 3;
+    c.beginPath();
+    c.moveTo(0, ed + 40);
+    c.lineTo(W, ed - 10);
+    c.stroke();
+    // Vignette.
+    const v2 = c.createRadialGradient(W / 2, H / 2, H * 0.25, W / 2, H / 2, H * 0.75);
+    v2.addColorStop(0, "rgba(0,0,0,0)");
+    v2.addColorStop(1, "rgba(0,0,0,0.6)");
+    c.fillStyle = v2;
+    c.fillRect(0, 0, W, H);
+    return;
+  }
+  const wide = b.type === "river-bridge";
+  const horizon = H * (b.y ?? (wide ? 0.47 : 0.56));
+  skyGrad(c, W, H, horizon, dusk);
+  // Stars and a low sun / moon glow.
+  for (let i = 0; i < (dusk ? 40 : 120); i++) {
+    c.fillStyle = `rgba(255,255,255,${(0.2 + hash(i + 300) * 0.5) * (dusk ? 0.6 : 1)})`;
+    c.fillRect(hash(i) * W, hash(i + 500) * horizon * 0.5, 1.8, 1.8);
+  }
+  const sunX = W * 0.58 - cam * 0.05;
+  const sunG = c.createRadialGradient(sunX, horizon, 0, sunX, horizon, W * 0.6);
+  sunG.addColorStop(0, dusk ? "rgba(255,170,100,0.55)" : "rgba(160,150,255,0.25)");
+  sunG.addColorStop(1, "rgba(0,0,0,0)");
+  c.fillStyle = sunG;
+  c.fillRect(0, 0, W, horizon);
+  // Thin clouds catching the light.
+  for (let i = 0; i < 6; i++) {
+    const y = horizon * (0.25 + i * 0.1);
+    const x = ((hash(i + 40) * W * 1.6 + t * (6 + i * 3)) % (W * 1.6)) - W * 0.3;
+    c.save();
+    c.translate(x, y);
+    c.scale(1, 0.12);
+    const cg = c.createRadialGradient(0, 0, 0, 0, 0, W * 0.4);
+    cg.addColorStop(0, dusk ? "rgba(255,160,150,0.28)" : "rgba(120,120,200,0.15)");
+    cg.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = cg;
+    c.beginPath();
+    c.arc(0, 0, W * 0.4, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+  }
+  // Skylines on the far bank (three depths).
+  const lights: Light[] = [];
+  const sc = wide ? 1 : 0.8;
+  lights.push(...cityBlock(c, -60 - cam * 0.05, W + 60, horizon, H, sc * 0.65, b.seed + 1, t, dusk, 0));
+  lights.push(...cityBlock(c, -80 - cam * 0.12, W + 80, horizon + 2, H, sc * 0.85, b.seed + 2, t, dusk, 1));
+  if (wide) {
+    // Near banks left and right frame the river.
+    lights.push(...cityBlock(c, -40, W * 0.28, horizon + H * 0.04, H, 1.25, b.seed + 3, t, dusk, 2));
+    lights.push(...cityBlock(c, W * 0.74, W + 40, horizon + H * 0.04, H, 1.25, b.seed + 4, t, dusk, 2));
+  }
+  // Haze over the water line.
+  const hz = c.createLinearGradient(0, horizon - H * 0.08, 0, horizon + H * 0.02);
+  hz.addColorStop(0, "rgba(0,0,0,0)");
+  hz.addColorStop(1, dusk ? "rgba(255,150,130,0.25)" : "rgba(80,90,170,0.2)");
+  c.fillStyle = hz;
+  c.fillRect(0, horizon - H * 0.08, W, H * 0.1);
+  riverSurface(c, W, horizon, H, lights, horizon, t, dusk, b.seed);
+  if (wide) {
+    // The bridge spanning the frame: deck, arches, cables, lamps.
+    const deck = H * 0.6;
+    const dh = H * 0.018;
+    c.fillStyle = "#0d0d17";
+    for (let i = 0; i < 4; i++) {
+      const ax = (i + 0.5) * (W / 4);
+      c.beginPath();
+      c.ellipse(ax, deck + dh, W / 8.4, H * 0.07, 0, Math.PI, 0);
+      c.lineTo(ax + W / 8, deck + H * 0.12);
+      c.lineTo(ax - W / 8, deck + H * 0.12);
+      c.closePath();
+      c.fill();
+    }
+    // Arch openings show water.
+    c.save();
+    c.globalCompositeOperation = "destination-out";
+    for (let i = 0; i < 4; i++) {
+      const ax = (i + 0.5) * (W / 4);
+      c.beginPath();
+      c.ellipse(ax, deck + H * 0.12, W / 9.5, H * 0.09, 0, Math.PI, 0);
+      c.fill();
+    }
+    c.restore();
+    c.fillStyle = "#0d0d17";
+    c.fillRect(0, deck, W, dh * 1.4);
+    // Arch reflections in the water.
+    c.fillStyle = "rgba(10,10,20,0.6)";
+    c.fillRect(0, deck + H * 0.12, W, H * 0.03);
+    // Deck rail.
+    c.strokeStyle = "#1a1a28";
+    c.lineWidth = 3;
+    c.beginPath();
+    c.moveTo(0, deck - H * 0.022);
+    c.lineTo(W, deck - H * 0.022);
+    c.stroke();
+    for (let x = 0; x < W; x += 18) {
+      c.beginPath();
+      c.moveTo(x, deck - H * 0.022);
+      c.lineTo(x, deck);
+      c.stroke();
+    }
+    for (let i = 0; i < 6; i++) streetLamp(c, (i + 0.5) * (W / 6), deck, H * 0.045, t, i);
+    // Lamp reflections.
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 6; i++) {
+      const x = (i + 0.5) * (W / 6) + H * 0.006;
+      for (let k = 0; k < 10; k++) {
+        const yy = deck + H * 0.16 + k * H * 0.025;
+        c.fillStyle = `rgba(255,200,130,${0.25 * (1 - k / 10) * (0.6 + 0.4 * Math.sin(t * 3 + k + i))})`;
+        c.fillRect(x + Math.sin(t * 2 + k + i) * (2 + k), yy, 6, H * 0.012);
+      }
+    }
+    c.restore();
+  } else {
+    // Bridge deck behind him: lamp posts along the far rail.
+    for (let i = 0; i < 4; i++) streetLamp(c, ((i + 0.3) * W) / 3.3 - ((cam * 0.6) % (W / 3.3)), horizon + H * 0.02, H * 0.16, t, i);
+  }
+  // Atmosphere.
+  const fog = c.createLinearGradient(0, horizon, 0, H);
+  fog.addColorStop(0, "rgba(0,0,0,0)");
+  fog.addColorStop(1, "rgba(5,5,12,0.45)");
+  c.fillStyle = fog;
+  c.fillRect(0, horizon, W, H - horizon);
+}
+
 /* ------------------------------ action library ----------------------------- */
 
 export type Expression = "neutral" | "smirk" | "cool" | "angry" | "surprised" | "smile" | "sad" | "closed" | "laugh" | "serious";
@@ -1449,6 +1971,7 @@ export const STANCES: Record<string, Record<string, number>> = {
   pocket: { handLx: 0.28, handLy: 2.42, handLpose: 4, handRx: 0.2, handRy: 2.5, handRpose: 0 },
   pockets: { handLx: 0.28, handLy: 2.42, handLpose: 4, handRx: -0.28, handRy: 2.42, handRpose: 4 },
   hip: { handLx: 0.02, handLy: 1.62, handLpose: 3, handLrot: 70, handRx: 0.2, handRy: 2.5, handRpose: 0 },
+  tpose: { handLx: -2.55, handLy: 0.08, handLpose: 1, handLrot: 0, handRx: 2.55, handRy: 0.08, handRpose: 1, handRrot: 0 },
   crossed: { handLx: 1.35, handLy: 0.95, handLpose: 3, handRx: -1.3, handRy: 0.85, handRpose: 3 },
 };
 
@@ -1484,6 +2007,29 @@ export function applyActions(l: AnimLayer, fps: number, steps: ActionStep[]): nu
       case "stance": {
         const s = STANCES[str("name", "relaxed")] ?? STANCES.relaxed!;
         const d = num("dur", 0.6);
+        // Hands travel on an arc around the shoulder, not a straight line (arms swing, they don't fold).
+        for (const side of ["L", "R"] as const) {
+          const xn = `hand${side}x`;
+          const yn = `hand${side}y`;
+          if (!(xn in s) || d < 0.05) continue;
+          const x0 = at(xn, t);
+          const y0 = at(yn, t);
+          const x1 = s[xn]!;
+          const y1 = s[yn]!;
+          const r0 = Math.hypot(x0, y0);
+          const r1 = Math.hypot(x1, y1);
+          const a0 = Math.atan2(y0, x0);
+          let a1 = Math.atan2(y1, x1);
+          if (Math.abs(a1 - a0) < 0.6) continue;
+          if (a1 - a0 > Math.PI) a1 -= 2 * Math.PI;
+          if (a0 - a1 > Math.PI) a1 += 2 * Math.PI;
+          for (const q of [0.33, 0.66]) {
+            const r = Math.max(lerp(r0, r1, q), 2.3);
+            const a = lerp(a0, a1, q);
+            key(xn, t + d * q, Math.cos(a) * r);
+            key(yn, t + d * q, Math.sin(a) * r);
+          }
+        }
         for (const [n, val] of Object.entries(s)) {
           if (n.endsWith("pose")) {
             key(n, t, at(n, t), "hold");

@@ -10,6 +10,7 @@ import * as anim from "../anim/ops";
 import * as rig from "../anim/rig";
 import * as puppet from "../anim/puppet";
 import { flattenPath } from "../anim/svgpath";
+import { ambience, compose, type Ambience, type Mood } from "../audio/compose";
 import { exposedKey, findAsset, projectDuration, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
 import { fetchToBlob, importBlob } from "../media/library";
 import { ExportJob, type ExportOptions } from "../render/export";
@@ -644,19 +645,22 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     },
   },
   "scene.backdrop": {
-    help: `{sceneId, type: ${puppet.BACKDROPS.join("|")}, seed?, sky?:[top,bottom], moon?} Painted background layer (bottom of the stack). Animate parallax with char.key on it: values {camX}.`,
+    help: `{sceneId, type: ${puppet.BACKDROPS.join("|")}, seed?, sky?:[top,bottom], moon?, time?: dusk|night, y? (horizon/railing height 0..1), front? (draw in front of characters, e.g. a railing)} Painted background layer. Animate parallax with char.key on it: values {camX}.`,
     run: (s, a) =>
       s.mutate("backdrop", (p) => {
         const sc = anim.getScene(p, a.str("sceneId"));
-        let l = sc.layers.find((x) => x.kind === "backdrop");
+        const front = a.bool("front", false);
+        let l = front ? undefined : sc.layers.find((x) => x.kind === "backdrop" && !x.name.startsWith("Foreground"));
         if (!l) {
-          l = anim.addLayer(sc, "Backdrop", "backdrop");
-          sc.layers.splice(sc.layers.indexOf(l), 1);
-          sc.layers.push(l);
+          l = anim.addLayer(sc, front ? "Foreground" : "Backdrop", "backdrop");
+          if (!front) {
+            sc.layers.splice(sc.layers.indexOf(l), 1);
+            sc.layers.push(l);
+          }
         }
         const type = a.str("type", "night-city") as puppet.BackdropSpec["type"];
         if (!puppet.BACKDROPS.includes(type)) throw new ops.OpError(`type must be one of ${puppet.BACKDROPS.join(", ")}`);
-        l.backdrop = { type, seed: a.num("seed", 3), sky: a.any("sky") as [string, string] | undefined, moon: a.any("moon") === undefined ? undefined : a.bool("moon") };
+        l.backdrop = { type, seed: a.num("seed", 3), sky: a.any("sky") as [string, string] | undefined, moon: a.any("moon") === undefined ? undefined : a.bool("moon"), time: a.optStr("time") as "dusk" | "night" | undefined, y: a.optNum("y") };
         l.chan ??= {};
         return { layerId: l.id };
       }),
@@ -734,6 +738,31 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         render: results[results.length - 1]?.op === "render.start" ? results[results.length - 1]?.result : undefined,
         steps: results.length,
       };
+    },
+  },
+
+  "music.compose": {
+    help: `{seconds, mood?: ${["melancholy", "hopeful", "dark", "tense", "calm", "epic"].join("|")}, lift? (s where the score brightens), bpm?, root? (MIDI, 57=A), seed?, start?=0, volume?=0.8, name?} Compose an original soundtrack on the phone and put it on the timeline.`,
+    run: async (s, a) => {
+      const blob = await compose({ mood: a.optStr("mood") as Mood | undefined, seconds: a.num("seconds"), lift: a.optNum("lift"), bpm: a.optNum("bpm"), root: a.optNum("root"), seed: a.optNum("seed") });
+      return await s.mutateAsync("compose music", async (p) => {
+        const asset = await importBlob(p, blob, `${a.str("name", "Score")}.wav`, "agent");
+        const clip = ops.addClip(p, { assetId: asset.id, start: a.num("start", 0) });
+        ops.patchClip(p, clip.id, { volume: a.num("volume", 0.8), fadeOut: 1.5 });
+        return { assetId: asset.id, clipId: clip.id, seconds: r3(asset.duration) };
+      });
+    },
+  },
+  "sfx.ambience": {
+    help: "{type: river|wind|city|rain|night, seconds, start?=0, volume?=0.6} Environmental sound bed generated on the phone.",
+    run: async (s, a) => {
+      const blob = await ambience(a.str("type") as Ambience, a.num("seconds"), a.num("seed", 3));
+      return await s.mutateAsync("ambience", async (p) => {
+        const asset = await importBlob(p, blob, `${a.str("type")} ambience.wav`, "agent");
+        const clip = ops.addClip(p, { assetId: asset.id, start: a.num("start", 0) });
+        ops.patchClip(p, clip.id, { volume: a.num("volume", 0.6), fadeIn: 0.8, fadeOut: 0.8 });
+        return { assetId: asset.id, clipId: clip.id };
+      });
     },
   },
 
