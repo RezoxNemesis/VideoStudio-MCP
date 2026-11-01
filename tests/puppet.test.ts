@@ -85,3 +85,15 @@ describe("svg paths", () => {
     expect(Math.max(...ys)).toBeGreaterThan(240);
   });
 });
+
+describe("stances", () => {
+  it("holds the old pose until a stance change starts, then swings on an arc", () => {
+    const { s, l } = character([]);
+    PU.applyActions(l, s.fps, [{ at: 2, do: "stance", name: "tpose", dur: 1.5 }]);
+    expect(PU.chan(l, "handRx", 24)).toBeCloseTo(0.22, 3);
+    expect(PU.chan(l, "handRy", 24)).toBeCloseTo(2.5, 3);
+    const mid = Math.hypot(PU.chan(l, "handRx", Math.round(2.75 * 24)), PU.chan(l, "handRy", Math.round(2.75 * 24)));
+    expect(mid).toBeGreaterThan(2.2);
+    expect(PU.chan(l, "handRx", 4 * 24)).toBeCloseTo(2.55, 3);
+  });
+});

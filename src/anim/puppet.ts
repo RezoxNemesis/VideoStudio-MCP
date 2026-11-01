@@ -2021,6 +2021,8 @@ export function applyActions(l: AnimLayer, fps: number, steps: ActionStep[]): nu
           const a0 = Math.atan2(y0, x0);
           let a1 = Math.atan2(y1, x1);
           if (Math.abs(a1 - a0) < 0.6) continue;
+          key(xn, t, x0);
+          key(yn, t, y0);
           if (a1 - a0 > Math.PI) a1 -= 2 * Math.PI;
           if (a0 - a1 > Math.PI) a1 += 2 * Math.PI;
           for (const q of [0.33, 0.66]) {
