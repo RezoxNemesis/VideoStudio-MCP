@@ -6,11 +6,12 @@ import * as ops from "../core/ops";
 import { runCommand } from "../agent/api";
 import { colorInput, h, select, sheet, slider, toggle, type SliderRow } from "./dom";
 
-export type InspectorTab = "edit" | "transform" | "color" | "effects" | "text" | "transition";
+export type InspectorTab = "edit" | "transform" | "crop" | "color" | "effects" | "text" | "transition";
 
 const TRANSITIONS: [TransitionKind, string][] = [
   ["none", "None"], ["fade", "Fade"], ["dip", "Dip to black"], ["blur", "Blur"], ["zoomIn", "Zoom"], ["slideLeft", "Slide left"], ["slideRight", "Slide right"],
   ["slideUp", "Slide up"], ["wipeLeft", "Wipe left"], ["wipeRight", "Wipe right"], ["wipeUp", "Wipe up"], ["iris", "Iris"],
+  ["whipLeft", "Whip pan ←"], ["whipRight", "Whip pan →"], ["zoomBlur", "Zoom blur"], ["spin", "Spin"], ["glitch", "Glitch"], ["flash", "Flash"],
 ];
 const PRESETS = ["natural", "cinematic", "tealOrange", "noir", "warm", "cool", "vintage", "punchy", "faded", "night", "dream"];
 const BLENDS: BlendMode[] = ["normal", "add", "multiply", "screen", "overlay", "darken", "lighten"];
@@ -33,7 +34,7 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
 
   const list = (): InspectorTab[] => {
     const c = clip();
-    const out: InspectorTab[] = ["edit", "transform", "color", "effects", "transition"];
+    const out: InspectorTab[] = ["edit", "transform", "crop", "color", "effects", "transition"];
     if (c?.kind === "text") out.splice(1, 0, "text");
     return out;
   };
@@ -49,7 +50,7 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
 
   const prop = (path: string, def: number, c: Clip) => {
     const t = ops.parseTarget(path);
-    const v = t.group === "volume" ? c.volume : t.group === "transform" ? c.transform[t.prop] : c.grade[t.prop];
+    const v = t.group === "volume" ? c.volume : t.group === "transform" ? c.transform[t.prop] : t.group === "fx" ? c.fx?.[t.prop] : c.grade[t.prop];
     return v;
   };
 
@@ -129,6 +130,19 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
             toggle("Flip V", c.flipY, (v) => set("flip", (cc) => (cc.flipY = v))),
           ),
           asset?.kind === "image" ? h("button", { class: "btn", type: "button", onclick: () => s.mutate("ken burns", (p) => ops.kenBurns(p, id)) }, "Ken Burns move") : null,
+          ...(c.kind === "media" && asset?.kind === "video"
+            ? [
+                h("h3", {}, "Speed ramp"),
+                h("div", { class: "chips" }, ...["none", ...Object.keys(ops.RAMPS)].map((r) => h("button", { class: `chip ${(!c.speedKeys && r === "none") ? "on" : ""}`, type: "button", onclick: () => (s.mutate("speed ramp", (p) => ops.speedRamp(p, id, r)), draw()) }, r))),
+                h("button", { class: "btn", type: "button", onclick: () => {
+                  try {
+                    s.mutate("freeze frame", (p) => ops.freezeFrame(p, id, s.time));
+                  } catch (e) {
+                    alert(e instanceof Error ? e.message : String(e));
+                  }
+                } }, "Freeze frame at playhead"),
+              ]
+            : []),
         ].filter(Boolean) as HTMLElement[];
       case "transform":
         return [
@@ -158,16 +172,74 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
             h("button", { class: "btn", type: "button", onclick: () => quickAnim(s, id, "float") }, "Float"),
           ),
         ];
+      case "crop": {
+        const cr = c.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+        const side = (lbl: string, k: "l" | "t" | "r" | "b") => slider(lbl, 0, 0.9, 0.002, cr[k], (v) => s.mutate("crop", (p) => ops.setCrop(p, id, { [k]: v })), { fmt: (v) => `${Math.round(v * 100)}%` }).el;
+        const preset = (lbl: string, v: { l?: number; t?: number; r?: number; b?: number }) => h("button", { class: "chip", type: "button", onclick: () => (s.mutate("crop", (p) => ops.setCrop(p, id, { l: 0, t: 0, r: 0, b: 0, ...v })), draw()) }, lbl);
+        return [
+          h("p", { class: "hint" }, "Trim the edges of the picture; what's left is fitted to the frame. Use Fit: Cover to fill the screen."),
+          side("Left", "l"),
+          side("Top", "t"),
+          side("Right", "r"),
+          side("Bottom", "b"),
+          h("div", { class: "chips" },
+            preset("Reset", {}),
+            preset("Remove phone bars", { t: 0.045, b: 0.06 }),
+            preset("Centre square", asset && asset.width && asset.height ? (asset.height > asset.width ? { t: (1 - asset.width / asset.height) / 2, b: (1 - asset.width / asset.height) / 2 } : { l: (1 - asset.height / asset.width) / 2, r: (1 - asset.height / asset.width) / 2 }) : {}),
+            preset("Top half", { b: 0.5 }),
+            preset("Bottom half", { t: 0.5 }),
+          ),
+        ];
+      }
       case "color":
         return [
           h("div", { class: "chips" }, ...PRESETS.map((pr) => h("button", { class: "chip", type: "button", onclick: async () => (await runCommand(s, { op: "clip.grade", id, preset: pr }), draw()) }, pr))),
           ...(Object.keys(GRADE_DEFAULTS) as (keyof Grade)[])
             .filter((k) => !["blur", "sharpen", "grain", "vignette"].includes(k))
             .map((k) => anim(cap(k), `grade.${k}`, ...gradeRange(k), GRADE_DEFAULTS[k])),
+          anim("Shadows", "fx.shadows", -1, 1, 0.01, 0),
+          anim("Highlights", "fx.highlights", -1, 1, 0.01, 0),
+          h("h3", {}, "Colour wheels"),
+          ...(["lift", "gamma", "gain"] as const).map((w) =>
+            h("div", { class: "row" },
+              colorInput(w === "lift" ? "Shadows" : w === "gamma" ? "Midtones" : "Highlights", wheelHex(c.wheels?.[w]), (v) => s.mutate("wheels", (p) => {
+                const cc = ops.getClip(p, id);
+                const wh = cc.wheels ?? { lift: [0, 0, 0], gamma: [0, 0, 0], gain: [0, 0, 0] };
+                wh[w] = ops.wheelFromColor(v, 0.6);
+                cc.wheels = wh;
+              })),
+            ),
+          ),
+          h("div", { class: "chips" },
+            h("button", { class: "chip", type: "button", onclick: () => (s.mutate("wheels", (p) => (ops.getClip(p, id).wheels = { lift: ops.wheelFromColor("#2a8f9a", 0.6), gamma: [0, 0, 0], gain: ops.wheelFromColor("#ff9d4d", 0.5) })), draw()) }, "Teal & orange"),
+            h("button", { class: "chip", type: "button", onclick: () => (s.mutate("wheels", (p) => (ops.getClip(p, id).wheels = { lift: ops.wheelFromColor("#5a3d8a", 0.5), gamma: [0, 0, 0], gain: ops.wheelFromColor("#ffd0a0", 0.4) })), draw()) }, "Dusk"),
+            h("button", { class: "chip", type: "button", onclick: () => (s.mutate("wheels", (p) => (ops.getClip(p, id).wheels = { lift: ops.wheelFromColor("#3d6b4a", 0.5), gamma: ops.wheelFromColor("#c7d9a8", 0.2), gain: ops.wheelFromColor("#fff1c4", 0.3) })), draw()) }, "Film green"),
+            h("button", { class: "chip", type: "button", onclick: () => (s.mutate("wheels", (p) => (ops.getClip(p, id).wheels = undefined)), draw()) }, "Clear wheels"),
+          ),
           h("button", { class: "btn", type: "button", onclick: () => (s.mutate("reset grade", (p) => (ops.getClip(p, id).grade = {})), draw()) }, "Reset colour"),
         ];
       case "effects":
         return [
+          h("h3", {}, "Light & motion"),
+          anim("Glow", "fx.glow", 0, 3, 0.01, 0),
+          anim("Glow threshold", "fx.glowThreshold", 0, 1, 0.01, 0.65),
+          anim("Glow size", "fx.glowRadius", 2, 120, 1, 24, (v) => `${v.toFixed(0)}px`),
+          anim("Motion blur", "fx.motionBlur", 0, 2, 0.01, 0),
+          anim("Zoom blur", "fx.zoomBlur", 0, 1, 0.01, 0),
+          h("h3", {}, "Stylise"),
+          anim("RGB split", "fx.rgbSplit", 0, 80, 0.5, 0, (v) => `${v.toFixed(0)}px`),
+          anim("Glitch", "fx.glitch", 0, 1, 0.01, 0),
+          anim("Pixelate", "fx.pixelate", 0, 80, 1, 0, (v) => `${v.toFixed(0)}px`),
+          anim("Posterize", "fx.posterize", 0, 16, 1, 0, (v) => (v < 2 ? "off" : `${v} levels`)),
+          anim("Invert", "fx.invert", 0, 1, 0.01, 0),
+          anim("Scanlines", "fx.scanlines", 0, 1, 0.01, 0),
+          anim("Letterbox", "fx.letterbox", 0, 0.3, 0.002, 0, (v) => `${Math.round(v * 100)}%`),
+          anim("Duotone", "fx.duotone", 0, 1, 0.01, 0),
+          h("div", { class: "row" },
+            colorInput("Duo dark", c.duotone?.dark ?? "#1b1035", (v) => set("duotone", (cc) => (cc.duotone = { dark: v, light: cc.duotone?.light ?? "#ffd166" }))),
+            colorInput("Duo light", c.duotone?.light ?? "#ffd166", (v) => set("duotone", (cc) => (cc.duotone = { dark: cc.duotone?.dark ?? "#1b1035", light: v }))),
+          ),
+          h("h3", {}, "Blur & texture"),
           anim("Blur", "grade.blur", 0, 120, 0.5, 0),
           anim("Sharpen", "grade.sharpen", 0, 2, 0.01, 0),
           anim("Vignette", "grade.vignette", 0, 1, 0.01, 0),
@@ -201,7 +273,11 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
           s.mutate("rename", (p) => (ops.getClip(p, id).name = ta.value.split("\n")[0]!.slice(0, 40)));
         });
         return [
+          h("div", { class: "chips" }, ...Object.keys(ops.TEXT_PRESETS).map((pr) => h("button", { class: "chip", type: "button", onclick: () => (s.mutate("title preset", (p) => ops.textPreset(p, id, pr)), draw()) }, pr))),
           ta,
+          slider("Tracking", -10, 60, 0.5, st.tracking ?? 0, (v) => upd({ tracking: v })).el,
+          toggle("Neon glow", !!st.glow, (v) => upd({ glow: v ? "#21d4fd" : "" }, true)),
+          st.glow ? colorInput("Glow colour", st.glow, (v) => upd({ glow: v })) : null,
           select("Font", FONTS.map(([v, l]) => [v, l] as [string, string]), st.font, (v) => upd({ font: v })),
           slider("Size", 10, 600, 1, st.size, (v) => upd({ size: v })).el,
           slider("Weight", 100, 900, 100, st.weight, (v) => upd({ weight: v })).el,
@@ -212,7 +288,7 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
           toggle("Background box", !!st.bg, (v) => upd({ bg: v ? "#000000aa" : "" }, true)),
           st.bg ? colorInput("Box colour", st.bg.slice(0, 7), (v) => upd({ bg: `${v}cc` })) : null,
           select("Align", ["left", "center", "right"] as const, st.align, (v) => upd({ align: v })),
-          select("Animation", ["none", "typewriter", "pop", "rise", "wave", "fade"] as const, st.animate, (v) => upd({ animate: v })),
+          select("Animation", ["none", "typewriter", "pop", "rise", "wave", "fade", "slam", "blurIn", "track", "bounce", "flicker"] as const, st.animate, (v) => upd({ animate: v })),
           slider("Animation time", 0.1, 5, 0.05, st.animateDur, (v) => upd({ animateDur: v }), { fmt: (v) => `${v.toFixed(2)}s` }).el,
         ].filter(Boolean) as HTMLElement[];
       }
@@ -237,7 +313,7 @@ function clampTime(s: Studio, c: Clip): number {
 }
 
 function label(t: InspectorTab): string {
-  return { edit: "Edit", transform: "Motion", color: "Colour", effects: "Effects", text: "Text", transition: "Transition" }[t];
+  return { edit: "Edit", transform: "Motion", crop: "Crop", color: "Colour", effects: "Effects", text: "Text", transition: "Transition" }[t];
 }
 
 function cap(s: string): string {
@@ -294,4 +370,10 @@ function quickAnim(s: Studio, id: string, kind: "popIn" | "slideIn" | "zoomOut" 
       }
     }
   });
+}
+
+function wheelHex(w: [number, number, number] | undefined): string {
+  if (!w) return "#808080";
+  const c = w.map((v) => Math.max(0, Math.min(255, Math.round(128 + (v / 0.6) * 255))));
+  return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }

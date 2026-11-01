@@ -1,5 +1,6 @@
 /** Draws animation scenes with Canvas 2D. Strokes are vectors, so any frame renders sharp at any size. */
 import { valueAt } from "../core/keyframes";
+import { worldMatrix } from "./rig";
 import { TRANSFORM_DEFAULTS, exposedKey, type AnimLayer, type AnimScene, type BlendMode, type Cel, type Stroke } from "../core/model";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -255,19 +256,11 @@ function scratchCanvas(w: number, h: number): AnyCanvas {
   return scratch;
 }
 
+/** Apply the layer's world transform (its own motion plus every parent joint above it). */
 function layerTransform(c: Ctx, l: AnimLayer, frame: number, s: AnimScene) {
-  const tr = (k: keyof typeof TRANSFORM_DEFAULTS) => valueAt(l.transform[k], frame, TRANSFORM_DEFAULTS[k]);
-  const x = tr("x");
-  const y = tr("y");
-  const sc = tr("scale");
-  const rot = tr("rotation");
-  if (x === 0 && y === 0 && sc === 1 && rot === 0) return;
-  const ax = tr("anchorX") * s.width;
-  const ay = tr("anchorY") * s.height;
-  c.translate(ax + x, ay + y);
-  c.rotate((rot * Math.PI) / 180);
-  c.scale(sc * tr("scaleX"), sc * tr("scaleY"));
-  c.translate(-ax, -ay);
+  if (!l.parent && !l.transform.x && !l.transform.y && !l.transform.rotation && !l.transform.scale && !l.transform.scaleX && !l.transform.scaleY) return;
+  const m = worldMatrix(s, l, frame);
+  c.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
 }
 
 function layerOpacityAt(l: AnimLayer, frame: number): number {

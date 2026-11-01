@@ -7,10 +7,13 @@
 import type { Studio } from "../app/studio";
 import * as ops from "../core/ops";
 import * as anim from "../anim/ops";
+import * as rig from "../anim/rig";
 import { exposedKey, findAsset, projectDuration, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
 import { fetchToBlob, importBlob } from "../media/library";
 import { ExportJob, type ExportOptions } from "../render/export";
 import { fetchInbox, listInbox } from "./remote";
+import { assetThumb, contactSheet, frameSnapshot, sceneSnapshot } from "../render/snapshot";
+import { analyseBeats, beatCut } from "../app/autoedit";
 
 export type Command = { op: string } & Record<string, unknown>;
 export interface CommandResult {
@@ -78,7 +81,7 @@ const GRADES: Record<string, Partial<Record<keyof Grade, number>>> = {
   dream: { blur: 2, exposure: 0.2, saturation: 1.1, vignette: 0.2, gain: 1.05 },
 };
 
-const TRANSITIONS: TransitionKind[] = ["none", "fade", "dip", "wipeLeft", "wipeRight", "wipeUp", "slideLeft", "slideRight", "slideUp", "zoomIn", "blur", "iris"];
+const TRANSITIONS: TransitionKind[] = ["none", "fade", "dip", "flash", "wipeLeft", "wipeRight", "wipeUp", "slideLeft", "slideRight", "slideUp", "whipLeft", "whipRight", "zoomIn", "zoomBlur", "spin", "glitch", "blur", "iris"];
 
 function summary(p: Project) {
   return {
@@ -274,6 +277,82 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         return c.grade;
       }),
   },
+  "clip.fx": {
+    help: "{id, values:{glow, glowThreshold, glowRadius, rgbSplit, glitch, pixelate, zoomBlur, motionBlur, posterize, invert, duotone, scanlines, shadows, highlights, letterbox}} Set effects (constants). Keyframe with clip.key prop 'fx.glow' etc.",
+    run: (s, a) =>
+      s.mutate("effects", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        for (const [k, v] of Object.entries(a.obj("values"))) ops.setConstant(p, c.id, `fx.${k}`, Number(v));
+        return c.fx;
+      }),
+  },
+  "clip.wheels": {
+    help: "{id, lift?:'#hex', gamma?:'#hex', gain?:'#hex', strength?=0.5} Colour wheels by tint colour: shadows, midtones, highlights (e.g. teal shadows #2a8f9a, orange highlights #ff9d4d).",
+    run: (s, a) =>
+      s.mutate("colour wheels", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        const k = a.num("strength", 0.5);
+        const w = c.wheels ?? { lift: [0, 0, 0], gamma: [0, 0, 0], gain: [0, 0, 0] };
+        for (const r of ["lift", "gamma", "gain"] as const) if (a.optStr(r)) w[r] = ops.wheelFromColor(a.str(r), k);
+        c.wheels = w;
+        return w;
+      }),
+  },
+  "clip.duotone": {
+    help: "{id, dark:'#hex', light:'#hex', amount?=1}",
+    run: (s, a) =>
+      s.mutate("duotone", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        c.duotone = { dark: a.str("dark"), light: a.str("light") };
+        ops.setConstant(p, c.id, "fx.duotone", a.num("amount", 1));
+        return true;
+      }),
+  },
+  "clip.crop": {
+    help: "{id, l?, t?, r?, b? (fractions 0..0.95 trimmed from each side)} Real crop; the remaining picture is fitted to the frame.",
+    run: (s, a) => s.mutate("crop", (p) => ops.setCrop(p, a.str("id"), { l: a.optNum("l"), t: a.optNum("t"), r: a.optNum("r"), b: a.optNum("b") }).crop ?? null),
+  },
+  "clip.freeze": {
+    help: "{id, t, dur?=1.5} Freeze frame at timeline time t; later clips slide right.",
+    run: (s, a) => s.mutate("freeze frame", (p) => ({ id: ops.freezeFrame(p, a.str("id"), a.num("t"), a.num("dur", 1.5)).id })),
+  },
+  "clip.speedRamp": {
+    help: `{id, preset?: ${Object.keys(ops.RAMPS).join("|")}|none, keys?: [[fraction, speed], ...]} Smooth speed ramp (time remap); audio pitch follows.`,
+    run: (s, a) => s.mutate("speed ramp", (p) => ops.speedRamp(p, a.str("id"), (a.any("keys") as [number, number][] | undefined) ?? a.str("preset", "hero")) ?? null),
+  },
+  "clip.textPreset": {
+    help: `{id, preset: ${Object.keys(ops.TEXT_PRESETS).join("|")}} Pro title look (font, animation, glow, effects).`,
+    run: (s, a) => s.mutate("title preset", (p) => (ops.textPreset(p, a.str("id"), a.str("preset")), true)),
+  },
+  "audio.beats": {
+    help: "{assetId, markers?=true} Detect tempo, beats, downbeats and hits; adds beat markers to the timeline.",
+    run: async (s, a) => {
+      const info = await analyseBeats(s, a.str("assetId"));
+      if (a.bool("markers", true)) s.mutate("beat markers", (p) => (p.markers = info.beats.map((t, i) => ({ t, label: `B${i + 1}` }))));
+      return { bpm: info.bpm, beats: info.beats.length, firstBeats: info.beats.slice(0, 16), downbeats: info.downbeats.slice(0, 8), onsets: info.onsets.slice(0, 24), duration: info.duration };
+    },
+  },
+  "edit.beatCut": {
+    help: "{assetIds?, musicId?, style?: punchy|smooth|cinematic|glitch, every? (beats per cut), loop?, replace?=true, maxDur?} Auto-edit your media to the music: beat cuts, overlapping transitions, beat punches, motion blur, look.",
+    run: (s, a) =>
+      beatCut(s, { assetIds: a.any("assetIds") as string[] | undefined, musicId: a.optStr("musicId"), style: a.optStr("style") as never, every: a.optNum("every"), loop: a.bool("loop"), replace: a.bool("replace", true), maxDur: a.optNum("maxDur") }),
+  },
+  "media.thumb": {
+    help: "{assetId, t?, max?=320} See an image or video frame (returns a small JPEG data URL).",
+    run: (s, a) => assetThumb(s.project, s.pool, a.str("assetId"), a.num("t", 0), Math.min(640, a.num("max", 320))),
+  },
+  "media.sheet": {
+    help: "{assetIds?, cell?=200, cols?=4} One numbered contact sheet of many assets (JPEG data URL).",
+    run: (s, a) => contactSheet(s.project, s.pool, (a.any("assetIds") as string[] | undefined) ?? s.project.assets.map((x) => x.id), Math.min(320, a.num("cell", 200)), Math.round(a.num("cols", 4))),
+  },
+  "render.frame": {
+    help: "{t, max?=360} See the edit as it renders at time t (JPEG data URL).",
+    run: (s, a) => frameSnapshot(s.project, s.pool, a.num("t"), Math.min(720, a.num("max", 360))),
+  },
+  "anim.preview": {
+    help: "{sceneId, frame?, max?=360} See a drawing frame (JPEG data URL).",
+    run: (s, a) => sceneSnapshot(s.project, s.pool, a.str("sceneId"), Math.round(a.num("frame", 0)), Math.min(720, a.num("max", 360))),
+  },
   "clip.kenBurns": { help: "{id, strength?=0.15} Slow push-in for photos.", run: (s, a) => s.mutate("ken burns", (p) => ops.kenBurns(p, a.str("id"), a.num("strength", 0.15))) },
 
   "anim.scene.new": {
@@ -381,6 +460,63 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         if (!Array.isArray(shapes)) throw new ops.OpError(`"shapes" must be a list of frame numbers.`);
         return anim.lipSync(anim.getScene(p, a.str("sceneId")), a.str("layerId"), asset.mouth, shapes.map(Number), Math.round(a.num("start", 0)));
       }),
+  },
+  "anim.rig.create": {
+    help: "{sceneId, x?, y? (hip joint px), height? (px, head to sole), view?: side|front, skin?, shirt?, pants?, shoes?, hair?, outline?, name?} Jointed puppet: hips, torso, head, upperArm/foreArm/hand and thigh/shin/foot for B (far) and F (near) sides.",
+    run: (s, a) =>
+      s.mutate("create rig", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const h = a.num("height", sc.height * 0.62);
+        const st: Partial<rig.RigStyle> = {};
+        for (const k of ["skin", "shirt", "pants", "shoes", "hair", "outline"] as const) if (a.optStr(k)) st[k] = a.str(k);
+        if (a.optStr("view")) st.view = a.str("view") as "side" | "front";
+        const r = rig.buildRig(sc, a.num("x", sc.width / 2), a.num("y", sc.height * 0.55), h, st, a.str("name", "Puppet"));
+        return r;
+      }),
+  },
+  "anim.rig.bind": {
+    help: "{sceneId, layerId, part, parentLayerId?, pivot:[x,y], tip:[x,y], rig?} Turn your own drawn layer into a rig part (rigs from your drawings).",
+    run: (s, a) =>
+      s.mutate("bind part", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = anim.getLayer(sc, a.str("layerId"));
+        const pv = a.any("pivot") as number[] | undefined;
+        const tp = a.any("tip") as number[] | undefined;
+        if (!Array.isArray(pv) || pv.length < 2) throw new ops.OpError("pivot must be [x, y].");
+        l.pivot = { x: Number(pv[0]), y: Number(pv[1]) };
+        if (Array.isArray(tp) && tp.length >= 2) l.tip = { x: Number(tp[0]), y: Number(tp[1]) };
+        l.part = rig.partName(a.str("part"));
+        l.rig = a.str("rig", sc.layers.find((x) => x.rig)?.rig ?? uid("rig"));
+        if (a.optStr("parentLayerId")) l.parent = a.str("parentLayerId");
+        return { rig: l.rig, part: l.part };
+      }),
+  },
+  "anim.rig.skeleton": {
+    help: "{sceneId, frame?, rig?} Joint positions (pivot → tip, px) and current angle for every part.",
+    run: (s, a) => rig.skeleton(anim.getScene(s.project, a.str("sceneId")), a.optStr("rig"), Math.round(a.num("frame", 0))),
+  },
+  "anim.joint": {
+    help: "{sceneId, part, frame, angle (deg; negative swings a limb forward, positive bends knees), ease?, rig?} Rotate one joint at a frame.",
+    run: (s, a) => s.mutate("joint", (p) => rig.applyPose(anim.getScene(p, a.str("sceneId")), a.optStr("rig"), Math.round(a.num("frame")), { [rig.partName(a.str("part"))]: a.num("angle") }, a.str("ease", "inOut") as Ease)),
+  },
+  "anim.pose": {
+    help: "{sceneId, frame, pose:{torso:5, head:-3, upperArmF:-90, foreArmF:-20, thighF:-30, shinF:40, ..., rootX, rootY}, ease?, rig?} Key a whole pose.",
+    run: (s, a) => s.mutate("pose", (p) => rig.applyPose(anim.getScene(p, a.str("sceneId")), a.optStr("rig"), Math.round(a.num("frame")), a.obj("pose") as rig.Pose, a.str("ease", "inOut") as Ease)),
+  },
+  "anim.pose.get": {
+    help: "{sceneId, frame, rig?} Read the pose at a frame.",
+    run: (s, a) => rig.readPose(anim.getScene(s.project, a.str("sceneId")), a.optStr("rig"), Math.round(a.num("frame"))),
+  },
+  "anim.ik": {
+    help: "{sceneId, limb: armF|armB|legF|legB, x, y, frame, ease?, rig?} Reach a hand/foot (wrist/ankle) to a point; solves both joints.",
+    run: (s, a) => s.mutate("ik", (p) => ({ reached: rig.solveIK(anim.getScene(p, a.str("sceneId")), a.optStr("rig"), a.str("limb"), a.num("x"), a.num("y"), Math.round(a.num("frame")), a.str("ease", "inOut") as Ease) })),
+  },
+  "anim.motion": {
+    help: `{sceneId, type: ${rig.MOTIONS.join("|")}, start?, cycles?, frames? (per cycle), travel? (px per cycle), energy?=1, rig?} Generate body motion as keyframes on every joint.`,
+    run: (s, a) =>
+      s.mutate("motion", (p) =>
+        rig.motion(anim.getScene(p, a.str("sceneId")), a.optStr("rig"), a.str("type") as rig.MotionType, { start: a.optNum("start"), cycles: a.optNum("cycles"), frames: a.optNum("frames"), travel: a.optNum("travel"), energy: a.optNum("energy") }),
+      ),
   },
   "anim.toTimeline": {
     help: "{sceneId, start?, trackId?, dur?} Put the scene on the editor timeline (loops if dur is longer).",

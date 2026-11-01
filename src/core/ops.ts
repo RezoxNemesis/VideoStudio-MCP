@@ -1,6 +1,9 @@
 /** Editing operations shared by the touch UI and the agent API. Each mutates the project in place. */
 import { removeKey, setKey, shiftKeys } from "./keyframes";
+import { rampIntegral, sourceTime } from "./model";
 import {
+  FX_DEFAULTS,
+  GRADE_DEFAULTS,
   defaultText,
   findAsset,
   findClip,
@@ -12,7 +15,9 @@ import {
   type Clip,
   type ClipKind,
   type Ease,
+  type Fx,
   type Grade,
+  type Keyframe,
   type Project,
   type Track,
   type TrackKind,
@@ -215,6 +220,7 @@ export function setSpeed(p: Project, id: string, speed: number): Clip {
 const PATCHABLE = new Set<keyof Clip>([
   "name", "start", "dur", "in", "speed", "reverse", "volume", "fadeIn", "fadeOut", "text", "shape", "color", "fit",
   "transform", "grade", "blend", "chroma", "mask", "flipX", "flipY", "transitionIn", "transitionOut", "shake",
+  "fx", "wheels", "duotone", "crop", "speedKeys", "hold",
 ]);
 
 /** Shallow-merge a patch. Object fields (text, grade, transform...) merge one level deep. */
@@ -234,13 +240,18 @@ export function patchClip(p: Project, id: string, patch: Record<string, unknown>
   return c;
 }
 
-export type AnimTarget = { group: "transform"; prop: TransformProp } | { group: "grade"; prop: keyof Grade } | { group: "volume" };
+export type AnimTarget = { group: "transform"; prop: TransformProp } | { group: "grade"; prop: keyof Grade } | { group: "fx"; prop: keyof Fx } | { group: "volume" };
 
 export function parseTarget(path: string): AnimTarget {
   if (path === "volume") return { group: "volume" };
   const [group, prop] = path.split(".");
   if (group === "transform" && prop) return { group, prop: prop as TransformProp };
   if (group === "grade" && prop) return { group, prop: prop as keyof Grade };
+  if (group === "fx" && prop) {
+    if (!(prop in FX_DEFAULTS)) throw new OpError(`Unknown effect "${prop}". Effects: ${Object.keys(FX_DEFAULTS).join(", ")}.`);
+    return { group: "fx", prop: prop as keyof Fx };
+  }
+  if (path in FX_DEFAULTS && !(path in GRADE_DEFAULTS)) return { group: "fx", prop: path as keyof Fx };
   // Bare names: transform first, then grade.
   if (["x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "anchorX", "anchorY"].includes(path)) return { group: "transform", prop: path as TransformProp };
   return { group: "grade", prop: path as keyof Grade };
@@ -253,6 +264,7 @@ export function keyframe(p: Project, id: string, path: string, t: number, v: num
   const target = parseTarget(path);
   if (target.group === "volume") c.volume = setKey(c.volume, local, v, kind, 1);
   else if (target.group === "transform") c.transform[target.prop] = setKey(c.transform[target.prop], local, v, kind, fallback);
+  else if (target.group === "fx") (c.fx ??= {})[target.prop] = setKey(c.fx[target.prop], local, v, kind, FX_DEFAULTS[target.prop]);
   else c.grade[target.prop] = setKey(c.grade[target.prop], local, v, kind, fallback);
 }
 
@@ -262,6 +274,7 @@ export function unkeyframe(p: Project, id: string, path: string, t: number): voi
   const target = parseTarget(path);
   if (target.group === "volume") c.volume = removeKey(c.volume, local) ?? 1;
   else if (target.group === "transform") c.transform[target.prop] = removeKey(c.transform[target.prop], local);
+  else if (target.group === "fx") (c.fx ??= {})[target.prop] = removeKey(c.fx[target.prop], local);
   else c.grade[target.prop] = removeKey(c.grade[target.prop], local);
 }
 
@@ -270,6 +283,7 @@ export function setConstant(p: Project, id: string, path: string, v: number): vo
   const target = parseTarget(path);
   if (target.group === "volume") c.volume = v;
   else if (target.group === "transform") c.transform[target.prop] = v;
+  else if (target.group === "fx") (c.fx ??= {})[target.prop] = v;
   else c.grade[target.prop] = v;
 }
 
@@ -305,4 +319,104 @@ export function kenBurns(p: Project, id: string, strength = 0.15): void {
     { t: 0, v: -p.width * strength * 0.15, ease: "linear" },
     { t: c.dur, v: p.width * strength * 0.15, ease: "linear" },
   ];
+}
+
+/* ------------------------------ pro edit ops ------------------------------ */
+
+/** Freeze the frame at timeline time t for `dur` seconds; later clips on the track slide right. */
+export function freezeFrame(p: Project, id: string, t: number, dur = 1.5): Clip {
+  const f = findClip(p, id);
+  if (!f) throw new OpError(`No clip ${id}`);
+  const c = f.clip;
+  if (c.kind !== "media" && c.kind !== "anim") throw new OpError("Freeze frames work on video and animation clips.");
+  if (t <= c.start || t >= c.start + c.dur) throw new OpError("Put the playhead inside the clip.");
+  const asset = findAsset(p, c.assetId);
+  const src = sourceTime(c, t, asset?.duration ?? Infinity);
+  const right = splitClip(p, id, t);
+  for (const o of f.track.clips) if (o.start >= t - 1e-6) o.start += dur;
+  const hold: Clip = JSON.parse(JSON.stringify(right)) as Clip;
+  hold.id = uid("clp");
+  hold.start = t;
+  hold.dur = dur;
+  hold.in = src;
+  hold.hold = true;
+  hold.speedKeys = undefined;
+  hold.name = `${c.name} (freeze)`;
+  hold.transform = {};
+  hold.transitionIn = { kind: "flash", dur: 0.15 };
+  hold.transitionOut = { kind: "none", dur: 0.3 };
+  f.track.clips.push(hold);
+  sortClips(f.track);
+  return hold;
+}
+
+export const RAMPS: Record<string, [number, number][]> = {
+  // [fraction of clip, speed]
+  montage: [[0, 1], [0.3, 4], [0.7, 4], [1, 1]],
+  hero: [[0, 1.6], [0.35, 0.25], [0.7, 0.25], [1, 1.6]],
+  bullet: [[0, 3], [0.4, 0.15], [0.6, 0.15], [1, 3]],
+  rampUp: [[0, 0.5], [1, 3]],
+  rampDown: [[0, 3], [1, 0.4]],
+  flashIn: [[0, 4], [0.25, 1], [1, 1]],
+};
+
+/** Apply a speed ramp preset (or custom keys). Speeds are scaled down if the source would run out. */
+export function speedRamp(p: Project, id: string, preset: string | [number, number][]): Keyframe[] | undefined {
+  const c = getClip(p, id);
+  if (preset === "none") {
+    c.speedKeys = undefined;
+    return undefined;
+  }
+  const shape = typeof preset === "string" ? RAMPS[preset] : preset;
+  if (!shape) throw new OpError(`Unknown ramp "${preset}". Ramps: ${Object.keys(RAMPS).join(", ")}, none.`);
+  let keys: Keyframe[] = shape.map(([f, v]) => ({ t: f * c.dur, v, ease: "inOut" as Ease }));
+  const asset = findAsset(p, c.assetId);
+  const avail = asset && asset.kind !== "image" ? asset.duration - c.in : Infinity;
+  const need = rampIntegral(keys, c.dur);
+  if (need > avail && need > 0) keys = keys.map((k) => ({ ...k, v: (k.v * avail) / need * 0.999 }));
+  c.speedKeys = keys;
+  return keys;
+}
+
+export function setCrop(p: Project, id: string, crop: { l?: number; t?: number; r?: number; b?: number }): Clip {
+  const c = getClip(p, id);
+  const cur = c.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+  const n = { ...cur, ...crop };
+  for (const k of ["l", "t", "r", "b"] as const) n[k] = Math.max(0, Math.min(0.95, Number(n[k]) || 0));
+  if (n.l + n.r > 0.95) n.r = 0.95 - n.l;
+  if (n.t + n.b > 0.95) n.b = 0.95 - n.t;
+  c.crop = n.l || n.t || n.r || n.b ? n : undefined;
+  return c;
+}
+
+/** Tint a colour wheel from a colour: the offset from neutral grey, scaled by strength (0..1). */
+export function wheelFromColor(hex: string, strength: number): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return [0, 0, 0];
+  const n = parseInt(m[1]!, 16);
+  const rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const avg = (rgb[0]! + rgb[1]! + rgb[2]!) / 3;
+  return rgb.map((v) => Math.round((v - avg) * strength * 0.6 * 1000) / 1000) as [number, number, number];
+}
+
+export const TEXT_PRESETS: Record<string, Partial<import("./model").TextStyle> & { fx?: Partial<Fx>; transform?: { y?: number } }> = {
+  punch: { font: "Impact, Haettenschweiler, sans-serif", weight: 900, size: 170, color: "#ffffff", stroke: "#000000", strokeWidth: 10, shadow: 18, animate: "slam", animateDur: 0.45, tracking: 2, glow: "", bg: "" },
+  neon: { font: "Geist Variable, system-ui, sans-serif", weight: 600, size: 130, color: "#e9fbff", stroke: "", strokeWidth: 0, shadow: 0, glow: "#21d4fd", animate: "flicker", animateDur: 0.9, tracking: 6, bg: "", fx: { glow: 1.2, glowThreshold: 0.4, glowRadius: 30 } },
+  cinematic: { font: "Instrument Serif, Georgia, serif", weight: 400, size: 120, color: "#f3ead7", stroke: "", strokeWidth: 0, shadow: 20, animate: "track", animateDur: 2.2, tracking: 18, glow: "", bg: "" },
+  subtitle: { font: "Geist Variable, system-ui, sans-serif", weight: 600, size: 62, color: "#ffffff", stroke: "", strokeWidth: 0, shadow: 0, bg: "#000000b0", animate: "fade", animateDur: 0.2, tracking: 0, glow: "", transform: { y: 700 } },
+  minimal: { font: "Geist Variable, system-ui, sans-serif", weight: 300, size: 96, color: "#ffffff", stroke: "", strokeWidth: 0, shadow: 6, animate: "blurIn", animateDur: 0.8, tracking: 10, glow: "", bg: "" },
+  glitch: { font: "'Courier New', monospace", weight: 800, size: 120, color: "#ffffff", stroke: "#ff0055", strokeWidth: 2, shadow: 0, animate: "flicker", animateDur: 0.6, tracking: 4, glow: "", bg: "", fx: { rgbSplit: 10, glitch: 0.25, scanlines: 0.3 } },
+  bounce: { font: "Geist Variable, system-ui, sans-serif", weight: 900, size: 150, color: "#ffd23f", stroke: "#2b1055", strokeWidth: 8, shadow: 14, animate: "bounce", animateDur: 1, tracking: 2, glow: "", bg: "" },
+};
+
+export function textPreset(p: Project, id: string, name: string): Clip {
+  const c = getClip(p, id);
+  if (!c.text) throw new OpError("That clip is not a title.");
+  const pr = TEXT_PRESETS[name];
+  if (!pr) throw new OpError(`Unknown title preset "${name}". Presets: ${Object.keys(TEXT_PRESETS).join(", ")}.`);
+  const { fx, transform, ...style } = pr;
+  Object.assign(c.text, style);
+  c.fx = fx ? { ...fx } : undefined;
+  if (transform?.y !== undefined) c.transform.y = transform.y * (p.height / 1920);
+  return c;
 }

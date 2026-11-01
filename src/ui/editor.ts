@@ -4,6 +4,7 @@ import { findAsset, findClip, newTrack } from "../core/model";
 import * as ops from "../core/ops";
 import { valueAt } from "../core/keyframes";
 import { createScene } from "../anim/ops";
+import { beatCut, type CutStyle } from "../app/autoedit";
 import { Preview } from "./preview";
 import { Timeline } from "./timeline";
 import { openInspector } from "./inspector";
@@ -61,6 +62,7 @@ export class EditorView {
     if (!f) {
       this.tools.replaceChildren(
         toolBtn("Import", "folder", () => void this.importMedia("video/*,image/*,audio/*")),
+        toolBtn("Beat cut", "wand", () => this.beatCutSheet()),
         toolBtn("Text", "text", () => this.addText()),
         toolBtn("Voice", "mic", () => this.host.goto("voice")),
         toolBtn("Animate", "brush", () => this.newAnimation()),
@@ -154,6 +156,41 @@ export class EditorView {
     const sc = s.mutate("new animation", (p) => createScene(p));
     s.mutate("animation to timeline", (p) => ops.addClip(p, { sceneId: sc.id, start: s.time }));
     this.host.goto("animate", sc.id);
+  }
+
+  private beatCutSheet() {
+    const s = this.s;
+    const audio = s.project.assets.filter((a) => a.kind === "audio");
+    let music = audio.find((a) => a.createdBy !== "voice")?.id ?? audio[0]?.id ?? "";
+    let style: CutStyle = "punchy";
+    let every = 2;
+    const body = h(
+      "div",
+      { class: "stack" },
+      h("p", { class: "hint" }, "Cuts all your photos and videos to the music: beat-timed cuts, overlapping transitions, beat punches, motion blur and a look. Existing clips of that media are replaced (undo brings them back)."),
+      audio.length
+        ? select("Music", audio.map((a) => [a.id, a.name] as [string, string]), music, (v) => (music = v))
+        : h("p", { class: "hint" }, "No music imported: cuts follow a 120 BPM grid. Import an audio file for real beat sync."),
+      select("Style", [["punchy", "Punchy (whips, zoom blur, flash)"], ["smooth", "Smooth (dissolves, drift)"], ["cinematic", "Cinematic (letterbox, teal & orange)"], ["glitch", "Glitch (RGB split, scanlines)"]] as const, style, (v) => {
+        style = v;
+        every = v === "punchy" || v === "glitch" ? 2 : 4;
+      }),
+      select("Cut every", [["1", "beat"], ["2", "2 beats"], ["4", "bar (4 beats)"], ["8", "2 bars"]] as const, "2", (v) => (every = Number(v))),
+      btn("Make the edit", "wand", async () => {
+        sh.close();
+        s.setStatus("Finding the beat…");
+        try {
+          const r = await beatCut(s, { musicId: music || undefined, style, every });
+          toast(`${r.cuts} cuts at ${r.bpm} BPM · ${r.duration}s`, "ok");
+          s.seek(0);
+        } catch (e) {
+          toast(e instanceof Error ? e.message : String(e), "error", 5000);
+        } finally {
+          s.setStatus("");
+        }
+      }, "primary"),
+    );
+    const sh = sheet("Beat cut", body);
   }
 
   private trackMenu() {

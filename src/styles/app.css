@@ -177,6 +177,10 @@ h3 {
   font-size: 12.5px;
   cursor: pointer;
 }
+.chip.on {
+  background: var(--accent);
+  color: #fff;
+}
 .chips {
   display: flex;
   gap: 6px;

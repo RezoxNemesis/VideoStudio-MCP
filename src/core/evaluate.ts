@@ -1,5 +1,6 @@
 import { valueAt, ease } from "./keyframes";
 import {
+  FX_DEFAULTS,
   GRADE_DEFAULTS,
   TRANSFORM_DEFAULTS,
   findAsset,
@@ -7,7 +8,9 @@ import {
   type BlendMode,
   type ChromaKey,
   type Clip,
+  type Fx,
   type Grade,
+  type Wheels,
   type Project,
   type ShapeStyle,
   type TextStyle,
@@ -15,6 +18,7 @@ import {
 } from "./model";
 
 export type GradeValues = Record<keyof Grade, number>;
+export type FxValues = Record<keyof Fx, number>;
 
 export interface ResolvedMask {
   shape: "none" | "rect" | "ellipse";
@@ -54,6 +58,12 @@ export interface LayerDraw {
   textProgress: number;
   shape?: ShapeStyle;
   color?: string;
+  fx: FxValues;
+  wheels?: Wheels;
+  duotone?: { dark: string; light: string };
+  crop: [number, number, number, number];
+  /** Directional (motion) blur in project px: from movement or whip transitions. */
+  dirBlur: [number, number];
 }
 
 const NO_MASK: ResolvedMask = { shape: "none", x: 0.5, y: 0.5, w: 1, h: 1, feather: 0, invert: false };
@@ -76,12 +86,48 @@ function resolveGrade(c: Clip, local: number): GradeValues {
   return out;
 }
 
+function resolveFx(c: Clip, local: number): FxValues {
+  const out = { ...FX_DEFAULTS } as FxValues;
+  if (c.fx) for (const k of Object.keys(FX_DEFAULTS) as (keyof Fx)[]) out[k] = valueAt(c.fx[k], local, FX_DEFAULTS[k]);
+  return out;
+}
+
 function applyTransition(d: LayerDraw, tr: Transition, p: number, dir: "in" | "out", w: number, h: number): void {
   // p runs 0 -> 1 as the clip becomes fully visible.
   const q = ease("inOut", p);
   const r = 1 - q;
+  const sgn = dir === "in" ? 1 : -1;
   switch (tr.kind) {
     case "none":
+      return;
+    case "flash":
+      d.grade.exposure += r * r * 4;
+      d.opacity *= Math.min(1, q * 3);
+      return;
+    case "whipLeft":
+    case "whipRight": {
+      const k = tr.kind === "whipLeft" ? 1 : -1;
+      const fast = ease("in", r);
+      d.x += sgn * k * fast * w * 1.1;
+      d.dirBlur[0] += k * Math.sin(r * Math.PI) * 160;
+      return;
+    }
+    case "zoomBlur":
+      d.scaleX *= 1 + r * (dir === "in" ? 0.6 : -0.4);
+      d.scaleY *= 1 + r * (dir === "in" ? 0.6 : -0.4);
+      d.fx.zoomBlur = Math.max(d.fx.zoomBlur, Math.sin(r * Math.PI * 0.5) * 0.9);
+      d.opacity *= Math.min(1, q * 2.5);
+      return;
+    case "spin":
+      d.rotation += sgn * r * r * 220;
+      d.scaleX *= 1 - r * 0.7;
+      d.scaleY *= 1 - r * 0.7;
+      d.opacity *= Math.min(1, q * 2);
+      return;
+    case "glitch":
+      d.fx.glitch = Math.max(d.fx.glitch, r > 0.02 ? 0.4 + r * 0.6 : 0);
+      d.fx.rgbSplit += r * 36;
+      d.opacity *= q < 0.15 ? q / 0.15 : 1;
       return;
     case "fade":
       d.opacity *= q;
@@ -153,7 +199,22 @@ export function evaluateClip(p: Project, c: Clip, t: number): LayerDraw {
     textProgress: c.text ? (c.text.animate === "none" ? 1 : Math.max(0, Math.min(1, local / Math.max(0.01, c.text.animateDur)))) : 1,
     shape: c.shape,
     color: c.color,
+    fx: resolveFx(c, local),
+    wheels: c.wheels,
+    duotone: c.duotone,
+    crop: c.crop ? [c.crop.l, c.crop.t, c.crop.r, c.crop.b] : [0, 0, 0, 0],
+    dirBlur: [0, 0],
   };
+  // Motion blur from movement: compare with where the clip was half a frame earlier.
+  if (d.fx.motionBlur > 0) {
+    const dt = 0.5 / Math.max(1, p.fps);
+    const px = valueAt(c.transform.x, local - dt, TRANSFORM_DEFAULTS.x);
+    const py = valueAt(c.transform.y, local - dt, TRANSFORM_DEFAULTS.y);
+    const ps = valueAt(c.transform.scale, local - dt, 1);
+    d.dirBlur[0] += (d.x - px) * 2 * d.fx.motionBlur;
+    d.dirBlur[1] += (d.y - py) * 2 * d.fx.motionBlur;
+    d.fx.zoomBlur = Math.max(d.fx.zoomBlur, Math.min(1, Math.abs(scale - ps) * 6 * d.fx.motionBlur));
+  }
   if (c.shake && c.shake.amp > 0) {
     d.x += noise1(t * c.shake.freq, 1) * c.shake.amp;
     d.y += noise1(t * c.shake.freq, 2) * c.shake.amp;

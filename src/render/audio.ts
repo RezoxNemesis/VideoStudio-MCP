@@ -1,6 +1,6 @@
 /** Schedules every audible clip into an AudioContext (live preview) or OfflineAudioContext (export mix). */
 import { clipGain } from "../core/evaluate";
-import { findAsset, type Clip, type Project } from "../core/model";
+import { findAsset, rampIntegral, rampSpeed, type Clip, type Project } from "../core/model";
 import type { MediaPool } from "../media/library";
 
 const reversed = new WeakMap<AudioBuffer, AudioBuffer>();
@@ -68,6 +68,36 @@ function placeClip(ctx: BaseAudioContext, c: Clip, buf: AudioBuffer, trackVol: n
   const begin = Math.max(from, c.start);
   const end = Math.min(to, c.start + c.dur);
   if (end <= begin) return;
+  if (c.hold) return; // a freeze frame is silent
+  if (c.speedKeys && c.speedKeys.length && !c.reverse) {
+    // Speed ramp: the playback rate follows the ramp, so pitch bends like a tape slow-down.
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    src.connect(g).connect(out);
+    const startAt = when + (begin - from);
+    const l0 = begin - c.start;
+    const l1 = end - c.start;
+    const steps = Math.max(2, Math.ceil((l1 - l0) * 50));
+    const rate = new Float32Array(steps);
+    const gain = new Float32Array(steps);
+    for (let i = 0; i < steps; i++) {
+      const lt = l0 + ((l1 - l0) * i) / (steps - 1);
+      rate[i] = Math.max(0.0625, Math.min(16, rampSpeed(c.speedKeys, lt)));
+      gain[i] = Math.max(0, clipGain(c, c.start + lt, trackVol));
+    }
+    try {
+      src.playbackRate.setValueCurveAtTime(rate, startAt, Math.max(0.01, l1 - l0));
+      g.gain.setValueCurveAtTime(gain, startAt, Math.max(0.01, l1 - l0));
+    } catch {
+      src.playbackRate.value = rate[0]!;
+    }
+    const offset = c.in + rampIntegral(c.speedKeys, l0);
+    const used = rampIntegral(c.speedKeys, l1) - rampIntegral(c.speedKeys, l0);
+    src.start(startAt, Math.max(0, offset), Math.max(0.01, used));
+    nodes.push(src);
+    return;
+  }
   const src = ctx.createBufferSource();
   const data = c.reverse ? reverseOf(ctx, buf) : buf;
   src.buffer = data;

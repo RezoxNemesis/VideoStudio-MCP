@@ -61,6 +61,50 @@ export const GRADE_DEFAULTS: Readonly<Record<keyof Grade, number>> = {
   blur: 0,
 };
 
+/** Stylised effects, all animatable. Units: px at project resolution unless noted. */
+export interface Fx {
+  glow: Animatable; // 0..3 strength
+  glowThreshold: Animatable; // 0..1 luminance where glow starts
+  glowRadius: Animatable; // px
+  rgbSplit: Animatable; // px
+  glitch: Animatable; // 0..1
+  pixelate: Animatable; // px block size
+  zoomBlur: Animatable; // 0..1
+  motionBlur: Animatable; // 0..2 shutter (auto blur from movement)
+  posterize: Animatable; // levels (0 off)
+  invert: Animatable; // 0..1
+  duotone: Animatable; // 0..1 mix
+  scanlines: Animatable; // 0..1
+  shadows: Animatable; // -1..1 lift / crush shadows
+  highlights: Animatable; // -1..1 boost / recover highlights
+  letterbox: Animatable; // 0..0.3 bar height (fraction of frame)
+}
+
+export const FX_DEFAULTS: Readonly<Record<keyof Fx, number>> = {
+  glow: 0,
+  glowThreshold: 0.65,
+  glowRadius: 24,
+  rgbSplit: 0,
+  glitch: 0,
+  pixelate: 0,
+  zoomBlur: 0,
+  motionBlur: 0,
+  posterize: 0,
+  invert: 0,
+  duotone: 0,
+  scanlines: 0,
+  shadows: 0,
+  highlights: 0,
+  letterbox: 0,
+};
+
+/** Colour wheels: RGB offsets (-0.5..0.5) for shadows (lift), midtones (gamma) and highlights (gain). */
+export interface Wheels {
+  lift: [number, number, number];
+  gamma: [number, number, number];
+  gain: [number, number, number];
+}
+
 export type BlendMode = "normal" | "add" | "multiply" | "screen" | "overlay" | "darken" | "lighten";
 
 export interface ChromaKey {
@@ -81,7 +125,9 @@ export interface Mask {
   invert: boolean;
 }
 
-export type TransitionKind = "none" | "fade" | "dip" | "wipeLeft" | "wipeRight" | "wipeUp" | "slideLeft" | "slideRight" | "slideUp" | "zoomIn" | "blur" | "iris";
+export type TransitionKind =
+  | "none" | "fade" | "dip" | "flash" | "wipeLeft" | "wipeRight" | "wipeUp" | "slideLeft" | "slideRight" | "slideUp"
+  | "whipLeft" | "whipRight" | "zoomIn" | "zoomBlur" | "spin" | "glitch" | "blur" | "iris";
 
 export interface Transition {
   kind: TransitionKind;
@@ -100,7 +146,11 @@ export interface TextStyle {
   bg: string; // "" for none
   align: "left" | "center" | "right";
   /** Per-character entrance: none, typewriter, pop, rise, wave. */
-  animate: "none" | "typewriter" | "pop" | "rise" | "wave" | "fade";
+  animate: "none" | "typewriter" | "pop" | "rise" | "wave" | "fade" | "slam" | "blurIn" | "track" | "bounce" | "flicker";
+  /** Letter spacing in px (at 1920 tall). */
+  tracking?: number;
+  /** Outer glow colour ("" for none). */
+  glow?: string;
   animateDur: number;
 }
 
@@ -148,6 +198,15 @@ export interface Clip {
   transitionOut: Transition;
   /** Camera shake: amplitude in px and frequency in Hz. */
   shake?: { amp: number; freq: number };
+  fx?: Partial<Fx>;
+  wheels?: Wheels;
+  duotone?: { dark: string; light: string };
+  /** Crop as fractions trimmed from each side of the source (0..0.95). */
+  crop?: { l: number; t: number; r: number; b: number };
+  /** Speed ramp: playback speed over clip-local timeline time (overrides `speed` for source timing). */
+  speedKeys?: Keyframe[];
+  /** Freeze frame: always show the source at `in`. */
+  hold?: boolean;
 }
 
 export type TrackKind = "video" | "audio";
@@ -236,7 +295,15 @@ export interface AnimLayer {
   transform: Partial<Record<TransformProp, Animatable>>;
   /** Reference layers show an image asset. */
   assetId?: string;
+  /** Rig: the layer this one hangs from (its transform applies first). */
   parent?: string;
+  /** Rig: the joint this part rotates around, in scene pixels (rest pose). */
+  pivot?: { x: number; y: number };
+  /** Rig: the far end of the bone (where the next joint or the tip is), in rest-pose scene pixels. */
+  tip?: { x: number; y: number };
+  /** Rig: body part name (hips, torso, head, upperArmF, ...), and which rig it belongs to. */
+  part?: string;
+  rig?: string;
 }
 
 export interface AnimScene {
@@ -378,8 +445,43 @@ export function findScene(p: Project, id: string | undefined): AnimScene | undef
 /** Source time (seconds into the asset) for a timeline time inside the clip. */
 export function sourceTime(c: Clip, t: number, assetDuration = Infinity): number {
   const local = Math.max(0, Math.min(c.dur, t - c.start));
+  if (c.hold) return Math.max(0, Math.min(assetDuration, c.in));
+  if (c.speedKeys && c.speedKeys.length) {
+    const used = rampIntegral(c.speedKeys, c.reverse ? c.dur - local : local);
+    return Math.max(0, Math.min(assetDuration, c.in + used));
+  }
   const s = c.reverse ? c.in + (c.dur - local) * c.speed : c.in + local * c.speed;
   return Math.max(0, Math.min(assetDuration, s));
+}
+
+/** Speed (multiplier) of a ramp at clip-local time t. */
+export function rampSpeed(keys: readonly Keyframe[], t: number): number {
+  if (t <= keys[0]!.t) return keys[0]!.v;
+  const last = keys[keys.length - 1]!;
+  if (t >= last.t) return last.v;
+  let i = 0;
+  while (i < keys.length - 2 && keys[i + 1]!.t <= t) i++;
+  const a = keys[i]!;
+  const b = keys[i + 1]!;
+  const x = (t - a.t) / Math.max(1e-6, b.t - a.t);
+  const e = a.ease === "linear" ? x : a.ease === "hold" ? 0 : x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+  return a.v + (b.v - a.v) * e;
+}
+
+/** Source seconds consumed after `local` seconds of a speed ramp (trapezoid integration, 1/240 s steps). */
+export function rampIntegral(keys: readonly Keyframe[], local: number): number {
+  const step = 1 / 240;
+  let sum = 0;
+  let prev = Math.max(0, rampSpeed(keys, 0));
+  for (let t = step; t < local + step; t += step) {
+    const tt = Math.min(t, local);
+    const h = tt - (t - step);
+    if (h <= 0) break;
+    const v = Math.max(0, rampSpeed(keys, tt));
+    sum += ((prev + v) / 2) * h;
+    prev = v;
+  }
+  return sum;
 }
 
 /** Which cel key is exposed at a frame (x-sheet hold), or undefined if blank. */

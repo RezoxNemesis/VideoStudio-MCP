@@ -37,14 +37,59 @@ uniform vec3 uKeyParams; // similarity, smoothness, spill
 uniform vec4 uMask;     // x, y, w, h
 uniform vec3 uMaskParams; // shape(0 none,1 rect,2 ellipse), feather, invert
 uniform float uOpacity;
+uniform vec4 uCrop;        // l, t, r, b fractions trimmed from the source
+uniform float uPixelate;   // block size, uv units
+uniform float uGlitch;     // 0..1
+uniform float uRgbSplit;   // uv units
+uniform float uZoomBlur;   // 0..1
+uniform vec2 uDirBlur;     // uv units
+uniform float uPosterize, uInvert, uDuo, uScan, uShadows, uHighlights, uLetterbox;
+uniform vec3 uDuoDark, uDuoLight, uWLift, uWGamma, uWGain;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + uSeed) * 43758.5453); }
+float hash0(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 vec3 unpm(vec4 c) { return c.a > 1e-5 ? c.rgb / c.a : vec3(0.0); }
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 vec2 cbcr(vec3 c) { return vec2(-0.1687 * c.r - 0.3313 * c.g + 0.5 * c.b, 0.5 * c.r - 0.4187 * c.g - 0.0813 * c.b); }
 
+vec4 tap(sampler2D tex, vec2 q) {
+  if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) return vec4(0.0);
+  if (uRgbSplit <= 0.0) return texture(tex, q);
+  vec4 r = texture(tex, q + vec2(uRgbSplit, 0.0));
+  vec4 g = texture(tex, q);
+  vec4 b = texture(tex, q - vec2(uRgbSplit, 0.0));
+  return vec4(r.r, g.g, b.b, max(max(r.a, g.a), b.a));
+}
+
+/** Source lookup with crop, pixelate, glitch, RGB split, zoom blur and directional blur. */
+vec4 fetchFx(sampler2D tex, vec2 uv) {
+  vec2 q = uCrop.xy + uv * (1.0 - uCrop.xy - uCrop.zw);
+  if (uPixelate > 0.0) {
+    vec2 px = vec2(uPixelate) * (1.0 - uCrop.xy - uCrop.zw);
+    q = (floor(q / px) + 0.5) * px;
+  }
+  if (uGlitch > 0.0) {
+    float band = floor(uv.y * 28.0);
+    float t = floor(uSeed * 3.0);
+    if (hash0(vec2(band, t)) < uGlitch * 0.55) q.x += (hash0(vec2(band, t + 7.0)) - 0.5) * 0.18 * uGlitch;
+    if (hash0(vec2(floor(uv.y * 6.0), t + 3.0)) < uGlitch * 0.2) q.y += 0.02 * uGlitch;
+  }
+  bool zb = uZoomBlur > 0.001;
+  bool db = abs(uDirBlur.x) + abs(uDirBlur.y) > 0.0005;
+  if (!zb && !db) return tap(tex, q);
+  vec4 acc = vec4(0.0);
+  for (int i = 0; i < 10; i++) {
+    float f = float(i) / 9.0;
+    vec2 p = q;
+    if (zb) p = mix(q, vec2(0.5), f * uZoomBlur * 0.12);
+    if (db) p += uDirBlur * (f - 0.5);
+    acc += tap(tex, p);
+  }
+  return acc / 10.0;
+}
+
 vec4 grade(sampler2D tex, vec2 uv) {
-  vec4 src = texture(tex, uv);
+  vec4 src = fetchFx(tex, uv);
   vec3 c = unpm(src);
   float a = src.a;
   if (uSharpen > 0.0) {
@@ -63,6 +108,14 @@ vec4 grade(sampler2D tex, vec2 uv) {
   c *= vec3(1.0 + uTemp * 0.12, 1.0 + uTint * 0.08, 1.0 - uTemp * 0.12);
   c = c * uGain + uLift * (1.0 - c);
   c = pow(max(c, 0.0), vec3(1.0 / max(uGamma, 0.05)));
+  // Colour wheels: lift (shadows), gamma (mids), gain (highlights).
+  c = c * (1.0 + uWGain) + uWLift * (1.0 - c);
+  c = pow(max(c, 0.0), vec3(1.0) / max(vec3(0.05), 1.0 + uWGamma));
+  if (uShadows != 0.0 || uHighlights != 0.0) {
+    float L = luma(c);
+    c += uShadows * 0.35 * (1.0 - smoothstep(0.0, 0.55, L));
+    c += uHighlights * 0.35 * smoothstep(0.45, 1.0, L);
+  }
   c = (c - 0.5) * uContrast + 0.5;
   float l = luma(c);
   float sat = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
@@ -81,7 +134,12 @@ vec4 grade(sampler2D tex, vec2 uv) {
     c *= mix(1.0, v, uVignette);
   }
   if (uGrain > 0.0) c += (hash(uv * 1000.0) - 0.5) * uGrain * 0.25;
+  if (uDuo > 0.0) c = mix(c, mix(uDuoDark, uDuoLight, smoothstep(0.05, 0.95, luma(c))), uDuo);
+  if (uPosterize > 1.5) c = floor(clamp(c, 0.0, 1.0) * uPosterize + 0.5) / uPosterize;
+  if (uInvert > 0.0) c = mix(c, 1.0 - c, uInvert);
+  if (uScan > 0.0) c *= 1.0 - uScan * 0.45 * (0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159));
   c = clamp(c, 0.0, 1.0);
+  if (uLetterbox > 0.0 && (uv.y < uLetterbox || uv.y > 1.0 - uLetterbox)) c = vec3(0.0);
   if (uMaskParams.x > 0.5) {
     vec2 d = (uv - uMask.xy) / max(uMask.zw * 0.5, vec2(1e-4));
     float f = max(uMaskParams.y, 1e-3) / max(min(uMask.z, uMask.w), 1e-3) * 2.0;
@@ -160,6 +218,32 @@ void main() {
   o = vec4(mix(base.rgb, gc, keep), base.a);
 }`;
 
+const FS_GLOW = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTex;
+uniform float uThr;
+out vec4 o;
+void main() {
+  vec4 c = texture(uTex, vUv);
+  vec3 u = c.a > 1e-5 ? c.rgb / c.a : vec3(0.0);
+  float L = dot(u, vec3(0.2126, 0.7152, 0.0722));
+  o = c * smoothstep(uThr, uThr + 0.18, L);
+}`;
+
+const FS_ADDGLOW = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uBase;
+uniform sampler2D uGlow;
+uniform float uK;
+out vec4 o;
+void main() {
+  vec4 b = texture(uBase, vUv);
+  vec4 g = texture(uGlow, vUv) * uK;
+  o = clamp(vec4(b.rgb + g.rgb, max(b.a, min(1.0, g.a))), 0.0, 1.0);
+}`;
+
 const FS_OUT = `#version 300 es
 precision highp float;
 in vec2 vUv;
@@ -201,7 +285,7 @@ export class Compositor {
   readonly gl: WebGL2RenderingContext;
   private quad: WebGLBuffer;
   private vao: WebGLVertexArrayObject;
-  private progs: Record<"layer" | "blur" | "blend" | "adjust" | "out", Prog>;
+  private progs: Record<"layer" | "blur" | "blend" | "adjust" | "out" | "glow" | "addglow", Prog>;
   private targets: Target[] = [];
   private texCache = new Map<string, { tex: WebGLTexture; version: string; used: number }>();
   private frame = 0;
@@ -225,6 +309,8 @@ export class Compositor {
       blend: this.program(VS_FULL, FS_BLEND),
       adjust: this.program(VS_FULL, FS_ADJUST),
       out: this.program(VS_FULL, FS_OUT),
+      glow: this.program(VS_FULL, FS_GLOW),
+      addglow: this.program(VS_FULL, FS_ADDGLOW),
     };
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
   }
@@ -315,8 +401,32 @@ export class Compositor {
     return e.tex;
   }
 
-  private setGrade(pr: Prog, d: LayerDraw, texW: number, texH: number) {
+  private setGrade(pr: Prog, d: LayerDraw, texW: number, texH: number, quadW = texW, quadH = texH) {
     const gl = this.gl;
+    const fx = d.fx;
+    const qw = Math.max(1, quadW);
+    const qh = Math.max(1, quadH);
+    gl.uniform4f(this.loc(pr, "uCrop"), d.crop[0], d.crop[1], d.crop[2], d.crop[3]);
+    gl.uniform1f(this.loc(pr, "uPixelate"), fx.pixelate > 0.5 ? fx.pixelate / qw : 0);
+    gl.uniform1f(this.loc(pr, "uGlitch"), fx.glitch);
+    gl.uniform1f(this.loc(pr, "uRgbSplit"), fx.rgbSplit / qw);
+    gl.uniform1f(this.loc(pr, "uZoomBlur"), fx.zoomBlur);
+    gl.uniform2f(this.loc(pr, "uDirBlur"), (d.flipX ? -1 : 1) * d.dirBlur[0] / qw, (d.flipY ? -1 : 1) * d.dirBlur[1] / qh);
+    gl.uniform1f(this.loc(pr, "uPosterize"), fx.posterize);
+    gl.uniform1f(this.loc(pr, "uInvert"), fx.invert);
+    gl.uniform1f(this.loc(pr, "uDuo"), d.duotone ? fx.duotone : 0);
+    gl.uniform1f(this.loc(pr, "uScan"), fx.scanlines);
+    gl.uniform1f(this.loc(pr, "uShadows"), fx.shadows);
+    gl.uniform1f(this.loc(pr, "uHighlights"), fx.highlights);
+    gl.uniform1f(this.loc(pr, "uLetterbox"), fx.letterbox);
+    const dd = hexRgb(d.duotone?.dark ?? "#1b1035");
+    const dl = hexRgb(d.duotone?.light ?? "#ffd166");
+    gl.uniform3f(this.loc(pr, "uDuoDark"), dd[0], dd[1], dd[2]);
+    gl.uniform3f(this.loc(pr, "uDuoLight"), dl[0], dl[1], dl[2]);
+    const w = d.wheels;
+    gl.uniform3f(this.loc(pr, "uWLift"), w?.lift[0] ?? 0, w?.lift[1] ?? 0, w?.lift[2] ?? 0);
+    gl.uniform3f(this.loc(pr, "uWGamma"), w?.gamma[0] ?? 0, w?.gamma[1] ?? 0, w?.gamma[2] ?? 0);
+    gl.uniform3f(this.loc(pr, "uWGain"), w?.gain[0] ?? 0, w?.gain[1] ?? 0, w?.gain[2] ?? 0);
     const g = d.grade;
     gl.uniform1f(this.loc(pr, "uExposure"), g.exposure);
     gl.uniform1f(this.loc(pr, "uContrast"), g.contrast);
@@ -374,6 +484,10 @@ export class Compositor {
         this.fullQuad();
         [acc, acc2] = [acc2, acc];
         if (d.grade.blur > 0.5) acc = this.blur(acc, acc2, d.grade.blur);
+        if (d.fx.glow > 0.01) {
+          const g = this.glow(acc, acc2, d.fx.glow * d.opacity, d.fx.glowThreshold, d.fx.glowRadius);
+          if (g !== acc) [acc, acc2] = [g, acc];
+        }
         continue;
       }
       if (!L.source || L.sw < 1 || L.sh < 1) continue;
@@ -385,15 +499,18 @@ export class Compositor {
       gl.uniform1i(this.loc(pr, "uTex"), 0);
       let qw: number;
       let qh: number;
+      // Crop trims the source before it is fitted.
+      const sw = L.sw * Math.max(0.02, 1 - d.crop[0] - d.crop[2]);
+      const sh = L.sh * Math.max(0.02, 1 - d.crop[1] - d.crop[3]);
       if (L.native || d.fit === "none") {
-        qw = L.sw;
-        qh = L.sh;
+        qw = sw;
+        qh = sh;
       } else {
-        const kx = this.width / L.sw;
-        const ky = this.height / L.sh;
+        const kx = this.width / sw;
+        const ky = this.height / sh;
         const k = d.fit === "cover" ? Math.max(kx, ky) : Math.min(kx, ky);
-        qw = d.fit === "fill" ? this.width : L.sw * k;
-        qh = d.fit === "fill" ? this.height : L.sh * k;
+        qw = d.fit === "fill" ? this.width : sw * k;
+        qh = d.fit === "fill" ? this.height : sh * k;
       }
       gl.uniform2f(this.loc(pr, "uRes"), this.width, this.height);
       gl.uniform2f(this.loc(pr, "uSize"), qw * d.scaleX, qh * d.scaleY);
@@ -402,11 +519,12 @@ export class Compositor {
       gl.uniform2f(this.loc(pr, "uAnchor"), d.anchorX, d.anchorY);
       gl.uniform1f(this.loc(pr, "uRot"), (d.rotation * Math.PI) / 180);
       gl.uniform2f(this.loc(pr, "uFlip"), d.flipX ? 1 : 0, d.flipY ? 1 : 0);
-      this.setGrade(pr, d, L.sw, L.sh);
+      this.setGrade(pr, d, L.sw, L.sh, qw * Math.abs(d.scaleX), qh * Math.abs(d.scaleY));
       this.bindTarget(lay);
       this.fullQuad();
       let layerTex = lay;
       if (d.grade.blur > 0.5) layerTex = this.blur(lay, tmp, d.grade.blur);
+      if (d.fx.glow > 0.01) layerTex = this.glow(layerTex, layerTex === lay ? tmp : lay, d.fx.glow, d.fx.glowThreshold, d.fx.glowRadius);
       // 2) Blend onto the frame.
       const pb = this.use("blend");
       this.bindTarget(acc2);
@@ -435,6 +553,33 @@ export class Compositor {
     gl.uniform4f(this.loc(po, "uBg"), bg[0], bg[1], bg[2], 1);
     this.fullQuad();
     this.evict();
+  }
+
+  /** Bloom: bright pass → blur → add back. Writes into `out` and returns it. */
+  private glow(src: Target, out: Target, k: number, thr: number, radius: number): Target {
+    const gl = this.gl;
+    const a = this.target(4);
+    const b = this.target(5);
+    const pg = this.use("glow");
+    this.bindTarget(a);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, src.tex);
+    gl.uniform1i(this.loc(pg, "uTex"), 0);
+    gl.uniform1f(this.loc(pg, "uThr"), thr);
+    this.fullQuad();
+    const blurred = this.blur(a, b, Math.max(2, radius));
+    const pa = this.use("addglow");
+    this.bindTarget(out);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, src.tex);
+    gl.uniform1i(this.loc(pa, "uBase"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, blurred.tex);
+    gl.uniform1i(this.loc(pa, "uGlow"), 1);
+    gl.uniform1f(this.loc(pa, "uK"), k);
+    this.fullQuad();
+    gl.activeTexture(gl.TEXTURE0);
+    return out;
   }
 
   /** Separable gaussian; large radii use repeated passes. Returns the target holding the result. */

@@ -31,9 +31,10 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
   const lines = st.text.split("\n");
   const measure = ctx2d(makeCanvas(4, 4));
   measure.font = font;
-  const widths = lines.map((l) => measure.measureText(l).width);
+  const trk = (st.tracking ?? 0) * k;
+  const widths = lines.map((l) => measure.measureText(l).width + Math.max(0, [...l].length - 1) * trk);
   const lineH = size * 1.2;
-  const pad = Math.ceil(size * 0.35 + st.strokeWidth * k + st.shadow * k);
+  const pad = Math.ceil(size * 0.35 + st.strokeWidth * k + st.shadow * k + (st.glow ? size * 0.4 : 0) + (st.animate === "track" ? size * 0.2 : 0));
   const w = Math.ceil(Math.max(1, ...widths) + pad * 2);
   const h = Math.ceil(lines.length * lineH + pad * 2);
   const c = makeCanvas(w, h);
@@ -54,12 +55,17 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
     const lw = widths[li]!;
     let cx = st.align === "left" ? pad : st.align === "right" ? w - pad - lw : (w - lw) / 2;
     const cy = pad + lineH * (li + 0.5);
-    for (const ch of [...line]) {
+    const chars = [...line];
+    // Tracking-in: letters start spread out and close up.
+    const spread = st.animate === "track" ? (1 - easeOut(step)) * size * 0.45 : 0;
+    cx -= (spread * (chars.length - 1)) / 2;
+    for (const ch of chars) {
       const cw = x.measureText(ch).width;
       const local = total > 0 ? Math.max(0, Math.min(1, (step * (total + 4) - index) / 4)) : 1;
       let alpha = 1;
       let dy = 0;
       let sc = 1;
+      let blur = 0;
       switch (st.animate) {
         case "typewriter":
           alpha = step * total >= index ? 1 : 0;
@@ -79,12 +85,44 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
           alpha = local;
           dy = Math.sin(local * Math.PI) * -size * 0.25;
           break;
+        case "slam":
+          alpha = Math.min(1, local * 3);
+          sc = 1 + (1 - easeOut(local)) * 1.8;
+          blur = (1 - local) * size * 0.08;
+          break;
+        case "blurIn":
+          alpha = local;
+          blur = (1 - easeOut(local)) * size * 0.25;
+          break;
+        case "track":
+          alpha = Math.min(1, step * 1.6);
+          break;
+        case "bounce":
+          alpha = local > 0 ? 1 : 0;
+          dy = -Math.abs(Math.sin(local * Math.PI * 2.2)) * (1 - local) * size * 0.7;
+          break;
+        case "flicker": {
+          const n = Math.sin(index * 91.7 + Math.floor(step * 30) * 12.9898) * 43758.5453;
+          alpha = step >= 1 ? 1 : (n - Math.floor(n)) < step ? 1 : 0.15;
+          break;
+        }
       }
       if (alpha > 0) {
         x.save();
         x.globalAlpha = alpha;
         x.translate(cx + cw / 2, cy + dy);
         x.scale(sc, sc);
+        if (blur > 0.3) x.filter = `blur(${blur.toFixed(1)}px)`;
+        if (st.glow) {
+          x.save();
+          x.shadowColor = st.glow;
+          x.shadowBlur = size * 0.35;
+          x.fillStyle = st.glow;
+          x.fillText(ch, -cw / 2, 0);
+          x.shadowBlur = size * 0.12;
+          x.fillText(ch, -cw / 2, 0);
+          x.restore();
+        }
         if (st.shadow > 0) {
           x.shadowColor = "rgba(0,0,0,0.55)";
           x.shadowBlur = st.shadow * k;
@@ -100,7 +138,7 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
         x.fillText(ch, -cw / 2, 0);
         x.restore();
       }
-      cx += cw;
+      cx += cw + trk + spread;
       index++;
     }
   });
@@ -165,7 +203,17 @@ export interface BuildOptions {
 export async function buildLayers(p: Project, pool: MediaPool, t: number, o: BuildOptions): Promise<LayerInput[]> {
   const draws = evaluate(p, t);
   const k = o.outH / p.height;
-  const scaled = (d: LayerDraw): LayerDraw => (k === 1 ? d : { ...d, x: d.x * k, y: d.y * k, grade: { ...d.grade, blur: d.grade.blur * k } });
+  const scaled = (d: LayerDraw): LayerDraw =>
+    k === 1
+      ? d
+      : {
+          ...d,
+          x: d.x * k,
+          y: d.y * k,
+          grade: { ...d.grade, blur: d.grade.blur * k },
+          fx: { ...d.fx, rgbSplit: d.fx.rgbSplit * k, pixelate: d.fx.pixelate * k, glowRadius: d.fx.glowRadius * k },
+          dirBlur: [d.dirBlur[0] * k, d.dirBlur[1] * k],
+        };
   const out: LayerInput[] = [];
   await Promise.all(
     draws.map(async (d0, i) => {

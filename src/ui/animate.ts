@@ -7,10 +7,12 @@ import { emptyCel, exposedKey, findAsset, uid, type AnimLayer, type AnimScene, t
 import * as A from "../anim/ops";
 import { bucketFill, ctx2d, drawStroke, makeCanvas, renderScene } from "../anim/render";
 import * as ops from "../core/ops";
+import * as R from "../anim/rig";
+import { valueAt } from "../core/keyframes";
 import { saveBlob } from "../native/storage";
 import { btn, colorInput, confirmBox, h, icon, pickFiles, select, sheet, slider, toast, toggle } from "./dom";
 
-type Tool = BrushTool | "fill" | "lasso" | "line" | "rect" | "ellipse" | "picker" | "hand";
+type Tool = BrushTool | "fill" | "lasso" | "line" | "rect" | "ellipse" | "picker" | "hand" | "pose";
 
 interface View {
   x: number;
@@ -180,10 +182,49 @@ export class AnimateView {
     this.drawSelection();
   }
 
+  ik = true;
+  poseEase: "inOut" | "linear" | "out" | "in" | "back" | "hold" = "inOut";
+  private copiedPose: R.Pose | null = null;
+  activePart: string | null = null;
+
+  /** Skeleton overlay for the Pose tool: bones, joints, and IK handles on hands and feet. */
+  private drawSkeleton(lx: CanvasRenderingContext2D) {
+    const sc = this.scene();
+    if (!sc || this.tool !== "pose") return;
+    let bones: ReturnType<typeof R.skeleton> = [];
+    try {
+      bones = R.skeleton(sc, undefined, this.frame);
+    } catch {
+      return;
+    }
+    lx.setTransform(this.res, 0, 0, this.res, 0, 0);
+    const k = 1 / this.res / Math.max(0.5, this.fit * this.view.zoom);
+    for (const b of bones) {
+      const on = b.part === this.activePart;
+      lx.strokeStyle = on ? "#ffb74d" : "rgba(47,123,255,0.85)";
+      lx.lineWidth = (on ? 7 : 5) * k;
+      lx.beginPath();
+      lx.moveTo(b.pivot[0], b.pivot[1]);
+      lx.lineTo(b.tip[0], b.tip[1]);
+      lx.stroke();
+    }
+    for (const b of bones) {
+      const end = this.ik && (b.part === "handF" || b.part === "handB" || b.part === "footF" || b.part === "footB");
+      lx.fillStyle = b.part === "hips" ? "#ff5b5b" : end ? "#3ccf8e" : "#ffffff";
+      lx.strokeStyle = "#1a1d26";
+      lx.lineWidth = 3 * k;
+      lx.beginPath();
+      lx.arc(b.pivot[0], b.pivot[1], (b.part === "hips" ? 14 : end ? 13 : 9) * k, 0, Math.PI * 2);
+      lx.fill();
+      lx.stroke();
+    }
+  }
+
   private drawSelection() {
     const lx = ctx2d(this.live) as CanvasRenderingContext2D;
     lx.setTransform(1, 0, 0, 1, 0, 0);
     lx.clearRect(0, 0, this.live.width, this.live.height);
+    this.drawSkeleton(lx);
     if (!this.selection) return;
     const [x0, y0, x1, y1] = this.selection.box;
     lx.setTransform(this.res, 0, 0, this.res, 0, 0);
@@ -218,6 +259,7 @@ export class AnimateView {
       }, "icon-only ghost"),
       sc ? btn("Scene settings", "sliders", () => this.sceneSettings(), "icon-only ghost") : null,
       sc ? btn("Layers", "layers", () => this.layersSheet(), "ghost") : null,
+      sc ? btn("Rig", "bone", () => this.rigSheet(), "ghost") : null,
       h("div", { class: "grow" }),
       btn("Undo", "undo", () => s.undo(), "icon-only ghost"),
       btn("Redo", "redo", () => s.redo(), "icon-only ghost"),
@@ -417,6 +459,7 @@ export class AnimateView {
         mk("rect", "Rect", "rect"),
         mk("ellipse", "Ellipse", "shape"),
         mk("picker", "Pick", "dropper"),
+        mk("pose", "Pose", "bone"),
         mk("hand", "Hand", "hand"),
         h("button", { class: `an-tool ${this.symmetry ? "on" : ""}`, type: "button", title: "Mirror", onclick: () => ((this.symmetry = !this.symmetry), this.drawTools()) }, icon("symmetry", 20), h("span", {}, "Mirror")),
       ),
@@ -437,6 +480,8 @@ export class AnimateView {
     }
     const keys = new Set(l ? Object.keys(l.cels).map(Number) : []);
     const anyKeys = new Set(sc.layers.flatMap((x) => Object.keys(x.cels).map(Number)));
+    // Pose keys (joint rotations / body moves) show as keys too.
+    for (const x of sc.layers) for (const v of Object.values(x.transform)) if (Array.isArray(v)) for (const k of v) anyKeys.add(Math.round(k.t));
     const cells = h("div", { class: "an-cells" });
     const max = Math.min(sc.frames, 2000);
     for (let i = 0; i < max; i++) {
@@ -528,6 +573,7 @@ export class AnimateView {
     let stroke: { pts: number[]; tool: Tool; sx: number; sy: number; last: [number, number, number]; lastT: number } | null = null;
     let gesture: { view: View; d: number; a: number; cx: number; cy: number } | null = null;
     let lassoMove: { x: number; y: number } | null = null;
+    let poseDrag: { mode: "rotate" | "ik" | "root"; part: string; limb?: string; px: number; py: number; a0: number; rot0: number; x0: number; y0: number; sx: number; sy: number } | null = null;
     const lx = () => ctx2d(this.live) as CanvasRenderingContext2D;
 
     const pair = () => {
@@ -552,6 +598,11 @@ export class AnimateView {
         return;
       }
       const [x, y] = this.toScene(e.clientX, e.clientY);
+      if (this.tool === "pose") {
+        poseDrag = this.pickBone(x, y);
+        if (!poseDrag) toast("Add a rig first (Rig → Add puppet), then drag its joints.");
+        return;
+      }
       if (this.tool === "picker") return this.pick(x, y);
       if (this.tool === "fill") return void this.fill(x, y);
       if (this.tool === "lasso" && this.selection && inside(this.selection.box, x, y)) {
@@ -572,6 +623,11 @@ export class AnimateView {
           this.view = { zoom: z, rot: gesture.view.rot + ((m.a - gesture.a) * 180) / Math.PI, x: gesture.view.x + (m.cx - gesture.cx), y: gesture.view.y + (m.cy - gesture.cy) };
         } else this.view = { ...gesture.view, x: gesture.view.x + (e.clientX - gesture.cx), y: gesture.view.y + (e.clientY - gesture.cy) };
         this.applyView();
+        return;
+      }
+      if (poseDrag) {
+        const [x, y] = this.toScene(e.clientX, e.clientY);
+        this.dragBone(poseDrag, x, y);
         return;
       }
       if (lassoMove && this.selection) {
@@ -613,6 +669,13 @@ export class AnimateView {
           const [p] = [...pointers.values()];
           gesture = { view: { ...this.view }, cx: p!.x, cy: p!.y, d: 0, a: 0 };
         }
+        return;
+      }
+      if (poseDrag) {
+        poseDrag = null;
+        this.activePart = null;
+        this.drawSelection();
+        this.drawStrip();
         return;
       }
       if (lassoMove) {
@@ -720,6 +783,137 @@ export class AnimateView {
       const S = A.getScene(p, sc.id);
       A.celForEdit(A.getLayer(S, l.id), this.frame).fills.push({ id: uid("fil"), ...r });
     });
+  }
+
+  /* ----------------------------------- rig ---------------------------------- */
+
+  private pickBone(x: number, y: number): { mode: "rotate" | "ik" | "root"; part: string; limb?: string; px: number; py: number; a0: number; rot0: number; x0: number; y0: number; sx: number; sy: number } | null {
+    const sc = this.scene();
+    if (!sc) return null;
+    let bones: ReturnType<typeof R.skeleton>;
+    try {
+      bones = R.skeleton(sc, undefined, this.frame);
+    } catch {
+      return null;
+    }
+    const reach = 46 / Math.max(0.35, this.fit * this.view.zoom * this.res);
+    const parts = R.rigLayers(sc);
+    const hips = parts.get("hips");
+    const base = { sx: x, sy: y, x0: hips ? valueAt(hips.transform.x, this.frame, 0) : 0, y0: hips ? valueAt(hips.transform.y, this.frame, 0) : 0 };
+    // IK handles: wrists and ankles.
+    if (this.ik) {
+      const ends: [string, string][] = [["handF", "armF"], ["handB", "armB"], ["footF", "legF"], ["footB", "legB"]];
+      let best: { d: number; part: string; limb: string; b: (typeof bones)[number] } | null = null;
+      for (const [part, limb] of ends) {
+        const b = bones.find((q) => q.part === part);
+        if (!b) continue;
+        const d = Math.hypot(b.pivot[0] - x, b.pivot[1] - y);
+        if (d < reach && (!best || d < best.d)) best = { d, part, limb, b };
+      }
+      if (best) {
+        this.activePart = best.part;
+        return { mode: "ik", part: best.part, limb: best.limb, px: best.b.pivot[0], py: best.b.pivot[1], a0: 0, rot0: 0, ...base };
+      }
+    }
+    const hb = bones.find((q) => q.part === "hips");
+    if (hb && Math.hypot(hb.pivot[0] - x, hb.pivot[1] - y) < reach) {
+      this.activePart = "hips";
+      return { mode: "root", part: "hips", px: hb.pivot[0], py: hb.pivot[1], a0: 0, rot0: 0, ...base };
+    }
+    // Nearest bone segment.
+    let best: { d: number; b: (typeof bones)[number] } | null = null;
+    for (const b of bones) {
+      const d = segDist(x, y, b.pivot, b.tip);
+      if (!best || d < best.d) best = { d, b };
+    }
+    if (!best || best.d > reach * 2.2) return null;
+    const b = best.b;
+    this.activePart = b.part;
+    return { mode: "rotate", part: b.part, px: b.pivot[0], py: b.pivot[1], a0: Math.atan2(y - b.pivot[1], x - b.pivot[0]), rot0: b.rotation, ...base };
+  }
+
+  private dragBone(d: { mode: "rotate" | "ik" | "root"; part: string; limb?: string; px: number; py: number; a0: number; rot0: number; x0: number; y0: number; sx: number; sy: number }, x: number, y: number) {
+    const sc = this.scene();
+    if (!sc) return;
+    const sid = sc.id;
+    const f = this.frame;
+    try {
+      this.s.mutate(`pose ${d.part}`, (p) => {
+        const S = A.getScene(p, sid);
+        if (d.mode === "ik" && d.limb) R.solveIK(S, undefined, d.limb, x, y, f, this.poseEase);
+        else if (d.mode === "root") R.applyPose(S, undefined, f, { rootX: Math.round(d.x0 + x - d.sx), rootY: Math.round(d.y0 + y - d.sy) }, this.poseEase);
+        else {
+          let delta = ((Math.atan2(y - d.py, x - d.px) - d.a0) * 180) / Math.PI;
+          while (delta > 180) delta -= 360;
+          while (delta < -180) delta += 360;
+          R.applyPose(S, undefined, f, { [d.part]: Math.round((d.rot0 + delta) * 10) / 10 }, this.poseEase);
+        }
+      });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  }
+
+  private rigSheet() {
+    const s = this.s;
+    const sc = this.scene();
+    if (!sc) return;
+    const sid = sc.id;
+    const has = R.rigIds(sc).length > 0;
+    const style = { ...R.DEFAULT_STYLE };
+    let cycles = 2;
+    let travel = 0;
+    let energy = 1;
+    const body = h("div", { class: "stack" });
+    const run = (label: string, fn: (S: AnimScene) => unknown) => {
+      try {
+        s.mutate(label, (p) => fn(A.getScene(p, sid)));
+        this.tool = "pose";
+        this.drawTools();
+        this.drawStrip();
+        this.queue();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error");
+      }
+    };
+    body.append(
+      h("p", { class: "hint" }, "Each body part is its own layer hanging from a joint. Use the Pose tool: drag a bone to rotate it, drag a green hand/foot dot to place it (IK), drag the red hip dot to move the body. Every drag keys the current frame."),
+      h("h3", {}, "Puppet"),
+      select("View", [["side", "Side (walks, runs)"], ["front", "Front"]] as const, "side", (v) => (style.view = v)),
+      h("div", { class: "row wrap" },
+        colorInput("Skin", style.skin, (v) => (style.skin = v)),
+        colorInput("Shirt", style.shirt, (v) => (style.shirt = v)),
+        colorInput("Pants", style.pants, (v) => (style.pants = v)),
+        colorInput("Shoes", style.shoes, (v) => (style.shoes = v)),
+        colorInput("Hair", style.hair, (v) => (style.hair = v)),
+      ),
+      btn(has ? "Add another puppet" : "Add puppet", "plus", () => {
+        run("add rig", (S) => R.buildRig(S, S.width / 2, S.height * 0.55, S.height * 0.62, style));
+        toast("Puppet added. Pick the Pose tool and drag its joints.", "ok");
+      }, "primary"),
+    );
+    if (has) {
+      body.append(
+        h("h3", {}, "Motion (from the current frame)"),
+        slider("Cycles", 1, 8, 1, cycles, (v) => (cycles = v), { fmt: (v) => String(v) }).el,
+        slider("Travel", -800, 800, 10, travel, (v) => (travel = v), { fmt: (v) => `${v}px` }).el,
+        slider("Energy", 0.3, 1.8, 0.05, energy, (v) => (energy = v), { fmt: (v) => `${Math.round(v * 100)}%` }).el,
+        h("div", { class: "chips" }, ...R.MOTIONS.map((m) => h("button", { class: "chip", type: "button", onclick: () => run(`motion ${m}`, (S) => R.motion(S, undefined, m, { start: this.frame, cycles, travel, energy })) }, m))),
+        h("h3", {}, "Posing"),
+        toggle("IK on hands and feet", this.ik, (v) => ((this.ik = v), this.queue())),
+        select("Ease into this pose", ["inOut", "linear", "out", "in", "back", "hold"] as const, this.poseEase, (v) => (this.poseEase = v)),
+        h("div", { class: "row wrap" },
+          btn("Key whole pose", "key", () => run("key pose", (S) => R.applyPose(S, undefined, this.frame, R.readPose(S, undefined, this.frame), this.poseEase))),
+          btn("Copy pose", "copy", () => {
+            this.copiedPose = R.readPose(sc, undefined, this.frame);
+            toast("Pose copied");
+          }),
+          btn("Paste pose", "download", () => this.copiedPose && run("paste pose", (S) => R.applyPose(S, undefined, this.frame, this.copiedPose!, this.poseEase))),
+          btn("Rest pose", "undo", () => run("rest pose", (S) => R.applyPose(S, undefined, this.frame, Object.fromEntries(R.PARTS.map((q) => [q, 0])) as R.Pose, this.poseEase))),
+        ),
+      );
+    }
+    sheet("Rig", body, { tall: true });
   }
 
   /* -------------------------------- selection ------------------------------- */
@@ -850,4 +1044,12 @@ function pointInPoly(x: number, y: number, poly: number[]): boolean {
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
   }
   return c;
+}
+
+function segDist(x: number, y: number, a: [number, number], b: [number, number]): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const L = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L));
+  return Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy));
 }
