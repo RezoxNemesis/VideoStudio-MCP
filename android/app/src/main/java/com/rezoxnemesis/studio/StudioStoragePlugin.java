@@ -226,6 +226,52 @@ public class StudioStoragePlugin extends Plugin {
         call.resolve();
     }
 
+    /** Background agent mode on/off, with the relay the service may use while the app is closed. */
+    @PluginMethod
+    public void agentMode(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        android.content.SharedPreferences.Editor e = AgentService.prefs(getContext()).edit();
+        e.putBoolean("on", on);
+        if (call.getString("relay") != null) e.putString("relay", call.getString("relay"));
+        if (call.getString("key") != null) e.putString("key", call.getString("key"));
+        e.apply();
+        if (on) AgentService.start(getContext());
+        else AgentService.stop(getContext());
+        JSObject r = new JSObject();
+        r.put("running", on);
+        r.put("canAutoOpen", Build.VERSION.SDK_INT < 23 || android.provider.Settings.canDrawOverlays(getContext()));
+        call.resolve(r);
+    }
+
+    /** Jobs the background service collected while the app was closed (handed over once). */
+    @PluginMethod
+    public void takeHeldJobs(PluginCall call) {
+        android.content.SharedPreferences p = AgentService.prefs(getContext());
+        String held = p.getString("held", "");
+        p.edit().remove("held").apply();
+        JSObject r = new JSObject();
+        r.put("jobs", held);
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void agentBusy(PluginCall call) {
+        AgentService s = AgentService.instance;
+        if (s != null) s.setBusy(Boolean.TRUE.equals(call.getBoolean("on", false)));
+        call.resolve();
+    }
+
+    /** Opens the system page where the person can allow VideoStudio to open itself for agent work. */
+    @PluginMethod
+    public void openAutoOpenSettings(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= 23) {
+            android.content.Intent i = new android.content.Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + getContext().getPackageName()));
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+        }
+        call.resolve();
+    }
+
     @PluginMethod
     public void keepAwake(PluginCall call) {
         boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));

@@ -12,7 +12,28 @@ interface StudioStoragePlugin {
   keepAwake(o: { on: boolean }): Promise<void>;
   download(o: { url: string; headers?: Record<string, string> }): Promise<{ path: string; bytes: number }>;
   removeDownload(o: { path: string }): Promise<void>;
+  agentMode(o: { on: boolean; relay?: string; key?: string }): Promise<{ running: boolean; canAutoOpen: boolean }>;
+  takeHeldJobs(): Promise<{ jobs: string }>;
+  agentBusy(o: { on: boolean }): Promise<void>;
+  openAutoOpenSettings(): Promise<void>;
 }
+
+/** Background agent mode (Android): a foreground service keeps the app ready and wakes it for agent work. */
+export const agentNative = {
+  available: () => hasNativeStorage(),
+  mode: (on: boolean, relay?: string, key?: string) => (hasNativeStorage() ? Native.agentMode({ on, relay, key }) : Promise.resolve({ running: false, canAutoOpen: false })),
+  takeHeld: async (): Promise<{ id: string; commands: unknown[]; continueOnError?: boolean }[]> => {
+    if (!hasNativeStorage()) return [];
+    const r = await Native.takeHeldJobs().catch(() => ({ jobs: "" }));
+    try {
+      return r.jobs ? JSON.parse(r.jobs) : [];
+    } catch {
+      return [];
+    }
+  },
+  busy: (on: boolean) => (hasNativeStorage() ? Native.agentBusy({ on }).catch(() => {}) : Promise.resolve()),
+  openAutoOpenSettings: () => (hasNativeStorage() ? Native.openAutoOpenSettings() : Promise.resolve()),
+};
 
 const Native = registerPlugin<StudioStoragePlugin>("StudioStorage");
 

@@ -1,4 +1,5 @@
 /** Agent tab: run JSON command batches by hand, browse the command list, and link a remote AI through the relay. */
+import { agentNative } from "../native/storage";
 import type { Studio } from "../app/studio";
 import { commandList, runBatch, type Command } from "../agent/api";
 import { listInbox, type RemoteLink } from "../agent/remote";
@@ -184,6 +185,16 @@ export class AgentView {
         cb.addEventListener("change", () => r.setAwake(cb.checked));
         return h("label", { class: "frow" }, cb, h("span", {}, " Keep screen on while linked (jobs start instantly)"));
       })(),
+      (() => {
+        const cb = h("input", { type: "checkbox", "aria-label": "Background agent mode" }) as HTMLInputElement;
+        cb.checked = !!r.config.background;
+        cb.addEventListener("change", async () => {
+          const res = await r.setBackground(cb.checked);
+          if (cb.checked) toast(res.canAutoOpen ? "Agents can now work in the background and open the app themselves." : "Agents keep working in the background. To let them open the app when it's closed, tap 'Allow auto-open'.", "ok", 5000);
+        });
+        return h("label", { class: "frow" }, cb, h("span", {}, " Background agent mode: keep working behind other apps and with the screen off, and wake the app for new work"));
+      })(),
+      r.config.background ? btn("Allow auto-open (Display over other apps)", "next", () => void agentNative.openAutoOpenSettings(), "ghost") : h("span"),
       h("div", { class: "row wrap" },
         r.state === "off" ? btn("Connect", "link", () => (r.config.relay ? r.start() : toast("Enter the relay address first", "error")), "primary") : btn("Disconnect", "close", () => r.stop(), "ghost"),
         btn("New key", "key", async () => {

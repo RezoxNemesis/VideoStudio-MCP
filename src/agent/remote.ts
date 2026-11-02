@@ -6,7 +6,7 @@
 import type { Studio } from "../app/studio";
 import { runBatch, type Command } from "./api";
 import { kvGet, kvSet } from "../core/storage";
-import { keepAwake } from "../native/storage";
+import { agentNative, keepAwake } from "../native/storage";
 import type { Notifier } from "../native/notify";
 
 export interface RemoteConfig {
@@ -15,6 +15,8 @@ export interface RemoteConfig {
   enabled: boolean;
   /** Keep the screen on while the link is on, so jobs never wait for the phone to wake. */
   awake?: boolean;
+  /** Background agent mode: keep working behind other apps / screen off, and wake the app for new work. */
+  background?: boolean;
 }
 
 export type RemoteState = "off" | "connecting" | "online" | "error";
@@ -62,6 +64,18 @@ export class RemoteLink {
       await this.save();
     }
     if (this.config.enabled && this.config.relay) this.start();
+    // Work the background service collected while the app was closed.
+    const held = await agentNative.takeHeld();
+    if (held.length && this.config.relay) void this.runJobs(held as { id: string; commands: Command[]; continueOnError?: boolean }[]);
+  }
+
+  /** Background agent mode on/off (Android): a small "ready" notification keeps the engine running. */
+  async setBackground(on: boolean): Promise<{ canAutoOpen: boolean }> {
+    this.config.background = on;
+    await this.save();
+    const r = await agentNative.mode(on && this.config.enabled, this.config.relay, this.config.key);
+    this.onState();
+    return r;
   }
 
   async save(): Promise<void> {
@@ -78,6 +92,7 @@ export class RemoteLink {
     void this.save();
     this.set("connecting");
     this.syncAwake();
+    if (this.config.background) void agentNative.mode(true, this.config.relay, this.config.key);
     this.loop(0);
   }
 
@@ -87,6 +102,7 @@ export class RemoteLink {
     this.config.enabled = false;
     void this.save();
     this.syncAwake();
+    void agentNative.mode(false);
     this.set("off");
   }
 
@@ -123,6 +139,34 @@ export class RemoteLink {
     this.onState();
   }
 
+  private async runJobs(jobs: { id: string; commands: Command[]; continueOnError?: boolean }[]) {
+    const base = this.config.relay.replace(/\/+$/, "");
+    for (const job of jobs) {
+      const n = job.commands.length;
+      this.studio.setStatus(`Agent: running ${n} command${n > 1 ? "s" : ""}…`);
+      void this.notifier?.send("jobStart", "Claude is working", `Running ${n} command${n > 1 ? "s" : ""} in VideoStudio`);
+      void agentNative.busy(true);
+      let lastSent = 0;
+      const progress = (done: number, op: string) => {
+        const now = Date.now();
+        if (now - lastSent < 2000) return;
+        lastSent = now;
+        void fetch(`${base}/device/${this.config.key}/progress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, state: { done, total: n, op, status: this.studio.status } }) }).catch(() => {});
+      };
+      try {
+        const results = await runBatch(this.studio, job.commands, !!job.continueOnError, progress);
+        await fetch(`${base}/device/${this.config.key}/result`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, results, state: summaryLite(this.studio) }) });
+        this.jobsRun++;
+        const ok = results.every((r) => r.ok);
+        this.studio.setStatus(`Agent: ${ok ? "done" : "finished with an error"}`);
+        const bad = results.find((r) => !r.ok);
+        void this.notifier?.send("jobDone", ok ? "Claude finished" : "Claude stopped with an error", ok ? `${results.length} steps done in “${this.studio.project.name}”` : `${bad?.op}: ${bad?.error ?? ""}`.slice(0, 180));
+      } finally {
+        void agentNative.busy(false);
+      }
+    }
+  }
+
   private loop(delay: number) {
     window.clearTimeout(this.timer);
     this.timer = window.setTimeout(() => void this.poll(), delay);
@@ -134,7 +178,7 @@ export class RemoteLink {
     this.running = true;
     // In the foreground the relay holds the request open until a job arrives (long poll), so jobs start
     // within a second. In the background the WebView is throttled, so fall back to a slow check.
-    const hidden = document.hidden;
+    const hidden = document.hidden && !this.config.background;
     let next = hidden ? 15_000 : 0;
     try {
       this.abort = new AbortController();
@@ -144,25 +188,7 @@ export class RemoteLink {
       } else if (res.ok) {
         this.set("online");
         const body = (await res.json()) as { jobs?: { id: string; commands: Command[]; continueOnError?: boolean }[] };
-        for (const job of body.jobs ?? []) {
-          const n = job.commands.length;
-          this.studio.setStatus(`Agent: running ${n} command${n > 1 ? "s" : ""}…`);
-          void this.notifier?.send("jobStart", "Claude is working", `Running ${n} command${n > 1 ? "s" : ""} in VideoStudio`);
-          let lastSent = 0;
-          const progress = (done: number, op: string) => {
-            const now = Date.now();
-            if (now - lastSent < 2000) return;
-            lastSent = now;
-            void fetch(`${base}/device/${this.config.key}/progress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, state: { done, total: n, op, status: this.studio.status } }) }).catch(() => {});
-          };
-          const results = await runBatch(this.studio, job.commands, !!job.continueOnError, progress);
-          await fetch(`${base}/device/${this.config.key}/result`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, results, state: summaryLite(this.studio) }) });
-          this.jobsRun++;
-          const ok = results.every((r) => r.ok);
-          this.studio.setStatus(`Agent: ${ok ? "done" : "finished with an error"}`);
-          const bad = results.find((r) => !r.ok);
-          void this.notifier?.send("jobDone", ok ? "Claude finished" : "Claude stopped with an error", ok ? `${results.length} steps done in “${this.studio.project.name}”` : `${bad?.op}: ${bad?.error ?? ""}`.slice(0, 180));
-        }
+        await this.runJobs(body.jobs ?? []);
         next = 0;
       } else {
         throw new Error(`Relay answered ${res.status}`);

@@ -30,6 +30,15 @@
 
         </activity>
 
+        <service
+            android:name=".AgentService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the editor ready to run AI-agent editing jobs the user queued from their own relay." />
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -45,6 +54,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Background agent mode (optional, the person switches it on): a foreground service that keeps the app
+         ready for agent work, a wake lock while a job renders, and (if allowed) opening the app for new work. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Deliberately no READ_MEDIA_* / READ_EXTERNAL_STORAGE: nothing in this app can browse the gallery.
          Files arrive only when the person picks them; renders are written through MediaStore (no permission). -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />

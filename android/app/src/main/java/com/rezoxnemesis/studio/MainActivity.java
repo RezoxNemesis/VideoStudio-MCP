@@ -11,12 +11,19 @@ import java.util.Map;
 
 public class MainActivity extends BridgeActivity {
 
+    /** True while this activity (and its WebView engine) exists; the agent service polls only when it does not. */
+    static volatile boolean alive = false;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeTtsPlugin.class);
         registerPlugin(FileSaverPlugin.class);
         registerPlugin(StudioStoragePlugin.class);
         super.onCreate(savedInstanceState);
+        alive = true;
+        // The WebView renderer keeps full priority when the app is in the background, so agent work keeps going.
+        if (android.os.Build.VERSION.SDK_INT >= 26) getBridge().getWebView().setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+        if (AgentService.prefs(this).getBoolean("on", false)) AgentService.start(this);
 
         // Cross-origin isolation lets the WebAssembly fallback use several threads.
         getBridge()
@@ -36,5 +43,21 @@ public class MainActivity extends BridgeActivity {
                     }
                 }
             );
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        // Background agent mode: keep JavaScript timers and network running behind other apps / screen off.
+        if (AgentService.prefs(this).getBoolean("on", false)) {
+            getBridge().getWebView().onResume();
+            getBridge().getWebView().resumeTimers();
+        }
+    }
+
+    @Override
+    public void onDestroy() {
+        alive = false;
+        super.onDestroy();
     }
 }
