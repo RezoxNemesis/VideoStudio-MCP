@@ -151,7 +151,7 @@ export async function openMagicEraser(s: Studio, clipId: string): Promise<void> 
       ] as const).map(([a, l]) => btn(l, null, () => ((action = a), drawActions()), action === a ? "primary" : "ghost")),
     );
     const info: Record<Action, string> = {
-      smart: `Repaints the marked area with generative AI on your phone: it can draw skin, arms, cloth or background that was hidden. About 1–3 minutes.${st.ready ? "" : ` First use downloads ${st.missingMB} MB once (Wi-Fi).`}`,
+      smart: `Repaints the marked area with generative AI on your phone: it can draw skin, arms, cloth or background that was hidden. About 1–3 minutes. Needs a phone with lots of free memory (about 2.3 GB) — on phones where it can't fit, use Erase or Recolour.${st.ready ? "" : ` First use downloads ${st.missingMB} MB once (Wi-Fi).`}`,
       erase: "Removes it and rebuilds what was behind from the surroundings. Best for logos, text, stickers and small objects. A few seconds.",
       recolor: "Keeps the shape, folds and shading — only the colour changes. Safest for clothes.",
       blur: "Hides it with a soft blur.",

@@ -81,6 +81,7 @@ export async function genRemove(): Promise<void> {
 }
 
 const NEED_MB = 2300;
+const CRASH_KEY = "vs.genfill.crashed";
 
 export interface SmartFillOptions {
   force?: boolean;
@@ -110,6 +111,15 @@ export async function smartFill(
   if (!st.ready) await genDownload(onProgress);
   // The painter needs ~2 GB of free memory (the phone's GPU shares RAM). Refuse politely instead of letting Android
   // close the app.
+  // If loading the painter closed the app before on this phone, don't do it again without the person's say-so.
+  let crashed = false;
+  try {
+    crashed = localStorage.getItem(CRASH_KEY) === "1";
+  } catch {
+    /* ignore */
+  }
+  if (crashed && !o.force)
+    throw new Error("Smart fill closed the app last time on this phone (the painter model is too big for its memory). Use Erase or Recolour instead, or try again with “force” if you have closed other apps.");
   const mem = await memInfo();
   if (mem && mem.availMB - mem.thresholdMB < NEED_MB && !o.force)
     throw new Error(`Smart fill needs about ${NEED_MB} MB of free memory, your phone has ${Math.max(0, mem.availMB - mem.thresholdMB)} MB free right now. Close other apps (or restart the phone) and try again.`);
@@ -138,6 +148,18 @@ export async function smartFill(
         gy = Math.min(H - 1, sy + Math.floor((y / S) * ch));
       m[y * S + x] = grown[gy * W + gx]!;
     }
+  try {
+    localStorage.setItem(CRASH_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+  const clear = () => {
+    try {
+      localStorage.removeItem(CRASH_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
   const r = await call(
     {
       type: "fill",
@@ -153,7 +175,7 @@ export async function smartFill(
     },
     [rgba.buffer],
     onProgress,
-  );
+  ).finally(clear);
   const out = new ImageData(new Uint8ClampedArray(r.rgba as Uint8ClampedArray), r.w as number, r.h as number);
   const oc = makeCanvas(out.width, out.height);
   ctx2d(oc).putImageData(out, 0, 0);
