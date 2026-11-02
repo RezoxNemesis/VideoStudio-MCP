@@ -625,7 +625,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       }),
   },
   "char.act": {
-    help: "{sceneId, layerId, actions:[{at (s), do: stance|expr|look|smoke|exhale|nod|shake|tilt|shrug|wave|point|gesture|lean|turn|laugh|breathe|set, ...}]} Animate a character with high-level actions (keys every channel for you). Run char.help for options.",
+    help: "{sceneId, layerId, actions:[{at (s), do: stance|expr|look|smoke|exhale|nod|shake|tilt|shrug|wave|point|gesture|lean|turn|laugh|breathe|set|jab|cross|uppercut|kick|block|dodge|dash{dist}|hit{force}|fly{dist,height}|land|getup|wipe|charge|jump{height}|hitstop{dur}, speed?, ...}]} Animate a character with high-level actions (keys every channel for you). Fight moves face the opponent; rootX moves are relative. Run char.help for options.",
     run: (s, a) =>
       s.mutate("character actions", (p) => {
         const sc = anim.getScene(p, a.str("sceneId"));
