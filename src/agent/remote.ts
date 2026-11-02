@@ -205,13 +205,22 @@ export class RemoteLink {
     }
   }
 
+  private lastPoll = 0;
+  private watchdog = 0;
   private loop(delay: number) {
     window.clearTimeout(this.timer);
     this.timer = window.setTimeout(() => void this.poll(), delay);
+    // Watchdog: if polling ever stalls (a lost timer after the app was frozen in the background), restart it.
+    if (!this.watchdog)
+      this.watchdog = window.setInterval(() => {
+        if (!this.config.enabled || this.running) return;
+        if (Date.now() - this.lastPoll > 60_000) this.loop(0);
+      }, 30_000);
   }
 
   private async poll() {
     if (!this.config.enabled || this.running) return;
+    this.lastPoll = Date.now();
     const base = this.config.relay.replace(/\/+$/, "");
     this.running = true;
     // In the foreground the relay holds the request open until a job arrives (long poll), so jobs start
@@ -220,7 +229,16 @@ export class RemoteLink {
     let next = hidden ? 15_000 : 0;
     try {
       this.abort = new AbortController();
-      const res = await fetch(`${base}/device/${this.config.key}/next${hidden ? "" : "?wait=20"}`, { method: "GET", cache: "no-store", signal: this.abort.signal });
+      // A long poll can hang forever if the network changes under it (Wi-Fi ↔ mobile, sleep). Never wait
+      // longer than the relay's own 20 s hold plus margin, then try again.
+      const ac = this.abort;
+      const guard = window.setTimeout(() => ac.abort(), 35_000);
+      let res: Response;
+      try {
+        res = await fetch(`${base}/device/${this.config.key}/next${hidden ? "" : "?wait=20"}`, { method: "GET", cache: "no-store", signal: ac.signal });
+      } finally {
+        window.clearTimeout(guard);
+      }
       if (res.status === 204) {
         this.set("online");
       } else if (res.ok) {
