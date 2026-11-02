@@ -80,7 +80,7 @@ export function matteAt(m: MatteTrack, t: number, out?: Uint8Array): Uint8Array 
  * Compute and store the person matte for a photo or video. Video frames are sampled at `fps` (default 15);
  * playback interpolates between them.
  */
-export async function computeMatte(pool: MediaPool, a: Asset, o: { fps?: number; onProgress?: (m: string) => void } = {}): Promise<MatteTrack> {
+export async function computeMatte(pool: MediaPool, a: Asset, o: { fps?: number; size?: number; onProgress?: (m: string) => void } = {}): Promise<MatteTrack> {
   if (a.kind === "image") {
     const bmp = (await pool.image(a)) as ImageBitmap;
     const r = await personMatte(bmp, bmp.width, bmp.height, o.onProgress);
@@ -89,7 +89,7 @@ export async function computeMatte(pool: MediaPool, a: Asset, o: { fps?: number;
     return t;
   }
   if (a.kind !== "video") throw new Error("Pick a photo or a video.");
-  const fps = Math.max(4, Math.min(30, o.fps ?? 15));
+  const fps = Math.max(4, Math.min(30, o.fps ?? 12));
   const f = await pool.framer(a, "matte", 720);
   if (!f) throw new Error("This video cannot be decoded.");
   const n = Math.max(1, Math.ceil(a.duration * fps));
@@ -100,7 +100,8 @@ export async function computeMatte(pool: MediaPool, a: Asset, o: { fps?: number;
   for (let i = 0; i < n; i++) {
     const fr = await f.frameAt(Math.min(a.duration - 0.01, i / fps));
     if (!fr) continue;
-    const r = await personMatte(fr.canvas as CanvasImageSource, fr.canvas.width, fr.canvas.height, o.onProgress);
+    // Videos: a smaller matte is plenty (it is upscaled smoothly) and roughly twice as fast.
+    const r = await personMatte(fr.canvas as CanvasImageSource, fr.canvas.width, fr.canvas.height, o.onProgress, o.size ?? 384);
     if (!data) {
       w = r.w;
       h = r.h;
@@ -108,7 +109,7 @@ export async function computeMatte(pool: MediaPool, a: Asset, o: { fps?: number;
     }
     if (r.w === w && r.h === h) data.set(r.alpha, i * w * h);
     const per = (performance.now() - t0) / (i + 1) / 1000;
-    o.onProgress?.(`Finding the person ${i + 1}/${n} · ~${Math.round(per * (n - i - 1))} s left`);
+    o.onProgress?.(`Finding the person ${i + 1}/${n} · ~${Math.round(per * (n - i - 1))} s left (${r.device === "webgpu" ? "GPU" : "CPU"})`);
   }
   if (!data) throw new Error("No frames could be read.");
   const t: MatteTrack = { w, h, fps, n, data };

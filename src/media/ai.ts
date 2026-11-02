@@ -318,7 +318,7 @@ let gpuOk: boolean | null = null;
 /**
  * Person matte for one picture (MODNet, on the phone; GPU when available): alpha 0..255 at the model's size.
  */
-export async function personMatte(src: CanvasImageSource, W: number, H: number, onProgress?: (m: string) => void): Promise<{ alpha: Uint8Array; w: number; h: number }> {
+export async function personMatte(src: CanvasImageSource, W: number, H: number, onProgress?: (m: string) => void, maxSide = 512): Promise<{ alpha: Uint8Array; w: number; h: number; device?: string }> {
   matteReady ??= (async () => {
     for (const f of MATTE_FILES) await cached("transformers-cache", `https://huggingface.co/${MATTE_MODEL}/resolve/main/${f}`, onProgress);
   })().catch((e) => {
@@ -334,7 +334,7 @@ export async function personMatte(src: CanvasImageSource, W: number, H: number, 
       gpuOk = false;
     }
   }
-  const k = 512 / Math.max(W, H);
+  const k = maxSide / Math.max(W, H);
   const w = Math.max(64, Math.round((W * k) / 32) * 32),
     h = Math.max(64, Math.round((H * k) / 32) * 32);
   const c = makeCanvas(w, h);
@@ -342,5 +342,5 @@ export async function personMatte(src: CanvasImageSource, W: number, H: number, 
   x.drawImage(src, 0, 0, w, h);
   const rgba = x.getImageData(0, 0, w, h).data;
   const r = await call({ type: "matte", model: MATTE_MODEL, device: gpuOk ? "webgpu" : "wasm", rgba, w, h }, [rgba.buffer]);
-  return { alpha: r.alpha as Uint8Array, w: r.w as number, h: r.h as number };
+  return { alpha: r.alpha as Uint8Array, w: r.w as number, h: r.h as number, device: r.device as string };
 }
