@@ -290,8 +290,9 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
             btn("Find automatically", "wand", busy("Looking for logos and stickers…", async () => {
               const r = await runCommand(s, { op: "media.findOverlays", assetId: c.assetId! });
               if (!r.ok) throw new Error(r.error);
-              const boxes = (r.result as { boxes: { x: number; y: number; w: number; h: number }[] }).boxes.slice(0, 3);
-              if (!boxes.length) return toast("Nothing static found. Add a box by hand.", "info");
+              const res = r.result as { boxes: { x: number; y: number; w: number; h: number; score: number }[]; moving: number };
+              const boxes = res.boxes.filter((b) => b.score >= 0.3).slice(0, 2);
+              if (!boxes.length || res.moving < 0.15) return toast("No clear logo found (the picture barely moves). Add a box by hand.", "info", 4500);
               for (const b of boxes) await runCommand(s, { op: "clip.remove", id, x: b.x, y: b.y, w: b.w * 1.1, h: b.h * 1.2 });
               toast(`Removing ${boxes.length} area${boxes.length > 1 ? "s" : ""}`, "ok");
             }), "primary"),
