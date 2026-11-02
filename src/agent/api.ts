@@ -10,7 +10,8 @@ import * as anim from "../anim/ops";
 import * as rig from "../anim/rig";
 import * as puppet from "../anim/puppet";
 import { flattenPath } from "../anim/svgpath";
-import { ambience, compose, sfx, SFX, type Ambience, type Mood, type Sfx } from "../audio/compose";
+import { ambience, compose, sfx, SFX, toWav, type Ambience, type Mood, type Sfx } from "../audio/compose";
+import { enhance, loudness, type EnhanceOptions } from "../audio/enhance";
 import * as motion from "../anim/motion";
 import { computeMatte, matteLoad, storeMatte } from "../media/matte";
 import { GENERATED_TEXTURES, type SubjectSpec } from "../render/subject";
@@ -1250,7 +1251,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         }
         const sp: SubjectSpec = { mode: a.str("mode") as SubjectSpec["mode"] };
         for (const k of ["texture", "bg", "color", "color2"] as const) if (a.optStr(k)) sp[k] = a.str(k);
-        for (const k of ["amount", "edge", "drawOn", "detail"] as const) if (a.optNum(k) !== undefined) sp[k] = a.num(k);
+        for (const k of ["amount", "edge", "drawOn", "detail", "blur"] as const) if (a.optNum(k) !== undefined) sp[k] = a.num(k);
         c.subject = sp;
         return sp;
       });
@@ -1830,6 +1831,38 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
           ops.patchClip(p, c.id, { volume: Math.min(1, vol * e.v), name: `SFX ${e.type}` });
         }
         return { sounds: keep.length, types };
+      });
+    },
+  },
+  "audio.enhance": {
+    help: "{id (video or audio clip), denoise?=0.75 (0..1), voicing?: song|voice|none, target?=-14 (LUFS), width?=0.15} Clean and master the clip's sound on the phone: removes steady noise (hiss, hum, wind, fan, room rumble, crowd murmur bed), cleans mud, adds presence and air, glue compression, loudness to the target and a −1 dB limiter. The cleaned audio replaces the clip's own sound (original muted, kept). Returns {assetId, clipId, lufsBefore, lufsAfter}.",
+    run: async (s, a) => {
+      const c = ops.getClip(s.project, a.str("id"));
+      const as = findAsset(s.project, c.assetId);
+      if (!as || (as.kind !== "video" && as.kind !== "audio")) throw new ops.OpError("Pick a video or audio clip.");
+      s.setStatus("Reading the sound…");
+      const full = await s.pool.audioBuffer(as, new OfflineAudioContext(2, 1, 48000));
+      if (!full) throw new ops.OpError("That clip has no sound.");
+      const sr = full.sampleRate;
+      const i0 = Math.max(0, Math.floor(c.in * sr)),
+        i1 = Math.min(full.length, Math.ceil((c.in + c.dur * c.speed) * sr));
+      const part = new AudioBuffer({ numberOfChannels: Math.min(2, full.numberOfChannels), length: Math.max(1, i1 - i0), sampleRate: sr });
+      for (let ch = 0; ch < part.numberOfChannels; ch++) part.copyToChannel(full.getChannelData(ch).slice(i0, i1), ch);
+      const ch0 = [part.getChannelData(0), part.getChannelData(part.numberOfChannels > 1 ? 1 : 0)];
+      const before = loudness(ch0, sr);
+      s.setStatus("Cleaning and mastering the sound…");
+      const out = await enhance(part, { denoise: a.num("denoise", 0.75), voicing: a.str("voicing", "song") as EnhanceOptions["voicing"], target: a.num("target", -14), width: a.num("width", 0.15) });
+      const after = loudness([out.getChannelData(0), out.getChannelData(1)], sr);
+      const blob = toWav(out);
+      s.setStatus("");
+      return await s.mutateAsync("enhance audio", async (p) => {
+        const asset = await importBlob(p, blob, `${(as.name || "clip").replace(/\.[^.]+$/, "")} (clean).wav`, "agent");
+        const cc = ops.getClip(p, c.id);
+        cc.volume = 0;
+        const nc = ops.addClip(p, { assetId: asset.id, start: cc.start });
+        if (Math.abs(cc.speed - 1) > 1e-3) ops.setSpeed(p, nc.id, cc.speed);
+        ops.patchClip(p, nc.id, { name: "Clean sound", volume: 1 });
+        return { assetId: asset.id, clipId: nc.id, lufsBefore: Math.round(before * 10) / 10, lufsAfter: Math.round(after * 10) / 10 };
       });
     },
   },

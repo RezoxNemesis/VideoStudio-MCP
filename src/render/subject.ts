@@ -5,6 +5,7 @@
  * Textures are another clip's picture/video or generated live: galaxy, fire, aurora, kaleido, glass, grid.
  */
 import { ctx2d, makeCanvas } from "../anim/render";
+import { pullPush } from "./inpaint";
 
 type AnyCanvas = ReturnType<typeof makeCanvas>;
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -26,6 +27,8 @@ export interface SubjectSpec {
   drawOn?: number;
   /** Keep some of the person's own shading over the texture (0..1). */
   detail?: number;
+  /** Background blur strength for bg "blur" (1 = default, 0.4 = a little). */
+  blur?: number;
 }
 
 export const GENERATED_TEXTURES = ["galaxy", "fire", "aurora", "kaleido", "glass", "grid"] as const;
@@ -268,7 +271,7 @@ function centroid(alpha: Uint8Array, w: number, h: number): { x: number; y: numb
   return { x: sx / n / w, y: sy / n / h, top: top / h, size: Math.max(0.1, (x1 - x0) / w) };
 }
 
-function background(x: Ctx, src: CanvasImageSource, W: number, H: number, bg: string | undefined, tex?: CanvasImageSource) {
+function background(x: Ctx, src: CanvasImageSource, W: number, H: number, bg: string | undefined, tex?: CanvasImageSource, blurK = 1) {
   const b = bg ?? "keep";
   x.save();
   if (b === "keep") x.drawImage(src, 0, 0, W, H);
@@ -276,8 +279,10 @@ function background(x: Ctx, src: CanvasImageSource, W: number, H: number, bg: st
     x.filter = "brightness(0.35) saturate(0.7)";
     x.drawImage(src, 0, 0, W, H);
   } else if (b === "blur") {
-    x.filter = `blur(${Math.round(Math.max(W, H) / 60)}px) brightness(0.8)`;
-    x.drawImage(src, -W * 0.05, -H * 0.05, W * 1.1, H * 1.1);
+    const r = Math.max(1, Math.round((Math.max(W, H) / 60) * blurK));
+    x.filter = `blur(${r}px) brightness(${blurK < 0.7 ? 0.92 : 0.8})`;
+    // Draw slightly larger so the blur doesn't pull dark edges in.
+    x.drawImage(src, -r * 2, -r * 2, W + r * 4, H + r * 4);
   } else if (b === "texture" && tex) x.drawImage(tex, 0, 0, W, H);
   else if (b === "transparent") {
     /* nothing */
@@ -286,6 +291,41 @@ function background(x: Ctx, src: CanvasImageSource, W: number, H: number, bg: st
     x.fillRect(0, 0, W, H);
   }
   x.restore();
+}
+
+/**
+ * The background with the person removed (filled from around them), small — blurring this instead of the whole
+ * frame keeps the person from smearing a soft ghost halo into the blur.
+ */
+function backgroundPlate(key: string, src: CanvasImageSource, alpha: Uint8Array, mw: number, mh: number): AnyCanvas {
+  const { c, x } = texCanvas(`plate:${key}`, mw, mh);
+  x.drawImage(src, 0, 0, mw, mh);
+  const id = x.getImageData(0, 0, mw, mh);
+  const n = mw * mh;
+  const rgb = new Float32Array(n * 3),
+    wt = new Float32Array(n);
+  // Grow the person a little so their edge colours don't leak.
+  for (let y = 0; y < mh; y++)
+    for (let xx = 0; xx < mw; xx++) {
+      let on = false;
+      for (let dy = -2; dy <= 2 && !on; dy++)
+        for (let dx = -2; dx <= 2; dx++) {
+          const yy = y + dy,
+            x2 = xx + dx;
+          if (yy >= 0 && x2 >= 0 && yy < mh && x2 < mw && alpha[yy * mw + x2]! > 60) {
+            on = true;
+            break;
+          }
+        }
+      const i = y * mw + xx;
+      wt[i] = on ? 0 : 1;
+      for (let k = 0; k < 3; k++) rgb[i * 3 + k] = on ? 0 : id.data[i * 4 + k]!;
+    }
+  const known = wt.slice();
+  pullPush(rgb, wt, mw, mh);
+  for (let i = 0; i < n; i++) if (!known[i]) for (let k = 0; k < 3; k++) id.data[i * 4 + k] = rgb[i * 3 + k]!;
+  x.putImageData(id, 0, 0);
+  return c;
 }
 
 /* ---------------------------------- render --------------------------------- */
@@ -338,7 +378,8 @@ export function renderSubject(key: string, src: CanvasImageSource, W: number, H:
       break;
     }
     case "replace": {
-      background(x, src, W, H, sp.bg ?? "blur", sp.texture ? tex() : undefined);
+      const bgk = sp.bg ?? "blur";
+      background(x, bgk === "blur" ? backgroundPlate(key, src, alpha, mw, mh) : src, W, H, bgk, sp.texture ? tex() : undefined, sp.blur ?? 1);
       x.drawImage(cutTo((c) => c.drawImage(src, 0, 0, W, H)) as CanvasImageSource, 0, 0);
       break;
     }
