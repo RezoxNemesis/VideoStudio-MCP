@@ -11,7 +11,7 @@
 import { valueAt } from "../core/keyframes";
 import type { Keyframe } from "../core/model";
 
-export type RemoveMode = "auto" | "clone" | "fill" | "blur" | "pixelate";
+export type RemoveMode = "auto" | "ai" | "clone" | "fill" | "blur" | "pixelate";
 
 export interface RemoveRegion {
   id: string;
@@ -32,6 +32,10 @@ export interface RemoveRegion {
   yKeys?: Keyframe[];
   /** Clone source offset as a fraction of the frame (chosen automatically when missing). */
   offset?: [number, number];
+  /** Exact shape from tap-to-select or the brush: PNG data URL over the whole source frame (alpha = remove). */
+  mask?: string;
+  /** Runtime only: the mask resampled to the working crop (not stored). */
+  maskLocal?: { w: number; h: number; data: Uint8Array };
 }
 
 export function activeRegions(regions: RemoveRegion[] | undefined, t: number): RemoveRegion[] {
@@ -107,6 +111,12 @@ function hash(n: number): number {
 
 /** Mask value (1 = remove) for a pixel at (px, py) in frame pixels. */
 function maskAt(r: RemoveRegion, px: number, py: number, FW: number, FH: number): number {
+  if (r.maskLocal) {
+    const x = Math.floor(px),
+      y = Math.floor(py);
+    if (x < 0 || y < 0 || x >= r.maskLocal.w || y >= r.maskLocal.h) return 0;
+    return r.maskLocal.data[y * r.maskLocal.w + x]! / 255;
+  }
   const cx = r.x * FW,
     cy = r.y * FH;
   const hw = (r.w * FW) / 2,
@@ -149,7 +159,15 @@ export function chooseOffset(img: ImageData, r: RemoveRegion): [number, number] 
   const bw = b.x1 - b.x0,
     bh = b.y1 - b.y0;
   const cands: [number, number][] = [];
-  for (const k of [1.05, 1.6]) for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]] as const) cands.push([Math.round(ux * bw * k), Math.round(uy * bh * k)]);
+  // 16 directions × 4 distances: more chances to find texture that really continues through the hole.
+  for (const k of [1.05, 1.4, 1.9, 2.5])
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const ux = Math.cos(a),
+        uy = Math.sin(a);
+      const sc = 1 / Math.max(Math.abs(ux), Math.abs(uy));
+      cands.push([Math.round(ux * sc * bw * k), Math.round(uy * sc * bh * k)]);
+    }
   let best: [number, number] | null = null;
   let bestScore = Infinity;
   const step = Math.max(1, Math.round(Math.max(bw, bh) / 40));
@@ -285,8 +303,9 @@ export function removeRegion(img: ImageData, r: RemoveRegion, seed = 1): [number
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 /** Apply regions to a 2D canvas context in place (works on the region boxes only, so it stays fast). */
-export function applyRemovals(ctx: Ctx, W: number, H: number, regions: RemoveRegion[], offsets: Map<string, [number, number]>, seed: number): void {
+export function applyRemovals(ctx: Ctx, W: number, H: number, regions: RemoveRegion[], offsets: Map<string, [number, number]>, seed: number, masks?: Map<string, Uint8Array>): void {
   for (const r of regions) {
+    const full = masks?.get(r.id);
     // Work on the region plus a generous margin (clone sources and the ring live there).
     const pad = Math.round(Math.max(r.w * W, r.h * H) * 1.8) + 8;
     const b = regionBox(r, W, H, pad);
@@ -295,6 +314,27 @@ export function applyRemovals(ctx: Ctx, W: number, H: number, regions: RemoveReg
     if (bw < 2 || bh < 2) continue;
     const img = ctx.getImageData(b.x0, b.y0, bw, bh);
     const local: RemoveRegion = { ...r, x: (r.x * W - b.x0) / bw, y: (r.y * H - b.y0) / bh, w: (r.w * W) / bw, h: (r.h * H) / bh };
+    if (full) {
+      // Exact mask: crop it, then soften the edge a little (2 px) so the fill blends.
+      const data = new Uint8Array(bw * bh);
+      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) data[y * bw + x] = full[(b.y0 + y) * W + (b.x0 + x)]!;
+      const soft = new Uint8Array(bw * bh);
+      for (let y = 0; y < bh; y++)
+        for (let x = 0; x < bw; x++) {
+          let s2 = 0,
+            n = 0;
+          for (let dy = -2; dy <= 2; dy++)
+            for (let dx = -2; dx <= 2; dx++) {
+              const yy = y + dy,
+                xx = x + dx;
+              if (yy < 0 || xx < 0 || yy >= bh || xx >= bw) continue;
+              s2 += data[yy * bw + xx]!;
+              n++;
+            }
+          soft[y * bw + x] = Math.max(data[y * bw + x]!, Math.min(255, (s2 / n) * 2));
+        }
+      local.maskLocal = { w: bw, h: bh, data: soft };
+    }
     const known = offsets.get(r.id);
     if (known) local.offset = [(known[0] * W) / bw, (known[1] * H) / bh];
     const used = removeRegion(img, local, seed);

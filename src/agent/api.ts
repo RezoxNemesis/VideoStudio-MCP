@@ -21,9 +21,11 @@ import { analyseSong } from "../media/song";
 import { to16k, transcribe, type LyricLine } from "../media/asr";
 import { ExportJob, type ExportOptions } from "../render/export";
 import { fetchInbox, listInbox } from "./remote";
-import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot } from "../render/snapshot";
+import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot, stillImage } from "../render/snapshot";
+import { dilate, maskBounds, maskToPng, segment } from "../media/ai";
 import { analyseBeats, beatCut } from "../app/autoedit";
 import * as t3 from "../anim/three3d";
+import * as living from "../anim/living";
 import * as mv from "../app/musicvideo";
 import { detectScenes, findOverlays, frameStrip } from "../media/vision";
 import type { RemoveRegion } from "../render/inpaint";
@@ -503,7 +505,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     run: (s, a) => findOverlays(s.project, s.pool, a.str("assetId"), { samples: a.optNum("samples"), from: a.optNum("from"), to: a.optNum("to") }),
   },
   "clip.remove": {
-    help: "{id, x, y, w, h (centre/size as fractions of the source frame), mode?: auto|clone|fill|blur|pixelate, shape?: rect|ellipse, feather?=0.15, from?, to? (source seconds), xKeys?, yKeys? ([[sourceSec, value], ...] for moving objects), offset?:[dx,dy]} Remove an object or logo: filled from its surroundings with texture, frame size and length unchanged. Returns {regionId}.",
+    help: "{id, x, y, w, h (centre/size as fractions of the source frame), mode?: auto|ai|clone|fill|blur|pixelate (ai = on-phone AI fill, best for photos and complex backgrounds, slow on long videos), shape?: rect|ellipse, feather?=0.15, from?, to? (source seconds), xKeys?, yKeys? ([[sourceSec, value], ...] for moving objects), offset?:[dx,dy]} Remove an object or logo: filled from its surroundings with texture, frame size and length unchanged. Returns {regionId}.",
     run: (s, a) =>
       s.mutate("remove object", (p) => {
         const c = ops.getClip(p, a.str("id"));
@@ -528,6 +530,54 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         (c.remove ??= []).push(r);
         return { regionId: r.id, regions: c.remove.length };
       }),
+  },
+  "clip.select": {
+    help: "{id, points:[[x,y,label?=1],...] (fractions of the source frame; label 0 = not this), box?:[x0,y0,x1,y1] (fractions), at? (source seconds, default the playhead), grow?=0.006 (fraction of the frame), mode?: ai|auto|fill|clone|blur|pixelate, from?, to?} Tap-to-select: on-phone AI finds the exact shape of the object at the points and removes it (default AI fill). Returns {regionId, box, score}.",
+    run: async (s, a) => {
+      const c = ops.getClip(s.project, a.str("id"));
+      const as = findAsset(s.project, c.assetId);
+      if (!as || (as.kind !== "video" && as.kind !== "image")) throw new ops.OpError("Tap-to-select works on video and photo clips.");
+      const t = a.optNum("at") ?? Math.max(0, c.in + (s.time - c.start) * c.speed);
+      const src = as.kind === "image" ? ((await s.pool.image(as)) as CanvasImageSource) : ((await (await s.pool.framer(as, "select", 1920))?.frameAt(t))?.canvas as CanvasImageSource | undefined);
+      if (!src) throw new ops.OpError("Could not read that frame.");
+      const W = (src as { width: number }).width,
+        H = (src as { height: number }).height;
+      const pts = ((a.any("points") as number[][] | undefined) ?? []).map((p) => [p[0]! * W, p[1]! * H, p[2] ?? 1] as [number, number, number]);
+      const bx = a.any("box") as number[] | undefined;
+      if (!pts.length && !bx) throw new ops.OpError("Give points (where the object is) or a box.");
+      const seg = await segment(src, W, H, pts, bx ? [bx[0]! * W, bx[1]! * H, bx[2]! * W, bx[3]! * H] : undefined, (m) => s.setStatus(m));
+      const mask = dilate(seg.mask, W, H, Math.round(a.num("grow", 0.006) * Math.max(W, H)));
+      const b = maskBounds(mask, W, H);
+      if (!b) throw new ops.OpError("Nothing was selected there. Try another point.");
+      const png = await maskToPng(mask, W, H);
+      return s.mutate("select & remove", (p) => {
+        const cc = ops.getClip(p, a.str("id"));
+        const r: RemoveRegion = {
+          id: uid("rm"),
+          x: (b.x0 + b.x1) / 2 / W,
+          y: (b.y0 + b.y1) / 2 / H,
+          w: (b.x1 - b.x0) / W,
+          h: (b.y1 - b.y0) / H,
+          shape: "rect",
+          mode: (a.optStr("mode") as RemoveRegion["mode"] | undefined) ?? "ai",
+          feather: 0.04,
+          mask: png,
+        };
+        if (a.optNum("from") !== undefined) r.from = a.num("from");
+        if (a.optNum("to") !== undefined) r.to = a.num("to");
+        (cc.remove ??= []).push(r);
+        return { regionId: r.id, box: { x: r3(r.x), y: r3(r.y), w: r3(r.w), h: r3(r.h) }, score: r3(seg.score), coverage: r3(mask.reduce((n, v) => n + (v ? 1 : 0), 0) / (W * H)) };
+      });
+    },
+  },
+  "render.still": {
+    help: "{t?=playhead, name?, format?: png|jpeg} Save the edit at time t as a full-resolution picture in Pictures/VideoStudio.",
+    run: async (s, a) => {
+      const fmt = a.str("format", "png") as "png" | "jpeg";
+      const blob = await stillImage(s.project, s.pool, a.num("t", s.time), fmt);
+      const name = `${a.str("name", s.project.name || "Still")}_${Date.now().toString(36)}.${fmt === "png" ? "png" : "jpg"}`;
+      return { ...(await saveBlob(blob, name, "Pictures")), bytes: blob.size, width: s.project.width, height: s.project.height };
+    },
   },
   "clip.removeClear": {
     help: "{id, regionId?} Delete one removal region (or all of them) from a clip.",
@@ -1028,6 +1078,33 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
   "mograph.add": {
     help: `{type: ${proc.MOGRAPH_TYPES.join("|")}, start?, dur?=3, x?, y? (0..1), size? (0..1), palette?, bg?, value?} Motion-design element.`,
     run: (s, a) => s.mutate("motion graphic", (p) => procClip(p, specFrom(a, "mograph", a.str("type")), a.num("start", s.time), a.num("dur", 3), { name: `Mograph ${a.str("type")}` })),
+  },
+  "anim.living": {
+    help: "{sceneId, assetId (photo/drawing), pins?:{head,neck,chest,hips,feet,eyeL?,eyeR?,hairTop?,headR?,cloth?:[[x,y],...]} (fractions of the image; guessed from the figure when missing), motion?:{breathe,sway,head,hair,cloth (0..2), blink (per 10 s), speed, seed}, fit?: contain|cover} Bring a still picture to life: the picture itself bends on a fine mesh (breathing, head, hair and cloth motion, blinks, idle sway) so proportions and line work stay exactly as drawn. Returns {layerId, pins}.",
+    run: async (s, a) => {
+      const as = findAsset(s.project, a.str("assetId"));
+      if (!as || as.kind !== "image") throw new ops.OpError("Pick an imported photo or drawing.");
+      let pins = a.any("pins") as living.LivingPins | undefined;
+      if (!pins || !pins.head) {
+        const bmp = (await s.pool.image(as)) as ImageBitmap;
+        const k = Math.min(1, 400 / Math.max(bmp.width, bmp.height));
+        const c = new OffscreenCanvas(Math.round(bmp.width * k), Math.round(bmp.height * k));
+        const x = c.getContext("2d")!;
+        x.drawImage(bmp, 0, 0, c.width, c.height);
+        pins = { ...living.guessPins(living.subjectBox(x.getImageData(0, 0, c.width, c.height).data, c.width, c.height)), ...(pins ?? {}) };
+      }
+      const motion = { ...living.DEFAULT_MOTION, ...((a.any("motion") as Partial<living.LivingMotion> | undefined) ?? {}) };
+      return s.mutate("living picture", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = anim.addLayer(sc, a.str("name", "Living picture"), "living");
+        sc.layers.splice(sc.layers.indexOf(l), 1);
+        let i = sc.layers.length;
+        while (i > 0 && sc.layers[i - 1]!.kind === "backdrop") i--;
+        sc.layers.splice(i, 0, l);
+        l.living = { assetId: as.id, pins: pins!, motion, fit: (a.optStr("fit") as "contain" | "cover" | undefined) ?? "contain" };
+        return { layerId: l.id, pins };
+      });
+    },
   },
   "three.new": {
     help: "{sceneId, style?: toon|realistic|clay|neon, sky?:[top,bottom]|null, ground?:{color,size,grid?}|null, fog?:{color,near,far}, camera?:{fov,pos:[x,y,z],target:[x,y,z]}, order?: bottom|top} Add a 3D layer to an animation scene (metres, y up; a character is ~1.75 m). Returns {layerId}.",

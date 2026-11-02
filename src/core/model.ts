@@ -286,7 +286,7 @@ export interface Cel {
 export interface AnimLayer {
   id: string;
   name: string;
-  kind: "draw" | "reference" | "puppet" | "backdrop" | "proc" | "three";
+  kind: "draw" | "reference" | "puppet" | "backdrop" | "proc" | "three" | "living";
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -316,6 +316,8 @@ export interface AnimLayer {
   proc?: import("../anim/proc").ProcSpec;
   /** 3D scene (kind "three"). */
   three?: import("../anim/three3d").Scene3D;
+  /** Living picture (kind "living"): a still drawing/photo animated by bending it on a mesh. */
+  living?: import("../anim/living").LivingSpec;
   /** Draw-on: strokes write themselves on between these frames; sketch adds construction lines first. */
   drawOn?: { start: number; dur: number; sketch?: boolean };
 }

@@ -1,4 +1,5 @@
-import { activeRegions, applyRemovals, type RemoveRegion } from "./inpaint";
+import { activeRegions, applyRemovals, regionBox, type RemoveRegion } from "./inpaint";
+import { aiFill, maskAtSize } from "../media/ai";
 import { fontStack } from "./fonts";
 /** Turns evaluated layers into pixel sources for the compositor: video frames, images, text, shapes, animation. */
 import { evaluate, type LayerDraw } from "../core/evaluate";
@@ -288,7 +289,7 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
       // Collage photos inside scenes: make sure they are decoded before an export frame is drawn.
       if (o.wait)
         for (const l of s.layers) {
-          const id = l.proc?.assetId ?? (l.kind === "reference" ? l.assetId : undefined);
+          const id = l.proc?.assetId ?? l.living?.assetId ?? (l.kind === "reference" ? l.assetId : undefined);
           if (!id || pool.imageNow(id)) continue;
           const a = findAsset(p, id);
           if (a?.kind === "image") await pool.image(a);
@@ -315,7 +316,7 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
       if (a.kind === "image") {
         const now = pool.imageNow(a.id) ?? (o.wait ? await pool.image(a) : null);
         if (now) {
-          if (regions.length) return cleaned(d, now, now.width, now.height, regions, `${a.id}`, o.purpose);
+          if (regions.length) return cleaned(d, now, now.width, now.height, regions, `${a.id}`, o.purpose, !!o.wait, o.onLate);
           return { draw: d, source: now, sw: now.width, sh: now.height, version: a.id };
         }
         void pool.image(a).then(() => o.onLate?.());
@@ -329,7 +330,7 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
         if (o.wait || !wc) wc = await f.frameAt(d.srcTime);
         else if (!near) void f.frameAt(d.srcTime).then(() => o.onLate?.());
         if (!wc) return null;
-        if (regions.length) return cleaned(d, wc.canvas as CanvasImageSource, wc.canvas.width, wc.canvas.height, regions, `${wc.timestamp}`, o.purpose);
+        if (regions.length) return cleaned(d, wc.canvas as CanvasImageSource, wc.canvas.width, wc.canvas.height, regions, `${wc.timestamp}`, o.purpose, !!o.wait, o.onLate);
         return { draw: d, source: wc.canvas as LayerSource, sw: wc.canvas.width, sh: wc.canvas.height, version: `${wc.timestamp}` };
       }
       return null;
@@ -340,9 +341,31 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
 /* Object removal: a cleaned copy of the frame per clip, with clone offsets kept steady across frames. */
 const cleanCanvases = new Map<string, { canvas: AnyCanvas; version: string }>();
 const cleanOffsets = new Map<string, Map<string, [number, number]>>();
-function cleaned(d: LayerDraw, src: CanvasImageSource, W: number, H: number, regions: RemoveRegion[], ver: string, purpose: string): LayerInput {
+/** AI-filled frames (slow): kept by version so scrubbing back is instant. */
+const aiFrames = new Map<string, ImageBitmap | AnyCanvas>();
+const aiBusy = new Set<string>();
+async function regionMasks(regions: RemoveRegion[], W: number, H: number): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>();
+  for (const r of regions) {
+    if (r.mask) out.set(r.id, await maskAtSize(r.mask, W, H));
+    else if (r.mode === "ai") {
+      // A box/oval drawn as a mask for the AI fill.
+      const m = new Uint8Array(W * H);
+      const b = regionBox(r, W, H);
+      for (let y = b.y0; y < b.y1; y++)
+        for (let x = b.x0; x < b.x1; x++) {
+          const dx = (x + 0.5 - r.x * W) / ((r.w * W) / 2),
+            dy = (y + 0.5 - r.y * H) / ((r.h * H) / 2);
+          if (r.shape === "ellipse" ? dx * dx + dy * dy <= 1 : Math.abs(dx) <= 1 && Math.abs(dy) <= 1) m[y * W + x] = 255;
+        }
+      out.set(r.id, m);
+    }
+  }
+  return out;
+}
+async function cleaned(d: LayerDraw, src: CanvasImageSource, W: number, H: number, regions: RemoveRegion[], ver: string, purpose: string, wait: boolean, onLate?: () => void): Promise<LayerInput> {
   const key = `${d.clipId}|${purpose}`;
-  const sig = JSON.stringify(regions.map(({ offset: _o, ...r }) => r));
+  const sig = JSON.stringify(regions.map(({ offset: _o, maskLocal: _m, ...r }) => r));
   const version = `${ver}|${sig}`;
   let e = cleanCanvases.get(key);
   if (!e || e.canvas.width !== W || e.canvas.height !== H) {
@@ -351,19 +374,62 @@ function cleaned(d: LayerDraw, src: CanvasImageSource, W: number, H: number, reg
   }
   if (e.version !== version) {
     const x = ctx2d(e.canvas);
+    const ai = regions.filter((r) => r.mode === "ai");
+    const fast = regions.filter((r) => r.mode !== "ai");
+    const aiKey = `${d.clipId}|${W}x${H}|${version}`;
+    const masks = regions.some((r) => r.mask || r.mode === "ai") ? await regionMasks(regions, W, H) : undefined;
+    const runFast = (list: RemoveRegion[]) => {
+      const okey = `${d.clipId}|${W}x${H}|${JSON.stringify(list.map((r) => [r.id, r.w, r.h, r.shape, r.mode, r.offset, !!r.mask]))}`;
+      let offs = cleanOffsets.get(okey);
+      if (!offs) {
+        offs = new Map();
+        cleanOffsets.set(okey, offs);
+      }
+      for (const r of list) if (r.offset) offs.set(r.id, r.offset);
+      applyRemovals(x as CanvasRenderingContext2D, W, H, list, offs, 7, masks);
+    };
     x.clearRect(0, 0, W, H);
-    x.drawImage(src, 0, 0, W, H);
-    const okey = `${d.clipId}|${W}x${H}|${JSON.stringify(regions.map((r) => [r.id, r.w, r.h, r.shape, r.mode, r.offset]))}`;
-    let offs = cleanOffsets.get(okey);
-    if (!offs) {
-      offs = new Map();
-      cleanOffsets.set(okey, offs);
+    const done = aiFrames.get(aiKey);
+    if (ai.length && done) {
+      x.drawImage(done as CanvasImageSource, 0, 0, W, H);
+    } else {
+      x.drawImage(src, 0, 0, W, H);
+      if (ai.length && wait) {
+        for (const r of ai) await aiFill(x, W, H, masks!.get(r.id)!);
+        aiFrames.set(aiKey, await snapshotOf(e.canvas));
+      } else if (ai.length) {
+        // Preview: show a quick fill now, compute the AI fill in the background, then redraw.
+        if (!aiBusy.has(aiKey)) {
+          aiBusy.add(aiKey);
+          const c2 = makeCanvas(W, H);
+          const x2 = ctx2d(c2);
+          x2.drawImage(src, 0, 0, W, H);
+          void (async () => {
+            try {
+              for (const r of ai) await aiFill(x2, W, H, masks!.get(r.id)!);
+              aiFrames.set(aiKey, c2);
+              if (aiFrames.size > 24) aiFrames.delete(aiFrames.keys().next().value!);
+              if (e) e.version = "";
+              onLate?.();
+            } catch {
+              /* keep the quick fill */
+            } finally {
+              aiBusy.delete(aiKey);
+            }
+          })();
+        }
+        runFast(ai.map((r) => ({ ...r, mode: "fill" as const })));
+      }
     }
-    for (const r of regions) if (r.offset) offs.set(r.id, r.offset);
-    applyRemovals(x as CanvasRenderingContext2D, W, H, regions, offs, 7);
+    if (fast.length) runFast(fast);
     e.version = version;
   }
   return { draw: d, source: e.canvas as LayerSource, sw: W, sh: H, version };
+}
+async function snapshotOf(c: AnyCanvas): Promise<AnyCanvas> {
+  const copy = makeCanvas(c.width, c.height);
+  ctx2d(copy).drawImage(c as CanvasImageSource, 0, 0);
+  return copy;
 }
 
 const colorCanvases = new Map<string, AnyCanvas>();

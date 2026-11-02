@@ -630,7 +630,7 @@ let renderer: THREE.WebGLRenderer | null = null;
 let rendererFailed = false;
 const camera = new THREE.PerspectiveCamera(40, 9 / 16, 0.05, 500);
 
-function getRenderer(): THREE.WebGLRenderer | null {
+export function getRenderer(): THREE.WebGLRenderer | null {
   if (renderer || rendererFailed) return renderer;
   try {
     const canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(16, 16) : document.createElement("canvas");

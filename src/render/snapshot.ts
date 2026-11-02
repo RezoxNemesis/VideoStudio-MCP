@@ -116,6 +116,20 @@ export async function frameSnapshot(p: Project, pool: MediaPool, t: number, max 
   }
 }
 
+/** The edit at time t at full project resolution, saved as a still image (PNG or JPEG). */
+export async function stillImage(p: Project, pool: MediaPool, t: number, type: "png" | "jpeg" = "png"): Promise<Blob> {
+  const canvas = new OffscreenCanvas(p.width, p.height);
+  const comp = new Compositor(canvas);
+  try {
+    for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref));
+    const layers = await buildLayers(p, pool, t, { purpose: "export", wait: true, outW: p.width, outH: p.height });
+    comp.render(layers, p.width, p.height, p.background);
+    return await canvas.convertToBlob({ type: `image/${type}`, quality: 0.95 });
+  } finally {
+    comp.dispose();
+  }
+}
+
 /** A drawing scene frame (with onion skin off). */
 export async function sceneSnapshot(p: Project, pool: MediaPool, sceneId: string, frame: number, max = 360): Promise<{ jpeg: string }> {
   const s = findScene(p, sceneId);

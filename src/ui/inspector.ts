@@ -296,6 +296,36 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
               for (const b of boxes) await runCommand(s, { op: "clip.remove", id, x: b.x, y: b.y, w: b.w * 1.1, h: b.h * 1.2 });
               toast(`Removing ${boxes.length} area${boxes.length > 1 ? "s" : ""}`, "ok");
             }), "primary"),
+            btn("Tap to select", "hand", () => {
+              const cv = document.querySelector(".pv-canvas") as HTMLCanvasElement | null;
+              if (!cv || !asset) return;
+              sh.close();
+              toast("Tap the thing to remove on the preview", "info", 4000);
+              const onTap = async (ev: PointerEvent) => {
+                cv.removeEventListener("pointerdown", onTap, true);
+                ev.preventDefault();
+                ev.stopPropagation();
+                const r = cv.getBoundingClientRect();
+                // Tap in project frame → source frame (clip drawn with its fit; transforms at rest assumed).
+                const fx = (ev.clientX - r.left) / r.width,
+                  fy = (ev.clientY - r.top) / r.height;
+                const P = s.project;
+                const sw = asset.width,
+                  sh2 = asset.height;
+                const k = c.fit === "contain" ? Math.min(P.width / sw, P.height / sh2) : Math.max(P.width / sw, P.height / sh2);
+                const ox = (P.width - sw * k) / 2,
+                  oy = (P.height - sh2 * k) / 2;
+                const px = (fx * P.width - ox) / (sw * k),
+                  py = (fy * P.height - oy) / (sh2 * k);
+                if (px < 0 || py < 0 || px > 1 || py > 1) return toast("That tap was outside the clip", "error");
+                s.setStatus("Selecting with on-phone AI (first time downloads the model)…");
+                const res = await runCommand(s, { op: "clip.select", id, points: [[px, py, 1]] });
+                s.setStatus("");
+                if (!res.ok) toast(res.error ?? "Selection failed", "error", 5000);
+                else toast("Selected and removed. Open Remove to adjust.", "ok");
+              };
+              cv.addEventListener("pointerdown", onTap, true);
+            }, "ghost"),
             btn("Add box", "plus", () => {
               void runCommand(s, { op: "clip.remove", id, x: 0.5, y: 0.5, w: 0.25, h: 0.08 }).then(() => draw());
             }, "ghost"),
@@ -310,8 +340,8 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
           ),
           ...regs.flatMap((r, i) => [
             h("h3", {}, `Area ${i + 1}`),
-            select("Method", [["auto", "Auto (clone + blend)"], ["clone", "Clone texture"], ["fill", "Smooth fill"], ["blur", "Blur"], ["pixelate", "Pixelate"]] as const, r.mode, (v) => set("remove mode", (cc) => (cc.remove!.find((q) => q.id === r.id)!.mode = v))),
-            select("Shape", [["rect", "Box"], ["ellipse", "Oval"]] as const, r.shape, (v) => set("remove shape", (cc) => (cc.remove!.find((q) => q.id === r.id)!.shape = v))),
+            select("Method", [["ai", "AI fill (best, on-phone)"], ["auto", "Auto (clone + blend)"], ["clone", "Clone texture"], ["fill", "Smooth fill"], ["blur", "Blur"], ["pixelate", "Pixelate"]] as const, r.mode, (v) => set("remove mode", (cc) => (cc.remove!.find((q) => q.id === r.id)!.mode = v))),
+            r.mask ? h("p", { class: "hint" }, "Exact shape from tap-to-select.") : select("Shape", [["rect", "Box"], ["ellipse", "Oval"]] as const, r.shape, (v) => set("remove shape", (cc) => (cc.remove!.find((q) => q.id === r.id)!.shape = v))),
             ...(["x", "y", "w", "h", "feather"] as const).map((k) =>
               slider({ x: "Across", y: "Down", w: "Width", h: "Height", feather: "Soft edge" }[k], 0, k === "feather" ? 0.5 : 1, 0.002, r[k], (v) =>
                 set("remove area", (cc) => {

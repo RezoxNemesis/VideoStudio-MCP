@@ -5,6 +5,7 @@ import { drawBackdrop, drawPuppet } from "./puppet";
 import { drawProc } from "./proc";
 import { TRANSFORM_DEFAULTS, exposedKey, type AnimLayer, type AnimScene, type BlendMode, type Cel, type Stroke } from "../core/model";
 import { draw3D } from "./three3d";
+import { drawLiving } from "./living";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
@@ -361,7 +362,7 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
   const layer = scratchCanvas(W, H);
   const lc = ctx2d(layer);
   const drawLayerAt = (l: AnimLayer, fr: number, tint: string | null, alpha: number, cel?: Cel) => {
-    const proc = l.kind === "puppet" || l.kind === "backdrop" || l.kind === "proc" || l.kind === "three";
+    const proc = l.kind === "puppet" || l.kind === "backdrop" || l.kind === "proc" || l.kind === "three" || l.kind === "living";
     const key = exposedKey(l, fr);
     const use = cel ?? (key ? l.cels[key] : undefined);
     if (!use && !proc) return;
@@ -375,6 +376,7 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
     else if (l.kind === "backdrop") drawBackdrop(lc, l, s, fr);
     else if (l.kind === "proc") drawProc(lc, l, s, fr, o.images);
     else if (l.kind === "three") draw3D(lc as CanvasRenderingContext2D, l, s, fr, W, H, o.onReady);
+    else if (l.kind === "living") drawLiving(lc as CanvasRenderingContext2D, l, s, fr, W, H, l.living && o.images ? o.images(l.living.assetId) : null);
     if (use) {
       if (l.drawOn && !cel) drawCelReveal(lc, use, (fr - l.drawOn.start) / Math.max(1, l.drawOn.dur), !!l.drawOn.sketch);
       else drawCel(lc, use, o.onReady);
