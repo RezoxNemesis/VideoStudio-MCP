@@ -2,6 +2,7 @@
 /** Lyrics / speech transcription on the phone with Whisper (ONNX, runs locally; the model downloads once). */
 import { env, pipeline } from "@huggingface/transformers";
 
+env.allowLocalModels = false;
 env.backends.onnx.wasm!.wasmPaths = `${self.location.origin}/ort/`;
 if (self.crossOriginIsolated) env.backends.onnx.wasm!.numThreads = Math.max(1, Math.min(4, (self.navigator.hardwareConcurrency ?? 4) - 1));
 

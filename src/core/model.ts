@@ -207,6 +207,8 @@ export interface Clip {
   speedKeys?: Keyframe[];
   /** Freeze frame: always show the source at `in`. */
   hold?: boolean;
+  /** Object / logo removal regions (filled from the surroundings; frame size and length unchanged). */
+  remove?: import("../render/inpaint").RemoveRegion[];
 }
 
 export type TrackKind = "video" | "audio";

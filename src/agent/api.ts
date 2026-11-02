@@ -14,7 +14,7 @@ import { ambience, compose, sfx, SFX, type Ambience, type Mood, type Sfx } from 
 import * as proc from "../anim/proc";
 import { speechEnvelope } from "../media/library";
 import { newScene, newTrack, type BlendMode, type Clip } from "../core/model";
-import { exposedKey, findAsset, projectDuration, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
+import { exposedKey, findAsset, projectDuration, rampIntegral, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
 import { fetchToBlob, importBlob } from "../media/library";
 import { receiveTransfer } from "../media/transfer";
 import { analyseSong } from "../media/song";
@@ -25,6 +25,8 @@ import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot } from
 import { analyseBeats, beatCut } from "../app/autoedit";
 import * as t3 from "../anim/three3d";
 import * as mv from "../app/musicvideo";
+import { detectScenes, findOverlays, frameStrip } from "../media/vision";
+import type { RemoveRegion } from "../render/inpaint";
 import { saveBlob } from "../native/storage";
 import { FONTS } from "../render/fonts";
 
@@ -487,6 +489,92 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     help: "{assetIds?, musicId?, style?: punchy|smooth|cinematic|glitch, every? (beats per cut), loop?, replace?=true, maxDur?} Auto-edit your media to the music: beat cuts, overlapping transitions, beat punches, motion blur, look.",
     run: (s, a) =>
       beatCut(s, { assetIds: a.any("assetIds") as string[] | undefined, musicId: a.optStr("musicId"), style: a.optStr("style") as never, every: a.optNum("every"), loop: a.bool("loop"), replace: a.bool("replace", true), maxDur: a.optNum("maxDur") }),
+  },
+  "media.strip": {
+    help: "{assetId, times?:[s...] | count?=8, cell?=160, cols?} One image of many moments of a clip, labelled with times (cheap way to see a whole video).",
+    run: (s, a) => frameStrip(s.project, s.pool, a.str("assetId"), { times: a.any("times") as number[] | undefined, count: a.optNum("count"), cell: a.optNum("cell"), cols: a.optNum("cols") }),
+  },
+  "media.scenes": {
+    help: "{assetId, fps?=6} Shot changes, frozen stretches (end cards, freeze frames), black stretches, and contentEnd (where real footage ends before an outro card).",
+    run: (s, a) => detectScenes(s.project, s.pool, a.str("assetId"), a.num("fps", 6)),
+  },
+  "media.findOverlays": {
+    help: "{assetId, samples?=12, from?, to?} Find burned-in static overlays (logos, stickers, text) as boxes {x,y,w,h} (centre/size, fractions of the frame), best first. Feed them to clip.remove.",
+    run: (s, a) => findOverlays(s.project, s.pool, a.str("assetId"), { samples: a.optNum("samples"), from: a.optNum("from"), to: a.optNum("to") }),
+  },
+  "clip.remove": {
+    help: "{id, x, y, w, h (centre/size as fractions of the source frame), mode?: auto|clone|fill|blur|pixelate, shape?: rect|ellipse, feather?=0.15, from?, to? (source seconds), xKeys?, yKeys? ([[sourceSec, value], ...] for moving objects), offset?:[dx,dy]} Remove an object or logo: filled from its surroundings with texture, frame size and length unchanged. Returns {regionId}.",
+    run: (s, a) =>
+      s.mutate("remove object", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        const as = findAsset(p, c.assetId);
+        if (!as || (as.kind !== "video" && as.kind !== "image")) throw new ops.OpError("Object removal works on video and photo clips.");
+        const keys = (k: string) => (a.any(k) as [number, number][] | undefined)?.map(([t, v]) => ({ t, v, ease: "inOut" as Ease }));
+        const r: RemoveRegion = {
+          id: uid("rm"),
+          x: a.num("x"),
+          y: a.num("y"),
+          w: Math.max(0.005, a.num("w")),
+          h: Math.max(0.005, a.num("h")),
+          shape: (a.optStr("shape") as RemoveRegion["shape"] | undefined) ?? "rect",
+          mode: (a.optStr("mode") as RemoveRegion["mode"] | undefined) ?? "auto",
+          feather: Math.max(0.02, Math.min(0.5, a.num("feather", 0.15))),
+        };
+        if (a.optNum("from") !== undefined) r.from = a.num("from");
+        if (a.optNum("to") !== undefined) r.to = a.num("to");
+        if (keys("xKeys")) r.xKeys = keys("xKeys");
+        if (keys("yKeys")) r.yKeys = keys("yKeys");
+        if (a.any("offset")) r.offset = a.any("offset") as [number, number];
+        (c.remove ??= []).push(r);
+        return { regionId: r.id, regions: c.remove.length };
+      }),
+  },
+  "clip.removeClear": {
+    help: "{id, regionId?} Delete one removal region (or all of them) from a clip.",
+    run: (s, a) =>
+      s.mutate("clear removal", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        c.remove = a.optStr("regionId") ? (c.remove ?? []).filter((r) => r.id !== a.str("regionId")) : undefined;
+        if (c.remove && !c.remove.length) c.remove = undefined;
+        return { regions: c.remove?.length ?? 0 };
+      }),
+  },
+  "clip.dropOutro": {
+    help: "{id, keep?: stretch|ripple} Cut a frozen/black end card (outro, logo card) off a video clip. stretch (default) slows the remaining footage so the clip keeps its length (no gap); ripple pulls later clips on the track earlier.",
+    run: async (s, a) => {
+      const c0 = ops.getClip(s.project, a.str("id"));
+      const as = findAsset(s.project, c0.assetId);
+      if (!as || as.kind !== "video") throw new ops.OpError("Pick a video clip.");
+      const sc = await detectScenes(s.project, s.pool, as.id);
+      const end = sc.contentEnd - 0.05;
+      return s.mutate("drop outro", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        const srcEnd = c.in + (c.speedKeys?.length ? rampIntegral(c.speedKeys, c.dur) : c.dur * c.speed);
+        if (srcEnd <= end) return { changed: false, contentEnd: sc.contentEnd };
+        const usable = Math.max(0.1, end - c.in);
+        if (a.str("keep", "stretch") === "ripple") {
+          let newDur = usable / c.speed;
+          if (c.speedKeys?.length) {
+            let lo = 0,
+              hi = c.dur;
+            for (let i = 0; i < 30; i++) {
+              const mid = (lo + hi) / 2;
+              if (rampIntegral(c.speedKeys, mid) < usable) lo = mid;
+              else hi = mid;
+            }
+            newDur = lo;
+          }
+          const cut = c.dur - newDur;
+          const tr = p.tracks.find((t) => t.clips.includes(c))!;
+          for (const o of tr.clips) if (o.start > c.start) o.start -= cut;
+          c.dur = newDur;
+        } else {
+          c.speed = usable / c.dur;
+          if (c.speedKeys) c.speedKeys = c.speedKeys.map((k) => ({ ...k, v: k.v * (usable / (srcEnd - c.in)) }));
+        }
+        return { changed: true, contentEnd: sc.contentEnd, speed: r3(c.speed), dur: r3(c.dur) };
+      });
+    },
   },
   "media.thumb": {
     help: "{assetId, t?, max?=320} See an image or video frame (returns a small JPEG data URL).",

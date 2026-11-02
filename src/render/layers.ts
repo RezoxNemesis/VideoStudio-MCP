@@ -1,7 +1,8 @@
+import { activeRegions, applyRemovals, type RemoveRegion } from "./inpaint";
 import { fontStack } from "./fonts";
 /** Turns evaluated layers into pixel sources for the compositor: video frames, images, text, shapes, animation. */
 import { evaluate, type LayerDraw } from "../core/evaluate";
-import { findAsset, findScene, type Project, type ShapeStyle, type TextStyle } from "../core/model";
+import { findAsset, findClip, findScene, type Project, type ShapeStyle, type TextStyle } from "../core/model";
 import { ctx2d, frameAt, makeCanvas, renderScene } from "../anim/render";
 import type { LayerInput, LayerSource } from "./compositor";
 import type { MediaPool } from "../media/library";
@@ -309,12 +310,13 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
     case "media": {
       const a = findAsset(p, d.assetId);
       if (!a) return null;
+      const clip = findClip(p, d.clipId);
+      const regions = activeRegions(clip?.clip.remove, d.srcTime);
       if (a.kind === "image") {
-        const now = pool.imageNow(a.id);
-        if (now) return { draw: d, source: now, sw: now.width, sh: now.height, version: a.id };
-        if (o.wait) {
-          const bmp = await pool.image(a);
-          return { draw: d, source: bmp, sw: bmp.width, sh: bmp.height, version: a.id };
+        const now = pool.imageNow(a.id) ?? (o.wait ? await pool.image(a) : null);
+        if (now) {
+          if (regions.length) return cleaned(d, now, now.width, now.height, regions, `${a.id}`, o.purpose);
+          return { draw: d, source: now, sw: now.width, sh: now.height, version: a.id };
         }
         void pool.image(a).then(() => o.onLate?.());
         return null;
@@ -327,11 +329,41 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
         if (o.wait || !wc) wc = await f.frameAt(d.srcTime);
         else if (!near) void f.frameAt(d.srcTime).then(() => o.onLate?.());
         if (!wc) return null;
+        if (regions.length) return cleaned(d, wc.canvas as CanvasImageSource, wc.canvas.width, wc.canvas.height, regions, `${wc.timestamp}`, o.purpose);
         return { draw: d, source: wc.canvas as LayerSource, sw: wc.canvas.width, sh: wc.canvas.height, version: `${wc.timestamp}` };
       }
       return null;
     }
   }
+}
+
+/* Object removal: a cleaned copy of the frame per clip, with clone offsets kept steady across frames. */
+const cleanCanvases = new Map<string, { canvas: AnyCanvas; version: string }>();
+const cleanOffsets = new Map<string, Map<string, [number, number]>>();
+function cleaned(d: LayerDraw, src: CanvasImageSource, W: number, H: number, regions: RemoveRegion[], ver: string, purpose: string): LayerInput {
+  const key = `${d.clipId}|${purpose}`;
+  const sig = JSON.stringify(regions.map(({ offset: _o, ...r }) => r));
+  const version = `${ver}|${sig}`;
+  let e = cleanCanvases.get(key);
+  if (!e || e.canvas.width !== W || e.canvas.height !== H) {
+    e = { canvas: makeCanvas(W, H), version: "" };
+    cleanCanvases.set(key, e);
+  }
+  if (e.version !== version) {
+    const x = ctx2d(e.canvas);
+    x.clearRect(0, 0, W, H);
+    x.drawImage(src, 0, 0, W, H);
+    const okey = `${d.clipId}|${W}x${H}|${JSON.stringify(regions.map((r) => [r.id, r.w, r.h, r.shape, r.mode, r.offset]))}`;
+    let offs = cleanOffsets.get(okey);
+    if (!offs) {
+      offs = new Map();
+      cleanOffsets.set(okey, offs);
+    }
+    for (const r of regions) if (r.offset) offs.set(r.id, r.offset);
+    applyRemovals(x as CanvasRenderingContext2D, W, H, regions, offs, 7);
+    e.version = version;
+  }
+  return { draw: d, source: e.canvas as LayerSource, sw: W, sh: H, version };
 }
 
 const colorCanvases = new Map<string, AnyCanvas>();

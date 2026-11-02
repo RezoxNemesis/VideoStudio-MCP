@@ -1,4 +1,41 @@
 /** Main-thread side of the on-phone transcriber (lyrics and dialogue with timings). */
+import { downloadBlob, hasNativeStorage } from "../native/storage";
+
+const MODEL_FILES = ["config.json", "generation_config.json", "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json", "onnx/encoder_model_quantized.onnx", "onnx/decoder_model_merged_quantized.onnx"];
+
+/**
+ * Big model files are fetched by the phone's native downloader (streamed to disk, retried) and placed in the
+ * same Cache API store the speech model reads from, so a flaky WebView download can't break transcription.
+ */
+export async function prefetchModel(model: string, onProgress?: (done: number, total: number) => void): Promise<void> {
+  if (typeof caches === "undefined") return;
+  const cache = await caches.open("transformers-cache");
+  let done = 0;
+  for (const f of MODEL_FILES) {
+    const url = `https://huggingface.co/${model}/resolve/main/${f}`;
+    onProgress?.(done, MODEL_FILES.length);
+    if (await cache.match(url)) {
+      done++;
+      continue;
+    }
+    if (!hasNativeStorage()) {
+      done++;
+      continue; // the browser path downloads inside the worker
+    }
+    let blob: Blob | null = null;
+    for (let attempt = 0; attempt < 3 && !blob; attempt++) {
+      try {
+        blob = await downloadBlob(url);
+      } catch (e) {
+        if (/HTTP 404/.test(String(e))) break; // optional file
+        if (attempt === 2) throw new Error(`Could not download the lyrics model (${f}). Check the internet connection and try again.`);
+      }
+    }
+    if (blob) await cache.put(url, new Response(blob, { headers: { "content-type": f.endsWith(".json") ? "application/json" : "application/octet-stream", "content-length": String(blob.size) } }));
+    done++;
+  }
+  onProgress?.(done, MODEL_FILES.length);
+}
 export interface LyricLine {
   start: number;
   end: number;
@@ -25,6 +62,7 @@ export async function transcribe(
   audio: Float32Array,
   o: { model?: keyof typeof ASR_MODELS; language?: string; translate?: boolean; onProgress?: (stage: string, pct: number) => void } = {},
 ): Promise<{ text: string; lines: LyricLine[] }> {
+  await prefetchModel(ASR_MODELS[o.model ?? "base"], (d, n) => o.onProgress?.("model", Math.round((d / n) * 100)));
   worker ??= new Worker(new URL("./asr.worker.ts", import.meta.url), { type: "module" });
   const id = nextId++;
   const w = worker;

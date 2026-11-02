@@ -5,9 +5,9 @@ import { GRADE_DEFAULTS, TRANSFORM_DEFAULTS, findAsset, findClip, type BlendMode
 import { hasKeyAt, isAnimated, valueAt } from "../core/keyframes";
 import * as ops from "../core/ops";
 import { runCommand } from "../agent/api";
-import { colorInput, h, select, sheet, slider, toggle, type SliderRow } from "./dom";
+import { btn, colorInput, h, select, sheet, slider, toast, toggle, type SliderRow } from "./dom";
 
-export type InspectorTab = "edit" | "transform" | "crop" | "color" | "effects" | "text" | "transition";
+export type InspectorTab = "edit" | "transform" | "crop" | "color" | "effects" | "remove" | "text" | "transition";
 
 const TRANSITIONS: [TransitionKind, string][] = [
   ["none", "None"], ["fade", "Fade"], ["dip", "Dip to black"], ["blur", "Blur"], ["zoomIn", "Zoom"], ["slideLeft", "Slide left"], ["slideRight", "Slide right"],
@@ -40,6 +40,8 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
     const c = clip();
     const out: InspectorTab[] = ["edit", "transform", "crop", "color", "effects", "transition"];
     if (c?.kind === "text") out.splice(1, 0, "text");
+    const ak = findAsset(s.project, c?.assetId)?.kind;
+    if (c?.kind === "media" && (ak === "video" || ak === "image")) out.splice(out.length - 1, 0, "remove");
     return out;
   };
 
@@ -268,6 +270,77 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
             ? (["x", "y", "w", "h", "feather"] as const).map((k) => slider(cap(k === "w" ? "width" : k === "h" ? "height" : k), 0, k === "feather" ? 0.5 : k === "w" || k === "h" ? 2 : 1, 0.005, c.mask![k], (v) => set("mask", (cc) => (cc.mask![k] = v))).el).concat([toggle("Invert", c.mask.invert, (v) => set("mask", (cc) => (cc.mask!.invert = v)))])
             : []),
         ];
+      case "remove": {
+        const regs = c.remove ?? [];
+        const busy = (lbl: string, fn: () => Promise<void>) => async () => {
+          s.setStatus(lbl);
+          try {
+            await fn();
+          } catch (e) {
+            toast(e instanceof Error ? e.message : String(e), "error", 5000);
+          } finally {
+            s.setStatus("");
+            draw();
+          }
+        };
+        const srcNow = () => c.in + Math.max(0, s.time - c.start) * c.speed;
+        return [
+          h("p", { class: "hint" }, "Remove logos, stickers, text or small unwanted things. The area is rebuilt from its surroundings (texture is cloned and blended in), so the frame keeps its size and the clip keeps its length."),
+          h("div", { class: "row wrap" },
+            btn("Find automatically", "wand", busy("Looking for logos and stickers…", async () => {
+              const r = await runCommand(s, { op: "media.findOverlays", assetId: c.assetId! });
+              if (!r.ok) throw new Error(r.error);
+              const boxes = (r.result as { boxes: { x: number; y: number; w: number; h: number }[] }).boxes.slice(0, 3);
+              if (!boxes.length) return toast("Nothing static found. Add a box by hand.", "info");
+              for (const b of boxes) await runCommand(s, { op: "clip.remove", id, x: b.x, y: b.y, w: b.w * 1.1, h: b.h * 1.2 });
+              toast(`Removing ${boxes.length} area${boxes.length > 1 ? "s" : ""}`, "ok");
+            }), "primary"),
+            btn("Add box", "plus", () => {
+              void runCommand(s, { op: "clip.remove", id, x: 0.5, y: 0.5, w: 0.25, h: 0.08 }).then(() => draw());
+            }, "ghost"),
+            asset?.kind === "video"
+              ? btn("Cut end card", "trash", busy("Checking the ending…", async () => {
+                  const r = await runCommand(s, { op: "clip.dropOutro", id, keep: "stretch" });
+                  if (!r.ok) throw new Error(r.error);
+                  const res = r.result as { changed: boolean; contentEnd: number };
+                  toast(res.changed ? `End card removed (footage ends at ${res.contentEnd}s); clip length kept` : "No end card found", res.changed ? "ok" : "info");
+                }), "ghost")
+              : null,
+          ),
+          ...regs.flatMap((r, i) => [
+            h("h3", {}, `Area ${i + 1}`),
+            select("Method", [["auto", "Auto (clone + blend)"], ["clone", "Clone texture"], ["fill", "Smooth fill"], ["blur", "Blur"], ["pixelate", "Pixelate"]] as const, r.mode, (v) => set("remove mode", (cc) => (cc.remove!.find((q) => q.id === r.id)!.mode = v))),
+            select("Shape", [["rect", "Box"], ["ellipse", "Oval"]] as const, r.shape, (v) => set("remove shape", (cc) => (cc.remove!.find((q) => q.id === r.id)!.shape = v))),
+            ...(["x", "y", "w", "h", "feather"] as const).map((k) =>
+              slider({ x: "Across", y: "Down", w: "Width", h: "Height", feather: "Soft edge" }[k], 0, k === "feather" ? 0.5 : 1, 0.002, r[k], (v) =>
+                set("remove area", (cc) => {
+                  const q = cc.remove!.find((z) => z.id === r.id)!;
+                  q[k] = v;
+                  if (k !== "feather") q.offset = undefined;
+                }),
+              ).el,
+            ),
+            h("div", { class: "row wrap" },
+              btn("Only from here", "next", () => set("remove from", (cc) => (cc.remove!.find((q) => q.id === r.id)!.from = srcNow()), true), "ghost"),
+              btn("Only until here", "next", () => set("remove until", (cc) => (cc.remove!.find((q) => q.id === r.id)!.to = srcNow()), true), "ghost"),
+              btn("Follow: key position here", "key", () =>
+                set("remove track", (cc) => {
+                  const q = cc.remove!.find((z) => z.id === r.id)!;
+                  const t = srcNow();
+                  for (const [kk, v] of [["xKeys", q.x], ["yKeys", q.y]] as const) {
+                    const list = (q[kk] ??= []).filter((k2) => Math.abs(k2.t - t) > 1e-3);
+                    list.push({ t, v, ease: "inOut" });
+                    q[kk] = list.sort((a2, b2) => a2.t - b2.t);
+                  }
+                }, true), "ghost"),
+              btn("Delete", "trash", () => set("remove delete", (cc) => {
+                cc.remove = cc.remove!.filter((q) => q.id !== r.id);
+                if (!cc.remove.length) cc.remove = undefined;
+              }, true), "ghost"),
+            ),
+          ]),
+        ];
+      }
       case "text": {
         const st = c.text!;
         const upd = (patch: Partial<TextStyle>, redraw = false) => set("text", (cc) => Object.assign(cc.text!, patch), redraw);
@@ -318,7 +391,7 @@ function clampTime(s: Studio, c: Clip): number {
 }
 
 function label(t: InspectorTab): string {
-  return { edit: "Edit", transform: "Motion", crop: "Crop", color: "Colour", effects: "Effects", text: "Text", transition: "Transition" }[t];
+  return { edit: "Edit", transform: "Motion", crop: "Crop", color: "Colour", effects: "Effects", remove: "Remove", text: "Text", transition: "Transition" }[t];
 }
 
 function cap(s: string): string {

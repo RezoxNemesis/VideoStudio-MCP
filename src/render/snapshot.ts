@@ -9,12 +9,34 @@ import { ctx2d, makeCanvas, preloadFills, renderScene } from "../anim/render";
 
 type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
 
-async function toJpeg(c: AnyCanvas, quality = 0.72): Promise<string> {
+export async function toJpeg(c: AnyCanvas, quality = 0.72): Promise<string> {
   const blob = "convertToBlob" in c ? await c.convertToBlob({ type: "image/jpeg", quality }) : await new Promise<Blob>((r) => (c as HTMLCanvasElement).toBlob((b) => r(b!), "image/jpeg", quality));
-  const buf = new Uint8Array(await blob.arrayBuffer());
+  const buf = stripIcc(new Uint8Array(await blob.arrayBuffer()));
   let s = "";
   for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
   return `data:image/jpeg;base64,${btoa(s)}`;
+}
+
+/** Drop the embedded colour profile (APP2/ICC, ~0.6 KB) so snapshots sent to the agent stay small. */
+export function stripIcc(b: Uint8Array): Uint8Array {
+  if (b[0] !== 0xff || b[1] !== 0xd8) return b;
+  const parts: Uint8Array[] = [b.subarray(0, 2)];
+  let i = 2;
+  while (i + 4 <= b.length && b[i] === 0xff) {
+    const m = b[i + 1]!;
+    if (m === 0xda) break; // start of scan: the rest is image data
+    const len = (b[i + 2]! << 8) | b[i + 3]!;
+    if (m !== 0xe2) parts.push(b.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  parts.push(b.subarray(i));
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
 }
 
 function fit(w: number, h: number, max: number): [number, number] {
