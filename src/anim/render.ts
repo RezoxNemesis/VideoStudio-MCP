@@ -2,6 +2,7 @@
 import { valueAt } from "../core/keyframes";
 import { worldMatrix } from "./rig";
 import { drawBackdrop, drawPuppet } from "./puppet";
+import { drawProc } from "./proc";
 import { TRANSFORM_DEFAULTS, exposedKey, type AnimLayer, type AnimScene, type BlendMode, type Cel, type Stroke } from "../core/model";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -236,6 +237,83 @@ export function drawCel(c: Ctx, cel: Cel, onReady?: () => void): void {
 
 export type ImageLookup = (assetId: string) => CanvasImageSource | null;
 
+function strokeLength(st: Stroke): number {
+  let n = 0;
+  for (let i = 3; i < st.pts.length; i += 3) n += Math.hypot(st.pts[i]! - st.pts[i - 3]!, st.pts[i + 1]! - st.pts[i - 2]!);
+  return Math.max(1, n);
+}
+
+/**
+ * Write-on animation: strokes appear in drawing order as if being drawn, fills fade in once their outline is
+ * done. With `sketch`, light construction lines are roughed in first and fade away under the final ink.
+ */
+export function drawCelReveal(c: Ctx, cel: Cel, progress: number, sketch: boolean): void {
+  const p = Math.max(0, Math.min(1, progress));
+  if (p >= 1 && !sketch) return drawCel(c, cel);
+  drawFills(c, cel);
+  const lens = cel.strokes.map(strokeLength);
+  const total = lens.reduce((a, b) => a + b, 0);
+  if (sketch) {
+    // Construction pass: quick, rough, light blue; fades as the ink lands.
+    const sp = Math.min(1, p / 0.4);
+    const fade = 1 - Math.max(0, (p - 0.75) / 0.25);
+    let acc = 0;
+    c.save();
+    c.globalAlpha = 0.55 * fade;
+    c.strokeStyle = "#6f8fc9";
+    c.lineCap = "round";
+    c.lineJoin = "round";
+    cel.strokes.forEach((st, i) => {
+      const share = Math.max(0, Math.min(1, (sp * total - acc) / lens[i]!));
+      acc += lens[i]!;
+      if (share <= 0) return;
+      const n = Math.max(2, Math.floor((st.pts.length / 3) * share));
+      for (const off of [-1, 1]) {
+        c.lineWidth = Math.max(1, st.size * 0.18);
+        c.beginPath();
+        for (let k = 0; k < n; k += 2) {
+          const j = Math.sin(k * 1.7 + i + off) * 2.2 * off;
+          const x = st.pts[k * 3]! + j;
+          const y = st.pts[k * 3 + 1]! - j;
+          if (k) c.lineTo(x, y);
+          else c.moveTo(x, y);
+        }
+        c.stroke();
+      }
+    });
+    c.restore();
+  }
+  const ip = sketch ? Math.max(0, (p - 0.35) / 0.6) : p;
+  let acc = 0;
+  cel.strokes.forEach((st, i) => {
+    const share = Math.max(0, Math.min(1, (ip * total - acc) / lens[i]!));
+    acc += lens[i]!;
+    if (share <= 0) return;
+    if (share >= 1) return drawStroke(c, st);
+    const n = Math.max(2, Math.floor((st.pts.length / 3) * share));
+    const part: Stroke = { ...st, pts: st.pts.slice(0, n * 3), closed: false, fill: undefined };
+    if (st.closed && st.fill) {
+      // Outline being traced: draw it as a pen line in the line colour.
+      c.save();
+      c.strokeStyle = st.color;
+      c.lineWidth = Math.max(1, st.size);
+      c.lineCap = "round";
+      c.lineJoin = "round";
+      c.beginPath();
+      for (let k = 0; k < n; k++) (k ? c.lineTo : c.moveTo).call(c, st.pts[k * 3]!, st.pts[k * 3 + 1]!);
+      c.stroke();
+      c.restore();
+    } else drawStroke(c, part);
+    // Pen tip glint.
+    c.save();
+    c.fillStyle = st.color;
+    c.beginPath();
+    c.arc(st.pts[(n - 1) * 3]!, st.pts[(n - 1) * 3 + 1]!, Math.max(2, st.size * 0.6), 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+  });
+}
+
 export interface SceneRenderOptions {
   /** Output scale relative to scene pixels. */
   scale?: number;
@@ -282,7 +360,7 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
   const layer = scratchCanvas(W, H);
   const lc = ctx2d(layer);
   const drawLayerAt = (l: AnimLayer, fr: number, tint: string | null, alpha: number, cel?: Cel) => {
-    const proc = l.kind === "puppet" || l.kind === "backdrop";
+    const proc = l.kind === "puppet" || l.kind === "backdrop" || l.kind === "proc";
     const key = exposedKey(l, fr);
     const use = cel ?? (key ? l.cels[key] : undefined);
     if (!use && !proc) return;
@@ -294,7 +372,11 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
     layerTransform(lc, l, fr, s);
     if (l.kind === "puppet") drawPuppet(lc, l, s, fr);
     else if (l.kind === "backdrop") drawBackdrop(lc, l, s, fr);
-    if (use) drawCel(lc, use, o.onReady);
+    else if (l.kind === "proc") drawProc(lc, l, s, fr, o.images);
+    if (use) {
+      if (l.drawOn && !cel) drawCelReveal(lc, use, (fr - l.drawOn.start) / Math.max(1, l.drawOn.dur), !!l.drawOn.sketch);
+      else drawCel(lc, use, o.onReady);
+    }
     if (tint) {
       lc.setTransform(1, 0, 0, 1, 0, 0);
       lc.globalCompositeOperation = "source-atop";

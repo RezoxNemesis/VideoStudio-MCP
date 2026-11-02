@@ -99,6 +99,22 @@ export class AnimateView {
     this.stop();
   }
 
+  /** Live mode: show a scene at a frame (the strip scrolls there and the canvas redraws). */
+  showFrame(sceneId: string, frame: number): void {
+    if (this.sceneId !== sceneId) this.open(sceneId);
+    const sc = this.scene();
+    if (!sc) return;
+    this.frame = Math.max(0, Math.min(sc.frames - 1, Math.round(frame)));
+    this.drawHeader();
+    this.drawStrip();
+    this.queue();
+  }
+
+  /** Live mode: which scene is on screen. */
+  get currentScene(): string | null {
+    return this.sceneId;
+  }
+
   private scene(): AnimScene | undefined {
     return this.s.project.scenes.find((x) => x.id === this.sceneId);
   }
@@ -510,7 +526,8 @@ export class AnimateView {
     );
     this.strip.replaceChildren(controls, cells);
     const on = cells.children[this.frame] as HTMLElement | undefined;
-    on?.scrollIntoView({ block: "nearest", inline: "center" });
+    // Centre the current frame inside the strip only (scrollIntoView would also scroll the page sideways).
+    if (on) requestAnimationFrame(() => (cells.scrollLeft = on.offsetLeft - cells.clientWidth / 2 + on.offsetWidth / 2));
   }
 
   goto(f: number): void {

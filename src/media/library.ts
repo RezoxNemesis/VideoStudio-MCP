@@ -56,6 +56,31 @@ async function probe(blob: Blob, kind: AssetKind): Promise<{ duration: number; w
   }
 }
 
+/** Loudness envelope (0..1) of an asset's speech for caption timing: VolTune lip data, or decoded audio. */
+export async function speechEnvelope(a: Asset): Promise<{ env: number[]; fps: number }> {
+  if (a.mouth?.length) return { env: a.mouth, fps: 30 };
+  const { getBlob } = await import("../core/storage");
+  const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(await getBlob(a.ref)) });
+  try {
+    const tr = await input.getPrimaryAudioTrack();
+    if (!tr) throw new Error(`"${a.name}" has no audio.`);
+    const duration = a.duration || (await input.computeDuration());
+    const fps = Math.max(1, Math.min(50, Math.floor(6000 / Math.max(1, duration))));
+    const peaks = await computePeaks(tr, duration);
+    const sorted = [...peaks].sort((x, y) => x - y);
+    const top = sorted[Math.floor(sorted.length * 0.95)] || 1;
+    // Smooth over ~60 ms so syllables merge into words.
+    const env = peaks.map((_, i) => {
+      let m = 0;
+      for (let k = -1; k <= 1; k++) m = Math.max(m, peaks[i + k] ?? 0);
+      return Math.min(1, m / top);
+    });
+    return { env, fps };
+  } finally {
+    input.dispose();
+  }
+}
+
 /** Waveform peaks at up to 50 per second (capped at 6000 values). */
 async function computePeaks(track: InputAudioTrack, duration: number): Promise<number[]> {
   const rate = Math.max(1, Math.min(50, Math.floor(6000 / Math.max(1, duration))));

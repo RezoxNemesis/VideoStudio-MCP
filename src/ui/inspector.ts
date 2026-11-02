@@ -20,9 +20,9 @@ const FONTS: [string, string][] = [
   ["'Comic Sans MS', 'Comic Neue', cursive", "Comic"], ["'Courier New', monospace", "Mono"], ["system-ui, sans-serif", "System"],
 ];
 
-export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
+export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: () => void } | null {
   const id = s.selection;
-  if (!id || !findClip(s.project, id)) return;
+  if (!id || !findClip(s.project, id)) return null;
   const tabs = h("nav", { class: "tabs" });
   const body = h("div", { class: "insp-body" });
   const root = h("div", { class: "inspector" }, tabs, body);
@@ -306,6 +306,7 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): void {
   offs.push(s.on("time", syncKeys));
   offs.push(s.on("change", () => (clip() ? syncKeys() : sh.close())));
   draw();
+  return sh;
 }
 
 function clampTime(s: Studio, c: Clip): number {

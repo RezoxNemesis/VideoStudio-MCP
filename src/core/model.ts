@@ -284,7 +284,7 @@ export interface Cel {
 export interface AnimLayer {
   id: string;
   name: string;
-  kind: "draw" | "reference" | "puppet" | "backdrop";
+  kind: "draw" | "reference" | "puppet" | "backdrop" | "proc";
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -310,6 +310,10 @@ export interface AnimLayer {
   backdrop?: import("../anim/puppet").BackdropSpec;
   /** Animation channels for puppets/backdrops, keyed by frame. */
   chan?: Record<string, Animatable>;
+  /** Procedural element (kind "proc"): captions, kinetic type, motion graphics, FX, overlays, collage. */
+  proc?: import("../anim/proc").ProcSpec;
+  /** Draw-on: strokes write themselves on between these frames; sketch adds construction lines first. */
+  drawOn?: { start: number; dur: number; sketch?: boolean };
 }
 
 export interface AnimScene {

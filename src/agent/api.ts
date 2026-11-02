@@ -11,11 +11,14 @@ import * as rig from "../anim/rig";
 import * as puppet from "../anim/puppet";
 import { flattenPath } from "../anim/svgpath";
 import { ambience, compose, type Ambience, type Mood } from "../audio/compose";
+import * as proc from "../anim/proc";
+import { speechEnvelope } from "../media/library";
+import { newScene, newTrack, type BlendMode, type Clip } from "../core/model";
 import { exposedKey, findAsset, projectDuration, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
 import { fetchToBlob, importBlob } from "../media/library";
 import { ExportJob, type ExportOptions } from "../render/export";
 import { fetchInbox, listInbox } from "./remote";
-import { assetThumb, contactSheet, frameSnapshot, sceneSnapshot } from "../render/snapshot";
+import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot } from "../render/snapshot";
 import { analyseBeats, beatCut } from "../app/autoedit";
 
 export type Command = { op: string } & Record<string, unknown>;
@@ -133,6 +136,47 @@ function shapePts(shape: string, x: number, y: number, w: number, h: number): nu
 }
 
 let activeExport: ExportJob | null = null;
+
+
+/* ------------------- procedural clips (captions, mograph, overlays…) ------------------- */
+
+/** The video track just above everything visible in [start, start+dur) (creates one on top if needed). */
+function topTrack(p: Project, start: number, dur: number): string {
+  const vids = p.tracks.filter((t) => t.kind === "video");
+  const busy = (t: (typeof vids)[number]) => t.clips.some((c) => c.start < start + dur - 1e-6 && c.start + c.dur > start + 1e-6);
+  const highest = vids.findIndex(busy); // tracks are listed top first
+  if (highest < 0) return ops.trackFor(p, "video", start, dur).id;
+  for (let i = highest - 1; i >= 0; i--) if (!busy(vids[i]!) && !vids[i]!.locked) return vids[i]!.id;
+  const t = newTrack("video", `V${vids.length + 1}`);
+  p.tracks.unshift(t);
+  return t.id;
+}
+
+function procClip(p: Project, spec: proc.ProcSpec, start: number, dur: number, o: { name?: string; blend?: BlendMode; opacity?: number; trackId?: string; bottom?: boolean } = {}): { id: string; sceneId: string } {
+  const sc = newScene(o.name ?? spec.type, p.width, p.height, p.fps);
+  sc.background = "";
+  sc.frames = Math.max(1, Math.round(dur * p.fps));
+  sc.layers = [];
+  const l = anim.addLayer(sc, o.name ?? spec.type, "proc");
+  l.proc = spec;
+  p.scenes.push(sc);
+  const trackId = o.trackId ?? (o.bottom ? ops.trackFor(p, "video", start, dur).id : topTrack(p, start, dur));
+  const clip = ops.addClip(p, { sceneId: sc.id, start, dur, trackId });
+  const patch: Record<string, unknown> = { name: o.name ?? spec.type };
+  if (o.blend) patch.blend = o.blend;
+  if (o.opacity !== undefined) patch.transform = { opacity: o.opacity };
+  ops.patchClip(p, clip.id, patch);
+  return { id: clip.id, sceneId: sc.id };
+}
+
+function specFrom(a: Args, type: proc.ProcSpec["type"], style: string): proc.ProcSpec {
+  const sp: proc.ProcSpec = { type, style };
+  for (const k of ["text", "color", "accent", "bg", "position", "assetId", "enter"] as const) if (a.optStr(k) !== undefined) (sp as unknown as Record<string, unknown>)[k] = a.str(k);
+  for (const k of ["x", "y", "size", "w", "rot", "maxWords", "value", "seed", "boil"] as const) if (a.optNum(k) !== undefined) (sp as unknown as Record<string, unknown>)[k] = a.num(k);
+  if (a.any("uppercase") !== undefined) sp.uppercase = a.bool("uppercase");
+  if (Array.isArray(a.any("palette"))) sp.palette = a.any("palette") as string[];
+  return sp;
+}
 
 const HANDLERS: Record<string, { help: string; run: Handler }> = {
   help: { help: "List every command.", run: () => Object.entries(HANDLERS).map(([op, h]) => `${op}: ${h.help}`) },
@@ -741,6 +785,183 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     },
   },
 
+  /* ------------------------------- motion toolkit ------------------------------- */
+  "media.fromScene": {
+    help: "{sceneId, frame?=0, crop?:[x,y,w,h], background?=true, name?} Turn an animation frame into an image asset (stills, collage pieces, thumbnails).",
+    run: async (s, a) => {
+      const cr = a.any("crop") as number[] | undefined;
+      const blob = await scenePng(s.project, s.pool, a.str("sceneId"), Math.round(a.num("frame", 0)), Array.isArray(cr) && cr.length === 4 ? { x: cr[0]!, y: cr[1]!, w: cr[2]!, h: cr[3]! } : undefined, a.bool("background", true));
+      return await s.mutateAsync("still from scene", async (p) => {
+        const asset = await importBlob(p, blob, `${a.str("name", "Still")}.png`, "agent");
+        return { assetId: asset.id, width: asset.width, height: asset.height };
+      });
+    },
+  },
+  "captions.add": {
+    help: `{text (use *word* for emphasis), assetId? (voice/audio/video to sync to), start?, end?, style?: ${proc.CAPTION_STYLES.join("|")}, position?: bottom|center|top, size?, color?, accent?, maxWords?, uppercase?} Word-by-word animated captions timed to the speech.`,
+    run: async (s, a) => {
+      const text = a.str("text");
+      const asset = a.optStr("assetId") ? findAsset(s.project, a.str("assetId")) : undefined;
+      if (a.optStr("assetId") && !asset) throw new ops.OpError("No such asset.");
+      let start = a.optNum("start");
+      if (start === undefined && asset) {
+        const c = s.project.tracks.flatMap((t) => t.clips).find((x) => x.assetId === asset.id);
+        start = c ? c.start : 0;
+      }
+      start ??= 0;
+      const words0 = text.split(/\s+/).filter(Boolean).length;
+      const end = a.optNum("end") ?? (asset?.duration ? start + asset.duration : start + Math.max(1.2, words0 * 0.38));
+      let envelope: number[] | undefined;
+      let envFps = 30;
+      if (asset) {
+        const e = await speechEnvelope(asset).catch(() => null);
+        if (e) {
+          envelope = e.env;
+          envFps = e.fps;
+        }
+      }
+      const words = proc.timeWords(text, 0, end - start, envelope, envFps);
+      const spec = specFrom(a, "captions", a.str("style", "pop"));
+      spec.words = words;
+      return s.mutate("captions", (p) => ({ ...procClip(p, spec, start!, end - start!, { name: "Captions" }), words: words.length }));
+    },
+  },
+  "kinetic.add": {
+    help: `{text (lines split by / or newline), style?: ${proc.KINETIC_STYLES.join("|")}, start?, dur?=2.5, bg?, color?, accent?, palette?} Big kinetic typography.`,
+    run: (s, a) => s.mutate("kinetic type", (p) => procClip(p, specFrom(a, "kinetic", a.str("style", "stretch")), a.num("start", s.time), a.num("dur", 2.5), { name: "Kinetic type" })),
+  },
+  "mograph.add": {
+    help: `{type: ${proc.MOGRAPH_TYPES.join("|")}, start?, dur?=3, x?, y? (0..1), size? (0..1), palette?, bg?, value?} Motion-design element.`,
+    run: (s, a) => s.mutate("motion graphic", (p) => procClip(p, specFrom(a, "mograph", a.str("type")), a.num("start", s.time), a.num("dur", 3), { name: `Mograph ${a.str("type")}` })),
+  },
+  "fx.add": {
+    help: `{type: ${proc.FX_TYPES.join("|")}, start?, dur?=2, x?, y? (0..1), size?, color? (ink), accent? (fill)} Hand-drawn effect animated on twos.`,
+    run: (s, a) => s.mutate("hand-drawn fx", (p) => procClip(p, specFrom(a, "fx", a.str("type")), a.num("start", s.time), a.num("dur", 2), { name: `FX ${a.str("type")}` })),
+  },
+  "overlay.add": {
+    help: `{type: ${proc.OVERLAY_TYPES.join("|")}, start?, dur?=2, opacity?, blend?, color?, y?} Film overlays: light leak, film burn, dust & scratches, VHS, red stripe wipe, paper texture.`,
+    run: (s, a) => {
+      const type = a.str("type");
+      const blend = (a.optStr("blend") as BlendMode | undefined) ?? (type === "lightLeak" || type === "filmBurn" ? "screen" : type === "paper" ? "multiply" : "normal");
+      return s.mutate("overlay", (p) => procClip(p, specFrom(a, "overlay", type), a.num("start", s.time), a.num("dur", 2), { name: `Overlay ${type}`, blend, opacity: a.optNum("opacity") }));
+    },
+  },
+  "transition.overlay": {
+    help: "{at (cut time), type?: stripe|filmBurn|lightLeak, dur?=0.9, color?} A transition overlay centred on a cut.",
+    run: (s, a) => {
+      const type = a.str("type", "stripe");
+      const dur = a.num("dur", 0.9);
+      const blend: BlendMode = type === "stripe" ? "normal" : "screen";
+      return s.mutate("transition overlay", (p) => procClip(p, specFrom(a, "overlay", type), Math.max(0, a.num("at") - dur / 2), dur, { name: `Transition ${type}`, blend }));
+    },
+  },
+  "collage.add": {
+    help: "{assetId (image), start?, dur?=3, x?, y? (0..1), w? (0..1 of width), rot? (deg), enter?: drop|slide|pop|none, boil? (stop-motion fps, default 8)} Paper-cut photo: torn edges, white border, shadow, stop-motion jitter.",
+    run: (s, a) => {
+      if (findAsset(s.project, a.str("assetId"))?.kind !== "image") throw new ops.OpError("collage.add needs an image asset.");
+      return s.mutate("collage photo", (p) => procClip(p, specFrom(a, "cutout", "photo"), a.num("start", s.time), a.num("dur", 3), { name: "Cutout" }));
+    },
+  },
+  "collage.label": {
+    help: "{text, start?, dur?=2, x?, y?, size?, bg?, color?, rot?, enter?} Torn-paper label.",
+    run: (s, a) => s.mutate("label", (p) => procClip(p, specFrom(a, "label", "torn"), a.num("start", s.time), a.num("dur", 2), { name: `Label ${a.str("text").slice(0, 16)}` })),
+  },
+  "collage.paper": {
+    help: `{tone?: ${proc.PAPER_TONES.join("|")}, start?, dur?, trackId?} Paper / newspaper background (goes on the lowest free track).`,
+    run: (s, a) => s.mutate("paper", (p) => procClip(p, specFrom(a, "paper", a.str("tone", "cream")), a.num("start", 0), a.num("dur", Math.max(3, projectDuration(p))), { name: "Paper", bottom: true, trackId: a.optStr("trackId") })),
+  },
+  "clip.punch": {
+    help: "{id, at: seconds | [seconds...], amount?=1.18, dur?=0.35} Punch-in zooms (snap in, ease back).",
+    run: (s, a) =>
+      s.mutate("punch zoom", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        const at = a.any("at");
+        const times = (Array.isArray(at) ? at : [at]).map(Number).filter((x) => Number.isFinite(x));
+        const amt = a.num("amount", 1.18);
+        const d = a.num("dur", 0.35);
+        const base = typeof c.transform.scale === "number" ? c.transform.scale : 1;
+        for (const t of times) {
+          if (t < c.start || t > c.start + c.dur) continue;
+          ops.keyframe(p, c.id, "scale", Math.max(c.start, t - 0.001), base, "hold", 1);
+          ops.keyframe(p, c.id, "scale", t, base * amt, "out", 1);
+          ops.keyframe(p, c.id, "scale", Math.min(c.start + c.dur, t + d), base, "inOut", 1);
+        }
+        return { punches: times.length };
+      }),
+  },
+  "edit.autoPunch": {
+    help: "{id, musicId? (audio asset), every?=4 (beats), amount?=1.15} Punch zooms on the music's beats.",
+    run: async (s, a) => {
+      const musicId = a.optStr("musicId") ?? s.project.assets.find((x) => x.kind === "audio" && x.createdBy !== "voice")?.id;
+      if (!musicId) throw new ops.OpError("No music to follow: pass musicId.");
+      const info = await analyseBeats(s, musicId);
+      const mClip = s.project.tracks.flatMap((t) => t.clips).find((x) => x.assetId === musicId);
+      const off = mClip ? mClip.start - mClip.in : 0;
+      const c = ops.getClip(s.project, a.str("id"));
+      const every = Math.max(1, Math.round(a.num("every", 4)));
+      const times = info.beats.filter((_, i) => i % every === 0).map((b) => b + off).filter((t) => t > c.start + 0.1 && t < c.start + c.dur - 0.2);
+      return await runCommand(s, { op: "clip.punch", id: c.id, at: times, amount: a.num("amount", 1.15) });
+    },
+  },
+  "anim.drawOn": {
+    help: "{sceneId, layerId? (default every drawing layer), start? (s)=0, dur? (s)=2, sketch?=false} Line art draws itself on; sketch roughs in construction lines first.",
+    run: (s, a) =>
+      s.mutate("draw on", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const start = Math.round(a.num("start", 0) * sc.fps);
+        const dur = Math.max(1, Math.round(a.num("dur", 2) * sc.fps));
+        const ls = a.optStr("layerId") ? [anim.getLayer(sc, a.str("layerId"))] : sc.layers.filter((l) => l.kind === "draw");
+        for (const l of ls) l.drawOn = { start, dur, sketch: a.bool("sketch") };
+        sc.frames = Math.max(sc.frames, start + dur + 1);
+        return { layers: ls.length };
+      }),
+  },
+  "layout.compare": {
+    help: '{a, b (clip ids), labels?: ["RAW","EDITED"], bg?="#ffffff", title?, gap?=40} Side-by-side compare (Raw vs Edited, "$5 edit" vs "our work").',
+    run: (s, a) =>
+      s.mutate("compare layout", (p) => {
+        const A = ops.getClip(p, a.str("a"));
+        const B = ops.getClip(p, a.str("b"));
+        const labels = (a.any("labels") as string[] | undefined) ?? ["RAW", "EDITED"];
+        const start = Math.min(A.start, B.start);
+        const dur = Math.max(A.start + A.dur, B.start + B.dur) - start;
+        const W = p.width;
+        const H = p.height;
+        const gap = a.num("gap", 40);
+        const portrait = H > W;
+        // Each clip scaled to fit half the frame (side by side in landscape, small-left/big-right in portrait).
+        const place = (c: Clip, side: -1 | 1, k: number, dy: number) => {
+          ops.patchClip(p, c.id, { transform: { scale: k, x: side * (portrait ? W * 0.23 : W / 4 + gap / 4) + (portrait && side === -1 ? -W * 0.02 : 0), y: dy } });
+        };
+        place(A, -1, portrait ? 0.36 : 0.46, portrait ? H * 0.06 : 0);
+        place(B, 1, portrait ? 0.52 : 0.46, 0);
+        const bg = ops.addClip(p, { kind: "color", start, dur, trackId: ops.trackFor(p, "video", start, dur).id });
+        ops.patchClip(p, bg.id, { color: a.str("bg", "#ffffff"), name: "Compare background" });
+        // Background must sit under both clips: move it to the bottom track.
+        const bt = p.tracks.find((t) => t.clips.includes(bg))!;
+        bt.clips = bt.clips.filter((x) => x !== bg);
+        let bottom = [...p.tracks].reverse().find((t) => t.kind === "video" && !t.clips.some((c) => c.start < start + dur && c.start + c.dur > start));
+        if (!bottom) {
+          bottom = newTrack("video", "BG");
+          const lastVideo = p.tracks.map((t) => t.kind).lastIndexOf("video");
+          p.tracks.splice(lastVideo + 1, 0, bottom);
+        }
+        bottom.clips.push(bg);
+        const ink = a.str("bg", "#ffffff").toLowerCase() === "#ffffff" ? "#111111" : "#ffffff";
+        const ids = labels.slice(0, 2).map((txt, i) => {
+          const tc = ops.addClip(p, { text: txt, start, dur, trackId: topTrack(p, start, dur) });
+          ops.patchClip(p, tc.id, { text: { size: portrait ? 64 : 54, weight: 800, color: ink, stroke: "", strokeWidth: 0, shadow: 0 }, transform: { x: (i ? 1 : -1) * (portrait ? W * 0.23 : W / 4), y: portrait ? (i ? -H * 0.28 : -H * 0.12) : -H * 0.4 } });
+          return tc.id;
+        });
+        if (a.optStr("title")) {
+          const tc = ops.addClip(p, { text: a.str("title"), start, dur, trackId: topTrack(p, start, dur) });
+          ops.patchClip(p, tc.id, { text: { size: 88, weight: 800, color: ink, stroke: "", strokeWidth: 0, shadow: 0 }, transform: { y: -H * 0.4 } });
+          ids.push(tc.id);
+        }
+        return { background: bg.id, labels: ids };
+      }),
+  },
+
   "music.compose": {
     help: `{seconds, mood?: ${["melancholy", "hopeful", "dark", "tense", "calm", "epic"].join("|")}, lift? (s where the score brightens), bpm?, root? (MIDI, 57=A), seed?, start?=0, volume?=0.8, name?} Compose an original soundtrack on the phone and put it on the timeline.`,
     run: async (s, a) => {
@@ -792,6 +1013,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       try {
         const r = await job.run();
         s.setStatus(`Saved ${r.name}`);
+        agentEvents.onRender?.({ name: r.name, path: (r as { path?: string }).path, seconds: r.seconds });
         const { blob: _b, ...rest } = r;
         return rest;
       } finally {
@@ -801,6 +1023,22 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
   },
   "render.cancel": { help: "", run: () => (activeExport?.cancel(), true) },
 };
+
+/** Live mode hooks: the app shows each command as it runs (see ui/live.ts). */
+export interface LiveHooks {
+  batchStart(n: number, depth: number): void;
+  batchEnd(depth: number): void;
+  before(op: string, args: Record<string, unknown>, depth: number): Promise<void>;
+  after(op: string, args: Record<string, unknown>, result: CommandResult, depth: number): Promise<void>;
+}
+export const STOPPED = "Stopped by you in the app.";
+/** App-level events other parts of the app listen to (notifications). */
+export const agentEvents: { onRender?: (r: { name: string; path?: string; seconds: number }) => void } = {};
+let live: LiveHooks | null = null;
+let depth = 0;
+export function setLiveHooks(h: LiveHooks | null): void {
+  live = h;
+}
 
 /** Replace "$N.path" strings with values from earlier results. */
 function resolveRefs(v: unknown, results: CommandResult[]): unknown {
@@ -823,23 +1061,42 @@ export async function runCommand(s: Studio, cmd: Command, previous: CommandResul
   const op = String(cmd.op ?? "");
   const h = HANDLERS[op];
   if (!h) return { ok: false, op, error: `Unknown op "${op}". Run {"op":"help"}.` };
+  let args: Record<string, unknown> = {};
   try {
-    const args = resolveRefs(cmd, previous) as Record<string, unknown>;
-    const result = await h.run(s, new Args(args));
-    return { ok: true, op, result: result === undefined ? true : result };
+    args = resolveRefs(cmd, previous) as Record<string, unknown>;
+    if (live) await live.before(op, args, depth);
+    depth++;
+    let result: unknown;
+    try {
+      result = await h.run(s, new Args(args));
+    } finally {
+      depth--;
+    }
+    const r: CommandResult = { ok: true, op, result: result === undefined ? true : result };
+    if (live) await live.after(op, args, r, depth).catch(() => {});
+    return r;
   } catch (e) {
-    return { ok: false, op, error: e instanceof Error ? e.message : String(e) };
+    const r: CommandResult = { ok: false, op, error: e instanceof Error ? e.message : String(e) };
+    if (live && r.error !== STOPPED) await live.after(op, args, r, depth).catch(() => {});
+    return r;
   }
 }
 
 /** Run commands in order. Stops at the first error unless `continueOnError`. */
 export async function runBatch(s: Studio, cmds: Command[], continueOnError = false, onProgress?: (done: number, op: string) => void): Promise<CommandResult[]> {
   const results: CommandResult[] = [];
-  for (const c of cmds) {
-    onProgress?.(results.length, String(c.op ?? ""));
-    const r = await runCommand(s, c, results);
-    results.push(r);
-    if (!r.ok && !continueOnError) break;
+  const d = depth;
+  live?.batchStart(cmds.length, d);
+  try {
+    for (const c of cmds) {
+      onProgress?.(results.length, String(c.op ?? ""));
+      const r = await runCommand(s, c, results);
+      results.push(r);
+      if (r.error === STOPPED) break;
+      if (!r.ok && !continueOnError) break;
+    }
+  } finally {
+    live?.batchEnd(d);
   }
   return results;
 }

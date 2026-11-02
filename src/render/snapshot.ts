@@ -102,3 +102,17 @@ export async function sceneSnapshot(p: Project, pool: MediaPool, sceneId: string
   renderScene(ctx2d(c), s, frame, { scale: k, images: (id) => pool.imageNow(id) });
   return { jpeg: await toJpeg(c) };
 }
+
+/** Render a scene frame as a PNG blob (transparent where the scene is), optionally cropped to a box in scene px. */
+export async function scenePng(p: Project, pool: MediaPool, sceneId: string, frame: number, crop?: { x: number; y: number; w: number; h: number }, background = true): Promise<Blob> {
+  const s = findScene(p, sceneId);
+  if (!s) throw new Error(`No scene ${sceneId}`);
+  await preloadFills(s);
+  const full = makeCanvas(s.width, s.height);
+  renderScene(ctx2d(full), s, frame, { scale: 1, images: (id) => pool.imageNow(id), background });
+  const box = crop ?? { x: 0, y: 0, w: s.width, h: s.height };
+  const out = makeCanvas(Math.max(1, Math.round(box.w)), Math.max(1, Math.round(box.h)));
+  ctx2d(out).drawImage(full as CanvasImageSource, box.x, box.y, box.w, box.h, 0, 0, out.width, out.height);
+  if ("convertToBlob" in out) return await out.convertToBlob({ type: "image/png" });
+  return await new Promise<Blob>((res, rej) => (out as HTMLCanvasElement).toBlob((b) => (b ? res(b) : rej(new Error("PNG failed"))), "image/png"));
+}

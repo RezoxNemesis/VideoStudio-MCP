@@ -246,6 +246,14 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
     case "anim": {
       const s = findScene(p, d.sceneId);
       if (!s) return null;
+      // Collage photos inside scenes: make sure they are decoded before an export frame is drawn.
+      if (o.wait)
+        for (const l of s.layers) {
+          const id = l.proc?.assetId ?? (l.kind === "reference" ? l.assetId : undefined);
+          if (!id || pool.imageNow(id)) continue;
+          const a = findAsset(p, id);
+          if (a?.kind === "image") await pool.image(a);
+        }
       const frame = frameAt(s, d.srcTime, true);
       const maxSide = o.purpose === "preview" ? (o.previewMax ?? 960) : Math.max(o.outW, o.outH);
       const sk = Math.min(1, maxSide / Math.max(s.width, s.height)) * (o.purpose === "export" ? Math.max(1, o.outH / s.height) : 1);

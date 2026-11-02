@@ -7,6 +7,7 @@ import type { Studio } from "../app/studio";
 import { runBatch, type Command } from "./api";
 import { kvGet, kvSet } from "../core/storage";
 import { keepAwake } from "../native/storage";
+import type { Notifier } from "../native/notify";
 
 export interface RemoteConfig {
   relay: string;
@@ -27,6 +28,9 @@ export class RemoteLink {
   private timer = 0;
   private running = false;
   private awakeOn = false;
+  notifier: Notifier | null = null;
+  private seenFiles = new Set<string>();
+  private lastInboxCheck = 0;
   private abort: AbortController | null = null;
 
   constructor(private readonly studio: Studio) {
@@ -86,6 +90,22 @@ export class RemoteLink {
     this.set("off");
   }
 
+  /** Notify about files that arrived in the relay inbox (checked at most every 30 s). */
+  private async checkInbox() {
+    if (!this.notifier?.settings.enabled || !this.notifier.settings.inbox) return;
+    const now = Date.now();
+    if (now - this.lastInboxCheck < 30_000) return;
+    this.lastInboxCheck = now;
+    try {
+      const files = await listInbox();
+      const fresh = files.filter((f) => f.complete && !this.seenFiles.has(f.id));
+      for (const f of files) this.seenFiles.add(f.id);
+      if (fresh.length && this.seenFiles.size > fresh.length) void this.notifier.send("inbox", "New file for VideoStudio", fresh.length === 1 ? `${fresh[0]!.name} is ready to import` : `${fresh.length} files are ready to import`);
+    } catch {
+      // Inbox is optional.
+    }
+  }
+
   setAwake(on: boolean): void {
     this.config.awake = on;
     void this.save();
@@ -127,6 +147,7 @@ export class RemoteLink {
         for (const job of body.jobs ?? []) {
           const n = job.commands.length;
           this.studio.setStatus(`Agent: running ${n} command${n > 1 ? "s" : ""}…`);
+          void this.notifier?.send("jobStart", "Claude is working", `Running ${n} command${n > 1 ? "s" : ""} in VideoStudio`);
           let lastSent = 0;
           const progress = (done: number, op: string) => {
             const now = Date.now();
@@ -137,13 +158,17 @@ export class RemoteLink {
           const results = await runBatch(this.studio, job.commands, !!job.continueOnError, progress);
           await fetch(`${base}/device/${this.config.key}/result`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, results, state: summaryLite(this.studio) }) });
           this.jobsRun++;
-          this.studio.setStatus(`Agent: ${results.every((r) => r.ok) ? "done" : "finished with an error"}`);
+          const ok = results.every((r) => r.ok);
+          this.studio.setStatus(`Agent: ${ok ? "done" : "finished with an error"}`);
+          const bad = results.find((r) => !r.ok);
+          void this.notifier?.send("jobDone", ok ? "Claude finished" : "Claude stopped with an error", ok ? `${results.length} steps done in “${this.studio.project.name}”` : `${bad?.op}: ${bad?.error ?? ""}`.slice(0, 180));
         }
         next = 0;
       } else {
         throw new Error(`Relay answered ${res.status}`);
       }
       this.lastError = "";
+      void this.checkInbox();
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
         next = 0;

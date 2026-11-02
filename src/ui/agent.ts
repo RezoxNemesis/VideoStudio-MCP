@@ -4,6 +4,8 @@ import { commandList, runBatch, type Command } from "../agent/api";
 import { listInbox, type RemoteLink } from "../agent/remote";
 import { fmtBytes } from "./dom";
 import { btn, h, toast } from "./dom";
+import type { LiveDirector, LivePace } from "./live";
+import type { Notifier, NotifySettings } from "../native/notify";
 
 const EXAMPLES: [string, Command[]][] = [
   [
@@ -37,11 +39,15 @@ export class AgentView {
   private log: HTMLElement;
   private remoteBox: HTMLElement;
   private inbox: HTMLElement;
+  private settingsBox: HTMLElement;
 
   constructor(
     private readonly s: Studio,
     private readonly remote: RemoteLink,
+    private readonly live: LiveDirector,
+    private readonly notifier: Notifier,
   ) {
+    this.settingsBox = h("div", { class: "remote" });
     this.input = h("textarea", { class: "code", rows: 8, spellcheck: "false", "aria-label": "Commands (JSON)" }, JSON.stringify(EXAMPLES[0]![1], null, 1)) as HTMLTextAreaElement;
     this.log = h("pre", { class: "log" });
     this.remoteBox = h("div", { class: "remote" });
@@ -54,6 +60,7 @@ export class AgentView {
         h("h2", {}, "Agent control"),
         h("p", { class: "muted small" }, "Everything in the app is a JSON command. Claude and any AI you link can drive editing, drawing, voices and rendering. No command can open your gallery."),
         this.remoteBox,
+        this.settingsBox,
         this.inbox,
         h("h3", {}, "Run commands"),
         h("div", { class: "chips" }, ...EXAMPLES.map(([name, cmds]) => h("button", { class: "chip", type: "button", onclick: () => (this.input.value = JSON.stringify(cmds, null, 1)) }, name))),
@@ -65,6 +72,7 @@ export class AgentView {
     );
     remote.onState = () => this.drawRemote();
     this.drawRemote();
+    this.drawSettings();
     void this.drawInbox();
   }
 
@@ -109,6 +117,43 @@ export class AgentView {
     const res = await runBatch(this.s, cmds);
     this.log.textContent = `// ${res.filter((r) => r.ok).length}/${cmds.length} ok in ${Math.round(performance.now() - t0)} ms\n${JSON.stringify(res, null, 1)}\n\n${this.log.textContent}`.slice(0, 60_000);
     if (res.some((r) => !r.ok)) toast(res.find((r) => !r.ok)?.error ?? "Error", "error", 5000);
+  }
+
+  private drawSettings() {
+    const L = this.live;
+    const N = this.notifier;
+    const chk = (label: string, on: boolean, fn: (v: boolean) => void, disabled = false) => {
+      const cb = h("input", { type: "checkbox", "aria-label": label }) as HTMLInputElement;
+      cb.checked = on;
+      cb.disabled = disabled;
+      cb.addEventListener("change", () => fn(cb.checked));
+      return h("label", { class: "frow" }, cb, h("span", {}, ` ${label}`));
+    };
+    const pace = (p: LivePace, label: string) => h("button", { class: `chip ${L.settings.pace === p ? "on" : ""}`, type: "button", onclick: () => ((L.settings.pace = p), L.save(), this.drawSettings()) }, label);
+    const n = N.settings;
+    const setN = (k: keyof NotifySettings) => (v: boolean) => {
+      (n as unknown as Record<string, boolean>)[k] = v;
+      void N.save();
+    };
+    this.settingsBox.replaceChildren(
+      h("h3", {}, "Live mode"),
+      h("p", { class: "muted small" }, "Watch Claude work: the app switches tabs, opens tools, selects clips, zooms the timeline and scrubs frames as each command runs. Pause, step or stop from the bar at the top."),
+      chk("Show agent work live", L.settings.enabled, (v) => ((L.settings.enabled = v), L.save())),
+      h("div", { class: "chips" }, pace("instant", "Instant"), pace("watch", "Watch"), pace("cinematic", "Cinematic")),
+      h("h3", {}, "Notifications"),
+      chk("Enable notifications", n.enabled, async (v) => {
+        if (v) {
+          const ok = await N.enable();
+          toast(ok ? "Notifications on" : "Android blocked notifications. Allow them in Settings → Apps → VideoStudio.", ok ? "ok" : "error", 4000);
+        } else await N.disable();
+        this.drawSettings();
+      }),
+      chk("When Claude starts a job", n.jobStart, setN("jobStart"), !n.enabled),
+      chk("When a job finishes (or fails)", n.jobDone, setN("jobDone"), !n.enabled),
+      chk("When a render is saved", n.render, setN("render"), !n.enabled),
+      chk("When a file arrives from chat", n.inbox, setN("inbox"), !n.enabled),
+      chk("Also while the app is open", n.whileOpen, setN("whileOpen"), !n.enabled),
+    );
   }
 
   private drawRemote() {

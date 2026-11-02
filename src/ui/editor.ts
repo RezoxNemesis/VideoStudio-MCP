@@ -8,6 +8,8 @@ import { beatCut, type CutStyle } from "../app/autoedit";
 import { Preview } from "./preview";
 import { Timeline } from "./timeline";
 import { openInspector } from "./inspector";
+import { runCommand, type Command } from "../agent/api";
+import * as PR from "../anim/proc";
 import { btn, fmtTime, h, icon, pickFiles, select, sheet, slider, toast, toolBtn, colorInput } from "./dom";
 
 export interface EditorHost {
@@ -62,6 +64,7 @@ export class EditorView {
     if (!f) {
       this.tools.replaceChildren(
         toolBtn("Import", "folder", () => void this.importMedia("video/*,image/*,audio/*")),
+        toolBtn("Motion kit", "wand", () => this.motionKit()),
         toolBtn("Beat cut", "wand", () => this.beatCutSheet()),
         toolBtn("Text", "text", () => this.addText()),
         toolBtn("Voice", "mic", () => this.host.goto("voice")),
@@ -156,6 +159,43 @@ export class EditorView {
     const sc = s.mutate("new animation", (p) => createScene(p));
     s.mutate("animation to timeline", (p) => ops.addClip(p, { sceneId: sc.id, start: s.time }));
     this.host.goto("animate", sc.id);
+  }
+
+  /** One-tap motion toolkit: captions, kinetic type, motion graphics, hand-drawn FX, film overlays, collage. */
+  private motionKit() {
+    const s = this.s;
+    let text = "Make it *move.*";
+    let dur = 3;
+    const run = async (cmd: Command) => {
+      sh.close();
+      const r = await runCommand(s, { ...cmd, start: "start" in cmd ? cmd.start : s.time, dur: "dur" in cmd ? cmd.dur : dur });
+      if (!r.ok) return toast(r.error ?? "Failed", "error", 5000);
+      const id = (r.result as { id?: string } | undefined)?.id;
+      if (id) s.select(id);
+      toast("Added at the playhead", "ok");
+    };
+    const chips = (title: string, items: readonly string[], make: (x: string) => Command) =>
+      h("div", { class: "stack" }, h("h3", {}, title), h("div", { class: "chips" }, ...items.map((x) => h("button", { class: "chip", type: "button", onclick: () => void run(make(x)) }, x))));
+    const voices = s.project.assets.filter((x) => x.kind === "audio" || x.kind === "video");
+    let sync = voices.find((x) => x.createdBy === "voice")?.id ?? "";
+    const ta = h("textarea", { rows: 2, "aria-label": "Text for captions and titles" }, text) as HTMLTextAreaElement;
+    ta.addEventListener("input", () => (text = ta.value));
+    const body = h(
+      "div",
+      { class: "stack" },
+      h("p", { class: "hint" }, "Everything is added at the playhead as its own clip: move, trim, grade or delete it like any clip. Use *stars* around a word to emphasise it in captions."),
+      ta,
+      slider("Length", 0.5, 10, 0.5, dur, (v) => (dur = v), { fmt: (v) => `${v}s` }).el,
+      voices.length ? select("Sync captions to", [["", "— no audio (even timing) —"] as [string, string]].concat(voices.map((x) => [x.id, x.name] as [string, string])), sync, (v) => (sync = v)) : h("span"),
+      chips("Captions", PR.CAPTION_STYLES, (st) => ({ op: "captions.add", text, style: st, ...(sync ? { assetId: sync, start: undefined, dur: undefined } : { end: s.time + dur }) })),
+      chips("Kinetic type", PR.KINETIC_STYLES, (st) => ({ op: "kinetic.add", text: text.replace(/\*/g, ""), style: st })),
+      chips("Motion graphics", PR.MOGRAPH_TYPES, (ty) => ({ op: "mograph.add", type: ty })),
+      chips("Hand-drawn FX (on twos)", PR.FX_TYPES, (ty) => ({ op: "fx.add", type: ty })),
+      chips("Film overlays", PR.OVERLAY_TYPES, (ty) => ({ op: "overlay.add", type: ty })),
+      chips("Collage", ["torn label", "paper", "newspaper", "kraft"], (x) => (x === "torn label" ? { op: "collage.label", text: text.replace(/\*/g, "") } : { op: "collage.paper", tone: x === "newspaper" ? "news" : x === "paper" ? "cream" : x })),
+      chips("Collage photo (pick an image)", s.project.assets.filter((x) => x.kind === "image").slice(0, 12).map((x) => x.name), (name) => ({ op: "collage.add", assetId: s.project.assets.find((x) => x.name === name)!.id })),
+    );
+    const sh = sheet("Motion kit", body, { tall: true });
   }
 
   private beatCutSheet() {

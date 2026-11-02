@@ -44,6 +44,7 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Deliberately no READ_MEDIA_* / READ_EXTERNAL_STORAGE: nothing in this app can browse the gallery.
          Files arrive only when the person picks them; renders are written through MediaStore (no permission). -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
