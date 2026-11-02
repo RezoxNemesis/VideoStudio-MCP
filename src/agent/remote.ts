@@ -64,6 +64,23 @@ export class RemoteLink {
       await this.save();
     }
     if (this.config.enabled && this.config.relay) this.start();
+    // A job that was running when the app stopped (closed by the system, e.g. out of memory): report it as failed
+    // with the last step it reached, instead of leaving it "running" forever.
+    try {
+      const raw = localStorage.getItem("vs.activeJob");
+      if (raw && this.config.relay) {
+        localStorage.removeItem("vs.activeJob");
+        const a = JSON.parse(raw) as { id: string; op: string; status: string; done: number };
+        const base = this.config.relay.replace(/\/+$/, "");
+        void fetch(`${base}/device/${this.config.key}/result`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: a.id, results: [{ ok: false, op: a.op, error: `The app was stopped by the phone while working (step ${a.done + 1}: ${a.op}; last status: "${a.status}"). Usually this means it ran out of memory.` }] }),
+        }).catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
     // Work the background service collected while the app was closed.
     const held = await agentNative.takeHeld();
     if (held.length && this.config.relay) void this.runJobs(held as { id: string; commands: Command[]; continueOnError?: boolean }[]);
@@ -147,12 +164,27 @@ export class RemoteLink {
       void this.notifier?.send("jobStart", "Claude is working", `Running ${n} command${n > 1 ? "s" : ""} in VideoStudio`);
       void agentNative.busy(true);
       let lastSent = 0;
-      const progress = (done: number, op: string) => {
-        const now = Date.now();
-        if (now - lastSent < 2000) return;
-        lastSent = now;
-        void fetch(`${base}/device/${this.config.key}/progress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, state: { done, total: n, op, status: this.studio.status } }) }).catch(() => {});
+      let cur = { done: 0, op: "" };
+      const send = () => {
+        lastSent = Date.now();
+        const st = { done: cur.done, total: n, op: cur.op, status: this.studio.status, at: Date.now() };
+        try {
+          localStorage.setItem("vs.activeJob", JSON.stringify({ id: job.id, ...st }));
+        } catch {
+          /* ignore */
+        }
+        void fetch(`${base}/device/${this.config.key}/progress`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, state: st }) }).catch(() => {});
       };
+      const progress = (done: number, op: string) => {
+        cur = { done, op };
+        if (Date.now() - lastSent < 2000) return;
+        send();
+      };
+      // Heartbeat: long steps (AI, renders) report what they are doing, so a stop can be traced.
+      const beat = window.setInterval(() => {
+        if (Date.now() - lastSent > 4000) send();
+      }, 5000);
+      send();
       try {
         const results = await runBatch(this.studio, job.commands, !!job.continueOnError, progress);
         await fetch(`${base}/device/${this.config.key}/result`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: job.id, results, state: summaryLite(this.studio) }) });
@@ -162,6 +194,12 @@ export class RemoteLink {
         const bad = results.find((r) => !r.ok);
         void this.notifier?.send("jobDone", ok ? "Claude finished" : "Claude stopped with an error", ok ? `${results.length} steps done in “${this.studio.project.name}”` : `${bad?.op}: ${bad?.error ?? ""}`.slice(0, 180));
       } finally {
+        window.clearInterval(beat);
+        try {
+          localStorage.removeItem("vs.activeJob");
+        } catch {
+          /* ignore */
+        }
         void agentNative.busy(false);
       }
     }

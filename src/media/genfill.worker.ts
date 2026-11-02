@@ -92,7 +92,8 @@ async function open(kind: keyof GenFiles, url: string, note: (m: string) => void
   provider = (await hasWebGpu()) ? "webgpu" : "wasm";
   const opts: ort.InferenceSession.SessionOptions = {
     executionProviders: provider === "webgpu" ? ["webgpu", "wasm"] : ["wasm"],
-    graphOptimizationLevel: "all",
+    // "basic": no constant folding, which would make extra CPU copies of big weights.
+    graphOptimizationLevel: kind === "unet" ? "basic" : "all",
     enableMemPattern: false,
     enableCpuMemArena: false,
   };
