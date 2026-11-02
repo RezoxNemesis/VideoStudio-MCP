@@ -13,6 +13,7 @@
  */
 import type { AnimLayer, AnimScene } from "../core/model";
 import { fontStack } from "../render/fonts";
+import { drawMotion } from "./motion";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 export type ImageLookup = (assetId: string) => CanvasImageSource | null;
@@ -25,7 +26,9 @@ export interface CaptionWord {
 }
 
 export interface ProcSpec {
-  type: "captions" | "kinetic" | "mograph" | "fx" | "overlay" | "cutout" | "label" | "paper";
+  type: "captions" | "kinetic" | "mograph" | "fx" | "overlay" | "cutout" | "label" | "paper" | "motion";
+  /** "motion": a full motion-design sequence (see motion.ts). */
+  motion?: import("./motion").MotionSpec;
   /** Sub-type: caption style, kinetic style, mograph/fx/overlay kind, paper tone. */
   style: string;
   text?: string;
@@ -177,6 +180,9 @@ export function drawProc(c: Ctx, l: AnimLayer, s: AnimScene, f: number, images?:
         break;
       case "paper":
         paper(c, p, s);
+        break;
+      case "motion":
+        if (p.motion) drawMotion(c, p.motion, s.width, s.height, t);
         break;
     }
   } finally {

@@ -11,6 +11,7 @@ import * as rig from "../anim/rig";
 import * as puppet from "../anim/puppet";
 import { flattenPath } from "../anim/svgpath";
 import { ambience, compose, sfx, SFX, type Ambience, type Mood, type Sfx } from "../audio/compose";
+import * as motion from "../anim/motion";
 import * as proc from "../anim/proc";
 import { speechEnvelope } from "../media/library";
 import { newScene, newTrack, type BlendMode, type Clip } from "../core/model";
@@ -1193,6 +1194,30 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
   "mograph.add": {
     help: `{type: ${proc.MOGRAPH_TYPES.join("|")}, start?, dur?=3, x?, y? (0..1), size? (0..1), palette?, bg?, value?} Motion-design element.`,
     run: (s, a) => s.mutate("motion graphic", (p) => procClip(p, specFrom(a, "mograph", a.str("type")), a.num("start", s.time), a.num("dur", 3), { name: `Mograph ${a.str("type")}` })),
+  },
+  "motion.promo": {
+    help: "{lines:[{text, sub?}], style?: warm|tech|cinematic, theme?: ember|cream|mono|eclipse|aurora|gold, beat?=2.4 (s per line), logo? (closing wordmark), start?=0, music?=true} A whole premium motion-design promo (glowing dots, sparkles, glow pills, frames, drawn paths, dot rows, particle rings, eclipse, brush titles) from a few lines, with camera moves, grain and an original score. Returns {id, seconds}.",
+    run: async (s, a) => {
+      const lines = (a.any("lines") as motion.PromoLine[] | undefined) ?? [];
+      if (!lines.length) throw new ops.OpError("Give lines: [{text, sub?}].");
+      const r = motion.buildPromo(lines, { theme: a.optStr("theme"), beat: a.optNum("beat"), logo: a.optStr("logo"), style: a.optStr("style") as "warm" | "tech" | "cinematic" | undefined });
+      const start = a.num("start", 0);
+      const clip = s.mutate("motion promo", (p) => procClip(p, { type: "motion", style: r.spec.theme, motion: r.spec }, start, r.seconds, { name: "Motion promo", bottom: true }));
+      if (a.bool("music", true)) {
+        const mood = a.optStr("style") === "cinematic" ? "dark" : a.optStr("style") === "tech" ? "tense" : "hopeful";
+        const blob = await compose({ mood: mood as Mood, seconds: r.seconds + 0.5, bpm: Math.round(60 / (r.spec.els.length ? (a.num("beat", 2.4) / 4) : 0.6)) });
+        await s.mutateAsync("promo music", async (p) => {
+          const asset = await importBlob(p, blob, "Promo score.wav", "agent");
+          const mc = ops.addClip(p, { assetId: asset.id, start });
+          ops.patchClip(p, mc.id, { volume: 0.75, fadeOut: 1.2 });
+        });
+      }
+      return { ...clip, seconds: r.seconds, elements: r.spec.els.length };
+    },
+  },
+  "motion.add": {
+    help: `{spec:{theme, els:[{k: ${["dot", "spark", "pill", "frame", "path", "dots", "ring", "stars", "title", "logo", "line", "eclipse", "fog", "embers", "rays", "brush", "flash"].join("|")}, t0, t1?, x?, y?, s?, text?, sub?, pts?, n?, color?, icon?, variant?, font?, rot?}], cam?:[{t,z,x,y,r}], bg?: false to overlay footage, grain?}, start?, dur} Hand-built motion-design sequence.`,
+    run: (s, a) => s.mutate("motion design", (p) => procClip(p, { type: "motion", style: "custom", motion: a.obj("spec") as unknown as motion.MotionSpec }, a.num("start", s.time), a.num("dur"), { name: "Motion", bottom: (a.obj("spec") as { bg?: boolean }).bg !== false })),
   },
   "anim.living": {
     help: "{sceneId, assetId (photo/drawing), pins?:{head,neck,chest,hips,feet,eyeL?,eyeR?,hairTop?,headR?,cloth?:[[x,y],...]} (fractions of the image; guessed from the figure when missing), motion?:{breathe,sway,head,hair,cloth (0..2), blink (per 10 s), speed, seed}, fit?: contain|cover} Bring a still picture to life: the picture itself bends on a fine mesh (breathing, head, hair and cloth motion, blinks, idle sway) so proportions and line work stay exactly as drawn. Returns {layerId, pins}.",
