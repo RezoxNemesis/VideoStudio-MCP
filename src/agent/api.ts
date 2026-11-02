@@ -1246,6 +1246,32 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       return { ...saved, assetId: asset.id, bytes: blob.size };
     },
   },
+  "system.caps": {
+    help: "What this phone can do for on-device AI: WebGPU (GPU compute), its limits and features, memory, cores, browser engine version.",
+    run: async () => {
+      const nav = navigator as Navigator & { gpu?: { requestAdapter(o?: unknown): Promise<unknown> }; deviceMemory?: number };
+      const out: Record<string, unknown> = { ua: navigator.userAgent, cores: navigator.hardwareConcurrency, deviceMemory: nav.deviceMemory, crossOriginIsolated: self.crossOriginIsolated, webgpu: !!nav.gpu };
+      if (nav.gpu) {
+        try {
+          const ad = (await nav.gpu.requestAdapter({ powerPreference: "high-performance" })) as { features: Set<string>; limits: Record<string, number>; info?: Record<string, string>; requestAdapterInfo?: () => Promise<Record<string, string>> } | null;
+          if (!ad) out.adapter = null;
+          else {
+            const info = ad.info ?? (ad.requestAdapterInfo ? await ad.requestAdapterInfo() : {});
+            out.adapter = { vendor: info.vendor, architecture: info.architecture, description: info.description, features: [...ad.features], maxBufferSize: ad.limits.maxBufferSize, maxStorageBufferBindingSize: ad.limits.maxStorageBufferBindingSize, maxComputeWorkgroupStorageSize: ad.limits.maxComputeWorkgroupStorageSize };
+          }
+        } catch (e) {
+          out.adapterError = String(e);
+        }
+      }
+      try {
+        const est = await navigator.storage?.estimate?.();
+        out.storage = est ? { quotaMB: Math.round((est.quota ?? 0) / 1048576), usedMB: Math.round((est.usage ?? 0) / 1048576) } : undefined;
+      } catch {
+        /* ignore */
+      }
+      return out;
+    },
+  },
   "fonts.list": { help: "Every bundled font (use the name in text styles, captions, kinetic type and 3D text).", run: () => FONTS.map((f) => `${f.name} (${f.category})`) },
   "fx.add": {
     help: `{type: ${proc.FX_TYPES.join("|")}, start?, dur?=2, x?, y? (0..1), size?, color? (ink), accent? (fill)} Hand-drawn effect animated on twos.`,
