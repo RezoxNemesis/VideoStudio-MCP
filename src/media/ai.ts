@@ -311,7 +311,7 @@ export async function depthToPng(d: { data: Uint8Array; w: number; h: number }):
 /* ------------------------------ subject matting ----------------------------- */
 
 export const MATTE_MODEL = "Xenova/modnet";
-const MATTE_FILES = ["config.json", "preprocessor_config.json", "onnx/model_fp16.onnx", "onnx/model_quantized.onnx"];
+const MATTE_FILES = ["config.json", "preprocessor_config.json", "onnx/model.onnx", "onnx/model_quantized.onnx"];
 let matteReady: Promise<void> | null = null;
 let gpuOk: boolean | null = null;
 
@@ -334,9 +334,9 @@ export async function personMatte(src: CanvasImageSource, W: number, H: number, 
       gpuOk = false;
     }
   }
-  const k = Math.min(1, 512 / Math.max(W, H));
-  const w = Math.max(32, Math.round(W * k)),
-    h = Math.max(32, Math.round(H * k));
+  const k = 512 / Math.max(W, H);
+  const w = Math.max(64, Math.round((W * k) / 32) * 32),
+    h = Math.max(64, Math.round((H * k) / 32) * 32);
   const c = makeCanvas(w, h);
   const x = ctx2d(c);
   x.drawImage(src, 0, 0, w, h);

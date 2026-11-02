@@ -3,7 +3,7 @@
  * On-phone AI for clean-up: tap-to-select segmentation (SlimSAM) and AI inpainting (LaMa). Models download once
  * (through the phone's own downloader, cached) and run here, off the UI thread. Nothing leaves the phone.
  */
-import { AutoModel, AutoProcessor, RawImage, SamModel, env, pipeline } from "@huggingface/transformers";
+import { AutoModel, AutoProcessor, RawImage, SamModel, Tensor, env, pipeline } from "@huggingface/transformers";
 import * as ort from "onnxruntime-web";
 
 env.allowLocalModels = false;
@@ -59,21 +59,32 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
       return;
     }
     if (m.type === "matte") {
-      if (!matteM || matteM.id !== m.model) {
-        let model: unknown;
-        let device = m.device;
-        try {
-          model = await AutoModel.from_pretrained(m.model, m.device === "webgpu" ? { device: "webgpu", dtype: "fp16" } : { dtype: "q8" });
-        } catch {
-          device = "wasm";
-          model = await AutoModel.from_pretrained(m.model, { dtype: "q8" });
-        }
+      const load = async (device: "webgpu" | "wasm") => {
+        const model = await AutoModel.from_pretrained(m.model, device === "webgpu" ? { device: "webgpu", dtype: "fp32" } : { dtype: "q8" });
         const processor = await AutoProcessor.from_pretrained(m.model);
         matteM = { id: m.model, model: model as never, processor: processor as never, device };
+      };
+      if (!matteM || matteM.id !== m.model) {
+        try {
+          await load(m.device);
+        } catch {
+          await load("wasm");
+        }
       }
-      const img = new RawImage(m.rgba, m.w, m.h, 4).rgb();
-      const { pixel_values } = await matteM.processor(img);
-      const out = await matteM.model({ input: pixel_values });
+      // MODNet wants sides that are multiples of 32 and pixels in [-1, 1]; the caller already sized the frame.
+      const P = m.w * m.h;
+      const px = new Float32Array(3 * P);
+      for (let i = 0; i < P; i++) for (let c = 0; c < 3; c++) px[c * P + i] = (m.rgba[i * 4 + c]! / 255 - 0.5) / 0.5;
+      const pixel_values = new Tensor(matteM!.device === "webgpu" ? "float32" : "float32", px, [1, 3, m.h, m.w]);
+      let out: Awaited<ReturnType<NonNullable<typeof matteM>["model"]>>;
+      try {
+        out = await matteM!.model({ input: pixel_values });
+      } catch (e) {
+        // The GPU path can fail on some phones: fall back to the CPU model once and remember.
+        if (matteM!.device === "wasm") throw e;
+        await load("wasm");
+        out = await matteM!.model({ input: pixel_values });
+      }
       const o = (out.output ?? Object.values(out)[0])!;
       const [, , oh, ow] = o.dims as [number, number, number, number];
       const a = new Uint8Array(ow * oh);
@@ -89,7 +100,7 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
         }
         a[i] = Math.max(0, Math.min(255, Math.round((v as number) * 255)));
       }
-      post({ id: m.id, ok: true, alpha: a, w: ow, h: oh, device: matteM.device }, [a.buffer]);
+      post({ id: m.id, ok: true, alpha: a, w: ow, h: oh, device: matteM!.device }, [a.buffer]);
       return;
     }
     if (m.type === "depth") {
@@ -144,6 +155,7 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
       post({ id: m.id, ok: true, rgba, w: outW, h: outH }, [rgba.buffer]);
     }
   } catch (err) {
-    post({ id: m.id, ok: false, error: (err as Error).message ?? String(err) });
+    const msg = (err as Error)?.message ?? String(err);
+    post({ id: m.id, ok: false, error: /^\d+$/.test(msg) ? `On-phone AI engine error (code ${msg}).` : msg });
   }
 };
