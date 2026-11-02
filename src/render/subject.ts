@@ -328,6 +328,78 @@ function backgroundPlate(key: string, src: CanvasImageSource, alpha: Uint8Array,
   return c;
 }
 
+/**
+ * Make the matte trustworthy: keep only the main subject (largest region, plus any region at least a quarter of its
+ * size — a second person), drop stray specks of background the AI was unsure about, pull the edge in by a pixel so
+ * no background rim stays sharp, then soften it slightly.
+ */
+export function cleanAlpha(a: Uint8Array, w: number, h: number): Uint8Array {
+  const n = w * h;
+  const lab = new Int32Array(n).fill(-1);
+  const sizes: number[] = [];
+  const stack: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (lab[i] !== -1 || a[i]! <= 110) continue;
+    const id = sizes.length;
+    let size = 0;
+    lab[i] = id;
+    stack.push(i);
+    while (stack.length) {
+      const j = stack.pop()!;
+      size++;
+      const x = j % w,
+        y = (j / w) | 0;
+      if (x > 0 && lab[j - 1] === -1 && a[j - 1]! > 110) (lab[j - 1] = id), stack.push(j - 1);
+      if (x < w - 1 && lab[j + 1] === -1 && a[j + 1]! > 110) (lab[j + 1] = id), stack.push(j + 1);
+      if (y > 0 && lab[j - w] === -1 && a[j - w]! > 110) (lab[j - w] = id), stack.push(j - w);
+      if (y < h - 1 && lab[j + w] === -1 && a[j + w]! > 110) (lab[j + w] = id), stack.push(j + w);
+    }
+    sizes.push(size);
+  }
+  if (!sizes.length) return a;
+  const big = Math.max(...sizes);
+  const keepId = sizes.map((sz) => sz >= big * 0.25);
+  // Keep zone: kept regions grown by 2 px (so their soft edge survives).
+  const keep = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (lab[i]! >= 0 && keepId[lab[i]!]) keep[i] = 1;
+  const grown = new Uint8Array(n);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      if (!keep[y * w + x]) continue;
+      for (let dy = -2; dy <= 2; dy++)
+        for (let dx = -2; dx <= 2; dx++) {
+          const yy = y + dy,
+            xx = x + dx;
+          if (yy >= 0 && xx >= 0 && yy < h && xx < w) grown[yy * w + xx] = 1;
+        }
+    }
+  // Erode by 1 px (min of 3×3), then a light 3×3 blur for a clean, soft edge.
+  const er = new Uint8Array(n);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!grown[i]) continue;
+      let m = 255;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const yy = Math.min(h - 1, Math.max(0, y + dy)),
+            xx = Math.min(w - 1, Math.max(0, x + dx));
+          const v = grown[yy * w + xx] ? a[yy * w + xx]! : 0;
+          if (v < m) m = v;
+        }
+      er[i] = m;
+    }
+  const out = new Uint8Array(n);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      let s2 = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) s2 += er[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))]!;
+      out[y * w + x] = s2 / 9;
+    }
+  return out;
+}
+
 /* ---------------------------------- render --------------------------------- */
 
 const outs = new Map<string, AnyCanvas>();
@@ -336,7 +408,8 @@ const outs = new Map<string, AnyCanvas>();
  * Draw the subject look for one frame. `local` is seconds since the clip started (for draw-on), `t` the
  * animation clock.
  */
-export function renderSubject(key: string, src: CanvasImageSource, W: number, H: number, alpha: Uint8Array, mw: number, mh: number, sp: SubjectSpec, t: number, local: number, texSrc?: CanvasImageSource | null): AnyCanvas {
+export function renderSubject(key: string, src: CanvasImageSource, W: number, H: number, alphaRaw: Uint8Array, mw: number, mh: number, sp: SubjectSpec, t: number, local: number, texSrc?: CanvasImageSource | null): AnyCanvas {
+  const alpha = cleanAlpha(alphaRaw, mw, mh);
   let out = outs.get(key);
   if (!out || out.width !== W || out.height !== H) {
     out = makeCanvas(W, H);

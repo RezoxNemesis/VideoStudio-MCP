@@ -68,7 +68,10 @@ export function matteAt(m: MatteTrack, t: number, out?: Uint8Array): Uint8Array 
   const i = Math.floor(f),
     j = Math.min(m.n - 1, i + 1),
     k = f - i;
-  if (k < 0.02) return m.data.subarray(i * P, i * P + P);
+  // Blending two mattes from different moments leaves half-transparent ghosts (sharp background showing through);
+  // only blend when the frames are very close in time, otherwise take the nearest.
+  if (k < 0.25) return m.data.subarray(i * P, i * P + P);
+  if (k > 0.75) return m.data.subarray(j * P, j * P + P);
   const a = m.data.subarray(i * P, i * P + P),
     b = m.data.subarray(j * P, j * P + P);
   const o = out && out.length === P ? out : new Uint8Array(P);
