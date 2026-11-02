@@ -1571,6 +1571,119 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       });
     },
   },
+  "sfx.auto": {
+    help: "{style?: clean|cinematic|playful, density?: 0.5..1.5 (=1), volume?=0.8, clear?=true} Sound design for the whole edit: listens to the timeline (cuts, transitions, titles, motion-graphics elements, effects) and layers matching sound effects — whooshes into cuts, pops and shimmers on UI elements, ticks on dots, chimes on logos, booms and reverse swells for cinematic titles. Everything is generated on the phone.",
+    run: async (s, a) => {
+      const style = a.str("style", "clean") as "clean" | "cinematic" | "playful";
+      const density = Math.max(0.3, Math.min(1.6, a.num("density", 1)));
+      const vol = a.num("volume", 0.8);
+      const p0 = s.project;
+      const ev: { t: number; type: Sfx; v: number }[] = [];
+      const add = (t: number, type: Sfx, v = 1, pre = 0) => {
+        if (t - pre >= 0) ev.push({ t: t - pre, type, v });
+      };
+      // Peak offsets so the sound lands on the moment, not after it.
+      const PRE: Partial<Record<Sfx, number>> = { whoosh: 0.18, swoosh: 0.3, deepWhoosh: 0.55, reverse: 1.55, riser: 2 };
+      const put = (t: number, type: Sfx, v = 1) => add(t, type, v, PRE[type] ?? 0);
+      for (const tr of p0.tracks) {
+        if (tr.kind !== "video" || tr.hidden) continue;
+        for (const c of tr.clips) {
+          if (c.kind === "media" && c.start > 0.05) {
+            const hasT = c.transitionIn.kind !== "none";
+            if (style === "cinematic") put(c.start, hasT ? "deepWhoosh" : "whoosh", 0.9);
+            else if (style === "playful") put(c.start, hasT ? "swoosh" : "pop", 0.8);
+            else put(c.start, hasT ? "swoosh" : "whoosh", 0.6);
+          }
+          if (c.kind === "text" && density >= 0.6) put(c.start + 0.02, style === "playful" ? "pop" : style === "cinematic" ? "whoosh" : "ui", 0.6);
+          if (c.sceneId) {
+            const sc = p0.scenes.find((x) => x.id === c.sceneId);
+            for (const l of sc?.layers ?? []) {
+              const pr = l.proc;
+              if (!pr) continue;
+              if (pr.type === "fx") put(c.start, /impact|clash|shockwave|hitspark/.test(pr.style) ? "impact" : "swoosh", 0.8);
+              if (pr.type === "kinetic" || pr.type === "captions") put(c.start, "ui", 0.5);
+              if (pr.type === "motion" && pr.motion) {
+                for (const el of pr.motion.els) {
+                  const t = c.start + el.t0;
+                  switch (el.k) {
+                    case "dot":
+                      put(t, "tick", 0.7);
+                      break;
+                    case "spark":
+                      put(t, "shimmer", 0.6);
+                      put(t, "swoosh", 0.4);
+                      break;
+                    case "pill":
+                      put(t, "swoosh", 0.5);
+                      put(t + 0.12, "pop", 0.55);
+                      if (density > 0.9) put(t + 0.7, "shimmer", 0.3);
+                      break;
+                    case "frame":
+                      put(t, "deepWhoosh", 0.6);
+                      put(t + 0.5, "click", 0.5);
+                      break;
+                    case "path":
+                    case "line":
+                      put(t + 0.2, "swoosh", 0.45);
+                      break;
+                    case "dots":
+                      for (let i = 0; i < (el.n ?? 5); i++) put(t + i * 0.12, "tick", 0.55);
+                      break;
+                    case "ring":
+                      put(t, "hum", 0.5);
+                      put(t, "riser", 0.35);
+                      break;
+                    case "title":
+                      if (style !== "playful") put(t, style === "cinematic" ? "whoosh" : "ui", 0.45);
+                      break;
+                    case "logo":
+                      put(t, "reverse", 0.5);
+                      put(t, "chime", 0.6);
+                      break;
+                    case "eclipse":
+                      put(t + 0.2, "reverse", 0.6);
+                      put(t + 0.25, "boom", 0.9);
+                      break;
+                    case "brush":
+                      put(t, "slash", 0.6);
+                      put(t, "boom", 0.8);
+                      break;
+                    case "flash":
+                      put(t, "impact", 0.8);
+                      break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      ev.sort((x, y) => x.t - y.t);
+      // Thin out: one of each type per 0.15 s, and fewer overall at low density.
+      const last: Partial<Record<Sfx, number>> = {};
+      const keep = ev.filter((e, i) => {
+        if ((last[e.type] ?? -9) > e.t - 0.15) return false;
+        if (density < 1 && (i * 0.618) % 1 > density) return false;
+        last[e.type] = e.t;
+        return true;
+      });
+      if (!keep.length) return { sounds: 0 };
+      const types = [...new Set(keep.map((e) => e.type))];
+      const blobs = new Map<Sfx, Blob>();
+      for (const ty of types) blobs.set(ty, await sfx(ty, 7));
+      return await s.mutateAsync("sound design", async (p) => {
+        if (a.bool("clear", true))
+          for (const tr of p.tracks) tr.clips = tr.clips.filter((c) => !(c.name ?? "").startsWith("SFX "));
+        const assets = new Map<Sfx, string>();
+        for (const ty of types) assets.set(ty, (await importBlob(p, blobs.get(ty)!, `sfx-${ty}.wav`, "agent")).id);
+        for (const e of keep) {
+          const c = ops.addClip(p, { assetId: assets.get(e.type)!, start: Math.max(0, e.t) });
+          ops.patchClip(p, c.id, { volume: Math.min(1, vol * e.v), name: `SFX ${e.type}` });
+        }
+        return { sounds: keep.length, types };
+      });
+    },
+  },
   "sfx.ambience": {
     help: "{type: river|wind|city|rain|night, seconds, start?=0, volume?=0.6} Environmental sound bed generated on the phone.",
     run: async (s, a) => {

@@ -450,12 +450,12 @@ export function toWav(b: AudioBuffer): Blob {
   return new Blob([buf], { type: "audio/wav" });
 }
 
-export const SFX = ["whoosh", "punch", "kick", "impact", "clash", "slash", "rumble", "riser", "land", "block"] as const;
+export const SFX = ["whoosh", "punch", "kick", "impact", "clash", "slash", "rumble", "riser", "land", "block", "swoosh", "deepWhoosh", "click", "pop", "tick", "typing", "paper", "pencil", "shimmer", "chime", "subdrop", "boom", "reverse", "glitch", "hum", "ui"] as const;
 export type Sfx = (typeof SFX)[number];
 
 /** One-shot sound effects for action scenes. */
 export async function sfx(type: Sfx, seed = 1): Promise<Blob> {
-  const len = { whoosh: 0.5, punch: 0.45, kick: 0.6, impact: 1.6, clash: 2.4, slash: 0.6, rumble: 2.5, riser: 2.2, land: 0.8, block: 0.4 }[type];
+  const len = { whoosh: 0.5, punch: 0.45, kick: 0.6, impact: 1.6, clash: 2.4, slash: 0.6, rumble: 2.5, riser: 2.2, land: 0.8, block: 0.4, swoosh: 0.7, deepWhoosh: 1.2, click: 0.12, pop: 0.25, tick: 0.08, typing: 1.4, paper: 0.9, pencil: 1.1, shimmer: 1.8, chime: 2.2, subdrop: 2, boom: 3.5, reverse: 1.6, glitch: 0.6, hum: 2, ui: 0.35 }[type];
   const ctx = new OfflineAudioContext(2, Math.ceil(SR * len), SR);
   const out = ctx.createGain();
   out.connect(ctx.destination);
@@ -529,6 +529,136 @@ export async function sfx(type: Sfx, seed = 1): Promise<Blob> {
     case "riser":
       noise("bandpass", 300, 6000, 1.5, 0.5, 2.0, 0.2);
       tone(200, 1600, 0.12, 2.2, "sawtooth");
+      break;
+    case "swoosh":
+      // Airy, soft pass-by (motion graphics, slides).
+      noise("bandpass", 600, 3200, 0.9, 0.35, 0.3, 0.38);
+      noise("highpass", 4000, 7000, 0.7, 0.08, 0.28, 0.3);
+      break;
+    case "deepWhoosh":
+      noise("lowpass", 300, 1400, 0.8, 0.7, 0.55, 0.6);
+      tone(90, 55, 0.25, 1.1);
+      break;
+    case "click":
+      noise("bandpass", 3500, 3000, 4, 0.6, 0.001, 0.03);
+      tone(1800, 900, 0.2, 0.04, "square");
+      break;
+    case "tick":
+      noise("highpass", 6000, 6000, 1, 0.4, 0.001, 0.02);
+      break;
+    case "pop":
+      tone(520, 980, 0.5, 0.12);
+      noise("bandpass", 1500, 900, 2, 0.25, 0.001, 0.05);
+      break;
+    case "ui":
+      tone(1046, 1046, 0.18, 0.25);
+      tone(1568, 1568, 0.12, 0.28, "sine", 0.06);
+      break;
+    case "typing":
+      for (let i = 0; i < 9; i++) {
+        const at = i * 0.13 + ((seed * (i + 3)) % 7) * 0.008;
+        const src = ctx.createBufferSource();
+        src.buffer = nb;
+        const f = ctx.createBiquadFilter();
+        f.type = "bandpass";
+        f.frequency.value = 2500 + ((i * 371) % 900);
+        f.Q.value = 3;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(0.5, at + 0.002);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + 0.035);
+        src.connect(f).connect(g).connect(out);
+        src.start(at, (i * 0.1) % 0.5, 0.06);
+      }
+      break;
+    case "paper":
+      // Crinkle: many tiny bright crackles.
+      for (let i = 0; i < 26; i++) {
+        const at = Math.pow(i / 26, 1.4) * 0.75;
+        const src = ctx.createBufferSource();
+        src.buffer = nb;
+        const f = ctx.createBiquadFilter();
+        f.type = "bandpass";
+        f.frequency.value = 2000 + ((i * 977) % 5000);
+        f.Q.value = 1.5;
+        const g = ctx.createGain();
+        const lvl = 0.15 + ((i * 13) % 10) / 30;
+        g.gain.setValueAtTime(0.0001, at);
+        g.gain.exponentialRampToValueAtTime(lvl, at + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + 0.04);
+        src.connect(f).connect(g).connect(out);
+        src.start(at, (i * 0.031) % 0.8, 0.06);
+      }
+      break;
+    case "pencil": {
+      // Graphite on paper: grainy band-passed scratches in strokes.
+      const src = ctx.createBufferSource();
+      src.buffer = nb;
+      const f = ctx.createBiquadFilter();
+      f.type = "bandpass";
+      f.frequency.value = 3800;
+      f.Q.value = 0.9;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, 0);
+      for (let i = 0; i < 4; i++) {
+        const at = i * 0.26;
+        g.gain.exponentialRampToValueAtTime(0.35, at + 0.04);
+        g.gain.exponentialRampToValueAtTime(0.05, at + 0.22);
+      }
+      g.gain.exponentialRampToValueAtTime(0.0001, len);
+      src.connect(f).connect(g).connect(out);
+      src.start(0);
+      break;
+    }
+    case "shimmer":
+      for (const [f, l, at] of [[2093, 0.08, 0], [2637, 0.07, 0.05], [3136, 0.06, 0.1], [4186, 0.05, 0.16], [5274, 0.04, 0.22]] as const) tone(f, f * 1.002, l, 1.5, "sine", at);
+      noise("highpass", 7000, 9000, 0.7, 0.06, 0.2, 1.2);
+      break;
+    case "chime":
+      for (const [f, l] of [[523, 0.16], [784, 0.12], [1046, 0.1], [1568, 0.06]] as const) tone(f, f, l, 2.1, "sine");
+      break;
+    case "subdrop":
+      tone(110, 32, 1, 1.9);
+      break;
+    case "boom":
+      // Cinematic hit: sub, body and a long dark tail.
+      tone(60, 26, 1, 3.2);
+      noise("lowpass", 4000, 90, 0.6, 1, 0.003, 3.2);
+      noise("bandpass", 200, 80, 0.8, 0.4, 0.05, 3);
+      break;
+    case "reverse": {
+      // Reverse swell that sucks into the cut.
+      const src = ctx.createBufferSource();
+      src.buffer = nb;
+      const f = ctx.createBiquadFilter();
+      f.type = "bandpass";
+      f.frequency.setValueAtTime(800, 0);
+      f.frequency.exponentialRampToValueAtTime(6000, len * 0.95);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, 0);
+      g.gain.exponentialRampToValueAtTime(0.7, len * 0.97);
+      g.gain.exponentialRampToValueAtTime(0.0001, len);
+      src.connect(f).connect(g).connect(out);
+      src.start(0);
+      break;
+    }
+    case "glitch":
+      for (let i = 0; i < 7; i++) tone(200 + ((i * 733) % 2400), 150 + ((i * 377) % 2000), 0.12, 0.05, "square", i * 0.07);
+      noise("highpass", 3000, 3000, 1, 0.2, 0.001, 0.4);
+      break;
+    case "hum":
+      for (const [f, l] of [[55, 0.25], [110, 0.12], [165, 0.06], [220, 0.04]] as const) {
+        const o = ctx.createOscillator();
+        o.frequency.value = f;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, 0);
+        g.gain.exponentialRampToValueAtTime(l, 0.5);
+        g.gain.setValueAtTime(l, len - 0.6);
+        g.gain.exponentialRampToValueAtTime(0.0001, len);
+        o.connect(g).connect(out);
+        o.start(0);
+        o.stop(len);
+      }
       break;
   }
   return toWav(await ctx.startRendering());
