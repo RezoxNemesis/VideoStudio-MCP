@@ -264,7 +264,7 @@ function captions(c: Ctx, p: ProcSpec, s: AnimScene, t: number) {
   }
   if (ci < 0) return;
   const ch = chunks[ci]!;
-  const base = (p.size ?? (style === "bold" ? 118 : style === "minimal" ? 68 : style === "serif" ? 64 : 92)) * K;
+  const base = (p.size ?? (style === "bold" ? 118 : style === "minimal" ? 68 : style === "serif" ? 84 : 92)) * K;
   const color = p.color ?? "#ffffff";
   const accent = p.accent ?? (style === "karaoke" ? "#7c5cff" : "#ffd23f");
   const yBase = (p.y ?? (p.position === "top" ? 0.2 : p.position === "center" ? 0.5 : 0.72)) * s.height;
@@ -283,8 +283,9 @@ function captions(c: Ctx, p: ProcSpec, s: AnimScene, t: number) {
     if (small.length) {
       c.font = `600 ${base * 0.62}px ${SANS}`;
       c.globalAlpha = fade;
-      c.fillStyle = rgba(color, 0.9);
-      c.shadowColor = "rgba(0,0,0,0.6)";
+      c.fillStyle = rgba(color, 0.92);
+      const light = /^#?(?:[e-f][0-9a-f]){3}$/i.test(color) || color === "#ffffff";
+      c.shadowColor = light ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.0)";
       c.shadowBlur = 12 * K;
       c.fillText(small.map(label).join(" ").toLowerCase(), W / 2, yBase - base * 1.1);
     }
@@ -962,11 +963,12 @@ function fx(c: Ctx, p: ProcSpec, s: AnimScene, f: number) {
     case "speedlines": {
       // Radial anime speed lines with a calm centre (redrawn on twos).
       c.fillStyle = ink;
-      for (let i = 0; i < 90; i++) {
+      c.globalAlpha = 0.85;
+      for (let i = 0; i < 48; i++) {
         const a = hash(i * 2.3 + two * 0.11) * Math.PI * 2;
-        const r0 = R * (1 + hash(i + two) * 0.8);
+        const r0 = R * (1.6 + hash(i + two) * 1.2);
         const r1 = Math.hypot(W, H);
-        const wdt = (0.004 + hash(i * 5.7) * 0.012) * Math.PI;
+        const wdt = (0.002 + hash(i * 5.7) * 0.006) * Math.PI;
         c.beginPath();
         c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
         c.lineTo(cx + Math.cos(a - wdt) * r1, cy + Math.sin(a - wdt) * r1);

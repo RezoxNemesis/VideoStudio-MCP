@@ -21,6 +21,19 @@ export function flattenPath(d: string, tolerance = 1.5): number[][] {
     return parseFloat(t);
   };
   const push = (px: number, py: number) => cur.push(px, py);
+  /** Straight segments are densified so the renderer's smoothing keeps their corners sharp. */
+  const line = (px: number, py: number) => {
+    const lx = cur.length >= 2 ? cur[cur.length - 2]! : x;
+    const ly = cur.length >= 2 ? cur[cur.length - 1]! : y;
+    const n = Math.max(1, Math.min(64, Math.ceil(Math.hypot(px - lx, py - ly) / 10)));
+    if (n > 1) {
+      // Keep a point right next to each corner so the curve hugs it.
+      push(lx + (px - lx) * 0.02, ly + (py - ly) * 0.02);
+      for (let k = 1; k < n; k++) push(lx + ((px - lx) * k) / n, ly + ((py - ly) * k) / n);
+      push(lx + (px - lx) * 0.98, ly + (py - ly) * 0.98);
+    }
+    push(px, py);
+  };
   const steps = (len: number) => Math.max(4, Math.min(64, Math.ceil(len / (tolerance * 4))));
   const cubic = (x1: number, y1: number, x2: number, y2: number, x3: number, y3: number) => {
     const n = steps(Math.hypot(x1 - x, y1 - y) + Math.hypot(x2 - x1, y2 - y1) + Math.hypot(x3 - x2, y3 - y2));
@@ -110,19 +123,26 @@ export function flattenPath(d: string, tolerance = 1.5): number[][] {
         cmd = rel ? "l" : "L";
         break;
       }
-      case "L":
-        x = num() + ox;
-        y = num() + oy;
-        push(x, y);
+      case "L": {
+        const nx = num() + ox;
+        const ny = num() + oy;
+        line(nx, ny);
+        x = nx;
+        y = ny;
         break;
-      case "H":
-        x = num() + ox;
-        push(x, y);
+      }
+      case "H": {
+        const nx = num() + ox;
+        line(nx, y);
+        x = nx;
         break;
-      case "V":
-        y = num() + oy;
-        push(x, y);
+      }
+      case "V": {
+        const ny = num() + oy;
+        line(x, ny);
+        y = ny;
         break;
+      }
       case "C": {
         const a = num() + ox,
           b = num() + oy,
@@ -167,7 +187,7 @@ export function flattenPath(d: string, tolerance = 1.5): number[][] {
         break;
       }
       case "Z":
-        push(sx, sy);
+        line(sx, sy);
         x = sx;
         y = sy;
         if (cur.length >= 4) out.push(cur);
