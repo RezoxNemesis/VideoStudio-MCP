@@ -146,6 +146,8 @@ export function splitClip(p: Project, id: string, t: number): Clip {
   for (const k of Object.keys(right.transform) as TransformProp[]) right.transform[k] = shiftKeys(right.transform[k], -leftDur);
   for (const k of Object.keys(right.grade) as (keyof Grade)[]) right.grade[k] = shiftKeys(right.grade[k], -leftDur);
   right.volume = shiftKeys(right.volume, -leftDur) ?? 1;
+  // Frame windows (band reveals, strips) are clip-local too: the right half continues where the left stopped.
+  if (right.win) right.win = right.win.map((k) => ({ ...k, t: k.t - leftDur }));
   right.transitionIn = { kind: "none", dur: right.transitionIn.dur };
   right.fadeIn = 0;
   c.transitionOut = { kind: "none", dur: c.transitionOut.dur };
@@ -178,6 +180,7 @@ export function trimClip(p: Project, id: string, edge: "start" | "end", t: numbe
     c.start = ns;
     c.dur -= delta;
     for (const k of Object.keys(c.transform) as TransformProp[]) c.transform[k] = shiftKeys(c.transform[k], -delta);
+    if (c.win) c.win = c.win.map((k) => ({ ...k, t: k.t - delta }));
   } else {
     let ne = Math.max(t, c.start + 0.05);
     const srcEnd = c.in + (ne - c.start) * c.speed;

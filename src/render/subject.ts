@@ -283,7 +283,13 @@ function background(x: Ctx, src: CanvasImageSource, W: number, H: number, bg: st
     x.filter = `blur(${r}px) brightness(${blurK < 0.7 ? 0.92 : 0.8})`;
     // Draw slightly larger so the blur doesn't pull dark edges in.
     x.drawImage(src, -r * 2, -r * 2, W + r * 4, H + r * 4);
-  } else if (b === "texture" && tex) x.drawImage(tex, 0, 0, W, H);
+  } else if (b === "texture" && tex) {
+    // Cover-fit (a landscape photo behind a portrait shot must not be stretched).
+    const tw = (tex as { width: number }).width || W,
+      th = (tex as { height: number }).height || H;
+    const k = Math.max(W / tw, H / th);
+    x.drawImage(tex, (W - tw * k) / 2, (H - th * k) / 2, tw * k, th * k);
+  }
   else if (b === "transparent") {
     /* nothing */
   } else {
