@@ -67,6 +67,7 @@ export class EditorView {
     if (!f) {
       this.tools.replaceChildren(
         toolBtn("Import", "folder", () => void this.importMedia("video/*,image/*,audio/*")),
+        toolBtn("Pro studio", "wand", () => this.proStudioSheet()),
         toolBtn("Motion kit", "wand", () => this.motionKit()),
         toolBtn("Beat cut", "wand", () => this.beatCutSheet()),
         toolBtn("Music video", "film", () => this.musicVideoSheet()),
@@ -236,6 +237,96 @@ export class EditorView {
       }, "primary"),
     );
     const sh = sheet("Beat cut", body);
+  }
+
+  /** The premium tools in one place: motion promo, 2.5D shot, auto sound design, screen pin. */
+  private proStudioSheet() {
+    const s = this.s;
+    const run = async (label: string, cmds: Record<string, unknown>[], done: (r: unknown) => string) => {
+      sh.close();
+      s.setStatus(label);
+      try {
+        const rs = await runBatch(s, cmds as never);
+        const bad = rs.find((r) => !r.ok);
+        if (bad) throw new Error(bad.error ?? "Failed");
+        toast(done(rs[rs.length - 1]?.result), "ok", 4000);
+        s.seek(0);
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error", 6000);
+      } finally {
+        s.setStatus("");
+      }
+    };
+    // Motion promo
+    const lines = h("textarea", { rows: "5", style: "width:100%", placeholder: "One line per beat, e.g.\nWith a Motions\nFinding form\nForm | Defines focus\nConnected" }) as HTMLTextAreaElement;
+    let style = "warm";
+    let theme = "";
+    const logo = h("input", { type: "text", placeholder: "Closing logo word (optional)", style: "width:100%" }) as HTMLInputElement;
+    // Depth shot
+    const images = s.project.assets.filter((a) => a.kind === "image");
+    let img = images[0]?.id ?? "";
+    let move = "push";
+    let wind = 0.8;
+    let fog = true;
+    let embers = false;
+    // Sound design
+    let sfxStyle = "clean";
+    const pinSel = s.selection ? findClip(s.project, s.selection)?.clip : undefined;
+    const PINS: Record<string, { tl: [number, number]; tr: [number, number]; br: [number, number]; bl: [number, number] }> = {
+      monitor: { tl: [0.1, 0.18], tr: [0.9, 0.2], br: [0.89, 0.52], bl: [0.11, 0.5] },
+      "phone tilt": { tl: [0.3, 0.2], tr: [0.72, 0.24], br: [0.68, 0.8], bl: [0.26, 0.76] },
+      "poster left": { tl: [0.08, 0.15], tr: [0.48, 0.22], br: [0.48, 0.7], bl: [0.08, 0.8] },
+      "poster right": { tl: [0.52, 0.22], tr: [0.92, 0.15], br: [0.92, 0.8], bl: [0.52, 0.7] },
+      billboard: { tl: [0.15, 0.12], tr: [0.85, 0.08], br: [0.86, 0.38], bl: [0.14, 0.36] },
+    };
+    let pin = "monitor";
+    const body = h(
+      "div",
+      { class: "stack" },
+      h("h3", {}, "Motion promo"),
+      h("p", { class: "hint" }, "Premium motion design from a few lines: glowing dots and sparkles, glass pills, frames, drawn paths, particle rings, eclipse and brush titles, with camera moves, grain and an original score. Use “Title | small line” for a subtitle."),
+      lines,
+      select("Style", [["warm", "Warm glow (orange)"], ["tech", "Tech (stars, particles)"], ["cinematic", "Cinematic (eclipse, fog, brush title)"]] as [string, string][], style, (v) => (style = v)),
+      select("Colours", [["", "Match the style"], ["ember", "Ember"], ["cream", "Cream (light)"], ["mono", "Mono night"], ["eclipse", "Eclipse red"], ["aurora", "Aurora"], ["gold", "Gold"]] as [string, string][], theme, (v) => (theme = v)),
+      logo,
+      btn("Make the promo", "wand", () => {
+        const ls = lines.value.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+          const [text, sub] = l.split("|").map((x) => x.trim());
+          return sub ? { text: text!, sub } : { text: text! };
+        });
+        if (!ls.length) return toast("Write at least one line", "error");
+        void run("Designing the motion promo…", [{ op: "motion.promo", lines: ls, style, ...(theme ? { theme } : {}), ...(logo.value.trim() ? { logo: logo.value.trim() } : {}), start: 0 }, { op: "sfx.auto", style: style === "cinematic" ? "cinematic" : "clean" }], (r) => `Promo ready (${(r as { sounds?: number }).sounds ?? 0} sound effects)`);
+      }, "primary"),
+      h("h3", {}, "2.5D cinematic shot"),
+      h("p", { class: "hint" }, "Turns one picture into a moving shot: the phone measures depth, then the camera moves through it with parallax, depth of field, wind on grass, cloth and hair, fog and embers."),
+      images.length ? select("Picture", images.map((a) => [a.id, a.name] as [string, string]), img, (v) => (img = v)) : h("p", { class: "hint" }, "Import a picture first."),
+      select("Camera", [["push", "Push in"], ["drift", "Side drift"], ["orbit", "Orbit"], ["rack", "Rack focus (near → far)"], ["rise", "Rise"], ["still", "Locked off"]] as [string, string][], move, (v) => (move = v)),
+      slider("Wind", 0, 2, 0.05, wind, (v) => (wind = v)).el,
+      toggle("Fog", fog, (v) => (fog = v)),
+      toggle("Embers", embers, (v) => (embers = v)),
+      btn("Make the shot", "film", () => {
+        if (!img) return toast("Import a picture first", "error");
+        void run("Measuring depth and building the shot…", [{ op: "shot.depth", assetId: img, move, wind, fog, embers, start: s.time }], () => "2.5D shot added");
+      }, "primary"),
+      h("h3", {}, "Sound design"),
+      h("p", { class: "hint" }, "Listens to your timeline and layers sound effects on every cut, title and motion element (whooshes, pops, shimmers, ticks, chimes, booms)."),
+      select("Feel", [["clean", "Clean"], ["cinematic", "Cinematic"], ["playful", "Playful"]] as [string, string][], sfxStyle, (v) => (sfxStyle = v)),
+      btn("Design the sound", "volume", () => void run("Designing the sound…", [{ op: "sfx.auto", style: sfxStyle }], (r) => `${(r as { sounds: number }).sounds} sound effects placed`), "primary"),
+      h("h3", {}, "Put on a screen"),
+      h("p", { class: "hint" }, pinSel ? `Pins the selected clip (“${pinSel.name}”) into a screen shape in perspective.` : "Select a clip on the timeline first, then pin it into a monitor, phone, poster or billboard shape."),
+      select("Shape", Object.keys(PINS).map((k) => [k, k] as [string, string]), pin, (v) => (pin = v)),
+      h("div", { class: "row" },
+        btn("Pin", "layers", () => {
+          if (!pinSel) return toast("Select a clip first", "error");
+          void run("Pinning…", [{ op: "clip.pin", id: pinSel.id, ...PINS[pin], glow: 0.25 }], () => "Pinned");
+        }, "primary"),
+        btn("Unpin", "close", () => {
+          if (!pinSel) return;
+          void run("Unpinning…", [{ op: "clip.pin", id: pinSel.id, clear: true }], () => "Unpinned");
+        }, "ghost"),
+      ),
+    );
+    const sh = sheet("Pro studio", body, { tall: true });
   }
 
   /** Song-aware auto edit: listens to structure, energy and lyrics, cuts in a genre style, adds lyric captions. */
