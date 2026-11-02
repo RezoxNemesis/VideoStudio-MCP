@@ -480,7 +480,7 @@ export class Compositor {
     this.clear(acc);
 
     for (const L of layers) {
-      const d = L.draw;
+      let d = L.draw;
       if (d.opacity <= 0.001) continue;
       if (d.kind === "adjust") {
         const pr = this.use("adjust");
@@ -532,6 +532,15 @@ export class Compositor {
         gl.uniform1f(this.loc(pr, "uPinOn"), 1);
         gl.uniformMatrix3fv(this.loc(pr, "uHomo"), false, squareToQuad(P(d.pin.tl), P(d.pin.tr), P(d.pin.br), P(d.pin.bl)));
       } else gl.uniform1f(this.loc(pr, "uPinOn"), 0);
+      if (d.win) {
+        // Frame-space window → this layer's own UV space (rotation ignored).
+        const sw = qw * d.scaleX,
+          sh = qh * d.scaleY;
+        const left = this.width / 2 + d.x + (d.anchorX - 0.5) * sw - d.anchorX * sw,
+          top = this.height / 2 + d.y + (d.anchorY - 0.5) * sh - d.anchorY * sh;
+        const [x0, y0, x1, y1] = d.win;
+        d = { ...d, mask: { shape: "rect", x: (((x0 + x1) / 2) * this.width - left) / sw, y: (((y0 + y1) / 2) * this.height - top) / sh, w: Math.max(0, ((x1 - x0) * this.width) / sw), h: Math.max(0, ((y1 - y0) * this.height) / sh), feather: 0.0005, invert: false } };
+      }
       this.setGrade(pr, d, L.sw, L.sh, qw * Math.abs(d.scaleX), qh * Math.abs(d.scaleY));
       this.bindTarget(lay);
       this.fullQuad();

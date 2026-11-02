@@ -33,6 +33,8 @@ export interface ResolvedMask {
 /** Everything the compositor needs to draw one clip at one instant. Pure data. */
 export interface LayerDraw {
   clipId: string;
+  /** Frame-space window [x0, y0, x1, y1] (fractions) for this instant. */
+  win?: [number, number, number, number];
   pin?: Clip["pin"];
   kind: Clip["kind"];
   assetId?: string;
@@ -205,6 +207,7 @@ export function evaluateClip(p: Project, c: Clip, t: number): LayerDraw {
     duotone: c.duotone,
     crop: c.crop ? [c.crop.l, c.crop.t, c.crop.r, c.crop.b] : [0, 0, 0, 0],
     pin: c.pin,
+    win: c.win?.length ? winAt(c.win, local) : undefined,
     dirBlur: [0, 0],
   };
   // Motion blur from movement: compare with where the clip was half a frame earlier.
@@ -261,4 +264,23 @@ export function clipGain(c: Clip, t: number, trackVolume = 1): number {
   const remain = c.dur - local;
   if (c.fadeOut > 0 && remain < c.fadeOut) g *= Math.max(0, remain / c.fadeOut);
   return g;
+}
+
+function winAt(keys: NonNullable<Clip["win"]>, t: number): [number, number, number, number] {
+  const k = [...keys].sort((a, b) => a.t - b.t);
+  const v = (o: (typeof k)[number]): [number, number, number, number] => [o.x0, o.y0, o.x1, o.y1];
+  if (t <= k[0]!.t) return v(k[0]!);
+  for (let i = 0; i < k.length - 1; i++) {
+    const a = k[i]!,
+      b = k[i + 1]!;
+    if (t <= b.t) {
+      const r = (t - a.t) / Math.max(1e-6, b.t - a.t);
+      // Expo in-out: snappy editorial motion.
+      const e = r === 0 ? 0 : r === 1 ? 1 : r < 0.5 ? Math.pow(2, 20 * r - 10) / 2 : (2 - Math.pow(2, -20 * r + 10)) / 2;
+      const A = v(a),
+        B = v(b);
+      return [0, 1, 2, 3].map((i2) => A[i2]! + (B[i2]! - A[i2]!) * e) as [number, number, number, number];
+    }
+  }
+  return v(k[k.length - 1]!);
 }

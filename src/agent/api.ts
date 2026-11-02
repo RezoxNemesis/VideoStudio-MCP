@@ -1644,6 +1644,120 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         return { layers: ls.length };
       }),
   },
+  "fx.window": {
+    help: "{id, keys:[{t (s from clip start), x0,y0,x1,y1 (frame fractions)}] | clear:true} Animated frame-space window: the clip only shows inside the moving rectangle (split screens, strips, reveals). Works on full-frame clips.",
+    run: (s, a) =>
+      s.mutate("window", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        if (a.bool("clear", false)) {
+          c.win = undefined;
+          return { keys: 0 };
+        }
+        c.win = (a.any("keys") as NonNullable<Clip["win"]>).map((k) => ({ t: Number(k.t), x0: Number(k.x0), y0: Number(k.y0), x1: Number(k.x1), y1: Number(k.y1) }));
+        return { keys: c.win.length };
+      }),
+  },
+  "fx.bandReveal": {
+    help: "{id, band?=0.14 (height of the letterbox strip, of the frame), y?=0.5, open?=0.5 (s to open the strip), hold?=1.6 (s as a strip), grow?=0.9 (s to full frame), title?, sub?, color?=#e32b2b, font?=Bebas Neue} Cinematic reveal: the shot appears through a thin letterbox band (title decoding on it), then the band opens to full frame. Returns {titleId?}.",
+    run: (s, a) =>
+      s.mutate("band reveal", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        const b = a.num("band", 0.14) / 2,
+          y = a.num("y", 0.5),
+          o = a.num("open", 0.5),
+          hold = a.num("hold", 1.6),
+          g = a.num("grow", 0.9);
+        c.win = [
+          { t: 0, x0: 0.5, y0: y - 0.002, x1: 0.5, y1: y + 0.002 },
+          { t: o * 0.5, x0: 0, y0: y - 0.002, x1: 1, y1: y + 0.002 },
+          { t: o, x0: 0, y0: y - b, x1: 1, y1: y + b },
+          { t: o + hold, x0: 0, y0: y - b, x1: 1, y1: y + b },
+          { t: o + hold + g, x0: 0, y0: 0, x1: 1, y1: 1 },
+        ];
+        let titleId: string | undefined;
+        if (a.optStr("title")) {
+          const tt = ops.addClip(p, { text: a.str("title"), start: c.start + o * 0.6, dur: hold + g + 1.2, trackId: topTrack(p, c.start + o * 0.6, hold + g + 1.2) });
+          ops.patchClip(p, tt.id, { text: { font: `"${a.str("font", "Bebas Neue")}", Impact, sans-serif`, size: 190, weight: 400, color: a.str("color", "#e32b2b"), stroke: "", strokeWidth: 0, shadow: 10, animate: "scramble", animateDur: 1.1, tracking: 6, bg: "" } });
+          ops.setConstant(p, tt.id, "y", (y - 0.5) * p.height);
+          titleId = tt.id;
+          if (a.optStr("sub")) {
+            const st = ops.addClip(p, { text: a.str("sub"), start: c.start + o * 0.8, dur: hold + g + 1, trackId: topTrack(p, c.start + o * 0.8, hold + g + 1) });
+            ops.patchClip(p, st.id, { text: { font: "Inter, sans-serif", size: 40, weight: 400, color: "#f2f2f2", stroke: "", strokeWidth: 0, shadow: 6, animate: "track", animateDur: 1.2, tracking: 14, bg: "" } });
+            ops.setConstant(p, st.id, "y", (y - 0.5) * p.height - 130);
+          }
+        }
+        return { titleId };
+      }),
+  },
+  "layout.strips": {
+    help: "{ids:[clip ids, 3..6], start?, hold?=1.6, collapse?=0.8, hero? (index kept full frame)} Strip intro: the clips appear as vertical slices side by side (staggered slide-in), then the slices collapse into the hero shot full frame.",
+    run: (s, a) =>
+      s.mutate("strips", (p) => {
+        const ids = a.any("ids") as string[];
+        const n = ids.length;
+        const start = a.num("start", ops.getClip(p, ids[0]!).start);
+        const hold = a.num("hold", 1.6),
+          col = a.num("collapse", 0.8);
+        const hero = Math.min(n - 1, a.num("hero", Math.floor(n / 2)));
+        const tot = hold + col + 0.6;
+        ids.forEach((id, i) => {
+          const c = ops.getClip(p, id);
+          const x0 = i / n,
+            x1 = (i + 1) / n;
+          const d0 = i * 0.08;
+          const keys: NonNullable<Clip["win"]> = [
+            { t: 0, x0, y0: i % 2 ? 0 : 1, x1, y1: i % 2 ? 0 : 1 },
+            { t: d0, x0, y0: i % 2 ? 0 : 1, x1, y1: i % 2 ? 0 : 1 },
+            { t: d0 + 0.55, x0, y0: 0, x1, y1: 1 },
+            { t: hold, x0, y0: 0, x1, y1: 1 },
+          ];
+          if (i === hero) keys.push({ t: hold + col, x0: 0, y0: 0, x1: 1, y1: 1 });
+          else keys.push({ t: hold + col, x0: i < hero ? 0 : 1, y0: 0, x1: i < hero ? 0 : 1, y1: 1 });
+          ops.moveClip(p, id, start, topTrack(p, start, Math.max(c.dur, tot)));
+          if (c.dur < tot && i !== hero) ops.trimClip(p, id, "end", start + tot);
+          c.win = keys;
+        });
+        return { clips: n, until: start + hold + col };
+      }),
+  },
+  "layout.grid": {
+    help: "{ids:[4 or 9 clip ids], start?, dur?=3, gap?=0.012, bg?=#0b0b0b, stagger?=0.1} Grid split: the shots open as tiles of a 2×2 or 3×3 grid with thin gaps (product / b-roll style), then the first tile expands to full frame at the end.",
+    run: (s, a) =>
+      s.mutate("grid", (p) => {
+        const ids = a.any("ids") as string[];
+        const n = ids.length >= 9 ? 3 : 2;
+        const start = a.num("start", ops.getClip(p, ids[0]!).start);
+        const dur = a.num("dur", 3),
+          gap = a.num("gap", 0.012),
+          st = a.num("stagger", 0.1);
+        const bg = ops.addClip(p, { kind: "color", start, dur, trackId: ops.trackFor(p, "video", start, dur).id });
+        ops.patchClip(p, bg.id, { color: a.str("bg", "#0b0b0b"), name: "Grid background" });
+        ids.slice(0, n * n).forEach((id, i) => {
+          const c = ops.getClip(p, id);
+          const gx = i % n,
+            gy = Math.floor(i / n);
+          const x0 = gx / n + gap / 2,
+            x1 = (gx + 1) / n - gap / 2,
+            y0 = gy / n + gap / 2,
+            y1 = (gy + 1) / n - gap / 2;
+          const cx = (x0 + x1) / 2,
+            cy = (y0 + y1) / 2;
+          const d0 = i * st;
+          const keys: NonNullable<Clip["win"]> = [
+            { t: 0, x0: cx, y0: cy, x1: cx, y1: cy },
+            { t: d0, x0: cx, y0: cy, x1: cx, y1: cy },
+            { t: d0 + 0.5, x0, y0, x1, y1 },
+            { t: dur - 0.6, x0, y0, x1, y1 },
+          ];
+          if (i === 0) keys.push({ t: dur, x0: 0, y0: 0, x1: 1, y1: 1 });
+          else keys.push({ t: dur - 0.25, x0: cx, y0: cy, x1: cx, y1: cy });
+          ops.moveClip(p, id, start, topTrack(p, start, Math.max(c.dur, dur)));
+          if (c.dur > dur && i !== 0) ops.trimClip(p, id, "end", start + dur);
+          c.win = keys;
+        });
+        return { tiles: Math.min(ids.length, n * n), background: bg.id };
+      }),
+  },
   "layout.compare": {
     help: '{a, b (clip ids), labels?: ["RAW","EDITED"], bg?="#ffffff", title?, gap?=40} Side-by-side compare (Raw vs Edited, "$5 edit" vs "our work").',
     run: (s, a) =>
