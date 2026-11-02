@@ -176,8 +176,11 @@ public class StudioStoragePlugin extends Plugin {
                     if (code >= 300 && code < 400) {
                         String loc = c.getHeaderField("Location");
                         c.disconnect();
-                        if (loc == null || !loc.startsWith("https://")) throw new Exception("Bad redirect");
-                        next = loc;
+                        if (loc == null) throw new Exception("Bad redirect");
+                        // Hugging Face (and others) answer with relative redirects like "/api/resolve-cache/…".
+                        String abs = new URL(new URL(next), loc).toString();
+                        if (!abs.startsWith("https://")) throw new Exception("Bad redirect");
+                        next = abs;
                         continue;
                     }
                     if (code != 200) throw new Exception("HTTP " + code);

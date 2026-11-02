@@ -95,6 +95,7 @@ export class EditorView {
       toolBtn("Keyframe", "key", () => this.keyAll(id)),
       a?.kind !== "audio" ? toolBtn("Colour", "color", () => openInspector(s, "color")) : null,
       a?.kind !== "audio" ? toolBtn("Effects", "wand", () => openInspector(s, "effects")) : null,
+      c.kind === "media" && (a?.kind === "video" || a?.kind === "image") ? toolBtn("Remove", "eraser", () => openInspector(s, "remove")) : null,
       toolBtn("Transition", "transition", () => openInspector(s, "transition")),
       c.kind === "media" || c.kind === "anim" ? toolBtn("Speed", "speed", () => openInspector(s, "edit")) : null,
       c.kind === "anim" ? toolBtn("Draw", "brush", () => this.host.goto("animate", c.sceneId)) : null,

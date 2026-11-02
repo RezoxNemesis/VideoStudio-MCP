@@ -41,14 +41,17 @@ async function cached(store: string, url: string, onProgress?: (msg: string) => 
   if (!hasNativeStorage()) return undefined;
   onProgress?.(`Downloading ${url.split("/").pop()} (once)…`);
   let blob: Blob | null = null;
+  let last = "";
   for (let attempt = 0; attempt < 3 && !blob; attempt++) {
     try {
-      blob = await downloadBlob(url);
+      // Native first (streams big files to disk); plain fetch as a fallback (model hosts allow it).
+      blob = attempt < 2 ? await downloadBlob(url) : await fetch(url).then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))));
     } catch (e) {
-      if (/HTTP 404/.test(String(e))) return undefined;
-      if (attempt === 2) throw new Error(`Download failed for ${url.split("/").pop()}. Check the connection and try again.`);
+      last = (e as Error).message ?? String(e);
+      if (/HTTP 404/.test(last)) return undefined;
     }
   }
+  if (!blob) throw new Error(`Download failed for ${url.split("/").pop()} (${last}). Check the connection and try again.`);
   if (!blob) return undefined;
   const res = new Response(blob, { headers: { "content-type": "application/octet-stream", "content-length": String(blob.size) } });
   await cache.put(url, res.clone());
