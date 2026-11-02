@@ -532,7 +532,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       }),
   },
   "clip.select": {
-    help: "{id, points:[[x,y,label?=1],...] (fractions of the source frame; label 0 = not this), box?:[x0,y0,x1,y1] (fractions), at? (source seconds, default the playhead), grow?=0.006 (fraction of the frame), mode?: ai|auto|fill|clone|blur|pixelate, from?, to?} Tap-to-select: on-phone AI finds the exact shape of the object at the points and removes it (default AI fill). Returns {regionId, box, score}.",
+    help: "{id, points:[[x,y,label?=1],...] (fractions of the source frame; label 0 = not this), box?:[x0,y0,x1,y1] (fractions), at? (source seconds, default the playhead), grow?=0.006 (fraction of the frame), mode?: ai|auto|fill|clone|blur|pixelate|recolor, color? (hex, for recolor), from?, to?} Tap-to-select: on-phone AI finds the exact shape of the object at the points and removes it (default AI fill). Returns {regionId, box, score}.",
     run: async (s, a) => {
       const c = ops.getClip(s.project, a.str("id"));
       const as = findAsset(s.project, c.assetId);
@@ -563,6 +563,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
           feather: 0.04,
           mask: png,
         };
+        if (a.optStr("color")) r.color = a.str("color");
         if (a.optNum("from") !== undefined) r.from = a.num("from");
         if (a.optNum("to") !== undefined) r.to = a.num("to");
         (cc.remove ??= []).push(r);

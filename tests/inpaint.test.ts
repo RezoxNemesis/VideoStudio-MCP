@@ -58,3 +58,17 @@ describe("object removal", () => {
     expect(activeRegions([r], 2)[0]!.x).toBeCloseTo(0.4, 3);
   });
 });
+
+describe("recolor", () => {
+  it("changes colour but keeps the shading order", () => {
+    const W = 20, H = 10;
+    const d = new Uint8ClampedArray(W * H * 4);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y * W + x) * 4; const v = 40 + x * 5; d[i] = v; d[i + 1] = v + 5; d[i + 2] = v; d[i + 3] = 255; }
+    const img = { width: W, height: H, data: d } as unknown as ImageData;
+    removeRegion(img, { id: "r", x: 0.5, y: 0.5, w: 1, h: 1, shape: "rect", mode: "recolor", color: "#2050d0", feather: 0 });
+    const px = (x: number) => [d[(5 * W + x) * 4]!, d[(5 * W + x) * 4 + 1]!, d[(5 * W + x) * 4 + 2]!];
+    const a = px(3), b = px(16);
+    expect(a[2]!).toBeGreaterThan(a[0]!);
+    expect(b[2]!).toBeGreaterThan(a[2]!);
+  });
+});

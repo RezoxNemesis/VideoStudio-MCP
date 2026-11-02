@@ -340,7 +340,10 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
           ),
           ...regs.flatMap((r, i) => [
             h("h3", {}, `Area ${i + 1}`),
-            select("Method", [["ai", "AI fill (best, on-phone)"], ["auto", "Auto (clone + blend)"], ["clone", "Clone texture"], ["fill", "Smooth fill"], ["blur", "Blur"], ["pixelate", "Pixelate"]] as const, r.mode, (v) => set("remove mode", (cc) => (cc.remove!.find((q) => q.id === r.id)!.mode = v))),
+            select("Method", [["ai", "AI fill (best, on-phone)"], ["auto", "Auto (clone + blend)"], ["clone", "Clone texture"], ["fill", "Smooth fill"], ["blur", "Blur"], ["pixelate", "Pixelate"], ["recolor", "Recolour (keep shape)"]] as const, r.mode, (v) => set("remove mode", (cc) => (cc.remove!.find((q) => q.id === r.id)!.mode = v))),
+            r.mode === "recolor"
+              ? h("label", { class: "row" }, "New colour ", h("input", { type: "color", value: r.color ?? "#2d6cdf", oninput: (e: Event) => set("recolour", (cc) => (cc.remove!.find((q) => q.id === r.id)!.color = (e.target as HTMLInputElement).value)) }))
+              : h("span"),
             r.mask ? h("p", { class: "hint" }, "Exact shape from tap-to-select.") : select("Shape", [["rect", "Box"], ["ellipse", "Oval"]] as const, r.shape, (v) => set("remove shape", (cc) => (cc.remove!.find((q) => q.id === r.id)!.shape = v))),
             ...(["x", "y", "w", "h", "feather"] as const).map((k) =>
               slider({ x: "Across", y: "Down", w: "Width", h: "Height", feather: "Soft edge" }[k], 0, k === "feather" ? 0.5 : 1, 0.002, r[k], (v) =>

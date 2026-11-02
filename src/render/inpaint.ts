@@ -11,7 +11,7 @@
 import { valueAt } from "../core/keyframes";
 import type { Keyframe } from "../core/model";
 
-export type RemoveMode = "auto" | "ai" | "clone" | "fill" | "blur" | "pixelate";
+export type RemoveMode = "auto" | "ai" | "clone" | "fill" | "blur" | "pixelate" | "recolor";
 
 export interface RemoveRegion {
   id: string;
@@ -32,6 +32,8 @@ export interface RemoveRegion {
   yKeys?: Keyframe[];
   /** Clone source offset as a fraction of the frame (chosen automatically when missing). */
   offset?: [number, number];
+  /** "recolor": the new colour (hex). Shading, folds and line work are kept; only the colour changes. */
+  color?: string;
   /** Exact shape from tap-to-select or the brush: PNG data URL over the whole source frame (alpha = remove). */
   mask?: string;
   /** Runtime only: the mask resampled to the working crop (not stored). */
@@ -218,6 +220,33 @@ export function removeRegion(img: ImageData, r: RemoveRegion, seed = 1): [number
     off = r.offset ?? chooseOffset(img, r);
     if (!off) mode = "fill";
     else mode = "clone";
+  }
+  if (mode === "recolor") {
+    const hex = (r.color ?? "#2d6cdf").replace("#", "");
+    const tc = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) || 0);
+    let sum = 0,
+      n = 0;
+    for (let y = 0; y < bh; y++)
+      for (let x = 0; x < bw; x++) {
+        if (m[y * bw + x]! < 0.5) continue;
+        const i = ((b.y0 + y) * FW + b.x0 + x) * 4;
+        sum += 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!;
+        n++;
+      }
+    const avg = Math.max(8, n ? sum / n : 128);
+    const tl = Math.max(8, 0.299 * tc[0]! + 0.587 * tc[1]! + 0.114 * tc[2]!);
+    for (let y = 0; y < bh; y++)
+      for (let x = 0; x < bw; x++) {
+        const k = m[y * bw + x]!;
+        if (k <= 0) continue;
+        const i = ((b.y0 + y) * FW + b.x0 + x) * 4;
+        const L = 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!;
+        // Relative shading around the garment's average, re-applied around the new colour's brightness.
+        const rel = L / avg;
+        const lift = Math.max(0, rel - 1) * (255 - tl) * 0.6; // highlights still reach towards white
+        for (let c = 0; c < 3; c++) put(b.x0 + x, b.y0 + y, c, Math.min(rel, 1) * tc[c]! + lift + (rel > 1 ? (rel - 1) * tc[c]! * 0.4 : 0), k);
+      }
+    return null;
   }
   if (mode === "blur" || mode === "pixelate") {
     const src = new Float32Array(bw * bh * 3);
