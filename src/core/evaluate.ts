@@ -33,6 +33,7 @@ export interface ResolvedMask {
 /** Everything the compositor needs to draw one clip at one instant. Pure data. */
 export interface LayerDraw {
   clipId: string;
+  pin?: Clip["pin"];
   kind: Clip["kind"];
   assetId?: string;
   sceneId?: string;
@@ -203,6 +204,7 @@ export function evaluateClip(p: Project, c: Clip, t: number): LayerDraw {
     wheels: c.wheels,
     duotone: c.duotone,
     crop: c.crop ? [c.crop.l, c.crop.t, c.crop.r, c.crop.b] : [0, 0, 0, 0],
+    pin: c.pin,
     dirBlur: [0, 0],
   };
   // Motion blur from movement: compare with where the clip was half a frame earlier.

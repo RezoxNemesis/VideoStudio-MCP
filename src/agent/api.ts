@@ -474,6 +474,25 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       return { ...res, bpm: song.bpm, key: song.key, mood: song.mood, sections: song.sections, captions, lyrics: lines, lyricError };
     },
   },
+  "clip.pin": {
+    help: "{id, tl:[x,y], tr, br, bl (fractions of the frame) | clear:true, glow?: 0..1} Corner pin: put the clip into any four-corner shape in perspective — a monitor, phone, billboard or poster in another shot. glow adds screen light spill.",
+    run: (s, a) =>
+      s.mutate("corner pin", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        if (a.bool("clear", false)) {
+          c.pin = undefined;
+          return { pinned: false };
+        }
+        const q = (k: string) => {
+          const v = a.any(k) as number[] | undefined;
+          if (!Array.isArray(v) || v.length < 2) throw new ops.OpError(`${k} must be [x, y]`);
+          return [Number(v[0]), Number(v[1])] as [number, number];
+        };
+        c.pin = { tl: q("tl"), tr: q("tr"), br: q("br"), bl: q("bl") };
+        if (a.optNum("glow") !== undefined) for (const [k, v] of Object.entries({ glow: a.num("glow"), glowThreshold: 0.55, glowRadius: 30 })) ops.setConstant(p, c.id, `fx.${k}`, v);
+        return { pinned: true };
+      }),
+  },
   "clip.look": {
     help: `{id | ids, look: ${Object.keys(mv.LOOKS).join("|")}, strength?=1} Colour look preset (grade, colour wheels, glow).`,
     run: (s, a) =>

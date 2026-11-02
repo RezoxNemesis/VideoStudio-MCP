@@ -72,3 +72,13 @@ describe("recolor", () => {
     expect(b[2]!).toBeGreaterThan(a[2]!);
   });
 });
+
+import { squareToQuad } from "../src/render/compositor";
+describe("corner pin", () => {
+  it("maps unit square corners onto the quad", () => {
+    const P: [number, number][] = [[100, 50], [400, 80], [380, 300], [120, 260]];
+    const m = squareToQuad(P[0]!, P[1]!, P[2]!, P[3]!);
+    const ap = (u: number, v: number) => { const X = m[0]! * u + m[3]! * v + m[6]!, Y = m[1]! * u + m[4]! * v + m[7]!, W = m[2]! * u + m[5]! * v + m[8]!; return [X / W, Y / W]; };
+    ([[0, 0], [1, 0], [1, 1], [0, 1]] as const).forEach(([u, v], i) => { const r = ap(u, v); expect(r[0]).toBeCloseTo(P[i]![0], 3); expect(r[1]).toBeCloseTo(P[i]![1], 3); });
+  });
+});

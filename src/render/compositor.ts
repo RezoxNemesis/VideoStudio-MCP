@@ -14,14 +14,22 @@ uniform vec2 uCenter;   // anchor position in px
 uniform vec2 uAnchor;   // 0..1 within the quad
 uniform float uRot;     // radians
 uniform vec2 uFlip;
+uniform float uPinOn;
+uniform mat3 uHomo;     // unit square -> frame px (perspective corner pin)
 out vec2 vUv;
 void main() {
+  vUv = mix(aPos, 1.0 - aPos, uFlip);
+  if (uPinOn > 0.5) {
+    vec3 h = uHomo * vec3(aPos, 1.0);
+    // Homogeneous w = h.z gives perspective-correct texture interpolation.
+    gl_Position = vec4(h.x / uRes.x * 2.0 - h.z, h.z - h.y / uRes.y * 2.0, 0.0, h.z);
+    return;
+  }
   vec2 p = (aPos - uAnchor) * uSize;
   float c = cos(uRot), s = sin(uRot);
   p = vec2(p.x * c - p.y * s, p.x * s + p.y * c) + uCenter;
   vec2 clip = vec2(p.x / uRes.x * 2.0 - 1.0, 1.0 - p.y / uRes.y * 2.0);
   gl_Position = vec4(clip, 0.0, 1.0);
-  vUv = mix(aPos, 1.0 - aPos, uFlip);
 }`;
 
 const VS_FULL = `#version 300 es
@@ -519,6 +527,11 @@ export class Compositor {
       gl.uniform2f(this.loc(pr, "uAnchor"), d.anchorX, d.anchorY);
       gl.uniform1f(this.loc(pr, "uRot"), (d.rotation * Math.PI) / 180);
       gl.uniform2f(this.loc(pr, "uFlip"), d.flipX ? 1 : 0, d.flipY ? 1 : 0);
+      if (d.pin) {
+        const P = (q: [number, number]) => [q[0] * this.width + d.x, q[1] * this.height + d.y] as [number, number];
+        gl.uniform1f(this.loc(pr, "uPinOn"), 1);
+        gl.uniformMatrix3fv(this.loc(pr, "uHomo"), false, squareToQuad(P(d.pin.tl), P(d.pin.tr), P(d.pin.br), P(d.pin.bl)));
+      } else gl.uniform1f(this.loc(pr, "uPinOn"), 0);
       this.setGrade(pr, d, L.sw, L.sh, qw * Math.abs(d.scaleX), qh * Math.abs(d.scaleY));
       this.bindTarget(lay);
       this.fullQuad();
@@ -633,4 +646,41 @@ export function hexRgb(hex: string): [number, number, number] {
   if (!m) return [0, 0, 0];
   const n = parseInt(m[1]!, 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
+/** Homography taking the unit square (0,0)(1,0)(1,1)(0,1) to the quad p0..p3 (column-major mat3 for WebGL). */
+export function squareToQuad(p0: [number, number], p1: [number, number], p2: [number, number], p3: [number, number]): Float32Array {
+  const [x0, y0] = p0,
+    [x1, y1] = p1,
+    [x2, y2] = p2,
+    [x3, y3] = p3;
+  const sx = x0 - x1 + x2 - x3,
+    sy = y0 - y1 + y2 - y3;
+  let a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number;
+  if (Math.abs(sx) < 1e-9 && Math.abs(sy) < 1e-9) {
+    a = x1 - x0;
+    b = x2 - x1;
+    c = x0;
+    d = y1 - y0;
+    e = y2 - y1;
+    f = y0;
+    g = 0;
+    h = 0;
+  } else {
+    const dx1 = x1 - x2,
+      dx2 = x3 - x2,
+      dy1 = y1 - y2,
+      dy2 = y3 - y2;
+    const den = dx1 * dy2 - dx2 * dy1;
+    g = (sx * dy2 - dx2 * sy) / den;
+    h = (dx1 * sy - sx * dy1) / den;
+    a = x1 - x0 + g * x1;
+    b = x3 - x0 + h * x3;
+    c = x0;
+    d = y1 - y0 + g * y1;
+    e = y3 - y0 + h * y3;
+    f = y0;
+  }
+  // [X,Y,W] = M * [u,v,1]; columns: (a,d,g), (b,e,h), (c,f,1)
+  return new Float32Array([a, d, g, b, e, h, c, f, 1]);
 }
