@@ -5,6 +5,7 @@ import { GRADE_DEFAULTS, TRANSFORM_DEFAULTS, findAsset, findClip, type BlendMode
 import { hasKeyAt, isAnimated, valueAt } from "../core/keyframes";
 import * as ops from "../core/ops";
 import { runCommand } from "../agent/api";
+import { openMagicEraser } from "./magic";
 import { btn, colorInput, h, select, sheet, slider, toast, toggle, type SliderRow } from "./dom";
 
 export type InspectorTab = "edit" | "transform" | "crop" | "color" | "effects" | "remove" | "text" | "transition";
@@ -287,6 +288,10 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
         return [
           h("p", { class: "hint" }, "Remove logos, stickers, text or small unwanted things. The area is rebuilt from its surroundings (texture is cloned and blended in), so the frame keeps its size and the clip keeps its length."),
           h("div", { class: "row wrap" },
+            btn("Magic Eraser", "eraser", () => {
+              sh.close();
+              void openMagicEraser(s, id);
+            }, "primary"),
             btn("Find automatically", "wand", busy("Looking for logos and stickers…", async () => {
               const r = await runCommand(s, { op: "media.findOverlays", assetId: c.assetId! });
               if (!r.ok) throw new Error(r.error);
@@ -340,7 +345,7 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
           ),
           ...regs.flatMap((r, i) => [
             h("h3", {}, `Area ${i + 1}`),
-            select("Method", [["ai", "AI fill (best, on-phone)"], ["auto", "Auto (clone + blend)"], ["clone", "Clone texture"], ["fill", "Smooth fill"], ["blur", "Blur"], ["pixelate", "Pixelate"], ["recolor", "Recolour (keep shape)"]] as const, r.mode, (v) => set("remove mode", (cc) => (cc.remove!.find((q) => q.id === r.id)!.mode = v))),
+            select("Method", [["ai", "AI fill (best, on-phone)"], ["auto", "Auto (clone + blend)"], ["clone", "Clone texture"], ["fill", "Smooth fill"], ["blur", "Blur"], ["pixelate", "Pixelate"], ["recolor", "Recolour (keep shape)"], ["smart", "Smart fill (generative)"]] as const, r.mode, (v) => set("remove mode", (cc) => (cc.remove!.find((q) => q.id === r.id)!.mode = v))),
             r.mode === "recolor"
               ? h("label", { class: "row" }, "New colour ", h("input", { type: "color", value: r.color ?? "#2d6cdf", oninput: (e: Event) => set("recolour", (cc) => (cc.remove!.find((q) => q.id === r.id)!.color = (e.target as HTMLInputElement).value)) }))
               : h("span"),

@@ -11,7 +11,7 @@
 import { valueAt } from "../core/keyframes";
 import type { Keyframe } from "../core/model";
 
-export type RemoveMode = "auto" | "ai" | "clone" | "fill" | "blur" | "pixelate" | "recolor";
+export type RemoveMode = "auto" | "ai" | "clone" | "fill" | "blur" | "pixelate" | "recolor" | "smart";
 
 export interface RemoveRegion {
   id: string;
@@ -32,6 +32,9 @@ export interface RemoveRegion {
   yKeys?: Keyframe[];
   /** Clone source offset as a fraction of the frame (chosen automatically when missing). */
   offset?: [number, number];
+  /** "smart": what to paint there (optional), and the baked result — a PNG over the whole frame, transparent outside. */
+  prompt?: string;
+  patch?: string;
   /** "recolor": the new colour (hex). Shading, folds and line work are kept; only the colour changes. */
   color?: string;
   /** Exact shape from tap-to-select or the brush: PNG data URL over the whole source frame (alpha = remove). */
@@ -224,26 +227,53 @@ export function removeRegion(img: ImageData, r: RemoveRegion, seed = 1): [number
   if (mode === "recolor") {
     const hex = (r.color ?? "#2d6cdf").replace("#", "");
     const tc = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) || 0);
-    let sum = 0,
-      n = 0;
-    for (let y = 0; y < bh; y++)
-      for (let x = 0; x < bw; x++) {
-        if (m[y * bw + x]! < 0.5) continue;
-        const i = ((b.y0 + y) * FW + b.x0 + x) * 4;
-        sum += 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!;
-        n++;
-      }
-    const avg = Math.max(8, n ? sum / n : 128);
+    // The garment's own colour: mean of the marked pixels, then re-estimated from the pixels near that mean (so a
+    // loose brush stroke over skin or background doesn't skew it).
+    const at = (x: number, y: number) => ((b.y0 + y) * FW + b.x0 + x) * 4;
+    let mr = 0, mg = 0, mb = 0, n = 0;
+    for (let pass = 0; pass < 3; pass++) {
+      let sr = 0, sg = 0, sb = 0, c = 0;
+      for (let y = 0; y < bh; y++)
+        for (let x = 0; x < bw; x++) {
+          if (m[y * bw + x]! < 0.5) continue;
+          const i = at(x, y);
+          if (pass > 0 && Math.hypot(d[i]! - mr, d[i + 1]! - mg, d[i + 2]! - mb) > (pass === 1 ? 90 : 60)) continue;
+          sr += d[i]!;
+          sg += d[i + 1]!;
+          sb += d[i + 2]!;
+          c++;
+        }
+      if (!c) break;
+      mr = sr / c;
+      mg = sg / c;
+      mb = sb / c;
+      n = c;
+    }
+    if (!n) return null;
+    const avg = Math.max(8, 0.299 * mr + 0.587 * mg + 0.114 * mb);
     const tl = Math.max(8, 0.299 * tc[0]! + 0.587 * tc[1]! + 0.114 * tc[2]!);
+    // How far from the garment colour a pixel may be and still count: ink lines (darker) always count; lighter or
+    // differently coloured pixels (skin, shirt, background) fade out.
+    const chromaDist = (i: number) => {
+      const L = 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!;
+      const cr = d[i]! - L - (mr - avg),
+        cg = d[i + 1]! - L - (mg - avg),
+        cb = d[i + 2]! - L - (mb - avg);
+      const chroma = Math.hypot(cr, cg, cb);
+      const lighter = Math.max(0, L - avg);
+      return chroma * 1.3 + lighter * 1.1;
+    };
     for (let y = 0; y < bh; y++)
       for (let x = 0; x < bw; x++) {
-        const k = m[y * bw + x]!;
+        const k0 = m[y * bw + x]!;
+        if (k0 <= 0) continue;
+        const i = at(x, y);
+        const dist = chromaDist(i);
+        const k = k0 * Math.max(0, Math.min(1, 1 - (dist - 45) / 50));
         if (k <= 0) continue;
-        const i = ((b.y0 + y) * FW + b.x0 + x) * 4;
         const L = 0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!;
-        // Relative shading around the garment's average, re-applied around the new colour's brightness.
         const rel = L / avg;
-        const lift = Math.max(0, rel - 1) * (255 - tl) * 0.6; // highlights still reach towards white
+        const lift = Math.max(0, rel - 1) * (255 - tl) * 0.6;
         for (let c = 0; c < 3; c++) put(b.x0 + x, b.y0 + y, c, Math.min(rel, 1) * tc[c]! + lift + (rel > 1 ? (rel - 1) * tc[c]! * 0.4 : 0), k);
       }
     return null;

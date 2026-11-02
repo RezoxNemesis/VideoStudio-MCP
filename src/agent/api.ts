@@ -22,7 +22,9 @@ import { to16k, transcribe, type LyricLine } from "../media/asr";
 import { ExportJob, type ExportOptions } from "../render/export";
 import { fetchInbox, listInbox } from "./remote";
 import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot, stillImage } from "../render/snapshot";
-import { dilate, maskBounds, maskToPng, segment } from "../media/ai";
+import { decodeMask, dilate, maskAtSize, maskBounds, maskToPng, segment } from "../media/ai";
+import { genDownload, genStatus, smartFill } from "../media/genfill";
+import { ctx2d as ctx2dA, makeCanvas as makeCanvasA } from "../anim/render";
 import { analyseBeats, beatCut } from "../app/autoedit";
 import * as t3 from "../anim/three3d";
 import * as living from "../anim/living";
@@ -568,6 +570,117 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         if (a.optNum("to") !== undefined) r.to = a.num("to");
         (cc.remove ??= []).push(r);
         return { regionId: r.id, box: { x: r3(r.x), y: r3(r.y), w: r3(r.w), h: r3(r.h) }, score: r3(seg.score), coverage: r3(mask.reduce((n, v) => n + (v ? 1 : 0), 0) / (W * H)) };
+      });
+    },
+  },
+  "clip.addRegion": {
+    help: "{id, mask (PNG data URL over the source frame, white/opaque = area), mode: ai|smart|recolor|blur|pixelate|fill|clone|auto, color?, prompt?, from?, to?, feather?=0.04} Add a removal/repaint area from a painted mask. Returns {regionId}.",
+    run: async (s, a) => {
+      const png = a.str("mask");
+      const mk = await decodeMask(png);
+      let x0 = mk.w, y0 = mk.h, x1 = 0, y1 = 0;
+      for (let y = 0; y < mk.h; y++)
+        for (let x = 0; x < mk.w; x++)
+          if (mk.data[y * mk.w + x]! > 127) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+      if (x1 < x0) throw new ops.OpError("The mask is empty.");
+      return s.mutate("add area", (p) => {
+        const cc = ops.getClip(p, a.str("id"));
+        const r: RemoveRegion = { id: uid("rm"), x: (x0 + x1 + 1) / 2 / mk.w, y: (y0 + y1 + 1) / 2 / mk.h, w: (x1 - x0 + 1) / mk.w, h: (y1 - y0 + 1) / mk.h, shape: "rect", mode: a.str("mode", "ai") as RemoveRegion["mode"], feather: a.num("feather", 0.04), mask: png };
+        if (a.optStr("color")) r.color = a.str("color");
+        if (a.optStr("prompt")) r.prompt = a.str("prompt");
+        if (a.optNum("from") !== undefined) r.from = a.num("from");
+        if (a.optNum("to") !== undefined) r.to = a.num("to");
+        (cc.remove ??= []).push(r);
+        return { regionId: r.id };
+      });
+    },
+  },
+  "smartfill.status": {
+    help: "Is Smart fill (generative repaint on the phone) downloaded, how big is it, does the phone have GPU compute (WebGPU)?",
+    run: async () => {
+      const st = await genStatus();
+      const g = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
+      let webgpu = false;
+      try {
+        webgpu = !!(g && (await g.requestAdapter()));
+      } catch {
+        /* no */
+      }
+      return { ...st, webgpu };
+    },
+  },
+  "smartfill.download": {
+    help: "Download the Smart fill models once (~2.1 GB). Waits until done.",
+    run: async (s) => {
+      await genDownload((m) => s.setStatus(m));
+      s.setStatus("");
+      return await genStatus();
+    },
+  },
+  "clip.smartFill": {
+    help: "{id, regionId? (an existing removal area, e.g. from clip.select) | points?/box? (select now), prompt? (what should be there, e.g. 'bare arms, white t-shirt sleeves'), steps?=20, guidance?=7.5, seed?, at? (source seconds)} Generative repaint on the phone: draws what was never visible (skin, arms, cloth, background) and bakes it into the clip. Slow (about 1–3 min on GPU).",
+    run: async (s, a) => {
+      const c = ops.getClip(s.project, a.str("id"));
+      const as = findAsset(s.project, c.assetId);
+      if (!as || (as.kind !== "video" && as.kind !== "image")) throw new ops.OpError("Smart fill works on video and photo clips.");
+      const t = a.optNum("at") ?? Math.max(0, c.in + (s.time - c.start) * c.speed);
+      const src = as.kind === "image" ? ((await s.pool.image(as)) as CanvasImageSource) : ((await (await s.pool.framer(as, "smartfill", 1920))?.frameAt(t))?.canvas as CanvasImageSource | undefined);
+      if (!src) throw new ops.OpError("Could not read that frame.");
+      const W = (src as { width: number }).width,
+        H = (src as { height: number }).height;
+      let region = a.optStr("regionId") ? (c.remove ?? []).find((r) => r.id === a.str("regionId")) : undefined;
+      let mask: Uint8Array;
+      if (region?.mask) mask = await maskAtSize(region.mask, W, H);
+      else {
+        const pts = ((a.any("points") as number[][] | undefined) ?? []).map((p) => [p[0]! * W, p[1]! * H, p[2] ?? 1] as [number, number, number]);
+        const bx = a.any("box") as number[] | undefined;
+        if (!pts.length && !bx) throw new ops.OpError("Give regionId, points or a box.");
+        const seg = await segment(src, W, H, pts, bx ? [bx[0]! * W, bx[1]! * H, bx[2]! * W, bx[3]! * H] : undefined, (m) => s.setStatus(m));
+        mask = dilate(seg.mask, W, H, Math.round(a.num("grow", 0.006) * Math.max(W, H)));
+      }
+      const b = maskBounds(mask, W, H);
+      if (!b) throw new ops.OpError("Nothing selected.");
+      const work = makeCanvasA(W, H);
+      const wx = ctx2dA(work);
+      wx.drawImage(src, 0, 0, W, H);
+      const res = await smartFill(wx, W, H, mask, { prompt: a.optStr("prompt"), steps: a.optNum("steps"), guidance: a.optNum("guidance"), seed: a.optNum("seed") }, (m) => s.setStatus(m));
+      s.setStatus("");
+      // Bake: keep only the repainted pixels (plus the soft edge) in a transparent full-frame patch.
+      const keep = dilate(mask, W, H, Math.max(5, Math.round(Math.max(W, H) / 128) + 4));
+      const k = Math.min(1, 1600 / Math.max(W, H));
+      const pw = Math.round(W * k),
+        ph = Math.round(H * k);
+      const full = wx.getImageData(0, 0, W, H);
+      for (let i = 0; i < W * H; i++) if (!keep[i]) full.data[i * 4 + 3] = 0;
+      const pc = makeCanvasA(W, H);
+      ctx2dA(pc).putImageData(full, 0, 0);
+      const small = makeCanvasA(pw, ph);
+      ctx2dA(small).drawImage(pc as CanvasImageSource, 0, 0, pw, ph);
+      const blob = "convertToBlob" in small ? await (small as OffscreenCanvas).convertToBlob({ type: "image/png" }) : await new Promise<Blob>((ok) => (small as HTMLCanvasElement).toBlob((bb) => ok(bb!), "image/png"));
+      const patch = await new Promise<string>((ok) => {
+        const fr = new FileReader();
+        fr.onload = () => ok(String(fr.result));
+        fr.readAsDataURL(blob);
+      });
+      const png = region?.mask ?? (await maskToPng(mask, W, H));
+      return s.mutate("smart fill", (p) => {
+        const cc = ops.getClip(p, a.str("id"));
+        cc.remove ??= [];
+        let r = region ? cc.remove.find((q) => q.id === region!.id) : undefined;
+        if (!r) {
+          r = { id: uid("rm"), x: (b.x0 + b.x1) / 2 / W, y: (b.y0 + b.y1) / 2 / H, w: (b.x1 - b.x0) / W, h: (b.y1 - b.y0) / H, shape: "rect", mode: "smart", feather: 0.04, mask: png };
+          cc.remove.push(r);
+        }
+        r.mode = "smart";
+        r.patch = patch;
+        if (a.optStr("prompt")) r.prompt = a.str("prompt");
+        region = r;
+        return { regionId: r.id, provider: res.provider, seconds: res.seconds, patchKB: Math.round(patch.length / 1365) };
       });
     },
   },

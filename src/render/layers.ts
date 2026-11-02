@@ -348,7 +348,7 @@ async function regionMasks(regions: RemoveRegion[], W: number, H: number): Promi
   const out = new Map<string, Uint8Array>();
   for (const r of regions) {
     if (r.mask) out.set(r.id, await maskAtSize(r.mask, W, H));
-    else if (r.mode === "ai") {
+    else if (r.mode === "ai" || r.mode === "smart") {
       // A box/oval drawn as a mask for the AI fill.
       const m = new Uint8Array(W * H);
       const b = regionBox(r, W, H);
@@ -374,10 +374,11 @@ async function cleaned(d: LayerDraw, src: CanvasImageSource, W: number, H: numbe
   }
   if (e.version !== version) {
     const x = ctx2d(e.canvas);
-    const ai = regions.filter((r) => r.mode === "ai");
-    const fast = regions.filter((r) => r.mode !== "ai");
+    const ai = regions.filter((r) => r.mode === "ai" || (r.mode === "smart" && !r.patch));
+    const fast = regions.filter((r) => r.mode !== "ai" && r.mode !== "smart");
+    const patched = regions.filter((r) => r.mode === "smart" && r.patch);
     const aiKey = `${d.clipId}|${W}x${H}|${version}`;
-    const masks = regions.some((r) => r.mask || r.mode === "ai") ? await regionMasks(regions, W, H) : undefined;
+    const masks = regions.some((r) => r.mask || r.mode === "ai" || (r.mode === "smart" && !r.patch)) ? await regionMasks(regions, W, H) : undefined;
     const runFast = (list: RemoveRegion[]) => {
       const okey = `${d.clipId}|${W}x${H}|${JSON.stringify(list.map((r) => [r.id, r.w, r.h, r.shape, r.mode, r.offset, !!r.mask]))}`;
       let offs = cleanOffsets.get(okey);
@@ -422,9 +423,28 @@ async function cleaned(d: LayerDraw, src: CanvasImageSource, W: number, H: numbe
       }
     }
     if (fast.length) runFast(fast);
+    // Smart fill: the generated pixels were baked once into a patch (transparent outside the repaint).
+    for (const r of patched) {
+      const img = await patchImage(r.patch!);
+      if (img) x.drawImage(img, 0, 0, W, H);
+    }
     e.version = version;
   }
   return { draw: d, source: e.canvas as LayerSource, sw: W, sh: H, version };
+}
+const patchCache = new Map<string, ImageBitmap | null>();
+async function patchImage(url: string): Promise<ImageBitmap | null> {
+  const k = url.length + ":" + url.slice(-64);
+  if (patchCache.has(k)) return patchCache.get(k)!;
+  let bmp: ImageBitmap | null = null;
+  try {
+    bmp = await createImageBitmap(await (await fetch(url)).blob());
+  } catch {
+    bmp = null;
+  }
+  patchCache.set(k, bmp);
+  if (patchCache.size > 16) patchCache.delete(patchCache.keys().next().value!);
+  return bmp;
 }
 async function snapshotOf(c: AnyCanvas): Promise<AnyCanvas> {
   const copy = makeCanvas(c.width, c.height);
