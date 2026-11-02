@@ -14,6 +14,7 @@ import { runCommand, type Command } from "../agent/api";
 import * as PR from "../anim/proc";
 import { btn, fmtTime, h, icon, pickFiles, select, sheet, slider, toast, toolBtn, colorInput, toggle } from "./dom";
 import { runBatch } from "../agent/api";
+import { GENERATED_TEXTURES as GEN_TEX } from "../render/subject";
 
 export interface EditorHost {
   goto(view: "edit" | "animate" | "voice" | "export" | "agent", arg?: string): void;
@@ -98,6 +99,7 @@ export class EditorView {
       a?.kind !== "audio" ? toolBtn("Colour", "color", () => openInspector(s, "color")) : null,
       a?.kind !== "audio" ? toolBtn("Effects", "wand", () => openInspector(s, "effects")) : null,
       c.kind === "media" && (a?.kind === "video" || a?.kind === "image") ? toolBtn("Magic Eraser", "eraser", () => void openMagicEraser(s, c.id)) : null,
+      c.kind === "media" && (a?.kind === "video" || a?.kind === "image") ? toolBtn("Subject", "wand", () => this.subjectSheet(c.id)) : null,
       toolBtn("Transition", "transition", () => openInspector(s, "transition")),
       c.kind === "media" || c.kind === "anim" ? toolBtn("Speed", "speed", () => openInspector(s, "edit")) : null,
       c.kind === "anim" ? toolBtn("Draw", "brush", () => this.host.goto("animate", c.sceneId)) : null,
@@ -239,6 +241,56 @@ export class EditorView {
     const sh = sheet("Beat cut", body);
   }
 
+  /** Person looks: cut-out, text behind, texture inside, neon outline, double exposure, halo. */
+  private subjectSheet(clipId: string) {
+    const s = this.s;
+    const others = s.project.assets.filter((x) => x.kind === "image" || x.kind === "video");
+    let texture = "galaxy";
+    let color = "#ffd23f";
+    let bg = "";
+    const word = h("input", { type: "text", placeholder: "Words behind the person, e.g. DREAMER", style: "width:100%" }) as HTMLInputElement;
+    const go = async (label: string, cmds: Record<string, unknown>[]) => {
+      sh.close();
+      s.setStatus(label);
+      try {
+        const rs = await runBatch(s, cmds as never);
+        const bad = rs.find((r) => !r.ok);
+        if (bad) throw new Error(bad.error ?? "Failed");
+        toast("Done", "ok");
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error", 6000);
+      } finally {
+        s.setStatus("");
+      }
+    };
+    const look = (mode: string, extra: Record<string, unknown> = {}) => void go("Finding the person (on-phone AI, once per clip)…", [{ op: "clip.subject", id: clipId, mode, ...(bg ? { bg } : {}), ...extra }]);
+    const body = h(
+      "div",
+      { class: "stack" },
+      h("p", { class: "hint" }, "The phone finds the person in this clip (once; a few seconds for a photo, longer for a video), then you can style them."),
+      h("h3", {}, "Text behind the person"),
+      word,
+      btn("Put the words behind", "text", () => {
+        if (!word.value.trim()) return toast("Write the words first", "error");
+        void go("Finding the person…", [{ op: "fx.textBehind", id: clipId, text: word.value.trim() }]);
+      }, "primary"),
+      h("h3", {}, "Looks"),
+      select("Texture inside", [...GEN_TEX.map((g) => [g, g] as [string, string]), ...others.filter((x) => x.id !== findClip(s.project, clipId)?.clip.assetId).map((x) => [x.id, `Your ${x.kind}: ${x.name}`] as [string, string])], texture, (v) => (texture = v)),
+      colorInput("Glow colour", color, (v) => (color = v)),
+      select("Background", [["", "Look's default"], ["keep", "Keep"], ["dark", "Darken"], ["black", "Black"], ["white", "Paper white"], ["blur", "Blur"]] as [string, string][], bg, (v) => (bg = v)),
+      h("div", { class: "row wrap" },
+        btn("Texture fill", "wand", () => look("fill", { texture, color2: color, drawOn: 1.2 }), "ghost"),
+        btn("Neon outline", "spark", () => look("neon", { color, drawOn: 1.5 }), "ghost"),
+        btn("Double exposure", "layers", () => look("double", { texture }), "ghost"),
+        btn("Halo light", "sun", () => look("halo", { color2: color }), "ghost"),
+        btn("Cut-out", "scissors", () => look("cutout", { bg: bg || "transparent" }), "ghost"),
+        btn("New background", "image", () => look("replace", { texture, bg: "texture" }), "ghost"),
+        btn("Clear look", "close", () => look("none"), "ghost"),
+      ),
+    );
+    const sh = sheet("Subject", body, { tall: true });
+  }
+
   /** The premium tools in one place: motion promo, 2.5D shot, auto sound design, screen pin. */
   private proStudioSheet() {
     const s = this.s;
@@ -286,7 +338,7 @@ export class EditorView {
       h("h3", {}, "Motion promo"),
       h("p", { class: "hint" }, "Premium motion design from a few lines: glowing dots and sparkles, glass pills, frames, drawn paths, particle rings, eclipse and brush titles, with camera moves, grain and an original score. Use “Title | small line” for a subtitle."),
       lines,
-      select("Style", [["warm", "Warm glow (orange)"], ["tech", "Tech (stars, particles)"], ["cinematic", "Cinematic (eclipse, fog, brush title)"]] as [string, string][], style, (v) => (style = v)),
+      select("Style", [["editorial", "Editorial collage (paper, serif, your photos)"], ["warm", "Warm glow (orange)"], ["tech", "Tech (stars, particles)"], ["cinematic", "Cinematic (eclipse, fog, brush title)"]] as [string, string][], style, (v) => (style = v)),
       select("Colours", [["", "Match the style"], ["ember", "Ember"], ["cream", "Cream (light)"], ["mono", "Mono night"], ["eclipse", "Eclipse red"], ["aurora", "Aurora"], ["gold", "Gold"]] as [string, string][], theme, (v) => (theme = v)),
       logo,
       btn("Make the promo", "wand", () => {
@@ -295,7 +347,8 @@ export class EditorView {
           return sub ? { text: text!, sub } : { text: text! };
         });
         if (!ls.length) return toast("Write at least one line", "error");
-        void run("Designing the motion promo…", [{ op: "motion.promo", lines: ls, style, ...(theme ? { theme } : {}), ...(logo.value.trim() ? { logo: logo.value.trim() } : {}), start: 0 }, { op: "sfx.auto", style: style === "cinematic" ? "cinematic" : "clean" }], (r) => `Promo ready (${(r as { sounds?: number }).sounds ?? 0} sound effects)`);
+        const photos = style === "editorial" ? s.project.assets.filter((x) => x.kind === "image").slice(0, 6).map((x) => x.id) : undefined;
+        void run("Designing the motion promo…", [{ op: "motion.promo", lines: ls, style, ...(photos?.length ? { photos } : {}), ...(theme ? { theme } : {}), ...(logo.value.trim() ? { logo: logo.value.trim() } : {}), start: 0 }, { op: "sfx.auto", style: style === "cinematic" ? "cinematic" : "clean" }], (r) => `Promo ready (${(r as { sounds?: number }).sounds ?? 0} sound effects)`);
       }, "primary"),
       h("h3", {}, "2.5D cinematic shot"),
       h("p", { class: "hint" }, "Turns one picture into a moving shot: the phone measures depth, then the camera moves through it with parallax, depth of field, wind on grass, cloth and hair, fog and embers."),
