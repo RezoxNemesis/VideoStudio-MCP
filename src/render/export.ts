@@ -1,3 +1,5 @@
+import { preloadModels } from "../anim/three3d";
+import { getBlob } from "../core/storage";
 import { loadFonts } from "./fonts";
 /**
  * Offline renderer: GPU compositing → hardware H.264/HEVC encoding (WebCodecs) → MP4 streamed straight to
@@ -96,7 +98,7 @@ export class ExportJob {
     const t0 = performance.now();
     await keepAwake(true);
     try {
-      for (const s of p.scenes) await preloadFills(s);
+      for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref));
       let audio: AudioBufferSource | null = null;
       let audioCodec = "";
       let mixed: AudioBuffer | null = null;

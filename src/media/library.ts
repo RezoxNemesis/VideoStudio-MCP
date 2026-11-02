@@ -15,13 +15,14 @@ export function kindFor(mime: string, name: string): AssetKind | null {
   if (["mp4", "mov", "m4v", "webm", "mkv", "3gp"].includes(ext)) return "video";
   if (["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "heic"].includes(ext)) return "image";
   if (["mp3", "wav", "m4a", "aac", "ogg", "opus", "flac"].includes(ext)) return "audio";
+  if (["glb", "gltf"].includes(ext) || m === "model/gltf-binary" || m === "model/gltf+json") return "model";
   return null;
 }
 
 /** Copy a blob into private storage and describe it. */
 export async function importBlob(p: Project, blob: Blob, name: string, createdBy: Asset["createdBy"] = "user"): Promise<Asset> {
   const kind = kindFor(blob.type, name);
-  if (!kind) throw new Error(`"${name}" is not a video, image or audio file.`);
+  if (!kind) throw new Error(`"${name}" is not a video, image, audio or 3D model (.glb/.gltf) file.`);
   const id = uid("ast");
   const info = await probe(blob, kind);
   const ref = await putBlob(id, blob);
@@ -31,6 +32,7 @@ export async function importBlob(p: Project, blob: Blob, name: string, createdBy
 }
 
 async function probe(blob: Blob, kind: AssetKind): Promise<{ duration: number; width: number; height: number; peaks?: number[] }> {
+  if (kind === "model") return { duration: 0, width: 0, height: 0 };
   if (kind === "image") {
     const bmp = await createImageBitmap(blob);
     const r = { duration: 0, width: bmp.width, height: bmp.height };

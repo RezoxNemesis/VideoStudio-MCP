@@ -9,6 +9,8 @@ import { bucketFill, ctx2d, drawStroke, makeCanvas, renderScene } from "../anim/
 import * as ops from "../core/ops";
 import * as R from "../anim/rig";
 import * as PU from "../anim/puppet";
+import * as T3 from "../anim/three3d";
+import { importBlob } from "../media/library";
 import { valueAt } from "../core/keyframes";
 import { saveBlob } from "../native/storage";
 import { btn, colorInput, confirmBox, h, icon, pickFiles, select, sheet, slider, toast, toggle } from "./dom";
@@ -278,6 +280,7 @@ export class AnimateView {
       sc ? btn("Layers", "layers", () => this.layersSheet(), "ghost") : null,
       sc ? btn("Rig", "bone", () => this.rigSheet(), "ghost") : null,
       sc ? btn("Character", "user", () => this.characterSheet(), "ghost") : null,
+      sc ? btn("3D", "cube", () => this.threeSheet(), "ghost") : null,
       h("div", { class: "grow" }),
       btn("Undo", "undo", () => s.undo(), "icon-only ghost"),
       btn("Redo", "redo", () => s.redo(), "icon-only ghost"),
@@ -1015,6 +1018,219 @@ export class AnimateView {
     };
     draw();
     sheet("Character", body, { tall: true });
+  }
+
+
+  /** 3D studio: a three.js layer in this scene. Objects, characters, models, camera moves, keyed at the current frame. */
+  private threeSheet() {
+    const s = this.s;
+    const sc = this.scene();
+    if (!sc) return;
+    const sid = sc.id;
+    const body = h("div", { class: "stack" });
+    const sl = (...args: Parameters<typeof slider>) => slider(...args).el;
+    let objId: string | null = null;
+    let textValue = "HELLO";
+    let style: T3.Scene3D["style"] = "toon";
+    const layer = () => this.scene()?.layers.find((l) => l.kind === "three") ?? null;
+    const run = (label: string, fn: (S: AnimScene, sp: T3.Scene3D) => unknown) => {
+      try {
+        s.mutate(label, (p) => {
+          const S = A.getScene(p, sid);
+          const l = S.layers.find((x) => x.kind === "three");
+          if (!l?.three) throw new Error("Add a 3D layer first");
+          return fn(S, l.three);
+        });
+        this.drawStrip();
+        this.queue();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error");
+      }
+    };
+    const fr = () => this.frame;
+    const addObj = (type: T3.Obj3DType, extra: Partial<T3.Obj3D> = {}) => {
+      run(`add 3D ${type}`, (_S, sp) => {
+        let n = sp.objects.length + 1;
+        while (sp.objects.some((o) => o.id === `${type}${n}`)) n++;
+        const o: T3.Obj3D = { id: `${type}${n}`, type, color: type === "character" ? "#ffffff" : ["#e8e4f0", "#ff4a2e", "#3b7dd8", "#ffd23f", "#2ecc71"][n % 5]!, material: "toon", pos: [0, type === "character" || type === "terrain" || type === "particles" || type === "model" ? 0 : 0.5, 0], rot: [0, 0, 0], scale: 1, ...extra };
+        if (type === "character") o.char = { ...T3.DEFAULT_CHAR3D };
+        sp.objects.push(o);
+        objId = o.id;
+      });
+      draw();
+    };
+    /** Set a property: the base value, or a key at this frame once the property is animated. */
+    const setProp = (o: T3.Obj3D, prop: string, v: number, base: () => void) =>
+      run(`3D ${prop}`, (_S, sp) => {
+        const live = sp.objects.find((x) => x.id === o.id)!;
+        if (sp.keys[`${o.id}.${prop}`]?.length) T3.setKey(sp, `${o.id}.${prop}`, fr(), v);
+        else base.call(live);
+        Object.assign(o, live);
+      });
+    const draw = () => {
+      const l = layer();
+      const sp = l?.three;
+      const o = sp?.objects.find((x) => x.id === objId) ?? sp?.objects[0] ?? null;
+      if (o) objId = o.id;
+      const kids: (HTMLElement | null)[] = [h("p", { class: "hint" }, "Build 3D scenes inside this animation: shapes, 3D text, toon characters, imported .glb models, lights and camera moves. Everything mixes with your drawings, characters and effects. Moving a slider on an animated property keys it at the current frame.")];
+      if (!sp) {
+        kids.push(
+          select("Look", [["toon", "Toon (anime)"], ["realistic", "Realistic"], ["clay", "Clay"], ["neon", "Neon"]] as const, style, (v) => (style = v)),
+          btn("Add 3D layer", "cube", () => {
+            try {
+              s.mutate("3D layer", (p) => {
+                const S = A.getScene(p, sid);
+                const nl = A.addLayer(S, "3D", "three");
+                S.layers.splice(S.layers.indexOf(nl), 1);
+                let i = S.layers.length;
+                while (i > 0 && S.layers[i - 1]!.kind === "backdrop") i--;
+                S.layers.splice(i, 0, nl);
+                nl.three = T3.newScene3D();
+                nl.three.style = style;
+              });
+              this.queue();
+            } catch (e) {
+              toast(e instanceof Error ? e.message : String(e), "error");
+            }
+            draw();
+          }, "primary"),
+        );
+        body.replaceChildren(...(kids.filter(Boolean) as HTMLElement[]));
+        return;
+      }
+      kids.push(
+        h("h3", {}, "Add"),
+        h("div", { class: "chips" },
+          ...(["box", "sphere", "cylinder", "cone", "torus", "capsule", "icosa", "knot", "plane", "ring", "terrain", "particles"] as const).map((t) => h("button", { class: "chip", type: "button", onclick: () => addObj(t, t === "particles" ? { color: "#ffe9a8", size: [500] } : t === "terrain" ? { color: "#3c6e47", size: [30] } : {}) }, t)),
+          h("button", { class: "chip", type: "button", onclick: () => addObj("character") }, "character"),
+        ),
+        h("div", { class: "row" },
+          (() => {
+            const i = h("input", { type: "text", value: textValue, placeholder: "3D text" }) as HTMLInputElement;
+            i.addEventListener("input", () => (textValue = i.value));
+            return i;
+          })(),
+          btn("3D text", "text", () => addObj("text", { text: textValue, color: "#ffd23f", font: "Anton", pos: [0, 2, -1], size: [0.7, 0.15] }), "ghost"),
+        ),
+        btn("Import 3D model (.glb / .gltf)", "folder", async () => {
+          const [file] = await pickFiles(".glb,.gltf,model/gltf-binary", false);
+          if (!file) return;
+          try {
+            const asset = await s.mutateAsync("import 3D model", async (p) => importBlob(p, file, file.name, "user"));
+            addObj("model", { assetId: asset.id, ref: asset.ref, color: "#ffffff" });
+          } catch (e) {
+            toast(e instanceof Error ? e.message : String(e), "error");
+          }
+        }, "ghost"),
+      );
+      if (o) {
+        const has = (prop: string) => !!sp.keys[`${o.id}.${prop}`]?.length;
+        const cur = (prop: string, base: number) => T3.kv(sp, `${o.id}.${prop}`, fr(), base);
+        kids.push(
+          h("h3", {}, "Object"),
+          select("Selected", sp.objects.map((x) => [x.id, `${x.id} (${x.type})`] as const), o.id, (v) => ((objId = v), draw())),
+          ...(["x", "y", "z"] as const).map((ax, i) => sl(`Position ${ax}${has(`p${ax}`) ? " ◆" : ""}`, -10, 10, 0.05, cur(`p${ax}`, o.pos[i]!), (v) => setProp(o, `p${ax}`, v, function (this: T3.Obj3D) { this.pos[i] = v; }), { fmt: (v) => v.toFixed(2) })),
+          ...(["x", "y", "z"] as const).map((ax, i) => sl(`Rotate ${ax}${has(`r${ax}`) ? " ◆" : ""}`, -180, 180, 1, cur(`r${ax}`, o.rot[i]!), (v) => setProp(o, `r${ax}`, v, function (this: T3.Obj3D) { this.rot[i] = v; }), { fmt: (v) => `${Math.round(v)}°` })),
+          sl(`Scale${has("s") ? " ◆" : ""}`, 0.05, 8, 0.05, cur("s", o.scale), (v) => setProp(o, "s", v, function (this: T3.Obj3D) { this.scale = v; }), { fmt: (v) => v.toFixed(2) }),
+          o.type !== "character" && o.type !== "model" ? colorInput("Colour", o.color, (v) => run("3D colour", (_S, sp2) => (sp2.objects.find((x) => x.id === o.id)!.color = v))) : null,
+          o.type !== "character" && o.type !== "model" ? select("Material", [["toon", "Toon"], ["standard", "Standard"], ["metal", "Metal"], ["glass", "Glass"], ["emissive", "Glow"], ["clay", "Clay"], ["flat", "Flat"]] as const, o.material, (v) => run("3D material", (_S, sp2) => (sp2.objects.find((x) => x.id === o.id)!.material = v))) : null,
+          h("div", { class: "row wrap" },
+            btn("Key all here", "key", () => run("3D key", (_S, sp2) => {
+              const live = sp2.objects.find((x) => x.id === o.id)!;
+              (["px", "py", "pz", "rx", "ry", "rz", "s"] as const).forEach((pr, k) => T3.setKey(sp2, `${o.id}.${pr}`, fr(), T3.kv(sp2, `${o.id}.${pr}`, fr(), k < 3 ? live.pos[k]! : k < 6 ? live.rot[k - 3]! : live.scale)));
+            }), "ghost"),
+            btn("Spin", "loop", () => run("3D spin", (S, sp2) => T3.act3D(sp2, o.id, S.fps, [{ at: fr() / S.fps, do: "spin", turns: 1, dur: 2 }])), "ghost"),
+            btn("Delete", "trash", () => {
+              run("delete 3D object", (_S, sp2) => {
+                sp2.objects = sp2.objects.filter((x) => x.id !== o.id);
+                for (const k of Object.keys(sp2.keys)) if (k.startsWith(`${o.id}.`)) delete sp2.keys[k];
+              });
+              objId = null;
+              draw();
+            }, "ghost"),
+            btn("Save as .glb", "download", async () => {
+              try {
+                const lay = layer();
+                if (!lay) return;
+                const blob = await T3.exportGlb(lay, o.id);
+                const r = await saveBlob(blob, `${o.id}.glb`, "Documents");
+                toast(`Saved ${r.path}`, "ok");
+              } catch (e) {
+                toast(e instanceof Error ? e.message : String(e), "error");
+              }
+            }, "ghost"),
+          ),
+        );
+        if (o.type === "character") {
+          const a3 = (step: Omit<T3.Step3D, "at">) =>
+            run(`3D ${step.do}`, (S, sp2) => {
+              const end = T3.act3D(sp2, o.id, S.fps, [{ at: fr() / S.fps, ...step } as T3.Step3D]);
+              S.frames = Math.max(S.frames, Math.ceil(end * S.fps) + 1);
+            });
+          kids.push(
+            h("h3", {}, "Character"),
+            h("div", { class: "row wrap" },
+              colorInput("Top", o.char?.top ?? "#7d1622", (v) => run("3D outfit", (_S, sp2) => (sp2.objects.find((x) => x.id === o.id)!.char!.top = v))),
+              colorInput("Hair", o.char?.hair ?? "#1c1c26", (v) => run("3D hair", (_S, sp2) => (sp2.objects.find((x) => x.id === o.id)!.char!.hair = v))),
+              colorInput("Eyes", o.char?.eyes ?? "#d12c43", (v) => run("3D eyes", (_S, sp2) => (sp2.objects.find((x) => x.id === o.id)!.char!.eyes = v))),
+              colorInput("Skin", o.char?.skin ?? "#f6dccb", (v) => run("3D skin", (_S, sp2) => (sp2.objects.find((x) => x.id === o.id)!.char!.skin = v))),
+            ),
+            select("Hair style", [["spiky", "Spiky"], ["short", "Short"], ["long", "Long"], ["bald", "None"]] as const, o.char?.hairStyle ?? "spiky", (v) => run("3D hair style", (_S, sp2) => (sp2.objects.find((x) => x.id === o.id)!.char!.hairStyle = v))),
+            h("h3", {}, "Moves (from this frame)"),
+            h("div", { class: "chips" },
+              ...([["walk", { dist: 2 }], ["run", { dist: 5 }], ["jump", { height: 0.8 }], ["punch", {}], ["kick", {}], ["wave", {}], ["nod", {}]] as const).map(([d, extra]) => h("button", { class: "chip", type: "button", onclick: () => a3({ do: d, ...extra }) }, d)),
+              ...Object.keys(T3.POSES3D).map((pz) => h("button", { class: "chip", type: "button", onclick: () => a3({ do: pz, dur: 0.4 }) }, pz)),
+            ),
+            h("div", { class: "chips" }, ...T3.EXPR3D.map((e) => h("button", { class: "chip", type: "button", onclick: () => a3({ do: "expr", name: e }) }, e))),
+          );
+        }
+      }
+      const cam = (move: string, amount?: number) =>
+        run(`camera ${move}`, (S, sp2) => {
+          T3.camMove(sp2, S.fps, { move, start: fr() / S.fps, dur: move === "shake" ? 0.5 : 2, amount });
+          S.frames = Math.max(S.frames, fr() + Math.ceil(2 * S.fps) + 1);
+        });
+      const preset = (pos: [number, number, number], target: [number, number, number], fov: number) =>
+        run("camera angle", (_S, sp2) => {
+          const animated = Object.keys(sp2.keys).some((k) => k.startsWith("cam."));
+          if (animated) {
+            pos.forEach((v, i) => T3.setKey(sp2, `cam.p${"xyz"[i]}`, fr(), v));
+            target.forEach((v, i) => T3.setKey(sp2, `cam.t${"xyz"[i]}`, fr(), v));
+            T3.setKey(sp2, "cam.fov", fr(), fov);
+          } else sp2.camera = { pos, target, fov };
+        });
+      kids.push(
+        h("h3", {}, "Camera"),
+        h("div", { class: "chips" },
+          h("button", { class: "chip", type: "button", onclick: () => preset([0, 1.5, 7], [0, 1.1, 0], 40) }, "Front"),
+          h("button", { class: "chip", type: "button", onclick: () => preset([0, 1.4, 2.4], [0, 1.45, 0], 32) }, "Close-up"),
+          h("button", { class: "chip", type: "button", onclick: () => preset([1.5, 0.3, 4], [0, 1.4, 0], 45) }, "Low angle"),
+          h("button", { class: "chip", type: "button", onclick: () => preset([0, 7, 6], [0, 0.5, 0], 40) }, "High angle"),
+          h("button", { class: "chip", type: "button", onclick: () => preset([0, 3, 16], [0, 1, 0], 35) }, "Wide"),
+        ),
+        h("div", { class: "chips" },
+          h("button", { class: "chip", type: "button", onclick: () => cam("orbit", 90) }, "Orbit 90°"),
+          h("button", { class: "chip", type: "button", onclick: () => cam("dolly", 0.5) }, "Dolly in"),
+          h("button", { class: "chip", type: "button", onclick: () => cam("dolly", -0.6) }, "Dolly out"),
+          h("button", { class: "chip", type: "button", onclick: () => cam("crane", 2) }, "Crane up"),
+          h("button", { class: "chip", type: "button", onclick: () => cam("push", 22) }, "Push in"),
+          h("button", { class: "chip", type: "button", onclick: () => cam("shake", 0.06) }, "Shake"),
+        ),
+        h("h3", {}, "World"),
+        select("Look", [["toon", "Toon (anime)"], ["realistic", "Realistic"], ["clay", "Clay"], ["neon", "Neon"]] as const, sp.style, (v) => run("3D look", (_S, sp2) => (sp2.style = v))),
+        h("div", { class: "row wrap" },
+          colorInput("Sky top", sp.env.sky?.[0] ?? "#0f1630", (v) => run("3D sky", (_S, sp2) => (sp2.env.sky = [v, sp2.env.sky?.[1] ?? "#3a4a8a"]))),
+          colorInput("Sky bottom", sp.env.sky?.[1] ?? "#3a4a8a", (v) => run("3D sky", (_S, sp2) => (sp2.env.sky = [sp2.env.sky?.[0] ?? "#0f1630", v]))),
+          colorInput("Ground", sp.env.ground?.color ?? "#2a2d3a", (v) => run("3D ground", (_S, sp2) => (sp2.env.ground = { size: 40, ...(sp2.env.ground ?? {}), color: v }))),
+        ),
+        toggle("Transparent sky (show the 2D backdrop)", !sp.env.sky, (v) => run("3D sky", (_S, sp2) => (sp2.env.sky = v ? null : ["#0f1630", "#3a4a8a"]))),
+        toggle("Ground", !!sp.env.ground, (v) => run("3D ground", (_S, sp2) => (sp2.env.ground = v ? { color: "#2a2d3a", size: 40 } : null))),
+        toggle("Fog", !!sp.env.fog, (v) => run("3D fog", (_S, sp2) => (sp2.env.fog = v ? { color: sp2.env.sky?.[1] ?? "#3a4a8a", near: 6, far: 40 } : null))),
+      );
+      body.replaceChildren(...(kids.filter(Boolean) as HTMLElement[]));
+    };
+    draw();
+    sheet("3D studio", body, { tall: true });
   }
 
   /* -------------------------------- selection ------------------------------- */

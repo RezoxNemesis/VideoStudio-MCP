@@ -222,7 +222,7 @@ export interface Track {
   clips: Clip[];
 }
 
-export type AssetKind = "video" | "image" | "audio";
+export type AssetKind = "video" | "image" | "audio" | "model";
 
 export interface Asset {
   id: string;
@@ -284,7 +284,7 @@ export interface Cel {
 export interface AnimLayer {
   id: string;
   name: string;
-  kind: "draw" | "reference" | "puppet" | "backdrop" | "proc";
+  kind: "draw" | "reference" | "puppet" | "backdrop" | "proc" | "three";
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -312,6 +312,8 @@ export interface AnimLayer {
   chan?: Record<string, Animatable>;
   /** Procedural element (kind "proc"): captions, kinetic type, motion graphics, FX, overlays, collage. */
   proc?: import("../anim/proc").ProcSpec;
+  /** 3D scene (kind "three"). */
+  three?: import("../anim/three3d").Scene3D;
   /** Draw-on: strokes write themselves on between these frames; sketch adds construction lines first. */
   drawOn?: { start: number; dur: number; sketch?: boolean };
 }

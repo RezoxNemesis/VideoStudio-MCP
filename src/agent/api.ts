@@ -23,6 +23,9 @@ import { ExportJob, type ExportOptions } from "../render/export";
 import { fetchInbox, listInbox } from "./remote";
 import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot } from "../render/snapshot";
 import { analyseBeats, beatCut } from "../app/autoedit";
+import * as t3 from "../anim/three3d";
+import { saveBlob } from "../native/storage";
+import { FONTS } from "../render/fonts";
 
 export type Command = { op: string } & Record<string, unknown>;
 export interface CommandResult {
@@ -179,6 +182,13 @@ function specFrom(a: Args, type: proc.ProcSpec["type"], style: string): proc.Pro
   if (a.any("uppercase") !== undefined) sp.uppercase = a.bool("uppercase");
   if (Array.isArray(a.any("palette"))) sp.palette = a.any("palette") as string[];
   return sp;
+}
+
+function threeLayer(p: Project, a: Args) {
+  const sc = anim.getScene(p, a.str("sceneId"));
+  const l = anim.getLayer(sc, a.str("layerId"));
+  if (l.kind !== "three" || !l.three) throw new ops.OpError("That layer is not a 3D layer (three.new makes one).");
+  return l;
 }
 
 const HANDLERS: Record<string, { help: string; run: Handler }> = {
@@ -882,6 +892,146 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     help: `{type: ${proc.MOGRAPH_TYPES.join("|")}, start?, dur?=3, x?, y? (0..1), size? (0..1), palette?, bg?, value?} Motion-design element.`,
     run: (s, a) => s.mutate("motion graphic", (p) => procClip(p, specFrom(a, "mograph", a.str("type")), a.num("start", s.time), a.num("dur", 3), { name: `Mograph ${a.str("type")}` })),
   },
+  "three.new": {
+    help: "{sceneId, style?: toon|realistic|clay|neon, sky?:[top,bottom]|null, ground?:{color,size,grid?}|null, fog?:{color,near,far}, camera?:{fov,pos:[x,y,z],target:[x,y,z]}, order?: bottom|top} Add a 3D layer to an animation scene (metres, y up; a character is ~1.75 m). Returns {layerId}.",
+    run: (s, a) =>
+      s.mutate("3D layer", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = anim.addLayer(sc, a.str("name", "3D"), "three");
+        if (a.str("order", "bottom") === "bottom") {
+          sc.layers.splice(sc.layers.indexOf(l), 1);
+          // Just above any painted backdrop at the bottom.
+          let i = sc.layers.length;
+          while (i > 0 && sc.layers[i - 1]!.kind === "backdrop") i--;
+          sc.layers.splice(i, 0, l);
+        }
+        const sp = t3.newScene3D();
+        const st = a.optStr("style");
+        if (st) sp.style = st as t3.Scene3D["style"];
+        if (a.any("sky") !== undefined) sp.env.sky = a.any("sky") as [string, string] | null;
+        if (a.any("ground") !== undefined) sp.env.ground = a.any("ground") as t3.Scene3D["env"]["ground"];
+        if (a.any("fog") !== undefined) sp.env.fog = a.any("fog") as t3.Scene3D["env"]["fog"];
+        const cam = a.any("camera") as Partial<t3.Scene3D["camera"]> | undefined;
+        if (cam) sp.camera = { ...sp.camera, ...cam };
+        if (sp.style === "neon") {
+          sp.env.sky = sp.env.sky ?? ["#05010f", "#1a0638"];
+          sp.lights = [{ id: "amb", type: "ambient", color: "#4a2a80", intensity: 0.6 }, { id: "key", type: "point", color: "#ff2bd6", intensity: 3, pos: [3, 3, 3] }, { id: "rim", type: "point", color: "#24c8ff", intensity: 3, pos: [-3, 2, -2] }];
+        }
+        l.three = sp;
+        return { layerId: l.id };
+      }),
+  },
+  "three.add": {
+    help: `{sceneId, layerId, type: ${t3.OBJ3D_TYPES.join("|")}, id?, color?, material?: toon|standard|metal|glass|emissive|clay|flat, size?:[..], pos?:[x,y,z], rot?:[deg x,y,z], scale?, text?, font?, assetId? (glb model), clip? (model animation), char?:{skin,hair,top,jacket,pants,shoes,eyes,hairStyle:spiky|short|long|bald}, outline?, emissive?, opacity?, parent?} Add a 3D object. Returns {id}.`,
+    run: (s, a) =>
+      s.mutate("3D object", (p) => {
+        const l = threeLayer(p, a);
+        const type = a.str("type") as t3.Obj3DType;
+        if (!t3.OBJ3D_TYPES.includes(type)) throw new ops.OpError(`type must be one of ${t3.OBJ3D_TYPES.join(", ")}`);
+        const id = a.str("id", `${type}${l.three!.objects.length + 1}`);
+        if (l.three!.objects.some((o) => o.id === id)) throw new ops.OpError(`3D object id "${id}" already exists`);
+        const o: t3.Obj3D = {
+          id,
+          type,
+          color: a.str("color", type === "character" ? "#ffffff" : "#e8e4f0"),
+          material: (a.optStr("material") as t3.Material3D | undefined) ?? "toon",
+          pos: (a.any("pos") as [number, number, number] | undefined) ?? [0, type === "character" || type === "terrain" || type === "model" || type === "particles" ? 0 : 0.5, 0],
+          rot: (a.any("rot") as [number, number, number] | undefined) ?? [0, 0, 0],
+          scale: a.num("scale", 1),
+        };
+        for (const k of ["size", "text", "font", "assetId", "clip", "char", "outline", "emissive", "opacity", "parent", "name", "castShadow"] as const) if (a.any(k) !== undefined) (o as unknown as Record<string, unknown>)[k] = a.any(k);
+        if (type === "model") {
+          const as = findAsset(p, a.str("assetId"));
+          if (!as || as.kind !== "model") throw new ops.OpError("assetId must be an imported .glb/.gltf model.");
+          o.ref = as.ref;
+        }
+        if (type === "character") o.char = { ...t3.DEFAULT_CHAR3D, ...(o.char ?? {}) };
+        l.three!.objects.push(o);
+        return { id };
+      }),
+  },
+  "three.set": {
+    help: "{sceneId, layerId, id (object id | camera | env | style | light id), patch} Change a 3D object, the camera {fov,pos,target}, env {sky,ground,fog}, a light {color,intensity,pos} or style (patch: 'toon').",
+    run: (s, a) =>
+      s.mutate("3D edit", (p) => {
+        const sp = threeLayer(p, a).three!;
+        const id = a.str("id");
+        const patch = a.any("patch") as Record<string, unknown>;
+        if (id === "camera") Object.assign(sp.camera, patch);
+        else if (id === "env") Object.assign(sp.env, patch);
+        else if (id === "style") sp.style = String(patch) as t3.Scene3D["style"];
+        else {
+          const o = sp.objects.find((x) => x.id === id) ?? sp.lights.find((x) => x.id === id);
+          if (!o) throw new ops.OpError(`No 3D object or light "${id}"`);
+          Object.assign(o, patch);
+        }
+        return true;
+      }),
+  },
+  "three.light": {
+    help: "{sceneId, layerId, id?, type: ambient|hemi|key|rim|point|spot, color?, intensity?, pos?:[x,y,z], replace?=false} Add a light (replace:true clears the default rig first).",
+    run: (s, a) =>
+      s.mutate("3D light", (p) => {
+        const sp = threeLayer(p, a).three!;
+        if (a.bool("replace")) sp.lights = [];
+        const id = a.str("id", `light${sp.lights.length + 1}`);
+        sp.lights = sp.lights.filter((x) => x.id !== id);
+        sp.lights.push({ id, type: a.str("type", "point") as t3.Light3D["type"], color: a.str("color", "#ffffff"), intensity: a.num("intensity", 1.5), pos: (a.any("pos") as [number, number, number] | undefined) ?? [2, 3, 2] });
+        return { id };
+      }),
+  },
+  "three.act": {
+    help: `{sceneId, layerId, id, actions:[{at (s), do: ${Object.keys(t3.POSES3D).join("|")}|walk{dist}|run{dist}|jump{height}|turn{to}|spin{turns}|moveTo{x,y,z}|punch{side}|kick|wave|nod|expr{name:${t3.EXPR3D.join("|")}}|key{prop,value}, dur?}]} Animate a 3D character or object.`,
+    run: (s, a) =>
+      s.mutate("3D animation", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const l = threeLayer(p, a);
+        const end = t3.act3D(l.three!, a.str("id"), sc.fps, a.any("actions") as t3.Step3D[]);
+        if (end * sc.fps > sc.frames) sc.frames = Math.ceil(end * sc.fps) + 1;
+        return { end };
+      }),
+  },
+  "three.camera": {
+    help: "{sceneId, layerId, pos?, target?, fov?, moves?:[{move: orbit|dolly|crane|truck|push|shake, start, dur, amount?, ease?}], keys?:[{at, pos?, target?, fov?, ease?}]} Set or animate the 3D camera.",
+    run: (s, a) =>
+      s.mutate("3D camera", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const sp = threeLayer(p, a).three!;
+        if (a.any("pos")) sp.camera.pos = a.any("pos") as [number, number, number];
+        if (a.any("target")) sp.camera.target = a.any("target") as [number, number, number];
+        if (a.optNum("fov") !== undefined) sp.camera.fov = a.num("fov");
+        for (const k of (a.any("keys") as { at: number; pos?: number[]; target?: number[]; fov?: number; ease?: Ease }[] | undefined) ?? []) {
+          const fr = Math.round(k.at * sc.fps);
+          k.pos?.forEach((v, i) => t3.setKey(sp, `cam.p${"xyz"[i]}`, fr, v, k.ease ?? "inOut"));
+          k.target?.forEach((v, i) => t3.setKey(sp, `cam.t${"xyz"[i]}`, fr, v, k.ease ?? "inOut"));
+          if (k.fov !== undefined) t3.setKey(sp, "cam.fov", fr, k.fov, k.ease ?? "inOut");
+        }
+        for (const m of (a.any("moves") as { move: string; start: number; dur: number; amount?: number; ease?: Ease }[] | undefined) ?? []) t3.camMove(sp, sc.fps, m);
+        return true;
+      }),
+  },
+  "three.key": {
+    help: "{sceneId, layerId, prop ('<id>.px|py|pz|rx|ry|rz|s|opacity|clipTime', '<charId>.j.<joint>.x|y|z', 'cam.px|..|fov|roll', '<lightId>.i'), keys:[[seconds, value, ease?], ...]} Raw 3D keyframes.",
+    run: (s, a) =>
+      s.mutate("3D keys", (p) => {
+        const sc = anim.getScene(p, a.str("sceneId"));
+        const sp = threeLayer(p, a).three!;
+        for (const [t, v, e] of a.any("keys") as [number, number, Ease?][]) t3.setKey(sp, a.str("prop"), Math.round(t * sc.fps), v, e ?? "inOut");
+        return true;
+      }),
+  },
+  "three.exportGlb": {
+    help: "{sceneId, layerId, id?, name?} Save a 3D object (or the whole 3D layer) as a .glb model into Documents/VideoStudio (and as a project asset).",
+    run: async (s, a) => {
+      const l = threeLayer(s.project, a);
+      const blob = await t3.exportGlb(l, a.optStr("id"));
+      const name = `${a.str("name", a.str("id", "scene"))}.glb`;
+      const saved = await saveBlob(blob, name, "Documents");
+      const asset = await s.mutateAsync("save 3D asset", async (p) => importBlob(p, blob, name, "agent"));
+      return { ...saved, assetId: asset.id, bytes: blob.size };
+    },
+  },
+  "fonts.list": { help: "Every bundled font (use the name in text styles, captions, kinetic type and 3D text).", run: () => FONTS.map((f) => `${f.name} (${f.category})`) },
   "fx.add": {
     help: `{type: ${proc.FX_TYPES.join("|")}, start?, dur?=2, x?, y? (0..1), size?, color? (ink), accent? (fill)} Hand-drawn effect animated on twos.`,
     run: (s, a) => s.mutate("hand-drawn fx", (p) => procClip(p, specFrom(a, "fx", a.str("type")), a.num("start", s.time), a.num("dur", 2), { name: `FX ${a.str("type")}` })),

@@ -18,6 +18,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = 
 
 const P: Record<string, string> = {
   play: "M8 5v14l11-7z",
+  cube: "M12 2l9 5v10l-9 5-9-5V7zM12 22V12M21 7l-9 5-9-5",
   pause: "M7 5h4v14H7zM13 5h4v14h-4z",
   undo: "M9 14L4 9l5-5M4 9h11a5 5 0 010 10h-3",
   redo: "M15 14l5-5-5-5M20 9H9a5 5 0 000 10h3",

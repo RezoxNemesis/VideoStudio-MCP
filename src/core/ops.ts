@@ -75,6 +75,7 @@ export interface AddClipInput {
 export function addClip(p: Project, input: AddClipInput): Clip {
   const asset = findAsset(p, input.assetId);
   if (input.assetId && !asset) throw new OpError(`No asset ${input.assetId}`);
+  if (asset?.kind === "model") throw new OpError("3D models go into a 3D layer (three.add type:model), not straight onto the timeline.");
   const scene = input.sceneId ? p.scenes.find((s) => s.id === input.sceneId) : undefined;
   if (input.sceneId && !scene) throw new OpError(`No scene ${input.sceneId}`);
   const kind: ClipKind = input.kind ?? (asset ? "media" : scene ? "anim" : input.text !== undefined ? "text" : "color");
