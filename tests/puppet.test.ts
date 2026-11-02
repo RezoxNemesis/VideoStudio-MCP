@@ -97,3 +97,46 @@ describe("stances", () => {
     expect(PU.chan(l, "handRx", 4 * 24)).toBeCloseTo(2.55, 3);
   });
 });
+
+describe("fight moves", () => {
+  const fighter = (facing: 1 | -1 = 1) => {
+    const s = newScene("f", 1080, 1920, 24);
+    const l = newAnimLayer("F", "puppet");
+    l.puppet = PU.makeSpec({ x: 540, y: 1780, height: 1100, props: [], facing, element: "fire" });
+    l.chan = {};
+    s.layers.unshift(l);
+    PU.applyActions(l, s.fps, [{ at: 0, do: "stance", name: "guard", dur: 0.001 }]);
+    return { s, l };
+  };
+  it("knows every move", () => {
+    for (const m of ["jab", "cross", "uppercut", "kick", "block", "dodge", "dash", "hit", "fly", "land", "getup", "wipe", "charge", "jump"]) expect(PU.FIGHT_MOVES).toContain(m);
+  });
+  it("jab extends the fist toward the opponent and returns to guard", () => {
+    const { s, l } = fighter();
+    PU.applyActions(l, s.fps, [{ at: 1, do: "jab" }]);
+    const rest = PU.skeleton(l, l.puppet!, 0, s.fps);
+    const out = PU.skeleton(l, l.puppet!, Math.round(1.12 * s.fps), s.fps);
+    const back = PU.skeleton(l, l.puppet!, Math.round(1.6 * s.fps), s.fps);
+    expect(out.wristR.x - rest.wristR.x).toBeGreaterThan(1.0 * rest.u);
+    expect(Math.abs(back.wristR.x - rest.wristR.x)).toBeLessThan(0.1 * rest.u);
+  });
+  it("dash moves relative to where the fighter stands, and moves stack", () => {
+    const { s, l } = fighter();
+    PU.applyActions(l, s.fps, [{ at: 0.5, do: "dash", dist: 2 }, { at: 1.5, do: "dash", dist: 2 }]);
+    expect(PU.chan(l, "rootX", Math.round(1.2 * s.fps))).toBeCloseTo(2, 2);
+    expect(PU.chan(l, "rootX", Math.round(2.4 * s.fps))).toBeCloseTo(4, 2);
+  });
+  it("hitstop freezes the pose", () => {
+    const { s, l } = fighter();
+    PU.applyActions(l, s.fps, [{ at: 1, do: "cross" }, { at: 1.15, do: "hitstop", dur: 0.25 }]);
+    const a = PU.skeleton(l, l.puppet!, Math.round(1.18 * s.fps), s.fps);
+    const b = PU.skeleton(l, l.puppet!, Math.round(1.35 * s.fps), s.fps);
+    expect(dist(a.wristL, b.wristL)).toBeLessThan(0.05 * a.u);
+  });
+  it("fly leaves the ground and lands further back", () => {
+    const { s, l } = fighter();
+    PU.applyActions(l, s.fps, [{ at: 0, do: "fly", dist: 3, height: 2 }]);
+    expect(PU.chan(l, "rootY", Math.round(0.4 * s.fps))).toBeLessThan(-1.5);
+    expect(PU.chan(l, "rootX", Math.round(1.2 * s.fps))).toBeCloseTo(-3, 1);
+  });
+});

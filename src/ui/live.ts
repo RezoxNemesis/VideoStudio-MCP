@@ -103,6 +103,7 @@ function describe(op: string, a: Record<string, unknown>): string {
     "anim.toTimeline": "Animation to the timeline",
     "music.compose": `Composing the score (${String(a.mood ?? "melancholy")})`,
     "sfx.ambience": `Ambience: ${String(a.type ?? "")}`,
+    "sfx.add": `Sound effect: ${String(a.type ?? "")}`,
     "voice.speak": `VolTune: ${q("text")}`,
     "render.start": "Rendering the video",
     "project.save": "Saving",

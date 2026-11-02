@@ -10,7 +10,7 @@ import * as anim from "../anim/ops";
 import * as rig from "../anim/rig";
 import * as puppet from "../anim/puppet";
 import { flattenPath } from "../anim/svgpath";
-import { ambience, compose, type Ambience, type Mood } from "../audio/compose";
+import { ambience, compose, sfx, SFX, type Ambience, type Mood, type Sfx } from "../audio/compose";
 import * as proc from "../anim/proc";
 import { speechEnvelope } from "../media/library";
 import { newScene, newTrack, type BlendMode, type Clip } from "../core/model";
@@ -593,7 +593,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     }),
   },
   "char.create": {
-    help: "{sceneId, name?, x?, y? (ground px), height? (px), hair?: messy|short|long|spiky, jacket?: leather|hoodie|coat|none, shirt?: turtleneck|tee|shirt, chain?, props?: [cigarette], propHand?: R|L, palette?: black|white|red|navy|brown, colors?:{skin,hair,eyes,jacket,...}, stance?, expr?} Add a fully drawn, rigged anime character (curves, cel shading, face rig, auto blink, hair follow-through).",
+    help: "{sceneId, name?, x?, y? (ground px), height? (px), hair?: messy|short|long|spiky, jacket?: leather|hoodie|coat|none, shirt?: turtleneck|tee|shirt, chain?, props?: [cigarette], propHand?: R|L, palette?: black|white|red|navy|brown|suit, colors?:{skin,hair,hairShade,hairHi,eyes,jacket,...}, facing?: 1|-1, element?: fire|ice, stance?, expr?} Add a fully drawn, rigged anime character (curves, cel shading, face rig, auto blink, hair follow-through).",
     run: (s, a) =>
       s.mutate("add character", (p) => {
         const sc = anim.getScene(p, a.str("sceneId"));
@@ -610,6 +610,8 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
           palette: a.optStr("palette"),
           colorOverrides: (a.any("colors") as Partial<puppet.PuppetPalette> | undefined) ?? {},
           seed: a.num("seed", Math.floor(Math.random() * 1000)),
+          facing: a.num("facing", 1) < 0 ? -1 : 1,
+          element: a.optStr("element") as "fire" | "ice" | "none" | undefined,
         });
         const top = sc.layers.find((l) => l.kind === "draw");
         const l = anim.addLayer(sc, a.str("name", "Character"), "puppet", top?.id);
@@ -655,7 +657,8 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         if (!l.puppet) throw new ops.OpError("That layer is not a character.");
         const sp = l.puppet;
         for (const k of ["x", "y", "height"] as const) if (a.optNum(k) !== undefined) sp[k] = a.num(k);
-        for (const k of ["hair", "jacket", "shirt", "propHand"] as const) if (a.optStr(k)) (sp as unknown as Record<string, string>)[k] = a.str(k);
+        for (const k of ["hair", "jacket", "shirt", "propHand", "element"] as const) if (a.optStr(k)) (sp as unknown as Record<string, string>)[k] = a.str(k);
+        if (a.optNum("facing") !== undefined) sp.facing = a.num("facing") < 0 ? -1 : 1;
         if (a.any("chain") !== undefined) sp.chain = a.bool("chain");
         if (Array.isArray(a.any("props"))) sp.props = a.any("props") as string[];
         if (a.any("colors")) sp.colors = { ...sp.colors, ...(a.obj("colors") as Partial<puppet.PuppetPalette>) };
@@ -963,7 +966,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
   },
 
   "music.compose": {
-    help: `{seconds, mood?: ${["melancholy", "hopeful", "dark", "tense", "calm", "epic"].join("|")}, lift? (s where the score brightens), bpm?, root? (MIDI, 57=A), seed?, start?=0, volume?=0.8, name?} Compose an original soundtrack on the phone and put it on the timeline.`,
+    help: `{seconds, mood?: ${["melancholy", "hopeful", "dark", "tense", "calm", "epic", "battle"].join("|")}, lift? (s where the score brightens), bpm?, root? (MIDI, 57=A), seed?, start?=0, volume?=0.8, name?} Compose an original soundtrack on the phone and put it on the timeline.`,
     run: async (s, a) => {
       const blob = await compose({ mood: a.optStr("mood") as Mood | undefined, seconds: a.num("seconds"), lift: a.optNum("lift"), bpm: a.optNum("bpm"), root: a.optNum("root"), seed: a.optNum("seed") });
       return await s.mutateAsync("compose music", async (p) => {
@@ -971,6 +974,25 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         const clip = ops.addClip(p, { assetId: asset.id, start: a.num("start", 0) });
         ops.patchClip(p, clip.id, { volume: a.num("volume", 0.8), fadeOut: 1.5 });
         return { assetId: asset.id, clipId: clip.id, seconds: r3(asset.duration) };
+      });
+    },
+  },
+  "sfx.add": {
+    help: `{type: ${SFX.join("|")}, at: seconds | [seconds...], volume?=0.9} Sound effects generated on the phone (one clip per hit).`,
+    run: async (s, a) => {
+      const type = a.str("type") as Sfx;
+      if (!SFX.includes(type)) throw new ops.OpError(`type must be one of ${SFX.join(", ")}`);
+      const at = a.any("at");
+      const times = (Array.isArray(at) ? at : [at]).map(Number).filter((x) => Number.isFinite(x));
+      const blob = await sfx(type, a.num("seed", 1));
+      return await s.mutateAsync("sound effects", async (p) => {
+        const asset = await importBlob(p, blob, `${type}.wav`, "agent");
+        const ids = times.map((t) => {
+          const c = ops.addClip(p, { assetId: asset.id, start: t });
+          ops.patchClip(p, c.id, { volume: a.num("volume", 0.9) });
+          return c.id;
+        });
+        return { assetId: asset.id, clips: ids.length };
       });
     },
   },

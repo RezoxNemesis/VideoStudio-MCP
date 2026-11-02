@@ -4,7 +4,7 @@
  * plus river / wind / city / rain beds. Output is a 16-bit stereo WAV blob.
  */
 
-export const MOODS = ["melancholy", "hopeful", "dark", "tense", "calm", "epic"] as const;
+export const MOODS = ["melancholy", "hopeful", "dark", "tense", "calm", "epic", "battle"] as const;
 export type Mood = (typeof MOODS)[number];
 export const AMBIENCES = ["river", "wind", "city", "rain", "night"] as const;
 export type Ambience = (typeof AMBIENCES)[number];
@@ -42,6 +42,7 @@ const PLANS: Record<Mood, { before: number[][]; after: number[][]; bpm: number }
   tense: { before: [[0, 3, 7], [0, 3, 6], [1, 4, 8], [0, 3, 7]], after: [[0, 3, 7], [1, 5, 8], [-2, 2, 5], [-1, 3, 6]], bpm: 96 },
   calm: { before: [[3, 7, 10, 14], [-4, 0, 3, 7], [-2, 2, 5, 9], [0, 3, 7, 10]], after: [[3, 7, 10, 14], [5, 8, 12, 15], [-4, 0, 3, 7], [-2, 2, 5, 9]], bpm: 66 },
   epic: { before: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5]], after: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5]], bpm: 90 },
+  battle: { before: [[0, 3, 7], [0, 3, 7], [-4, 0, 3], [-2, 2, 5]], after: [[0, 3, 7], [-4, 0, 3], [-7, -4, 0], [-2, 2, 5]], bpm: 140 },
 };
 
 function impulse(ctx: BaseAudioContext, seconds: number, decay: number, seed: number): AudioBuffer {
@@ -257,6 +258,68 @@ export async function compose(o: ComposeOptions): Promise<Blob> {
       sh.start(st);
     }
   }
+  if (mood === "battle") {
+    const nb = noiseBuffer(ctx, 0.5, 13);
+    const hit = (t: number, f0: number, f1: number, dec: number, lvl: number) => {
+      const o = ctx.createOscillator();
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f1, t + dec * 0.6);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(lvl, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dec);
+      o.connect(g).connect(dry);
+      o.start(t);
+      o.stop(t + dec + 0.05);
+    };
+    const noiseHit = (t: number, hp: number, dec: number, lvl: number, wet = 0.2) => {
+      const src = ctx.createBufferSource();
+      src.buffer = nb;
+      const f = ctx.createBiquadFilter();
+      f.type = "highpass";
+      f.frequency.value = hp;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(lvl, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dec);
+      src.connect(f).connect(g);
+      send(g, wet);
+      src.start(t);
+      src.stop(t + dec + 0.05);
+    };
+    const start = Math.min(secs, 0);
+    for (let t = start; t < secs - 0.3; t += beat / 2) {
+      const step = Math.round(t / (beat / 2)) % 16;
+      const hot = t >= lift;
+      // Kick: 1, the "and" of 2, 3 (+ extra after the lift); snare on 2 and 4; hats on every eighth.
+      if ([0, 3, 8, ...(hot ? [6, 11, 14] : [])].includes(step)) hit(t, 120, 40, 0.35, hot ? 0.55 : 0.45);
+      if (step === 4 || step === 12) {
+        hit(t, 220, 140, 0.12, 0.25);
+        noiseHit(t, 1800, 0.18, hot ? 0.32 : 0.24, 0.35);
+      }
+      noiseHit(t, 8000, 0.04, step % 2 ? 0.05 : 0.08, 0.05);
+      if (hot) noiseHit(t + beat / 4, 9000, 0.03, 0.04, 0.05);
+      // Staccato string stabs on the chord.
+      if (step % 2 === 0) {
+        const ch = chordAt(t);
+        const n = ch[step % 4 === 0 ? 0 : 2 % ch.length]!;
+        const o = ctx.createOscillator();
+        o.type = "sawtooth";
+        o.frequency.value = midiHz(root + 12 + n);
+        const lp = ctx.createBiquadFilter();
+        lp.type = "lowpass";
+        lp.frequency.value = hot ? 2600 : 1600;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(hot ? 0.06 : 0.045, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, t + beat * 0.45);
+        o.connect(lp).connect(g);
+        send(g, 0.4);
+        o.start(t);
+        o.stop(t + beat * 0.5);
+      }
+    }
+    // Tom fill into the lift.
+    if (lift < secs) for (let i = 0; i < 6; i++) hit(lift - beat * 1.5 + i * (beat / 4), 180 - i * 18, 70, 0.25, 0.35);
+  }
   return toWav(await ctx.startRendering());
 }
 
@@ -385,4 +448,88 @@ export function toWav(b: AudioBuffer): Blob {
       o += 2;
     }
   return new Blob([buf], { type: "audio/wav" });
+}
+
+export const SFX = ["whoosh", "punch", "kick", "impact", "clash", "slash", "rumble", "riser", "land", "block"] as const;
+export type Sfx = (typeof SFX)[number];
+
+/** One-shot sound effects for action scenes. */
+export async function sfx(type: Sfx, seed = 1): Promise<Blob> {
+  const len = { whoosh: 0.5, punch: 0.45, kick: 0.6, impact: 1.6, clash: 2.4, slash: 0.6, rumble: 2.5, riser: 2.2, land: 0.8, block: 0.4 }[type];
+  const ctx = new OfflineAudioContext(2, Math.ceil(SR * len), SR);
+  const out = ctx.createGain();
+  out.connect(ctx.destination);
+  const nb = noiseBuffer(ctx, len, seed);
+  const noise = (filter: BiquadFilterType, f0: number, f1: number, q: number, lvl: number, a: number, d: number) => {
+    const src = ctx.createBufferSource();
+    src.buffer = nb;
+    const f = ctx.createBiquadFilter();
+    f.type = filter;
+    f.Q.value = q;
+    f.frequency.setValueAtTime(f0, 0);
+    f.frequency.exponentialRampToValueAtTime(f1, Math.max(0.01, a + d * 0.8));
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, 0);
+    g.gain.exponentialRampToValueAtTime(lvl, Math.max(0.002, a));
+    g.gain.exponentialRampToValueAtTime(0.0001, a + d);
+    src.connect(f).connect(g).connect(out);
+    src.start(0);
+  };
+  const tone = (f0: number, f1: number, lvl: number, d: number, type: OscillatorType = "sine", at = 0) => {
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, at);
+    o.frequency.exponentialRampToValueAtTime(f1, at + d * 0.7);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(lvl, at);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + d);
+    o.connect(g).connect(out);
+    o.start(at);
+    o.stop(at + d + 0.02);
+  };
+  switch (type) {
+    case "whoosh":
+      noise("bandpass", 400, 2400, 1.2, 0.6, 0.18, 0.3);
+      break;
+    case "slash":
+      noise("bandpass", 1800, 7000, 2, 0.6, 0.08, 0.35);
+      tone(2400, 1200, 0.08, 0.4, "sawtooth");
+      break;
+    case "punch":
+      tone(140, 50, 0.9, 0.25);
+      noise("lowpass", 3000, 300, 0.7, 0.7, 0.002, 0.12);
+      break;
+    case "kick":
+      tone(110, 38, 1, 0.4);
+      noise("lowpass", 2400, 200, 0.7, 0.8, 0.002, 0.2);
+      noise("bandpass", 600, 2000, 1, 0.35, 0.05, 0.3);
+      break;
+    case "block":
+      tone(320, 180, 0.5, 0.15, "triangle");
+      noise("bandpass", 1200, 800, 3, 0.5, 0.002, 0.12);
+      break;
+    case "land":
+      tone(90, 35, 0.9, 0.5);
+      noise("lowpass", 1200, 150, 0.7, 0.6, 0.004, 0.6);
+      break;
+    case "impact":
+      tone(80, 28, 1, 1.2);
+      noise("lowpass", 6000, 200, 0.6, 0.9, 0.002, 1.1);
+      noise("highpass", 3000, 6000, 0.7, 0.25, 0.002, 0.25);
+      break;
+    case "clash":
+      tone(70, 25, 1, 1.8);
+      noise("lowpass", 8000, 150, 0.6, 1, 0.002, 1.8);
+      for (const [f, l] of [[880, 0.12], [1320, 0.08], [1975, 0.06]] as const) tone(f, f * 0.98, l, 2.2, "triangle");
+      break;
+    case "rumble":
+      noise("lowpass", 180, 120, 0.8, 0.9, 0.6, 1.9);
+      tone(45, 40, 0.5, 2.4);
+      break;
+    case "riser":
+      noise("bandpass", 300, 6000, 1.5, 0.5, 2.0, 0.2);
+      tone(200, 1600, 0.12, 2.2, "sawtooth");
+      break;
+  }
+  return toWav(await ctx.startRendering());
 }

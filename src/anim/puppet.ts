@@ -53,6 +53,10 @@ export interface PuppetSpec {
   props: string[];
   /** Which hand holds props: R (screen right) or L. */
   propHand: "R" | "L";
+  /** 1 faces screen-right (default), -1 faces screen-left (the whole drawing mirrors). */
+  facing?: 1 | -1;
+  /** Elemental aura drawn when the "aura" channel is up. */
+  element?: "fire" | "ice" | "none";
   colors: PuppetPalette;
   seed: number;
 }
@@ -89,6 +93,9 @@ export const DEFAULT_PALETTE: PuppetPalette = {
 };
 
 export function makeSpec(o: Partial<PuppetSpec> & { palette?: string; colorOverrides?: Partial<PuppetPalette> } = {}): PuppetSpec {
+  const extra: Partial<PuppetSpec> = {};
+  if (o.facing === -1) extra.facing = -1;
+  if (o.element && o.element !== "none") extra.element = o.element;
   const colors: PuppetPalette = { ...DEFAULT_PALETTE, ...(PALETTES[o.palette ?? "black"] ?? {}), ...(o.colors ?? {}), ...(o.colorOverrides ?? {}) };
   return {
     x: o.x ?? 540,
@@ -100,6 +107,7 @@ export function makeSpec(o: Partial<PuppetSpec> & { palette?: string; colorOverr
     chain: o.chain ?? true,
     props: o.props ?? [],
     propHand: o.propHand ?? "R",
+    ...extra,
     colors,
     seed: o.seed ?? 7,
   };
@@ -149,6 +157,10 @@ export const CHANNELS: Record<string, number> = {
   exhale: 0, // smoke from the mouth
   breath: 1, // breathing amplitude
   wind: 0.3,
+  kneeDir: 0, // 0 front-facing knees, 1 knees point toward the opponent (fighting stance)
+  rootRot: 0, // deg, whole body around the hips (knockdowns, flips)
+  aura: 0, // 0..1 elemental aura (spec.element)
+  trail: 1, // afterimages on fast moves (0 = off)
 };
 
 export type Channels = Record<string, Animatable>;
@@ -309,8 +321,9 @@ export function skeleton(l: AnimLayer, spec: PuppetSpec, f: number, fps: number)
   // Feet are planted relative to the ground under each hip (not the tilted pelvis).
   const footL = v(spec.x + c("rootX") * u - 0.4 * u + c("footLx") * u, pelvis.y + 0.12 * u + c("footLy") * u - c("rootY") * u);
   const footR = v(spec.x + c("rootX") * u + 0.4 * u + c("footRx") * u, pelvis.y + 0.12 * u + c("footRy") * u - c("rootY") * u);
-  const lL = ik(hipL, footL, THIGH * u, SHIN * u, v(-0.04, -1));
-  const lR = ik(hipR, footR, THIGH * u, SHIN * u, v(0.04, -1));
+  const kd = Math.max(0, Math.min(1, c("kneeDir")));
+  const lL = ik(hipL, footL, THIGH * u, SHIN * u, lerpV(v(-0.04, -1), v(1, -0.25), kd));
+  const lR = ik(hipR, footR, THIGH * u, SHIN * u, lerpV(v(0.04, -1), v(1, -0.25), kd));
   const handLA = angleOf(sub(aL.end, aL.mid)) - 90 + c("handLrot");
   const handRA = angleOf(sub(aR.end, aR.mid)) - 90 + c("handRrot");
   const wrist = ph === "R" ? aR.end : aL.end;
@@ -555,22 +568,19 @@ function tube(pts: V[], widths: number[], capStart = true, capEnd = true): Path2
 export function drawPuppet(c: Ctx, l: AnimLayer, s: AnimScene, f: number): void {
   const spec = l.puppet;
   if (!spec) return;
-  const sk = skeleton(l, spec, f, s.fps);
-  lastSk = sk;
-  const u = sk.u;
-  const k: Kit = { c, u, lw: Math.max(1.2, 0.036 * u), pal: spec.colors, light: norm(v(0.75, -0.66)) };
   const ch = (n: string) => chan(l, n, f);
-  // Velocities for follow-through (hair, jacket).
-  const prev = skeleton(l, spec, Math.max(0, f - 3), s.fps);
-  const swing = {
-    head: (sk.headA - prev.headA) * 0.9 + noise1(f / s.fps / 1.7, spec.seed) * 2.5 * ch("wind"),
-    body: (sk.pelvis.x - prev.pelvis.x) / u,
-  };
-
-  // Ground shadow.
+  const sk0 = skeleton(l, spec, f, s.fps);
+  const u = sk0.u;
+  c.save();
+  if (spec.facing === -1) {
+    c.translate(spec.x * 2, 0);
+    c.scale(-1, 1);
+  }
+  // Ground shadow (shrinks when airborne).
+  const air = Math.max(0, -ch("rootY"));
   c.save();
   const gs = c.createRadialGradient(spec.x, spec.y, 0, spec.x, spec.y, 1.9 * u);
-  gs.addColorStop(0, "rgba(0,0,0,0.45)");
+  gs.addColorStop(0, `rgba(0,0,0,${0.45 / (1 + air * 0.5)})`);
   gs.addColorStop(1, "rgba(0,0,0,0)");
   c.fillStyle = gs;
   c.setTransform(c.getTransform().multiply(new DOMMatrix([1, 0, 0, 0.18, 0, spec.y * (1 - 0.18)])));
@@ -578,17 +588,151 @@ export function drawPuppet(c: Ctx, l: AnimLayer, s: AnimScene, f: number): void 
   c.arc(spec.x + ch("rootX") * u, spec.y, 1.9 * u, 0, Math.PI * 2);
   c.fill();
   c.restore();
+  const aura = ch("aura");
+  if (aura > 0.02 && spec.element) drawAura(c, sk0, spec, aura, f / s.fps, false);
+  // Afterimages on fast moves: earlier poses, fading.
+  if (ch("trail") > 0) {
+    const back = skeleton(l, spec, Math.max(0, f - 2), s.fps);
+    const speed = Math.hypot(sk0.pelvis.x - back.pelvis.x, sk0.pelvis.y - back.pelvis.y) / u;
+    if (speed > 0.45) {
+      for (const g of [6, 4, 2]) {
+        c.save();
+        c.globalAlpha = Math.min(0.35, (speed - 0.35) * 0.3) * (1 - g / 8);
+        drawBody(c, l, s, Math.max(0, f - g));
+        c.restore();
+      }
+    }
+  }
+  drawBody(c, l, s, f);
+  if (aura > 0.02 && spec.element) drawAura(c, sk0, spec, aura, f / s.fps, true);
+  c.restore();
+  drawSmoke(c, l, spec, s, f);
+}
 
+/** The character itself (no shadow, aura or smoke) at frame f; rootRot spins it around the hips. */
+function drawBody(c: Ctx, l: AnimLayer, s: AnimScene, f: number): void {
+  const spec = l.puppet!;
+  const sk = skeleton(l, spec, f, s.fps);
+  lastSk = sk;
+  const u = sk.u;
+  const k: Kit = { c, u, lw: Math.max(1.2, 0.036 * u), pal: spec.colors, light: norm(v(0.75, -0.66)) };
+  const ch = (n: string) => chan(l, n, f);
+  const prev = skeleton(l, spec, Math.max(0, f - 3), s.fps);
+  const swing = {
+    head: (sk.headA - prev.headA) * 0.9 + noise1(f / s.fps / 1.7, spec.seed) * 2.5 * ch("wind"),
+    body: (sk.pelvis.x - prev.pelvis.x) / u,
+  };
+  const rr = ch("rootRot");
+  c.save();
+  if (Math.abs(rr) > 0.01) {
+    c.translate(sk.pelvis.x, sk.pelvis.y);
+    c.rotate((rr * Math.PI) / 180);
+    c.translate(-sk.pelvis.x, -sk.pelvis.y);
+  }
   drawHairBack(k, sk, spec, swing.head, f / s.fps);
   drawLegs(k, sk, spec);
-  drawTorso(k, sk, spec, swing.body, chan(l, "wind", f), f / s.fps);
+  drawTorso(k, sk, spec, swing.body, ch("wind"), f / s.fps);
   drawHead(k, l, sk, spec, f, s.fps, swing.head);
   // Arms: the one crossing the body goes last.
   const crossR = sk.wristR.x < sk.shoulderR.x - 0.6 * u;
   const crossL = sk.wristL.x > sk.shoulderL.x + 0.6 * u;
   const order: ("L" | "R")[] = crossR && !crossL ? ["L", "R"] : crossL && !crossR ? ["R", "L"] : ["L", "R"];
   for (const side of order) drawArm(k, l, sk, spec, side, f);
-  drawSmoke(c, l, spec, s, f);
+  c.restore();
+}
+
+/** Elemental aura: fire tongues licking up around the body, or ice shards, frost glow and snow. Front pass adds eye glow. */
+function drawAura(c: Ctx, sk: Skeleton, spec: PuppetSpec, a: number, t: number, front: boolean): void {
+  const u = sk.u;
+  const fire = spec.element === "fire";
+  const cx = sk.pelvis.x;
+  const top = sk.neck.y - 2.2 * u;
+  const bot = spec.y;
+  const cy = (top + bot) / 2;
+  const ry = (bot - top) / 2 + 0.4 * u;
+  const rx = 1.9 * u;
+  c.save();
+  c.globalCompositeOperation = "lighter";
+  if (front) {
+    // Glowing eyes.
+    for (const sx of [-1, 1]) {
+      const e = add(sk.head, rot(v((sx * 0.19 + sk.turn * 0.1) * u * HS, -0.9 * u * HS), sk.headA));
+      const g = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, 0.35 * u);
+      g.addColorStop(0, fire ? `rgba(255,190,90,${0.9 * a})` : `rgba(170,230,255,${0.9 * a})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      c.fillStyle = g;
+      c.fillRect(e.x - 0.4 * u, e.y - 0.4 * u, 0.8 * u, 0.8 * u);
+    }
+    // Embers / snow drifting in front.
+    for (let i = 0; i < 26; i++) {
+      const ph = (t * (fire ? 0.9 : 0.4) + hash(i * 3.3)) % 1;
+      const x = cx + (hash(i * 7.1) - 0.5) * rx * 2.4 + Math.sin(t * 2 + i) * 0.15 * u;
+      const y = fire ? bot - ph * (bot - top) * 1.2 : top + ph * (bot - top);
+      const r = (fire ? 0.05 : 0.04) * u * (1 - ph * 0.5);
+      c.fillStyle = fire ? `rgba(255,${150 + hash(i) * 90},60,${a * (1 - ph)})` : `rgba(220,245,255,${a * 0.8})`;
+      c.beginPath();
+      c.arc(x, y, r, 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
+    return;
+  }
+  // Outer glow.
+  const g = c.createRadialGradient(cx, cy, rx * 0.2, cx, cy, ry * 1.1);
+  g.addColorStop(0, fire ? `rgba(255,120,40,${0.45 * a})` : `rgba(120,200,255,${0.4 * a})`);
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  c.fillStyle = g;
+  c.fillRect(cx - ry * 1.2, cy - ry * 1.2, ry * 2.4, ry * 2.4);
+  if (fire) {
+    // Flames rise off the body itself (shoulders, arms, head, back, legs), licking upward.
+    const pts = [sk.shoulderL, sk.shoulderR, sk.elbowL, sk.elbowR, sk.wristL, sk.wristR, sk.neck, sk.hipL, sk.hipR, sk.kneeL, sk.kneeR,
+      add(sk.head, rot(v(0, -1.7 * u * HS), sk.headA)), add(sk.head, rot(v(-0.55 * u * HS, -1.3 * u * HS), sk.headA)), add(sk.head, rot(v(0.55 * u * HS, -1.3 * u * HS), sk.headA))];
+    for (let i = 0; i < pts.length * 2; i++) {
+      const p0 = pts[i % pts.length]!;
+      const side = Math.sign(p0.x - cx) || (i % 2 ? 1 : -1);
+      const bx = p0.x + side * (0.25 + 0.2 * hash(i * 1.9)) * u + Math.sin(t * 6 + i) * 0.08 * u;
+      const by = p0.y + (hash(i * 2.7) - 0.5) * 0.5 * u;
+      const h = (0.8 + 0.9 * Math.max(0, Math.sin(t * 9 + i * 1.7))) * u * a * (i < pts.length ? 1 : 0.6);
+      const w = (0.2 + 0.08 * hash(i)) * u;
+      const sway = Math.sin(t * 7 + i) * 0.2 * u;
+      for (const [col, k] of [["rgba(255,80,20,0.55)", 1], ["rgba(255,190,70,0.7)", 0.55]] as const) {
+        c.fillStyle = col;
+        c.beginPath();
+        c.moveTo(bx - w * k, by);
+        c.quadraticCurveTo(bx - w * 0.3 * k + sway, by - h * 0.55 * k, bx + sway * 1.4, by - h * k);
+        c.quadraticCurveTo(bx + w * 0.4 * k + sway, by - h * 0.45 * k, bx + w * k, by);
+        c.closePath();
+        c.fill();
+      }
+    }
+  } else {
+    // Ice: rotating crystal shards and a cold mist ring.
+    for (let i = 0; i < 16; i++) {
+      const ang = (i / 16) * Math.PI * 2 + t * 0.6;
+      const r = rx * (0.62 + 0.12 * Math.sin(t * 2 + i));
+      const x = cx + Math.cos(ang) * r;
+      const y = cy + Math.sin(ang) * ry * 0.85 - ((t * 0.5 + i / 16) % 1) * 0.4 * u;
+      const sz = (0.12 + hash(i) * 0.1) * u * a;
+      c.save();
+      c.translate(x, y);
+      c.rotate(ang + t);
+      c.fillStyle = `rgba(190,235,255,${0.75 * a})`;
+      c.beginPath();
+      c.moveTo(0, -sz * 1.6);
+      c.lineTo(sz * 0.45, 0);
+      c.lineTo(0, sz * 1.6);
+      c.lineTo(-sz * 0.45, 0);
+      c.closePath();
+      c.fill();
+      c.restore();
+    }
+    const m = c.createRadialGradient(cx, bot, 0, cx, bot, rx * 1.6);
+    m.addColorStop(0, `rgba(200,235,255,${0.35 * a})`);
+    m.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = m;
+    c.fillRect(cx - rx * 1.7, bot - rx * 1.7, rx * 3.4, rx * 3.4);
+  }
+  c.restore();
 }
 
 function norm(a: V): V {
@@ -1950,7 +2094,7 @@ function drawRiverScene(c: Ctx, l: AnimLayer, s: AnimScene, f: number, b: Backdr
 
 /* ------------------------------ action library ----------------------------- */
 
-export type Expression = "neutral" | "smirk" | "cool" | "angry" | "surprised" | "smile" | "sad" | "closed" | "laugh" | "serious";
+export type Expression = "neutral" | "smirk" | "cool" | "angry" | "surprised" | "smile" | "sad" | "closed" | "laugh" | "serious" | "fierce" | "shout" | "hurt";
 
 export const EXPRESSIONS: Record<Expression, Record<string, number>> = {
   neutral: { lid: 0.12, browL: 0, browR: 0, mouthSmile: 0, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0, blink: -1 },
@@ -1963,17 +2107,106 @@ export const EXPRESSIONS: Record<Expression, Record<string, number>> = {
   closed: { lid: 0.12, blink: 1, browL: 0.15, browR: 0.15, mouthSmile: 0, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0 },
   laugh: { lid: 0.12, blink: 1, browL: 0.5, browR: 0.5, mouthSmile: 1, mouthSmirk: 0, mouthOpen: 0.6, mouthRound: 0 },
   serious: { lid: 0.25, browL: -0.45, browR: -0.45, mouthSmile: -0.1, mouthSmirk: 0, mouthOpen: 0, mouthRound: 0, blink: -1 },
+  fierce: { lid: 0.18, browL: -1, browR: -1, mouthSmile: -0.35, mouthSmirk: 0.15, mouthOpen: 0.12, mouthRound: 0, blink: -1 },
+  shout: { lid: 0.05, browL: -1, browR: -1, mouthSmile: -0.4, mouthSmirk: 0, mouthOpen: 0.85, mouthRound: 0.15, blink: -1 },
+  hurt: { lid: 0.12, blink: 1, browL: 0.9, browR: 0.9, mouthSmile: -0.8, mouthSmirk: 0, mouthOpen: 0.35, mouthRound: 0 },
 };
 
 /** Hand placements relative to the shoulders (head units, torso space). */
 export const STANCES: Record<string, Record<string, number>> = {
-  relaxed: { handLx: -0.2, handLy: 2.5, handLpose: 0, handRx: 0.2, handRy: 2.5, handRpose: 0 },
+  relaxed: { handLx: -0.2, handLy: 2.5, handLpose: 0, handRx: 0.2, handRy: 2.5, handRpose: 0, kneeDir: 0 },
   pocket: { handLx: 0.28, handLy: 2.42, handLpose: 4, handRx: 0.2, handRy: 2.5, handRpose: 0 },
   pockets: { handLx: 0.28, handLy: 2.42, handLpose: 4, handRx: -0.28, handRy: 2.42, handRpose: 4 },
   hip: { handLx: 0.02, handLy: 1.62, handLpose: 3, handLrot: 70, handRx: 0.2, handRy: 2.5, handRpose: 0 },
   tpose: { handLx: -2.55, handLy: 0.08, handLpose: 1, handLrot: 0, handRx: 2.55, handRy: 0.08, handRpose: 1, handRrot: 0 },
+  guard: { handLx: 0.95, handLy: 0.75, handLpose: 3, handLrot: -20, handRx: 1.3, handRy: 0.55, handRpose: 3, handRrot: -30, footLx: -0.62, footLy: 3.55, footRx: 0.5, footRy: 3.55, rootY: 0.22, kneeDir: 1, lean: 5, headNod: -0.15, headTurn: 0.25 },
   crossed: { handLx: 1.35, handLy: 0.95, handLpose: 3, handRx: -1.3, handRy: 0.85, handRpose: 3 },
 };
+
+/**
+ * Fight moves, written for a character facing screen-right (+x = toward the opponent); a character with
+ * facing -1 is mirrored so the same moves point left. Each move is [time, pose, ease] keys and ends in guard.
+ */
+type MoveKey = [number, Record<string, number>, Ease?];
+const G = STANCES.guard!;
+const MOVES: Record<string, (o: { dist: number; height: number; force: number }) => MoveKey[]> = {
+  jab: () => [
+    [0.07, { handRx: 2.5, handRy: -0.02, handRrot: 0, lean: 9, rootX: 0.15, headTurn: 0.35 }, "out"],
+    [0.16, { handRx: 2.5, handRy: -0.02, lean: 9, rootX: 0.15 }],
+    [0.3, { handRx: G.handRx!, handRy: G.handRy!, handRrot: G.handRrot!, lean: G.lean!, rootX: 0, headTurn: G.headTurn! }],
+  ],
+  cross: () => [
+    [0.06, { handLx: 0.6, handLy: 0.9, lean: 2 }, "in"],
+    [0.15, { handLx: 3.15, handLy: 0.05, handLrot: 0, lean: 14, hipTilt: 6, rootX: 0.3, footLx: -0.6 }, "out"],
+    [0.26, { handLx: 3.15, handLy: 0.05, lean: 14, rootX: 0.3 }],
+    [0.45, { handLx: G.handLx!, handLy: G.handLy!, handLrot: G.handLrot!, lean: G.lean!, hipTilt: 0, rootX: 0, footLx: G.footLx! }],
+  ],
+  uppercut: () => [
+    [0.12, { rootY: 0.85, handRx: 0.7, handRy: 1.7, lean: 10 }, "in"],
+    [0.26, { rootY: -0.35, handRx: 0.9, handRy: -1.7, handRrot: -10, lean: -8, headNod: 0.45, footRy: 3.2 }, "out"],
+    [0.4, { rootY: -0.35, handRy: -1.75, headNod: 0.45 }],
+    [0.65, { rootY: G.rootY!, handRx: G.handRx!, handRy: G.handRy!, handRrot: G.handRrot!, lean: G.lean!, headNod: G.headNod!, footRy: G.footRy! }],
+  ],
+  kick: () => [
+    [0.12, { footRx: 0.8, footRy: 2.0, lean: -8, rootY: 0.1 }, "out"],
+    [0.22, { footRx: 2.75, footRy: 1.35, lean: -20, handLx: 0.4, handLy: 1.2 }, "out"],
+    [0.36, { footRx: 2.75, footRy: 1.35, lean: -20 }],
+    [0.5, { footRx: 0.8, footRy: 2.1, lean: -8 }],
+    [0.65, { footRx: G.footRx!, footRy: G.footRy!, lean: G.lean!, rootY: G.rootY!, handLx: G.handLx!, handLy: G.handLy! }],
+  ],
+  block: () => [
+    [0.07, { handLx: 1.45, handLy: 0.05, handRx: 0.55, handRy: -0.1, lean: -7, rootX: -0.15, headNod: -0.35, blink: 1 }, "out"],
+    [0.3, { handLx: 1.45, handLy: 0.05, handRx: 0.55, handRy: -0.1, lean: -7, rootX: -0.15, blink: 1 }],
+    [0.5, { handLx: G.handLx!, handLy: G.handLy!, handRx: G.handRx!, handRy: G.handRy!, lean: G.lean!, rootX: 0, headNod: G.headNod!, blink: -1 }],
+  ],
+  dodge: () => [
+    [0.1, { rootY: 1.15, lean: -16, rootX: -0.35, headTilt: -8 }, "out"],
+    [0.3, { rootY: 1.15, lean: -16, rootX: -0.35 }],
+    [0.5, { rootY: G.rootY!, lean: G.lean!, rootX: 0, headTilt: 0 }],
+  ],
+  dash: (o) => [
+    [0.08, { lean: 22, handLx: -1.0, handLy: 1.7, handRx: -0.3, handRy: 2.0, rootY: 0.5, wind: 1.5 }, "in"],
+    [0.3, { rootX: o.dist, lean: 22, wind: 1.5 }, "out"],
+    [0.45, { lean: G.lean!, handLx: G.handLx!, handLy: G.handLy!, handRx: G.handRx!, handRy: G.handRy!, rootY: G.rootY!, wind: 0.5 }],
+  ],
+  hit: (o) => [
+    [0.05, { rootX: -0.55 * o.force, lean: -18 * o.force, headTilt: -14 * o.force, headNod: 0.35, blink: 1, browL: 0.9, browR: 0.9, mouthOpen: 0.4, mouthSmile: -0.8, handLx: -0.6, handLy: 0.9, handRx: 0.2, handRy: 1.6 }, "out"],
+    [0.3, { rootX: -0.75 * o.force, lean: -12 * o.force, headTilt: -8 }],
+    [0.65, { rootX: -0.75 * o.force, lean: G.lean!, headTilt: 0, headNod: G.headNod!, blink: -1, browL: -1, browR: -1, mouthOpen: 0.1, mouthSmile: -0.4, handLx: G.handLx!, handLy: G.handLy!, handRx: G.handRx!, handRy: G.handRy! }],
+  ],
+  fly: (o) => [
+    [0.05, { rootRot: -25, headNod: 0.6, blink: 1, mouthOpen: 0.45, browL: 0.9, browR: 0.9, handLx: -1.6, handLy: -0.4, handRx: 1.2, handRy: -0.8, footLy: 2.6, footRy: 3.0 }, "out"],
+    [0.4, { rootX: -o.dist * 0.6, rootY: -o.height, footLy: 3.6, footRy: 3.6, rootRot: -70 }, "out"],
+    [0.75, { rootX: -o.dist, rootY: 0.9, rootRot: -8 }, "in"],
+    [0.9, { rootX: -o.dist, rootY: 1.2, rootRot: 0, footLy: 3.55, footRy: 3.55, footLx: -0.6, footRx: 0.6, handLx: -0.9, handLy: 2.0, handRx: 0.6, handRy: 2.3, headNod: -0.4, blink: 1 }],
+  ],
+  land: () => [
+    [0.06, { rootY: 1.25, lean: 12, handLx: -0.6, handLy: 2.2, handRx: 0.9, handRy: 2.4 }, "out"],
+    [0.5, { rootY: G.rootY!, lean: G.lean!, handLx: G.handLx!, handLy: G.handLy!, handRx: G.handRx!, handRy: G.handRy! }],
+  ],
+  getup: () => [
+    [0.3, { rootY: 0.9, headNod: -0.3, blink: -1, footLx: -0.5, footRx: 0.5 }],
+    [0.7, { rootY: G.rootY!, headNod: 0.1, lean: 2, footLx: G.footLx!, footRx: G.footRx! }],
+  ],
+  wipe: () => [
+    [0.2, { handRx: -0.85, handRy: -0.05, handRrot: 40, handRpose: 3, headTilt: 6 }],
+    [0.35, { handRx: -0.6, handRy: 0.0 }],
+    [0.55, { handRx: 1.5, handRy: 0.9, handRrot: -10, headTilt: 0 }, "out"],
+    [0.8, { handRx: G.handRx!, handRy: G.handRy!, handRrot: G.handRrot! }],
+  ],
+  charge: () => [
+    [0.3, { rootY: 0.75, lean: 8, handLx: -0.9, handLy: 2.0, handRx: 0.85, handRy: 2.1, shrugL: 0.5, shrugR: 0.5, wind: 1.6, aura: 0.6 }, "out"],
+    [1.0, { rootY: 0.75, aura: 1, wind: 1.8, headNod: -0.2 }],
+  ],
+  jump: (o) => [
+    [0.1, { rootY: 1.0, lean: 8 }, "in"],
+    [0.35, { rootY: -o.height, footLy: 2.8, footRy: 2.6, lean: -4 }, "out"],
+    [0.6, { rootY: -o.height * 0.9 }],
+    [0.8, { rootY: 0.9, footLy: 3.55, footRy: 3.55 }, "in"],
+    [1.0, { rootY: G.rootY!, lean: G.lean! }],
+  ],
+};
+export const FIGHT_MOVES = Object.keys(MOVES);
 
 export interface ActionStep {
   at: number; // seconds
@@ -1982,7 +2215,7 @@ export interface ActionStep {
   [k: string]: unknown;
 }
 
-export const ACTIONS = ["stance", "expr", "look", "smoke", "exhale", "nod", "shake", "tilt", "shrug", "wave", "point", "gesture", "lean", "breathe", "turn", "laugh", "set"] as const;
+export const ACTIONS = ["stance", "expr", "look", "smoke", "exhale", "nod", "shake", "tilt", "shrug", "wave", "point", "gesture", "lean", "breathe", "turn", "laugh", "set", ...FIGHT_MOVES, "hitstop"] as const;
 
 type Key = (name: string, sec: number, val: number, ease?: Ease) => void;
 
@@ -2000,8 +2233,13 @@ export function applyActions(l: AnimLayer, fps: number, steps: ActionStep[]): nu
       case "set": {
         // Raw channel keys: {do:"set", values:{headTilt:5}, ease?}
         const vals = (st.values ?? {}) as Record<string, number>;
-        for (const [n, val] of Object.entries(vals)) key(n, t, Number(val), str("ease", "inOut") as Ease);
-        end = Math.max(end, t);
+        // Ramp from the current value over dur (default 0.25 s) so earlier frames keep their pose.
+        const d = num("dur", 0.25);
+        for (const [n, val] of Object.entries(vals)) {
+          if (d > 0) key(n, t, at(n, t));
+          key(n, t + d, Number(val), str("ease", "inOut") as Ease);
+        }
+        end = Math.max(end, t + d);
         break;
       }
       case "stance": {
@@ -2253,8 +2491,30 @@ export function applyActions(l: AnimLayer, fps: number, steps: ActionStep[]): nu
         end = Math.max(end, t);
         break;
       }
-      default:
-        throw new Error(`Unknown action "${st.do}". Actions: ${ACTIONS.join(", ")}`);
+      case "hitstop": {
+        // Freeze every animated channel for a beat (impact feel).
+        const d = num("dur", 0.1);
+        for (const n of Object.keys(l.chan ?? {})) {
+          const v0 = at(n, t);
+          key(n, t, v0, "hold");
+          key(n, t + d, v0, "inOut");
+        }
+        end = Math.max(end, t + d);
+        break;
+      }
+      default: {
+        const mv = MOVES[st.do];
+        if (!mv) throw new Error(`Unknown action "${st.do}". Actions: ${ACTIONS.join(", ")}`);
+        const keys = mv({ dist: num("dist", 3), height: num("height", 2.5), force: num("force", 1) });
+        const sc = num("speed", 1) > 0 ? 1 / num("speed", 1) : 1;
+        // Start from the current pose for every channel the move touches.
+        const names = new Set(keys.flatMap(([, v]) => Object.keys(v)));
+        // Position moves are relative: a jab after a dash starts where the dash ended.
+        const baseX = at("rootX", t);
+        for (const n of names) key(n, t, at(n, t), n.endsWith("pose") ? "hold" : "inOut");
+        for (const [dt, vals, ease] of keys) for (const [n, val] of Object.entries(vals)) key(n, t + dt * sc, n === "rootX" ? baseX + val : val, n.endsWith("pose") ? "hold" : (ease ?? "inOut"));
+        end = Math.max(end, t + keys[keys.length - 1]![0] * sc);
+      }
     }
   }
   return end;

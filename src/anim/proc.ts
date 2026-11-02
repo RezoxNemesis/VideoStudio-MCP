@@ -53,8 +53,8 @@ export const PROC_TYPES = ["captions", "kinetic", "mograph", "fx", "overlay", "c
 export const CAPTION_STYLES = ["pop", "karaoke", "bold", "serif", "minimal", "torn"] as const;
 export const KINETIC_STYLES = ["stretch", "stack", "warp", "split", "typewriter", "slide"] as const;
 export const MOGRAPH_TYPES = ["ball", "morph", "halftone", "cube", "counter", "chart", "burst", "toggle"] as const;
-export const FX_TYPES = ["fire", "splash", "ripple", "impact", "speedlines", "sparkle", "smoke"] as const;
-export const OVERLAY_TYPES = ["lightLeak", "filmBurn", "dust", "vhs", "stripe", "paper"] as const;
+export const FX_TYPES = ["fire", "splash", "ripple", "impact", "speedlines", "sparkle", "smoke", "shockwave", "slash", "debris", "dust", "clash"] as const;
+export const OVERLAY_TYPES = ["lightLeak", "filmBurn", "dust", "vhs", "stripe", "paper", "rain", "flash", "impactFrame"] as const;
 export const PAPER_TONES = ["cream", "news", "kraft", "dark"] as const;
 
 const SANS = "Geist Variable, system-ui, sans-serif";
@@ -1000,6 +1000,132 @@ function fx(c: Ctx, p: ProcSpec, s: AnimScene, f: number) {
       }
       break;
     }
+    case "shockwave":
+    case "clash": {
+      // Expanding ring with radial streaks; "clash" adds a white core flash and a second ring.
+      const ph = clamp(t / Math.max(0.3, (s.frames / s.fps) * 0.8));
+      const rings = p.style === "clash" ? [0, 0.18] : [0];
+      for (const off of rings) {
+        const q = clamp(ph - off);
+        if (q <= 0) continue;
+        const r = R * (0.2 + easeOut(q) * 2.6);
+        c.save();
+        c.globalAlpha = 1 - q;
+        c.lineWidth = R * 0.12 * (1 - q) + lw;
+        c.strokeStyle = col;
+        c.beginPath();
+        c.ellipse(cx, cy, r, r * 0.42, 0, 0, Math.PI * 2);
+        c.stroke();
+        c.lineWidth = lw;
+        c.strokeStyle = "#ffffff";
+        c.beginPath();
+        c.ellipse(cx, cy, r * 0.96, r * 0.4, 0, 0, Math.PI * 2);
+        c.stroke();
+        c.restore();
+      }
+      c.save();
+      c.globalAlpha = 1 - ph;
+      c.strokeStyle = col;
+      for (let i = 0; i < 24; i++) {
+        const a = hash(i * 2.1 + seed) * Math.PI * 2;
+        const r0 = R * (0.3 + ph * 1.4);
+        const r1 = r0 + R * (0.4 + hash(i) * 0.8) * (1 - ph);
+        c.lineWidth = lw * (1.5 - ph);
+        c.beginPath();
+        c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.6);
+        c.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.6);
+        c.stroke();
+      }
+      if (p.style === "clash") {
+        const g = c.createRadialGradient(cx, cy, 0, cx, cy, R * 1.4);
+        g.addColorStop(0, `rgba(255,255,255,${1 - ph})`);
+        g.addColorStop(0.4, rgba(col, 0.6 * (1 - ph)));
+        g.addColorStop(1, "rgba(255,255,255,0)");
+        c.globalAlpha = 1;
+        c.fillStyle = g;
+        c.fillRect(cx - R * 1.5, cy - R * 1.5, R * 3, R * 3);
+      }
+      c.restore();
+      break;
+    }
+    case "slash": {
+      // Crescent sword/energy arc that sweeps and fades.
+      const ph = clamp(t / 0.35);
+      const fade = 1 - clamp((t - 0.35) / 0.3);
+      const a0 = -2.4 + ph * 0.4;
+      const a1 = a0 + ph * 2.8;
+      c.save();
+      c.globalAlpha = fade;
+      c.translate(cx, cy);
+      c.rotate(((p.rot ?? -20) * Math.PI) / 180);
+      c.beginPath();
+      c.arc(0, 0, R, a0, a1);
+      c.arc(R * 0.18, -R * 0.08, R * 0.88, a1, a0, true);
+      c.closePath();
+      const g = c.createLinearGradient(-R, 0, R, 0);
+      g.addColorStop(0, rgba(col, 0));
+      g.addColorStop(1, "#ffffff");
+      c.fillStyle = g;
+      c.fill();
+      c.lineWidth = lw * 0.8;
+      c.strokeStyle = col;
+      c.stroke();
+      c.restore();
+      break;
+    }
+    case "debris": {
+      // Chunks thrown up and falling with gravity, spinning.
+      for (let i = 0; i < 16; i++) {
+        const vx = (hash(i * 3.7 + (p.seed ?? 3)) - 0.5) * 2.4 * R;
+        const vy = -(0.8 + hash(i * 1.3) * 1.6) * R;
+        const x = cx + vx * t;
+        const y = cy + vy * t + 2.6 * R * t * t;
+        if (y > cy + R * 0.4) continue;
+        const sz = R * (0.04 + hash(i * 9) * 0.07);
+        c.save();
+        c.translate(x, y);
+        c.rotate(t * (4 + hash(i) * 8));
+        c.beginPath();
+        c.moveTo(-sz, -sz * 0.6);
+        c.lineTo(sz * 0.8, -sz);
+        c.lineTo(sz, sz * 0.7);
+        c.lineTo(-sz * 0.6, sz);
+        c.closePath();
+        c.fillStyle = p.accent ?? "#4a4560";
+        c.fill();
+        c.lineWidth = lw * 0.6;
+        c.strokeStyle = ink;
+        c.stroke();
+        c.restore();
+      }
+      break;
+    }
+    case "dust": {
+      // Landing / skid dust puffs spreading sideways along the ground.
+      const ph = clamp(t / 1.2);
+      for (let i = 0; i < 10; i++) {
+        const side = i % 2 ? 1 : -1;
+        const x = cx + side * (0.2 + easeOut(ph) * (0.8 + hash(i) * 0.6)) * R;
+        const y = cy - hash(i * 3) * R * 0.25 * ph - R * 0.05;
+        const r = R * (0.12 + ph * 0.3) * (0.7 + hash(i * 5) * 0.6);
+        c.globalAlpha = (1 - ph) * 0.9;
+        c.beginPath();
+        for (let k = 0; k <= 9; k++) {
+          const a = (k / 9) * Math.PI * 2;
+          const rr = r * (0.82 + hash(i * 10 + k + two) * 0.3);
+          if (k) c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.75);
+          else c.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.75);
+        }
+        c.closePath();
+        c.fillStyle = p.accent ?? "#cfc8bd";
+        c.fill();
+        c.lineWidth = lw * 0.7;
+        c.strokeStyle = ink;
+        c.stroke();
+      }
+      c.globalAlpha = 1;
+      break;
+    }
     case "smoke": {
       for (let i = 0; i < 6; i++) {
         const ph = ((t * 0.5 + i / 6) % 1);
@@ -1166,6 +1292,53 @@ function overlay(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number, f: n
       }
       c.fillStyle = col;
       c.fillRect(0, top, W, Math.max(0, bot - top));
+      break;
+    }
+    case "rain": {
+      // Slanted streaks falling fast, splashes on the ground line.
+      c.strokeStyle = p.color ?? "rgba(190,200,255,0.45)";
+      c.lineWidth = 2;
+      for (let i = 0; i < 160; i++) {
+        const sp = 1.6 + hash(i * 1.7) * 0.9;
+        const x = ((hash(i * 3.1 + seed) * W * 1.3 + t * W * 0.25 * sp) % (W * 1.3)) - W * 0.15;
+        const y = ((hash(i * 7.3 + seed) * H + t * H * 1.4 * sp) % H);
+        const len = 30 + hash(i) * 50;
+        c.globalAlpha = 0.25 + hash(i * 5) * 0.45;
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(x - len * 0.25, y - len);
+        c.stroke();
+      }
+      c.globalAlpha = 1;
+      break;
+    }
+    case "flash": {
+      // A hard white (or coloured) flash that decays: hit sparks, lightning, cuts.
+      const k = Math.pow(1 - clamp(t / Math.max(0.05, dur)), 2);
+      c.fillStyle = rgba(p.color ?? "#ffffff", k);
+      c.fillRect(0, 0, W, H);
+      break;
+    }
+    case "impactFrame": {
+      // Anime impact frame: black / white / red graphic burst for a few frames, alternating.
+      const n = Math.floor(f / 2);
+      const col = p.color ?? "#e1121b";
+      const cx = (p.x ?? 0.5) * W;
+      const cy = (p.y ?? 0.5) * H;
+      c.fillStyle = n % 2 ? "#ffffff" : "#000000";
+      c.fillRect(0, 0, W, H);
+      c.fillStyle = n % 2 ? "#000000" : col;
+      for (let i = 0; i < 40; i++) {
+        const a = hash(i * 1.9 + n) * Math.PI * 2;
+        const w2 = (0.01 + hash(i * 4.4) * 0.03) * Math.PI;
+        const r1 = Math.hypot(W, H);
+        c.beginPath();
+        c.moveTo(cx, cy);
+        c.lineTo(cx + Math.cos(a - w2) * r1, cy + Math.sin(a - w2) * r1);
+        c.lineTo(cx + Math.cos(a + w2) * r1, cy + Math.sin(a + w2) * r1);
+        c.closePath();
+        c.fill();
+      }
       break;
     }
     case "paper": {
