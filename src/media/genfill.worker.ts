@@ -7,7 +7,7 @@
  */
 import * as ort from "onnxruntime-web/webgpu";
 import { AutoTokenizer, env } from "@huggingface/transformers";
-import { externalize } from "./onnxext";
+import { blobSource, externalize, lazyBytes } from "./onnxext";
 
 env.allowLocalModels = false;
 
@@ -98,24 +98,23 @@ async function open(kind: keyof GenFiles, url: string, note: (m: string) => void
     enableCpuMemArena: false,
   };
   let s: ort.InferenceSession;
-  {
-    let bytes: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
-    if (bytes.length > 150 * 1048576) {
-      // Big model: a small rewritten graph whose weights point back into these same bytes, which ONNX Runtime
-      // streams straight to the GPU — no second copy in WebAssembly memory (that copy is what runs a phone out of RAM).
-      const gkey = `${url}#graph-v1`;
-      let graph: Uint8Array;
-      const hit = await cache.match(gkey);
-      if (hit) graph = new Uint8Array(await hit.arrayBuffer());
-      else {
-        note("Preparing the painter for your phone (once)…");
-        graph = externalize(bytes, "weights.bin").graph;
-        await cache.put(gkey, new Response(new Blob([graph as BlobPart])));
-      }
-      s = await ort.InferenceSession.create(graph, { ...opts, externalData: [{ path: "weights.bin", data: bytes }] });
-    } else s = await ort.InferenceSession.create(bytes, opts);
-    bytes = null;
-  }
+  const blob = await res.blob();
+  if (blob.size > 150 * 1048576) {
+    // Big model: a small rewritten graph whose weights point back into the downloaded file. ONNX Runtime asks for
+    // each weight in turn; we read just that piece from disk and it goes straight to the GPU. The whole file is
+    // never in memory (holding it is what made the phone close the app).
+    const src = blobSource(blob);
+    const gkey = `${url}#graph-v2`;
+    let graph: Uint8Array;
+    const hit = await cache.match(gkey);
+    if (hit) graph = new Uint8Array(await hit.arrayBuffer());
+    else {
+      note("Preparing the painter for your phone (once)…");
+      graph = externalize(src, "weights.bin").graph;
+      await cache.put(gkey, new Response(new Blob([graph as BlobPart])));
+    }
+    s = await ort.InferenceSession.create(graph, { ...opts, externalData: [{ path: "weights.bin", data: lazyBytes(src) }] });
+  } else s = await ort.InferenceSession.create(new Uint8Array(await blob.arrayBuffer()), opts);
   const out: Sess = { s, half: null };
   sessions[kind] = out;
   return out;

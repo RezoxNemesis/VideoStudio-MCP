@@ -5,11 +5,55 @@
  * first. Nothing is duplicated, nothing is re-downloaded.
  */
 
-function readVarint(b: Uint8Array, p: number): [number, number] {
+/** Random access to the model bytes: a buffer in memory, or a big file read piece by piece. */
+export interface ByteSource {
+  length: number;
+  at(i: number): number;
+  slice(s: number, e: number): Uint8Array;
+}
+export function bufferSource(b: Uint8Array): ByteSource {
+  return { length: b.length, at: (i) => b[i]!, slice: (s, e) => b.subarray(s, e) };
+}
+/** A Blob (disk-backed) read synchronously in pages — for workers (FileReaderSync). */
+export function blobSource(blob: Blob, page = 1 << 20): ByteSource {
+  const FRS = (self as unknown as { FileReaderSync: new () => { readAsArrayBuffer(b: Blob): ArrayBuffer } }).FileReaderSync;
+  const rd = new FRS();
+  let start = -1,
+    buf = new Uint8Array(0);
+  const load = (i: number) => {
+    start = Math.floor(i / page) * page;
+    buf = new Uint8Array(rd.readAsArrayBuffer(blob.slice(start, Math.min(blob.size, start + page))));
+  };
+  return {
+    length: blob.size,
+    at(i) {
+      if (i < start || i >= start + buf.length) load(i);
+      return buf[i - start]!;
+    },
+    slice(s, e) {
+      if (s >= start && e <= start + buf.length) return buf.subarray(s - start, e - start);
+      return new Uint8Array(rd.readAsArrayBuffer(blob.slice(s, e)));
+    },
+  };
+}
+
+/**
+ * A stand-in for a huge Uint8Array that ONNX Runtime Web reads tensor by tensor (it only uses byteLength and
+ * subarray on mounted external data). Each read comes from disk, so the weights never sit in memory all at once.
+ */
+export function lazyBytes(src: ByteSource): Uint8Array {
+  const o = Object.create(Uint8Array.prototype) as Uint8Array;
+  Object.defineProperty(o, "byteLength", { value: src.length });
+  Object.defineProperty(o, "length", { value: src.length });
+  Object.defineProperty(o, "subarray", { value: (s: number, e: number) => src.slice(s, e).slice() });
+  return o;
+}
+
+function readVarint(b: ByteSource, p: number): [number, number] {
   let v = 0,
     mul = 1;
   for (;;) {
-    const x = b[p++]!;
+    const x = b.at(p++);
     v += (x & 0x7f) * mul;
     if (x < 0x80) return [v, p];
     mul *= 128;
@@ -46,7 +90,7 @@ class Out {
 }
 
 /** Walk the fields of a message in b[start, end): calls fn(field, wireType, valueStart, valueEnd, tagStart). */
-function fields(b: Uint8Array, start: number, end: number, fn: (f: number, wt: number, vs: number, ve: number, ts: number) => void) {
+function fields(b: ByteSource, start: number, end: number, fn: (f: number, wt: number, vs: number, ve: number, ts: number) => void) {
   let p = start;
   while (p < end) {
     const ts = p;
@@ -94,7 +138,8 @@ export interface ExternalizeResult {
  * Rewrite `model` (a whole .onnx file) so initializers with raw_data ≥ minBytes are external, located in
  * `location` at their offsets inside `model` itself. Pass the same bytes as the external data when loading.
  */
-export function externalize(model: Uint8Array, location: string, minBytes = 4096): ExternalizeResult {
+export function externalize(input: Uint8Array | ByteSource, location: string, minBytes = 4096): ExternalizeResult {
+  const model: ByteSource = input instanceof Uint8Array ? bufferSource(input) : input;
   let tensors = 0,
     externalBytes = 0;
   const tensor = (s: number, e: number): Uint8Array => {
@@ -110,7 +155,7 @@ export function externalize(model: Uint8Array, location: string, minBytes = 4096
         o.push(entry("length", String(ve - vs)));
         return;
       }
-      o.push(model.subarray(ts, ve));
+      o.push(model.slice(ts, ve));
     });
     if (moved) o.push([...varint(14 * 8 + 0), 1]); // data_location = EXTERNAL
     return o.bytes();
@@ -119,14 +164,14 @@ export function externalize(model: Uint8Array, location: string, minBytes = 4096
     const o = new Out();
     fields(model, s, e, (f, wt, vs, ve, ts) => {
       if (f === 5 && wt === 2) o.push(lenField(5, tensor(vs, ve)));
-      else o.push(model.subarray(ts, ve));
+      else o.push(model.slice(ts, ve));
     });
     return o.bytes();
   };
   const top = new Out();
   fields(model, 0, model.length, (f, wt, vs, ve, ts) => {
     if (f === 7 && wt === 2) top.push(lenField(7, graph(vs, ve)));
-    else top.push(model.subarray(ts, ve));
+    else top.push(model.slice(ts, ve));
   });
   return { graph: top.bytes(), tensors, externalBytes };
 }
