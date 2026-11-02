@@ -1,3 +1,4 @@
+import { loadFonts } from "./fonts";
 /**
  * Offline renderer: GPU compositing → hardware H.264/HEVC encoding (WebCodecs) → MP4 streamed straight to
  * shared storage. Audio is mixed offline and encoded to AAC.
@@ -64,6 +65,7 @@ export class ExportJob {
   }
 
   async run(): Promise<ExportResult> {
+    await loadFonts();
     const p = JSON.parse(JSON.stringify(this.project)) as Project;
     const o = this.opts;
     const fps = Math.max(1, Math.min(120, o.fps ?? p.fps));

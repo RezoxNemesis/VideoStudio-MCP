@@ -400,13 +400,26 @@ export function wheelFromColor(hex: string, strength: number): [number, number, 
 }
 
 export const TEXT_PRESETS: Record<string, Partial<import("./model").TextStyle> & { fx?: Partial<Fx>; transform?: { y?: number } }> = {
-  punch: { font: "Impact, Haettenschweiler, sans-serif", weight: 900, size: 170, color: "#ffffff", stroke: "#000000", strokeWidth: 10, shadow: 18, animate: "slam", animateDur: 0.45, tracking: 2, glow: "", bg: "" },
+  punch: { font: '"Anton", Impact, sans-serif', weight: 900, size: 170, color: "#ffffff", stroke: "#000000", strokeWidth: 10, shadow: 18, animate: "slam", animateDur: 0.45, tracking: 2, glow: "", bg: "" },
   neon: { font: "Geist Variable, system-ui, sans-serif", weight: 600, size: 130, color: "#e9fbff", stroke: "", strokeWidth: 0, shadow: 0, glow: "#21d4fd", animate: "flicker", animateDur: 0.9, tracking: 6, bg: "", fx: { glow: 1.2, glowThreshold: 0.4, glowRadius: 30 } },
   cinematic: { font: "Instrument Serif, Georgia, serif", weight: 400, size: 120, color: "#f3ead7", stroke: "", strokeWidth: 0, shadow: 20, animate: "track", animateDur: 2.2, tracking: 18, glow: "", bg: "" },
   subtitle: { font: "Geist Variable, system-ui, sans-serif", weight: 600, size: 62, color: "#ffffff", stroke: "", strokeWidth: 0, shadow: 0, bg: "#000000b0", animate: "fade", animateDur: 0.2, tracking: 0, glow: "", transform: { y: 700 } },
   minimal: { font: "Geist Variable, system-ui, sans-serif", weight: 300, size: 96, color: "#ffffff", stroke: "", strokeWidth: 0, shadow: 6, animate: "blurIn", animateDur: 0.8, tracking: 10, glow: "", bg: "" },
   glitch: { font: "'Courier New', monospace", weight: 800, size: 120, color: "#ffffff", stroke: "#ff0055", strokeWidth: 2, shadow: 0, animate: "flicker", animateDur: 0.6, tracking: 4, glow: "", bg: "", fx: { rgbSplit: 10, glitch: 0.25, scanlines: 0.3 } },
   bounce: { font: "Geist Variable, system-ui, sans-serif", weight: 900, size: 150, color: "#ffd23f", stroke: "#2b1055", strokeWidth: 8, shadow: 14, animate: "bounce", animateDur: 1, tracking: 2, glow: "", bg: "" },
+  rap: { font: '"Bebas Neue", sans-serif', weight: 400, size: 230, color: "#ffffff", stroke: "#000000", strokeWidth: 6, shadow: 22, animate: "slam", animateDur: 0.3, tracking: 4, glow: "", bg: "" },
+  anime: { font: '"Bangers", sans-serif', weight: 400, size: 190, color: "#ffe14d", stroke: "#1a0f2e", strokeWidth: 12, shadow: 0, animate: "pop", animateDur: 0.5, tracking: 6, glow: "", bg: "" },
+  royal: { font: '"Cinzel", serif', weight: 900, size: 120, color: "#f7e3a1", stroke: "", strokeWidth: 0, shadow: 12, glow: "#d4a537", animate: "track", animateDur: 2, tracking: 20, bg: "" },
+  love: { font: '"Great Vibes", cursive', weight: 400, size: 170, color: "#ffe6ef", stroke: "", strokeWidth: 0, shadow: 10, glow: "#ff6fa3", animate: "blurIn", animateDur: 1.2, tracking: 0, bg: "" },
+  street: { font: '"Permanent Marker", cursive', weight: 400, size: 150, color: "#ffffff", stroke: "#000000", strokeWidth: 4, shadow: 10, animate: "rise", animateDur: 0.5, tracking: 2, glow: "", bg: "" },
+  graffiti: { font: '"Rubik Wet Paint", sans-serif', weight: 400, size: 170, color: "#7dff4a", stroke: "#111111", strokeWidth: 6, shadow: 14, animate: "slam", animateDur: 0.4, tracking: 2, glow: "", bg: "" },
+  retro: { font: '"Monoton", sans-serif', weight: 400, size: 150, color: "#ffd1f7", stroke: "", strokeWidth: 0, shadow: 0, glow: "#ff2bd6", animate: "flicker", animateDur: 0.9, tracking: 6, bg: "", fx: { glow: 1, glowThreshold: 0.4, glowRadius: 26 } },
+  pixel: { font: '"Press Start 2P", monospace', weight: 400, size: 80, color: "#ffffff", stroke: "#000000", strokeWidth: 6, shadow: 0, animate: "typewriter", animateDur: 0.8, tracking: 2, glow: "", bg: "" },
+  horror: { font: '"Creepster", cursive', weight: 400, size: 180, color: "#d10f1f", stroke: "#000000", strokeWidth: 4, shadow: 20, animate: "flicker", animateDur: 1.2, tracking: 4, glow: "", bg: "" },
+  scifi: { font: '"Orbitron", sans-serif', weight: 900, size: 120, color: "#bff6ff", stroke: "", strokeWidth: 0, shadow: 0, glow: "#24c8ff", animate: "track", animateDur: 1.2, tracking: 14, bg: "" },
+  elegant: { font: '"Playfair Display", serif', weight: 900, size: 140, color: "#ffffff", stroke: "", strokeWidth: 0, shadow: 16, animate: "rise", animateDur: 0.9, tracking: 2, glow: "", bg: "" },
+  hindi: { font: '"Rozha One", serif', weight: 400, size: 160, color: "#fff4d6", stroke: "#3a1200", strokeWidth: 6, shadow: 14, animate: "pop", animateDur: 0.5, tracking: 0, glow: "", bg: "" },
+  bold: { font: '"Archivo Black", sans-serif', weight: 400, size: 150, color: "#ffffff", stroke: "", strokeWidth: 0, shadow: 18, animate: "rise", animateDur: 0.45, tracking: 0, glow: "", bg: "" },
 };
 
 export function textPreset(p: Project, id: string, name: string): Clip {

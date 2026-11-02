@@ -1,3 +1,4 @@
+import { fontStack } from "./fonts";
 /** Turns evaluated layers into pixel sources for the compositor: video frames, images, text, shapes, animation. */
 import { evaluate, type LayerDraw } from "../core/evaluate";
 import { findAsset, findScene, type Project, type ShapeStyle, type TextStyle } from "../core/model";
@@ -27,7 +28,7 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
     return { canvas: hit.canvas, w: hit.canvas.width, h: hit.canvas.height, key };
   }
   const size = Math.max(4, st.size * k);
-  const font = `${st.weight} ${size}px ${st.font}`;
+  const font = `${st.weight} ${size}px ${/[,"']/.test(st.font) ? st.font : fontStack(st.font)}`;
   const lines = st.text.split("\n");
   const measure = ctx2d(makeCanvas(4, 4));
   measure.font = font;

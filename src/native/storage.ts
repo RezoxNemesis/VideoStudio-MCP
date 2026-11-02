@@ -10,6 +10,8 @@ interface StudioStoragePlugin {
   finish(o: { id: string; name: string; mime: string; collection: "Movies" | "Music" | "Pictures" | "Documents" }): Promise<{ uri: string; path: string }>;
   abort(o: { id: string }): Promise<void>;
   keepAwake(o: { on: boolean }): Promise<void>;
+  download(o: { url: string; headers?: Record<string, string> }): Promise<{ path: string; bytes: number }>;
+  removeDownload(o: { path: string }): Promise<void>;
 }
 
 const Native = registerPlugin<StudioStoragePlugin>("StudioStorage");
@@ -129,3 +131,23 @@ export async function keepAwake(on: boolean): Promise<void> {
   }
 }
 let wakeLockHandle: { release(): Promise<void> } | null = null;
+
+/**
+ * Download an https file into a Blob. On the phone this streams natively to the app cache (no CORS limits);
+ * on the web it falls back to fetch.
+ */
+export async function downloadBlob(url: string, headers: Record<string, string> = {}): Promise<Blob> {
+  if (!/^https:\/\//i.test(url)) throw new Error("Only https links can be downloaded.");
+  if (hasNativeStorage()) {
+    const r = await Native.download({ url, headers });
+    try {
+      const res = await fetch(Capacitor.convertFileSrc(r.path));
+      return await res.blob();
+    } finally {
+      await Native.removeDownload({ path: r.path }).catch(() => {});
+    }
+  }
+  const res = await fetch(url, { headers });
+  if (!res.ok) throw new Error(`Download failed (${res.status}).`);
+  return await res.blob();
+}

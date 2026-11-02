@@ -16,6 +16,9 @@ import { speechEnvelope } from "../media/library";
 import { newScene, newTrack, type BlendMode, type Clip } from "../core/model";
 import { exposedKey, findAsset, projectDuration, uid, type Ease, type Grade, type Project, type Stroke, type TransitionKind } from "../core/model";
 import { fetchToBlob, importBlob } from "../media/library";
+import { receiveTransfer } from "../media/transfer";
+import { analyseSong } from "../media/song";
+import { to16k, transcribe, type LyricLine } from "../media/asr";
 import { ExportJob, type ExportOptions } from "../render/export";
 import { fetchInbox, listInbox } from "./remote";
 import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot } from "../render/snapshot";
@@ -215,6 +218,20 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       });
     },
   },
+  "media.transfer": {
+    help: "{urls (parts, in order) | url, key (base64 AES-256), name, mime?, add?=true, start?} Bring a file the agent was given in chat into the project (encrypted hand-off; decrypted on the phone).",
+    run: async (s, a) => {
+      const name = a.str("name");
+      const mime = a.str("mime", /\.mp3$/i.test(name) ? "audio/mpeg" : /\.wav$/i.test(name) ? "audio/wav" : /\.(m4a|aac)$/i.test(name) ? "audio/mp4" : /\.mov$/i.test(name) ? "video/quicktime" : /\.(png)$/i.test(name) ? "image/png" : /\.(jpe?g)$/i.test(name) ? "image/jpeg" : "video/mp4");
+      const urls = (a.any("urls") as string[] | undefined) ?? [a.str("url")];
+      const blob = await receiveTransfer(urls, a.str("key"), mime);
+      return await s.mutateAsync("import transfer", async (p) => {
+        const asset = await importBlob(p, blob, name, "agent");
+        const clip = a.bool("add", true) ? ops.addClip(p, { assetId: asset.id, start: a.optNum("start") }) : undefined;
+        return { id: asset.id, clipId: clip?.id, kind: asset.kind, duration: asset.duration, width: asset.width, height: asset.height, bytes: blob.size };
+      });
+    },
+  },
   "media.inbox": { help: "Files waiting in the relay inbox (things shared in chat).", run: () => listInbox() },
   "media.importInbox": {
     help: "{fileId, add?=true, start?, keep?=false} Import a file from the relay inbox into the project.",
@@ -377,6 +394,34 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       const info = await analyseBeats(s, a.str("assetId"));
       if (a.bool("markers", true)) s.mutate("beat markers", (p) => (p.markers = info.beats.map((t, i) => ({ t, label: `B${i + 1}` }))));
       return { bpm: info.bpm, beats: info.beats.length, firstBeats: info.beats.slice(0, 16), downbeats: info.downbeats.slice(0, 8), onsets: info.onsets.slice(0, 24), duration: info.duration };
+    },
+  },
+  "audio.analyze": {
+    help: "{assetId, lyrics?=true, model?: tiny|base|small, language? (e.g. hindi, english), translate?=false, markers?=true} Understand a song: tempo, beats, key, mood, sections (intro/verse/chorus/drop/bridge/outro), energy curve, hits, breaks, and timed lyrics transcribed on the phone (Whisper; model downloads once).",
+    run: async (s, a) => {
+      const asset = s.project.assets.find((x) => x.id === a.str("assetId"));
+      if (!asset || asset.kind === "image") throw new ops.OpError("Pick an audio or video asset.");
+      const buf = await s.pool.audioBuffer(asset, new OfflineAudioContext(1, 1, 44100));
+      if (!buf) throw new ops.OpError("That file has no audio.");
+      const chans: Float32Array[] = [];
+      for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) chans.push(buf.getChannelData(c));
+      const info = analyseSong(chans, buf.sampleRate);
+      if (a.bool("markers", true)) s.mutate("song markers", (p) => (p.markers = info.sections.map((x) => ({ t: x.start, label: x.label }))));
+      let lyrics: { text: string; lines: LyricLine[] } | { error: string } | undefined;
+      if (a.bool("lyrics", true)) {
+        try {
+          const audio = await to16k(buf);
+          lyrics = await transcribe(audio, {
+            model: (a.optStr("model") as "tiny" | "base" | "small" | undefined) ?? "base",
+            language: a.optStr("language"),
+            translate: a.bool("translate"),
+            onProgress: (stage, pct) => s.setStatus(`${stage === "model" ? "Downloading the lyrics model" : "Listening to the lyrics"} ${pct}%`),
+          });
+        } catch (e) {
+          lyrics = { error: (e as Error).message };
+        }
+      }
+      return { ...info, lyrics };
     },
   },
   "edit.beatCut": {

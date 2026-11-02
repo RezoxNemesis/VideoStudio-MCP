@@ -1,5 +1,7 @@
 import "@fontsource-variable/geist";
 import "@fontsource/instrument-serif/latin-400.css";
+import { loadFonts } from "./render/fonts";
+void loadFonts();
 import "./styles/app.css";
 import { Studio } from "./app/studio";
 import { EditorView } from "./ui/editor";

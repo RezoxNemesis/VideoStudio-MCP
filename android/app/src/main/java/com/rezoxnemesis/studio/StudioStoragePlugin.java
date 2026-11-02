@@ -16,7 +16,10 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.io.RandomAccessFile;
 import java.util.HashMap;
 import java.util.Map;
@@ -134,6 +137,92 @@ public class StudioStoragePlugin extends Plugin {
             if (raf != null) raf.close();
         } catch (Throwable ignored) {}
         if (f != null) f.delete();
+        call.resolve();
+    }
+
+    /**
+     * Download an https file into the app's private cache (no CORS limits, streamed to disk). Used to bring
+     * files the agent was given in chat into the project. Never touches shared storage.
+     */
+    @PluginMethod
+    public void download(PluginCall call) {
+        final String url = call.getString("url", "");
+        if (!url.startsWith("https://")) {
+            call.reject("Only https links can be downloaded.");
+            return;
+        }
+        final JSObject headers = call.getObject("headers", new JSObject());
+        getBridge().execute(() -> {
+            HttpURLConnection c = null;
+            try {
+                File d = new File(getContext().getCacheDir(), "downloads");
+                if (!d.exists()) d.mkdirs();
+                File out = new File(d, UUID.randomUUID().toString() + ".bin");
+                String next = url;
+                for (int hop = 0; hop < 6; hop++) {
+                    c = (HttpURLConnection) new URL(next).openConnection();
+                    c.setInstanceFollowRedirects(false);
+                    c.setConnectTimeout(20000);
+                    c.setReadTimeout(60000);
+                    // Only send our headers to the host we were asked for (redirect targets are signed URLs).
+                    if (hop == 0) {
+                        java.util.Iterator<String> keys = headers.keys();
+                        while (keys.hasNext()) {
+                            String k = keys.next();
+                            c.setRequestProperty(k, headers.getString(k));
+                        }
+                    }
+                    int code = c.getResponseCode();
+                    if (code >= 300 && code < 400) {
+                        String loc = c.getHeaderField("Location");
+                        c.disconnect();
+                        if (loc == null || !loc.startsWith("https://")) throw new Exception("Bad redirect");
+                        next = loc;
+                        continue;
+                    }
+                    if (code != 200) throw new Exception("HTTP " + code);
+                    long total = c.getContentLengthLong();
+                    try (InputStream in = c.getInputStream(); OutputStream os = new FileOutputStream(out)) {
+                        byte[] buf = new byte[1 << 16];
+                        long got = 0;
+                        long lastNote = 0;
+                        int n;
+                        while ((n = in.read(buf)) > 0) {
+                            os.write(buf, 0, n);
+                            got += n;
+                            if (got - lastNote > (4 << 20)) {
+                                lastNote = got;
+                                JSObject ev = new JSObject();
+                                ev.put("bytes", got);
+                                ev.put("total", total);
+                                notifyListeners("downloadProgress", ev);
+                            }
+                        }
+                    }
+                    JSObject r = new JSObject();
+                    r.put("path", out.getAbsolutePath());
+                    r.put("bytes", out.length());
+                    call.resolve(r);
+                    return;
+                }
+                throw new Exception("Too many redirects");
+            } catch (Throwable e) {
+                call.reject("Download failed: " + e.getMessage());
+            } finally {
+                if (c != null) c.disconnect();
+            }
+        });
+    }
+
+    @PluginMethod
+    public void removeDownload(PluginCall call) {
+        String path = call.getString("path", "");
+        File f = new File(path);
+        File d = new File(getContext().getCacheDir(), "downloads");
+        try {
+            if (f.getCanonicalPath().startsWith(d.getCanonicalPath())) f.delete();
+        } catch (Throwable ignored) {
+        }
         call.resolve();
     }
 

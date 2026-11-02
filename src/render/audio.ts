@@ -29,7 +29,16 @@ export interface Scheduled {
 export async function scheduleAudio(ctx: BaseAudioContext, p: Project, pool: MediaPool, from: number, to: number, when: number, dest: AudioNode = ctx.destination): Promise<Scheduled> {
   const nodes: AudioScheduledSourceNode[] = [];
   const master = ctx.createGain();
-  master.connect(dest);
+  // Master bus limiter: keeps stacked hits, music and voices from clipping (peaks held under about -1 dBFS).
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -6;
+  comp.knee.value = 4;
+  comp.ratio.value = 12;
+  comp.attack.value = 0.002;
+  comp.release.value = 0.12;
+  const trim = ctx.createGain();
+  trim.gain.value = 0.92;
+  master.connect(comp).connect(trim).connect(dest);
   const jobs: Promise<void>[] = [];
   const solo = p.tracks.some((t) => t.kind === "audio" && !t.muted) || p.tracks.some((t) => !t.muted);
   if (!solo) return { stop() {} };

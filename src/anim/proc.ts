@@ -12,6 +12,7 @@
  *   paper      paper / newspaper / kraft background texture
  */
 import type { AnimLayer, AnimScene } from "../core/model";
+import { fontStack } from "../render/fonts";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 export type ImageLookup = (assetId: string) => CanvasImageSource | null;
@@ -38,6 +39,8 @@ export interface ProcSpec {
   accent?: string;
   bg?: string;
   palette?: string[];
+  /** Font family name from FONTS (kinetic type, captions, labels). */
+  font?: string;
   position?: "top" | "center" | "bottom";
   maxWords?: number;
   uppercase?: boolean;
@@ -53,7 +56,7 @@ export const PROC_TYPES = ["captions", "kinetic", "mograph", "fx", "overlay", "c
 export const CAPTION_STYLES = ["pop", "karaoke", "bold", "serif", "minimal", "torn"] as const;
 export const KINETIC_STYLES = ["stretch", "stack", "warp", "split", "typewriter", "slide"] as const;
 export const MOGRAPH_TYPES = ["ball", "morph", "halftone", "cube", "counter", "chart", "burst", "toggle"] as const;
-export const FX_TYPES = ["fire", "splash", "ripple", "impact", "speedlines", "sparkle", "smoke", "shockwave", "slash", "debris", "dust", "clash"] as const;
+export const FX_TYPES = ["fire", "blaze", "splash", "ripple", "impact", "hitspark", "speedlines", "sparkle", "smoke", "shockwave", "slash", "debris", "dust", "clash"] as const;
 export const OVERLAY_TYPES = ["lightLeak", "filmBurn", "dust", "vhs", "stripe", "paper", "rain", "flash", "impactFrame"] as const;
 export const PAPER_TONES = ["cream", "news", "kraft", "dark"] as const;
 
@@ -83,6 +86,13 @@ function noise(x: number, seed = 0): number {
   const u = f * f * (3 - 2 * f);
   return lerp(hash(i + seed * 57), hash(i + 1 + seed * 57), u) * 2 - 1;
 }
+/** Lighten (k>0) or darken (k<0) a #rrggbb colour. */
+function shade(hex: string, k: number): string {
+  const n = parseInt(hex.slice(1, 7), 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((x) => Math.round(k > 0 ? x + (255 - x) * k : x * (1 + k)));
+  return `rgb(${ch[0]},${ch[1]},${ch[2]})`;
+}
+
 function rgba(hex: string, a: number): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return hex;
@@ -251,6 +261,7 @@ export function timeWords(text: string, start: number, end: number, envelope?: r
 }
 
 function captions(c: Ctx, p: ProcSpec, s: AnimScene, t: number) {
+  const CF = p.font ? fontStack(p.font) : SANS;
   const words = p.words ?? [];
   if (!words.length) return;
   const K = s.height / 1920;
@@ -281,7 +292,7 @@ function captions(c: Ctx, p: ProcSpec, s: AnimScene, t: number) {
     c.textBaseline = "middle";
     const fade = clamp((t - ch.start) / 0.25);
     if (small.length) {
-      c.font = `600 ${base * 0.62}px ${SANS}`;
+      c.font = `600 ${base * 0.62}px ${CF}`;
       c.globalAlpha = fade;
       c.fillStyle = rgba(color, 0.92);
       const light = /^#?(?:[e-f][0-9a-f]){3}$/i.test(color) || color === "#ffffff";
@@ -300,7 +311,7 @@ function captions(c: Ctx, p: ProcSpec, s: AnimScene, t: number) {
   }
 
   // Lay words out in lines.
-  const font = (w: CaptionWord, big = 1) => (style === "bold" ? `900 ${base * big}px ${SANS}` : style === "minimal" ? `500 ${base * big}px ${SANS}` : style === "torn" ? `800 ${base * big}px ${SANS}` : `800 ${base * big}px ${SANS}`);
+  const font = (w: CaptionWord, big = 1) => (style === "bold" ? `900 ${base * big}px ${CF}` : style === "minimal" ? `500 ${base * big}px ${CF}` : style === "torn" ? `800 ${base * big}px ${CF}` : `800 ${base * big}px ${CF}`);
   const space = base * (style === "bold" ? 0.42 : 0.32);
   const maxW = W * 0.86;
   const metrics = ch.words.map((w) => {
@@ -403,6 +414,13 @@ function captions(c: Ctx, p: ProcSpec, s: AnimScene, t: number) {
 
 /* ------------------------------ kinetic type ------------------------------- */
 
+/** Largest size (<= size) at which every line fits in maxW with the given font builder. */
+function fitSize(c: Ctx, lines: string[], font: (px: number) => string, size: number, maxW: number): number {
+  c.font = font(size);
+  const w = Math.max(1, ...lines.map((l) => c.measureText(l).width));
+  return w > maxW ? size * (maxW / w) : size;
+}
+
 function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
   const W = s.width;
   const H = s.height;
@@ -415,6 +433,7 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
     c.fillRect(0, 0, W, H);
   }
   const style = p.style || "stretch";
+  const FONT = p.font ? fontStack(p.font) : SANS;
   const out = clamp((t - (dur - 0.45)) / 0.45); // exit
   c.textBaseline = "alphabetic";
   c.textAlign = "left";
@@ -425,11 +444,11 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
       const a = clamp((t - i * 0.22) / 0.5);
       if (a <= 0) return;
       let size = Math.min(lh * 1.12, W * 0.32);
-      c.font = `900 ${size}px ${SANS}`;
+      c.font = `900 ${size}px ${FONT}`;
       let w = c.measureText(ln).width;
       const fit = (W * 0.92) / w;
       size *= Math.min(fit, 1.8);
-      c.font = `900 ${size}px ${SANS}`;
+      c.font = `900 ${size}px ${FONT}`;
       w = c.measureText(ln).width;
       const sy = backOut(a, 1.6) * (1 - out);
       const sx = lerp(1.25, 1, easeOut(a));
@@ -451,7 +470,7 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
     return;
   }
   if (style === "stack") {
-    const size = Math.min(W * 0.16, (H * 0.7) / Math.max(1, lines.length) / 1.05);
+    const size = fitSize(c, lines, (px) => `900 ${px}px ${FONT}`, Math.min(W * 0.16, (H * 0.7) / Math.max(1, lines.length) / 1.05), W * 0.9);
     lines.forEach((ln, i) => {
       const a = easeOut(clamp((t - i * 0.18) / 0.45));
       const y = H * 0.5 + (i - (lines.length - 1) / 2) * size * 1.02 + size * 0.36;
@@ -459,7 +478,7 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
       c.beginPath();
       c.rect(0, y - size * 0.95, W, size * 1.08);
       c.clip();
-      c.font = `900 ${size}px ${SANS}`;
+      c.font = `900 ${size}px ${FONT}`;
       const w = c.measureText(ln).width;
       c.fillStyle = pal[i % pal.length]!;
       c.fillText(ln, (W - w) / 2, y + (1 - a) * size * 1.1 + out * size * 1.1);
@@ -472,11 +491,11 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
     const ln = lines.join(" ");
     const n = [...ln].length;
     let size = W * 0.2;
-    c.font = `900 ${size}px ${SANS}`;
+    c.font = `900 ${size}px ${FONT}`;
     // Fit the whole warped word inside 88% of the width.
     const est = [...ln].reduce((sum, ch, i) => sum + c.measureText(ch).width * lerp(1.5, 0.55, i / Math.max(1, n - 1)) * 0.92, 0);
     size *= Math.min(1, (W * 0.88) / est);
-    c.font = `900 ${size}px ${SANS}`;
+    c.font = `900 ${size}px ${FONT}`;
     let x = W * 0.06;
     const y = H * 0.5;
     [...ln].forEach((ch, i) => {
@@ -498,9 +517,9 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
   }
   if (style === "split") {
     // Each line in two halves that slide in from opposite sides and lock together.
-    const size = Math.min(W * 0.17, (H * 0.6) / Math.max(1, lines.length));
+    const size = fitSize(c, lines, (px) => `900 ${px}px ${FONT}`, Math.min(W * 0.17, (H * 0.6) / Math.max(1, lines.length)), W * 0.9);
     lines.forEach((ln, i) => {
-      c.font = `900 ${size}px ${SANS}`;
+      c.font = `900 ${size}px ${FONT}`;
       const w = c.measureText(ln).width;
       const y = H * 0.5 + (i - (lines.length - 1) / 2) * size * 1.05 + size * 0.36;
       const a = easeInOut(clamp((t - i * 0.15) / 0.6));
@@ -518,8 +537,9 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
   }
   if (style === "typewriter") {
     const ln = lines.join("\n");
-    const size = W * 0.075;
-    c.font = `600 ${size}px "Courier New", monospace`;
+    const mono = p.font ? FONT : `"Courier New", monospace`;
+    const size = fitSize(c, lines, (px) => `600 ${px}px ${mono}`, W * 0.075, W * 0.8);
+    c.font = `600 ${size}px ${mono}`;
     const shown = Math.floor(clamp(t / Math.max(0.5, dur * 0.7)) * ln.length);
     const rows = ln.slice(0, shown).split("\n");
     rows.forEach((r, i) => {
@@ -539,8 +559,12 @@ function kinetic(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number) {
   words.forEach((w, i) => {
     const a = easeOut(clamp((t - i * 0.2) / 0.4));
     const last = i === words.length - 1;
-    c.font = last ? `italic 400 ${size * 1.3}px ${SERIF}` : `900 ${size}px ${SANS}`;
-    const ww = c.measureText(w).width;
+    c.font = last ? `italic 400 ${size * 1.3}px ${SERIF}` : `900 ${size}px ${FONT}`;
+    let ww = c.measureText(w).width;
+    if (ww > W * 0.9) {
+      c.font = last ? `italic 400 ${size * 1.3 * ((W * 0.9) / ww)}px ${SERIF}` : `900 ${size * ((W * 0.9) / ww)}px ${FONT}`;
+      ww = c.measureText(w).width;
+    }
     c.globalAlpha = a * (1 - out);
     c.fillStyle = last ? pal[1 % pal.length]! : pal[0]!;
     c.fillText(w, (W - ww) / 2, y + (1 - a) * size * 0.6);
@@ -1000,50 +1024,114 @@ function fx(c: Ctx, p: ProcSpec, s: AnimScene, f: number) {
       }
       break;
     }
-    case "shockwave":
+    case "hitspark":
     case "clash": {
-      // Expanding ring with radial streaks; "clash" adds a white core flash and a second ring.
-      const ph = clamp(t / Math.max(0.3, (s.frames / s.fps) * 0.8));
-      const rings = p.style === "clash" ? [0, 0.18] : [0];
-      for (const off of rings) {
-        const q = clamp(ph - off);
-        if (q <= 0) continue;
-        const r = R * (0.2 + easeOut(q) * 2.6);
-        c.save();
-        c.globalAlpha = 1 - q;
-        c.lineWidth = R * 0.12 * (1 - q) + lw;
-        c.strokeStyle = col;
-        c.beginPath();
-        c.ellipse(cx, cy, r, r * 0.42, 0, 0, Math.PI * 2);
-        c.stroke();
-        c.lineWidth = lw;
-        c.strokeStyle = "#ffffff";
-        c.beginPath();
-        c.ellipse(cx, cy, r * 0.96, r * 0.4, 0, 0, Math.PI * 2);
-        c.stroke();
-        c.restore();
-      }
+      // Glowing hit spark: white-hot core, needle rays, sparks with gravity. "clash" is bigger, lasts,
+      // pulses and splits into two element colours (accent / palette[1]).
+      const tt = f / s.fps;
+      const big = p.style === "clash";
+      const life = big ? Math.max(0.6, (s.frames / s.fps) * 0.9) : 0.4;
+      const ph = clamp(tt / life);
+      const pop = clamp(tt / 0.06);
+      const fade = 1 - easeOut(ph);
+      const c2 = p.palette?.[1] ?? (big ? "#7fd8ff" : col);
       c.save();
-      c.globalAlpha = 1 - ph;
-      c.strokeStyle = col;
-      for (let i = 0; i < 24; i++) {
-        const a = hash(i * 2.1 + seed) * Math.PI * 2;
-        const r0 = R * (0.3 + ph * 1.4);
-        const r1 = r0 + R * (0.4 + hash(i) * 0.8) * (1 - ph);
-        c.lineWidth = lw * (1.5 - ph);
+      c.globalCompositeOperation = "lighter";
+      // Outer glow.
+      const glowR = R * (big ? 1.6 + 0.15 * Math.sin(tt * 40) : 1.1) * (0.6 + 0.4 * pop);
+      const g = c.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+      g.addColorStop(0, rgba("#ffffff", 0.95 * fade));
+      g.addColorStop(0.25, rgba(col, 0.75 * fade));
+      g.addColorStop(0.6, rgba(c2, 0.25 * fade));
+      g.addColorStop(1, rgba(c2, 0));
+      c.fillStyle = g;
+      c.fillRect(cx - glowR, cy - glowR, glowR * 2, glowR * 2);
+      // Needle rays (re-rolled every 2 frames so they flicker).
+      const nr = big ? 16 : 10;
+      for (let i = 0; i < nr; i++) {
+        const a = hash(i * 3.3 + two * 0.7 + (p.seed ?? 3)) * Math.PI * 2;
+        const L = R * (big ? 1.4 : 1.0) * (0.5 + hash(i * 1.7 + two) * 0.9) * (0.4 + 0.6 * pop) * (1 - ph * 0.6);
+        const w = R * (big ? 0.06 : 0.045) * fade;
+        const tip = { x: cx + Math.cos(a) * L, y: cy + Math.sin(a) * L };
+        c.fillStyle = rgba(i % 2 && big ? c2 : col, 0.9 * fade);
         c.beginPath();
-        c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0 * 0.6);
-        c.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1 * 0.6);
+        c.moveTo(cx + Math.cos(a + Math.PI / 2) * w, cy + Math.sin(a + Math.PI / 2) * w);
+        c.lineTo(tip.x, tip.y);
+        c.lineTo(cx + Math.cos(a - Math.PI / 2) * w, cy + Math.sin(a - Math.PI / 2) * w);
+        c.closePath();
+        c.fill();
+        c.fillStyle = rgba("#ffffff", 0.9 * fade);
+        c.beginPath();
+        c.moveTo(cx + Math.cos(a + Math.PI / 2) * w * 0.35, cy + Math.sin(a + Math.PI / 2) * w * 0.35);
+        c.lineTo(cx + Math.cos(a) * L * 0.7, cy + Math.sin(a) * L * 0.7);
+        c.lineTo(cx + Math.cos(a - Math.PI / 2) * w * 0.35, cy + Math.sin(a - Math.PI / 2) * w * 0.35);
+        c.closePath();
+        c.fill();
+      }
+      // Anamorphic flare.
+      if (big) {
+        const fl = c.createLinearGradient(cx - R * 3, cy, cx + R * 3, cy);
+        fl.addColorStop(0, rgba(c2, 0));
+        fl.addColorStop(0.5, rgba("#ffffff", 0.8 * fade));
+        fl.addColorStop(1, rgba(col, 0));
+        c.fillStyle = fl;
+        c.fillRect(cx - R * 3, cy - R * 0.025, R * 6, R * 0.05);
+      }
+      // Sparks: streaks flying out, falling.
+      const ns = big ? 40 : 18;
+      for (let i = 0; i < ns; i++) {
+        const a = hash(i * 7.7 + (p.seed ?? 3)) * Math.PI * 2;
+        const sp = R * (1.5 + hash(i * 2.9) * 2.5);
+        const x = cx + Math.cos(a) * sp * tt;
+        const y = cy + Math.sin(a) * sp * tt + 3 * R * tt * tt;
+        const vx = Math.cos(a) * sp,
+          vy = Math.sin(a) * sp + 6 * R * tt;
+        const k = 0.03;
+        c.strokeStyle = rgba(i % 3 ? col : "#ffffff", fade);
+        c.lineWidth = Math.max(1.5, R * 0.014);
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(x - vx * k, y - vy * k);
         c.stroke();
       }
-      if (p.style === "clash") {
-        const g = c.createRadialGradient(cx, cy, 0, cx, cy, R * 1.4);
-        g.addColorStop(0, `rgba(255,255,255,${1 - ph})`);
-        g.addColorStop(0.4, rgba(col, 0.6 * (1 - ph)));
-        g.addColorStop(1, "rgba(255,255,255,0)");
-        c.globalAlpha = 1;
-        c.fillStyle = g;
-        c.fillRect(cx - R * 1.5, cy - R * 1.5, R * 3, R * 3);
+      // Core.
+      c.fillStyle = rgba("#ffffff", fade);
+      c.beginPath();
+      c.arc(cx, cy, R * (big ? 0.28 : 0.18) * (0.5 + 0.5 * pop) * (1 - ph * 0.5), 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+      break;
+    }
+    case "shockwave": {
+      // Ground wave: a bright thin ring racing out along the floor, kicking up a skirt of dust.
+      const tt = f / s.fps;
+      const ph = clamp(tt / 0.7);
+      const r = R * (0.2 + easeOut(ph) * 2.4);
+      const fade = 1 - ph;
+      c.save();
+      c.globalCompositeOperation = "lighter";
+      c.lineWidth = R * 0.05 * fade + 2;
+      c.strokeStyle = rgba(col, 0.8 * fade);
+      c.beginPath();
+      c.ellipse(cx, cy, r, r * 0.22, 0, 0, Math.PI * 2);
+      c.stroke();
+      c.lineWidth = 2;
+      c.strokeStyle = rgba("#ffffff", fade);
+      c.beginPath();
+      c.ellipse(cx, cy, r * 0.97, r * 0.21, 0, 0, Math.PI * 2);
+      c.stroke();
+      c.restore();
+      c.save();
+      for (let i = 0; i < 26; i++) {
+        const a = (i / 26) * Math.PI * 2 + hash(i) * 0.2;
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r * 0.22 - hash(i * 5) * R * 0.25 * ph;
+        const rr = R * (0.08 + 0.18 * ph) * (0.6 + hash(i * 3));
+        const gd = c.createRadialGradient(x, y, 0, x, y, rr);
+        gd.addColorStop(0, `rgba(190,185,200,${0.35 * fade})`);
+        gd.addColorStop(1, "rgba(190,185,200,0)");
+        c.fillStyle = gd;
+        c.fillRect(x - rr, y - rr, rr * 2, rr * 2);
       }
       c.restore();
       break;
@@ -1074,56 +1162,119 @@ function fx(c: Ctx, p: ProcSpec, s: AnimScene, f: number) {
       break;
     }
     case "debris": {
-      // Chunks thrown up and falling with gravity, spinning.
-      for (let i = 0; i < 16; i++) {
-        const vx = (hash(i * 3.7 + (p.seed ?? 3)) - 0.5) * 2.4 * R;
-        const vy = -(0.8 + hash(i * 1.3) * 1.6) * R;
-        const x = cx + vx * t;
-        const y = cy + vy * t + 2.6 * R * t * t;
-        if (y > cy + R * 0.4) continue;
-        const sz = R * (0.04 + hash(i * 9) * 0.07);
+      // Broken concrete: irregular shaded chunks thrown up, falling and bouncing on the ground line, with dust.
+      const tt = f / s.fps;
+      const ground = cy + R * 0.35;
+      const base = p.accent ?? "#5a566a";
+      for (let i = 0; i < 18; i++) {
+        const sd = (p.seed ?? 3) * 11 + i;
+        const vx = (hash(sd * 3.7) - 0.5) * 2.6 * R;
+        let vy = -(0.9 + hash(sd * 1.3) * 1.8) * R;
+        let x = cx + vx * tt;
+        let y = cy + vy * tt + 3.2 * R * tt * tt;
+        const tHit = (-vy + Math.sqrt(vy * vy + 4 * 3.2 * R * (ground - cy))) / (2 * 3.2 * R);
+        let spin = tt * (3 + hash(sd) * 7);
+        if (tt > tHit) {
+          // One damped bounce, then rest.
+          const tb = tt - tHit;
+          vy = -(-vy + 2 * 3.2 * R * tHit) * 0.3;
+          x = cx + vx * tHit + vx * 0.4 * Math.min(tb, 0.5);
+          y = Math.min(ground, ground + vy * tb + 3.2 * R * tb * tb);
+          spin = tHit * (3 + hash(sd) * 7) + Math.min(tb, 0.4) * 4;
+        }
+        const sz = R * (0.035 + hash(sd * 9) * 0.075);
+        const n = 5 + (i % 3);
         c.save();
         c.translate(x, y);
-        c.rotate(t * (4 + hash(i) * 8));
+        c.rotate(spin);
+        const pts: [number, number][] = [];
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2;
+          const rr = sz * (0.65 + hash(sd * 13 + k) * 0.55);
+          pts.push([Math.cos(a) * rr, Math.sin(a) * rr]);
+        }
         c.beginPath();
-        c.moveTo(-sz, -sz * 0.6);
-        c.lineTo(sz * 0.8, -sz);
-        c.lineTo(sz, sz * 0.7);
-        c.lineTo(-sz * 0.6, sz);
+        pts.forEach(([px, py], k) => (k ? c.lineTo(px, py) : c.moveTo(px, py)));
         c.closePath();
-        c.fillStyle = p.accent ?? "#4a4560";
+        c.fillStyle = base;
         c.fill();
-        c.lineWidth = lw * 0.6;
-        c.strokeStyle = ink;
+        // Lit top face.
+        c.beginPath();
+        c.moveTo(pts[0]![0], pts[0]![1]);
+        for (let k = 1; k <= Math.floor(n / 2); k++) c.lineTo(pts[n - k]![0], pts[n - k]![1]);
+        c.lineTo(0, 0);
+        c.closePath();
+        c.fillStyle = shade(base, 0.35);
+        c.fill();
+        c.lineWidth = Math.max(1, sz * 0.12);
+        c.strokeStyle = shade(base, -0.55);
+        c.beginPath();
+        pts.forEach(([px, py], k) => (k ? c.lineTo(px, py) : c.moveTo(px, py)));
+        c.closePath();
         c.stroke();
         c.restore();
+      }
+      // Dust cloud where it broke.
+      const ph = clamp(tt / 1.4);
+      for (let i = 0; i < 8; i++) {
+        const x = cx + (hash(i * 4.1) - 0.5) * R * (0.6 + ph * 1.4);
+        const y = ground - R * (0.05 + hash(i * 2.2) * 0.3) * (0.3 + ph);
+        const rr = R * (0.15 + ph * 0.35);
+        const gd = c.createRadialGradient(x, y, 0, x, y, rr);
+        gd.addColorStop(0, `rgba(150,145,160,${0.4 * (1 - ph)})`);
+        gd.addColorStop(1, "rgba(150,145,160,0)");
+        c.fillStyle = gd;
+        c.fillRect(x - rr, y - rr, rr * 2, rr * 2);
       }
       break;
     }
     case "dust": {
-      // Landing / skid dust puffs spreading sideways along the ground.
-      const ph = clamp(t / 1.2);
-      for (let i = 0; i < 10; i++) {
+      // Soft skid / landing dust spreading along the ground.
+      const tt = f / s.fps;
+      const ph = clamp(tt / 1.3);
+      for (let i = 0; i < 12; i++) {
         const side = i % 2 ? 1 : -1;
-        const x = cx + side * (0.2 + easeOut(ph) * (0.8 + hash(i) * 0.6)) * R;
-        const y = cy - hash(i * 3) * R * 0.25 * ph - R * 0.05;
-        const r = R * (0.12 + ph * 0.3) * (0.7 + hash(i * 5) * 0.6);
-        c.globalAlpha = (1 - ph) * 0.9;
-        c.beginPath();
-        for (let k = 0; k <= 9; k++) {
-          const a = (k / 9) * Math.PI * 2;
-          const rr = r * (0.82 + hash(i * 10 + k + two) * 0.3);
-          if (k) c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.75);
-          else c.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.75);
-        }
-        c.closePath();
-        c.fillStyle = p.accent ?? "#cfc8bd";
-        c.fill();
-        c.lineWidth = lw * 0.7;
-        c.strokeStyle = ink;
-        c.stroke();
+        const x = cx + side * (0.15 + easeOut(ph) * (0.8 + hash(i) * 0.7)) * R;
+        const y = cy - hash(i * 3) * R * 0.3 * ph - R * 0.05;
+        const rr = R * (0.14 + ph * 0.38) * (0.7 + hash(i * 5) * 0.6);
+        const gd = c.createRadialGradient(x, y, 0, x, y, rr);
+        const dc = p.accent ?? "#c9c2ba";
+        gd.addColorStop(0, rgba(dc, 0.5 * (1 - ph)));
+        gd.addColorStop(0.6, rgba(dc, 0.25 * (1 - ph)));
+        gd.addColorStop(1, rgba(dc, 0));
+        c.fillStyle = gd;
+        c.fillRect(x - rr, y - rr, rr * 2, rr * 2);
       }
-      c.globalAlpha = 1;
+      break;
+    }
+    case "blaze": {
+      // Particle fire: many additive soft embers rising and shrinking, hot white-yellow core, red-orange edges.
+      const tt = f / s.fps;
+      c.save();
+      c.globalCompositeOperation = "lighter";
+      const base = c.createRadialGradient(cx, cy, 0, cx, cy, R * 1.2);
+      base.addColorStop(0, "rgba(255,150,40,0.35)");
+      base.addColorStop(1, "rgba(255,60,0,0)");
+      c.fillStyle = base;
+      c.fillRect(cx - R * 1.2, cy - R * 1.2, R * 2.4, R * 2.4);
+      for (let i = 0; i < 90; i++) {
+        const life = 0.55 + hash(i * 1.3) * 0.5;
+        const ph = ((tt + hash(i * 7.9) * life) % life) / life;
+        const spread = (hash(i * 3.1) - 0.5) * R * 1.1 * (1 - ph * 0.6);
+        const x = cx + spread + Math.sin(tt * 6 + i) * R * 0.05 * ph;
+        const y = cy - ph * R * (1.2 + hash(i * 2.3) * 0.9);
+        const rr = R * (0.2 + hash(i * 4.4) * 0.15) * (1 - ph * 0.85);
+        const heat = 1 - ph;
+        const rC = 255,
+          gC = Math.round(80 + 170 * heat * heat),
+          bC = Math.round(30 + 160 * Math.pow(heat, 4));
+        const gd = c.createRadialGradient(x, y, 0, x, y, rr);
+        gd.addColorStop(0, `rgba(${rC},${gC},${bC},${0.5 * heat})`);
+        gd.addColorStop(1, `rgba(${rC},${Math.round(gC * 0.5)},0,0)`);
+        c.fillStyle = gd;
+        c.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+      }
+      c.restore();
       break;
     }
     case "smoke": {
@@ -1295,21 +1446,35 @@ function overlay(c: Ctx, p: ProcSpec, s: AnimScene, t: number, dur: number, f: n
       break;
     }
     case "rain": {
-      // Slanted streaks falling fast, splashes on the ground line.
-      c.strokeStyle = p.color ?? "rgba(190,200,255,0.45)";
+      // Two depths of slanted streaks (far thin, near thick and long) plus splashes on the ground line.
+      const tt = f / s.fps;
+      const tint = p.color ?? "#c8d2ff";
+      c.lineCap = "round";
+      for (const [count, wdt, lenK, speed, alpha] of [[220, 1.6, 1, 1.5, 0.35], [40, 4, 2.4, 2.4, 0.5]] as const) {
+        c.lineWidth = wdt;
+        for (let i = 0; i < count; i++) {
+          const sp = speed * (0.8 + hash(i * 1.7 + wdt) * 0.5);
+          const x = ((hash(i * 3.1 + seed + wdt) * W * 1.3 + tt * W * 0.22 * sp) % (W * 1.3)) - W * 0.15;
+          const y = (hash(i * 7.3 + wdt) * H + tt * H * 1.6 * sp) % H;
+          const len = (40 + hash(i) * 60) * lenK;
+          c.strokeStyle = rgba(tint, alpha * (0.5 + hash(i * 5) * 0.5));
+          c.beginPath();
+          c.moveTo(x, y);
+          c.lineTo(x - len * 0.22, y - len);
+          c.stroke();
+        }
+      }
+      const gy = (p.y ?? 0.93) * H;
       c.lineWidth = 2;
-      for (let i = 0; i < 160; i++) {
-        const sp = 1.6 + hash(i * 1.7) * 0.9;
-        const x = ((hash(i * 3.1 + seed) * W * 1.3 + t * W * 0.25 * sp) % (W * 1.3)) - W * 0.15;
-        const y = ((hash(i * 7.3 + seed) * H + t * H * 1.4 * sp) % H);
-        const len = 30 + hash(i) * 50;
-        c.globalAlpha = 0.25 + hash(i * 5) * 0.45;
+      for (let i = 0; i < 26; i++) {
+        const ph = (tt * 3 + hash(i * 9.1)) % 1;
+        const x = hash(i * 2.7 + Math.floor(tt * 3 + hash(i * 9.1))) * W;
+        const y = gy + (hash(i * 4.3) - 0.5) * H * 0.08;
+        c.strokeStyle = rgba(tint, 0.5 * (1 - ph));
         c.beginPath();
-        c.moveTo(x, y);
-        c.lineTo(x - len * 0.25, y - len);
+        c.ellipse(x, y, 6 + ph * 22, 2 + ph * 6, 0, Math.PI, Math.PI * 2);
         c.stroke();
       }
-      c.globalAlpha = 1;
       break;
     }
     case "flash": {
@@ -1408,12 +1573,13 @@ function cutout(c: Ctx, p: ProcSpec, s: AnimScene, t: number, f: number, images?
 }
 
 function label(c: Ctx, p: ProcSpec, s: AnimScene, t: number, f: number) {
+  const CF = p.font ? fontStack(p.font) : SANS;
   const W = s.width;
   const H = s.height;
   const K = H / 1920;
   const size = (p.size ?? 64) * K;
   const text = p.text ?? "label";
-  c.font = `800 ${size}px ${SANS}`;
+  c.font = `800 ${size}px ${CF}`;
   const tw = c.measureText(text).width;
   const seed = p.seed ?? 21;
   const j = jitterAt(t, p.boil ?? 8, seed);
