@@ -5,12 +5,14 @@ import * as ops from "../core/ops";
 import { valueAt } from "../core/keyframes";
 import { createScene } from "../anim/ops";
 import { beatCut, type CutStyle } from "../app/autoedit";
+import * as MV from "../app/musicvideo";
 import { Preview } from "./preview";
 import { Timeline } from "./timeline";
 import { openInspector } from "./inspector";
 import { runCommand, type Command } from "../agent/api";
 import * as PR from "../anim/proc";
-import { btn, fmtTime, h, icon, pickFiles, select, sheet, slider, toast, toolBtn, colorInput } from "./dom";
+import { btn, fmtTime, h, icon, pickFiles, select, sheet, slider, toast, toolBtn, colorInput, toggle } from "./dom";
+import { runBatch } from "../agent/api";
 
 export interface EditorHost {
   goto(view: "edit" | "animate" | "voice" | "export" | "agent", arg?: string): void;
@@ -66,6 +68,7 @@ export class EditorView {
         toolBtn("Import", "folder", () => void this.importMedia("video/*,image/*,audio/*")),
         toolBtn("Motion kit", "wand", () => this.motionKit()),
         toolBtn("Beat cut", "wand", () => this.beatCutSheet()),
+        toolBtn("Music video", "film", () => this.musicVideoSheet()),
         toolBtn("Text", "text", () => this.addText()),
         toolBtn("Voice", "mic", () => this.host.goto("voice")),
         toolBtn("Animate", "brush", () => this.newAnimation()),
@@ -231,6 +234,57 @@ export class EditorView {
       }, "primary"),
     );
     const sh = sheet("Beat cut", body);
+  }
+
+  /** Song-aware auto edit: listens to structure, energy and lyrics, cuts in a genre style, adds lyric captions. */
+  private musicVideoSheet() {
+    const s = this.s;
+    const songs = s.project.assets.filter((a) => a.kind === "audio" && a.createdBy !== "voice");
+    let music = songs[0]?.id ?? "";
+    let genre = "auto";
+    let lyrics = true;
+    let look = "";
+    const body = h(
+      "div",
+      { class: "stack" },
+      h("p", { class: "hint" }, "Makes a full music video from your photos and videos: finds the song's sections, energy and big hits, cuts faster in the chorus and drops, applies a colour look, and writes the lyrics on screen in time (the lyrics are heard on this phone; the model downloads once)."),
+      songs.length ? select("Song", songs.map((a) => [a.id, a.name] as [string, string]), music, (v) => (music = v)) : h("p", { class: "hint" }, "Import a song first."),
+      select("Style", [["auto", "Auto (from the song)"], ...Object.keys(MV.GENRES).map((g) => [g, g] as [string, string])] as [string, string][], genre, (v) => (genre = v)),
+      toggle("Lyric captions", lyrics, (v) => (lyrics = v)),
+      btn("Make the music video", "film", async () => {
+        if (!music) return toast("Import a song first", "error");
+        sh.close();
+        s.setStatus("Listening to the song…");
+        try {
+          const [r] = await runBatch(s, [{ op: "edit.musicVideo", musicId: music, ...(genre !== "auto" ? { genre } : {}), lyrics, captions: lyrics }]);
+          if (!r?.ok) throw new Error(r?.error ?? "Failed");
+          const res = r.result as { cuts: number; genre: string; captions: number };
+          toast(`${res.cuts} cuts · ${res.genre} · ${res.captions} lyric lines`, "ok", 4000);
+          s.seek(0);
+        } catch (e) {
+          toast(e instanceof Error ? e.message : String(e), "error", 5000);
+        } finally {
+          s.setStatus("");
+        }
+      }, "primary"),
+      h("h3", {}, "Tools"),
+      btn("Duck music under voices", "volume", () => {
+        const r = s.mutate("duck music", (p) => MV.duckMusic(p));
+        toast(r.ducked ? `Music dips under ${r.windows} voice parts` : "No voice clips to duck under", r.ducked ? "ok" : "info");
+      }, "ghost"),
+      select("Colour look for the selected clip", [["", "Pick a look…"], ...Object.keys(MV.LOOKS).map((k) => [k, k] as [string, string])] as [string, string][], look, (v) => {
+        look = v;
+        if (!v) return;
+        if (!s.selection) return toast("Select a clip first", "error");
+        try {
+          s.mutate("look", (p) => MV.applyLook(ops.getClip(p, s.selection!), v));
+          toast(`Look: ${v}`, "ok");
+        } catch (e) {
+          toast(e instanceof Error ? e.message : String(e), "error");
+        }
+      }),
+    );
+    const sh = sheet("Music video", body, { tall: true });
   }
 
   private trackMenu() {

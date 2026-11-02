@@ -1,3 +1,4 @@
+import { FONTS as LIB_FONTS, fontStack } from "../render/fonts";
 /** Clip inspector: tabs for edit, transform (keyframes), colour, effects, text and transitions. */
 import type { Studio } from "../app/studio";
 import { GRADE_DEFAULTS, TRANSFORM_DEFAULTS, findAsset, findClip, type BlendMode, type Clip, type Grade, type TextStyle, type TransitionKind } from "../core/model";
@@ -16,8 +17,11 @@ const TRANSITIONS: [TransitionKind, string][] = [
 const PRESETS = ["natural", "cinematic", "tealOrange", "noir", "warm", "cool", "vintage", "punchy", "faded", "night", "dream"];
 const BLENDS: BlendMode[] = ["normal", "add", "multiply", "screen", "overlay", "darken", "lighten"];
 const FONTS: [string, string][] = [
-  ["Geist Variable, system-ui, sans-serif", "Geist"], ["Instrument Serif, Georgia, serif", "Serif"], ["Impact, Haettenschweiler, sans-serif", "Impact"],
-  ["'Comic Sans MS', 'Comic Neue', cursive", "Comic"], ["'Courier New', monospace", "Mono"], ["system-ui, sans-serif", "System"],
+  ["Geist Variable, system-ui, sans-serif", "Geist"],
+  ["Instrument Serif, Georgia, serif", "Instrument Serif"],
+  ...LIB_FONTS.filter((f) => f.category !== "core").map((f) => [fontStack(f.name), `${f.name} · ${f.category}`] as [string, string]),
+  ["'Courier New', monospace", "Mono"],
+  ["system-ui, sans-serif", "System"],
 ];
 
 export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: () => void } | null {
@@ -288,7 +292,7 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
           toggle("Background box", !!st.bg, (v) => upd({ bg: v ? "#000000aa" : "" }, true)),
           st.bg ? colorInput("Box colour", st.bg.slice(0, 7), (v) => upd({ bg: `${v}cc` })) : null,
           select("Align", ["left", "center", "right"] as const, st.align, (v) => upd({ align: v })),
-          select("Animation", ["none", "typewriter", "pop", "rise", "wave", "fade", "slam", "blurIn", "track", "bounce", "flicker"] as const, st.animate, (v) => upd({ animate: v })),
+          select("Animation", ["none", "typewriter", "pop", "rise", "wave", "fade", "slam", "blurIn", "track", "bounce", "flicker", "scramble", "drop", "shake", "zoomOut", "spin", "swing"] as const, st.animate, (v) => upd({ animate: v })),
           slider("Animation time", 0.1, 5, 0.05, st.animateDur, (v) => upd({ animateDur: v }), { fmt: (v) => `${v.toFixed(2)}s` }).el,
         ].filter(Boolean) as HTMLElement[];
       }

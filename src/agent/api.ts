@@ -24,6 +24,7 @@ import { fetchInbox, listInbox } from "./remote";
 import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot } from "../render/snapshot";
 import { analyseBeats, beatCut } from "../app/autoedit";
 import * as t3 from "../anim/three3d";
+import * as mv from "../app/musicvideo";
 import { saveBlob } from "../native/storage";
 import { FONTS } from "../render/fonts";
 
@@ -177,7 +178,7 @@ function procClip(p: Project, spec: proc.ProcSpec, start: number, dur: number, o
 
 function specFrom(a: Args, type: proc.ProcSpec["type"], style: string): proc.ProcSpec {
   const sp: proc.ProcSpec = { type, style };
-  for (const k of ["text", "color", "accent", "bg", "position", "assetId", "enter"] as const) if (a.optStr(k) !== undefined) (sp as unknown as Record<string, unknown>)[k] = a.str(k);
+  for (const k of ["text", "color", "accent", "bg", "position", "assetId", "enter", "font"] as const) if (a.optStr(k) !== undefined) (sp as unknown as Record<string, unknown>)[k] = a.str(k);
   for (const k of ["x", "y", "size", "w", "rot", "maxWords", "value", "seed", "boil"] as const) if (a.optNum(k) !== undefined) (sp as unknown as Record<string, unknown>)[k] = a.num(k);
   if (a.any("uppercase") !== undefined) sp.uppercase = a.bool("uppercase");
   if (Array.isArray(a.any("palette"))) sp.palette = a.any("palette") as string[];
@@ -433,6 +434,54 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       }
       return { ...info, lyrics };
     },
+  },
+  "edit.musicVideo": {
+    help: `{musicId, assetIds?, genre?: ${Object.keys(mv.GENRES).join("|")}, lyrics?=true, language?, model?: tiny|base|small, lines?:[{start,end,text}] (your own timed lyrics), captions?=true, start?, maxDur?} Full music video from your media: listens to the song (sections, energy, hits, lyrics), cuts to its structure in the genre's style, colour look, punches, transitions, timed lyric captions.`,
+    run: async (s, a) => {
+      const music = findAsset(s.project, a.str("musicId"));
+      if (!music || (music.kind !== "audio" && music.kind !== "video")) throw new ops.OpError("musicId must be a song (audio or video with sound).");
+      const buf = await s.pool.audioBuffer(music, new OfflineAudioContext(1, 1, 44100));
+      if (!buf) throw new ops.OpError("That file has no audio.");
+      const chans: Float32Array[] = [];
+      for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) chans.push(buf.getChannelData(c));
+      const song = analyseSong(chans, buf.sampleRate);
+      let lines = a.any("lines") as LyricLine[] | undefined;
+      let lyricError: string | undefined;
+      if (!lines && a.bool("lyrics", true) && a.bool("captions", true)) {
+        try {
+          const r = await transcribe(await to16k(buf), { model: (a.optStr("model") as "tiny" | "base" | "small" | undefined) ?? "base", language: a.optStr("language"), onProgress: (st, pct) => s.setStatus(`${st === "model" ? "Downloading the lyrics model" : "Listening to the lyrics"} ${pct}%`) });
+          lines = r.lines;
+        } catch (e) {
+          lyricError = (e as Error).message;
+        }
+      }
+      const genre = (a.optStr("genre") as mv.Genre | undefined) ?? mv.guessGenre(song);
+      const res = s.mutate(`music video (${genre})`, (p) => mv.musicVideoEdit(p, { musicId: music.id, assetIds: a.any("assetIds") as string[] | undefined, genre, song, start: a.optNum("start"), maxDur: a.optNum("maxDur") }));
+      let captions = 0;
+      if (lines?.length && a.bool("captions", true)) {
+        const cmds = mv.lyricCaptionCommands(lines.filter((l) => l.start < res.duration), genre, a.num("start", 0));
+        const out = await runBatch(s, cmds as Command[], true);
+        captions = out.filter((r) => r.ok).length;
+      }
+      return { ...res, bpm: song.bpm, key: song.key, mood: song.mood, sections: song.sections, captions, lyrics: lines, lyricError };
+    },
+  },
+  "clip.look": {
+    help: `{id | ids, look: ${Object.keys(mv.LOOKS).join("|")}, strength?=1} Colour look preset (grade, colour wheels, glow).`,
+    run: (s, a) =>
+      s.mutate("look", (p) => {
+        const ids = (a.any("ids") as string[] | undefined) ?? [a.str("id")];
+        for (const id of ids) mv.applyLook(ops.getClip(p, id), a.str("look"), a.num("strength", 1));
+        return { clips: ids.length };
+      }),
+  },
+  "audio.duck": {
+    help: "{amount?=0.3, fade?=0.2, musicIds?} Lower the music under every VolTune/voice clip (sidechain ducking).",
+    run: (s, a) => s.mutate("duck music", (p) => mv.duckMusic(p, { amount: a.optNum("amount"), fade: a.optNum("fade"), musicIds: a.any("musicIds") as string[] | undefined })),
+  },
+  "clip.reframe": {
+    help: "{id, focus?: center|left|right|pan} Fit a landscape clip to a vertical frame (or vice versa) with a fixed focus or a slow pan.",
+    run: (s, a) => s.mutate("reframe", (p) => mv.reframe(p, a.str("id"), a.str("focus", "center") as never).id),
   },
   "edit.beatCut": {
     help: "{assetIds?, musicId?, style?: punchy|smooth|cinematic|glitch, every? (beats per cut), loop?, replace?=true, maxDur?} Auto-edit your media to the music: beat cuts, overlapping transitions, beat punches, motion blur, look.",

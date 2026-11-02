@@ -67,7 +67,43 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
       let dy = 0;
       let sc = 1;
       let blur = 0;
+      let rot = 0;
+      let dx = 0;
+      let glyph = ch;
       switch (st.animate) {
+        case "scramble": {
+          alpha = local > 0 ? 1 : 0;
+          if (local < 1 && ch.trim()) {
+            const set = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789#$%&@";
+            const n = Math.abs(Math.sin(index * 12.9898 + Math.floor(step * 40) * 78.233) * 43758.5453);
+            glyph = set[Math.floor((n - Math.floor(n)) * set.length)]!;
+          }
+          break;
+        }
+        case "drop":
+          alpha = Math.min(1, local * 2);
+          dy = -(1 - easeOut(local)) * size * 1.4 + Math.sin(Math.min(1, local) * Math.PI) * size * 0.06;
+          break;
+        case "shake": {
+          alpha = 1;
+          const amp = (1 - Math.min(1, step)) * size * 0.12 + size * 0.015;
+          dx = Math.sin(index * 7.1 + step * 90) * amp;
+          dy = Math.cos(index * 3.3 + step * 110) * amp;
+          break;
+        }
+        case "zoomOut":
+          alpha = Math.min(1, local * 1.5);
+          sc = 1 + (1 - easeOut(local)) * 2.5;
+          break;
+        case "spin":
+          alpha = local > 0 ? 1 : 0;
+          sc = Math.max(0.01, easeOut(local));
+          rot = (1 - easeOut(local)) * Math.PI * 1.5;
+          break;
+        case "swing":
+          alpha = Math.min(1, local * 2);
+          rot = Math.sin(local * Math.PI * 3) * (1 - local) * 0.6;
+          break;
         case "typewriter":
           alpha = step * total >= index ? 1 : 0;
           break;
@@ -111,7 +147,8 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
       if (alpha > 0) {
         x.save();
         x.globalAlpha = alpha;
-        x.translate(cx + cw / 2, cy + dy);
+        x.translate(cx + cw / 2 + dx, cy + dy);
+        if (rot) x.rotate(rot);
         x.scale(sc, sc);
         if (blur > 0.3) x.filter = `blur(${blur.toFixed(1)}px)`;
         if (st.glow) {
@@ -119,9 +156,9 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
           x.shadowColor = st.glow;
           x.shadowBlur = size * 0.35;
           x.fillStyle = st.glow;
-          x.fillText(ch, -cw / 2, 0);
+          x.fillText(glyph, -cw / 2, 0);
           x.shadowBlur = size * 0.12;
-          x.fillText(ch, -cw / 2, 0);
+          x.fillText(glyph, -cw / 2, 0);
           x.restore();
         }
         if (st.shadow > 0) {
@@ -132,11 +169,11 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
         if (st.strokeWidth > 0) {
           x.lineWidth = st.strokeWidth * k * 2;
           x.strokeStyle = st.stroke;
-          x.strokeText(ch, -cw / 2, 0);
+          x.strokeText(glyph, -cw / 2, 0);
           x.shadowColor = "transparent";
         }
         x.fillStyle = st.color;
-        x.fillText(ch, -cw / 2, 0);
+        x.fillText(glyph, -cw / 2, 0);
         x.restore();
       }
       cx += cw + trk + spread;
