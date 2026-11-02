@@ -6,7 +6,10 @@
  * sent anywhere.
  */
 import * as ort from "onnxruntime-web/webgpu";
-import { AutoTokenizer } from "@huggingface/transformers";
+import { AutoTokenizer, env } from "@huggingface/transformers";
+import { externalize } from "./onnxext";
+
+env.allowLocalModels = false;
 
 ort.env.wasm.wasmPaths = `${self.location.origin}/ort/`;
 ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, Math.min(4, (self.navigator.hardwareConcurrency ?? 4) - 1)) : 1;
@@ -83,15 +86,35 @@ async function open(kind: keyof GenFiles, url: string, note: (m: string) => void
   const have = sessions[kind];
   if (have) return have;
   note(`Loading ${kind === "unet" ? "painter" : kind === "text" ? "prompt reader" : "image codec"}…`);
-  const res = await caches.match(url);
+  const cache = await caches.open("vs-genfill");
+  const res = await cache.match(url);
   if (!res) throw new Error(`Smart fill model missing (${kind}). Download it from the Smart fill screen first.`);
-  const bytes = new Uint8Array(await res.arrayBuffer());
   provider = (await hasWebGpu()) ? "webgpu" : "wasm";
-  const s = await ort.InferenceSession.create(bytes, {
+  const opts: ort.InferenceSession.SessionOptions = {
     executionProviders: provider === "webgpu" ? ["webgpu", "wasm"] : ["wasm"],
     graphOptimizationLevel: "all",
     enableMemPattern: false,
-  });
+    enableCpuMemArena: false,
+  };
+  let s: ort.InferenceSession;
+  {
+    let bytes: Uint8Array | null = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length > 150 * 1048576) {
+      // Big model: a small rewritten graph whose weights point back into these same bytes, which ONNX Runtime
+      // streams straight to the GPU — no second copy in WebAssembly memory (that copy is what runs a phone out of RAM).
+      const gkey = `${url}#graph-v1`;
+      let graph: Uint8Array;
+      const hit = await cache.match(gkey);
+      if (hit) graph = new Uint8Array(await hit.arrayBuffer());
+      else {
+        note("Preparing the painter for your phone (once)…");
+        graph = externalize(bytes, "weights.bin").graph;
+        await cache.put(gkey, new Response(new Blob([graph as BlobPart])));
+      }
+      s = await ort.InferenceSession.create(graph, { ...opts, externalData: [{ path: "weights.bin", data: bytes }] });
+    } else s = await ort.InferenceSession.create(bytes, opts);
+    bytes = null;
+  }
   const out: Sess = { s, half: null };
   sessions[kind] = out;
   return out;
@@ -205,6 +228,11 @@ async function fill(m: Extract<Msg, { type: "fill" }>) {
   const emb = await encodeText(m.files, [m.negative, m.prompt], note);
   note("Looking at the picture…");
   const mlat = await vaeEncode(m.files, masked, S, note);
+  // Free GPU memory the painter needs (phones share RAM between CPU and GPU).
+  for (const k of ["text", "vaeEnc"] as const) {
+    await sessions[k]?.s.release().catch(() => {});
+    delete sessions[k];
+  }
 
   const unet = await open("unet", m.files.unet, note);
   const names = unet.s.inputNames;
