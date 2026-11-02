@@ -2,6 +2,14 @@ import { activeRegions, applyRemovals, regionBox, type RemoveRegion } from "./in
 import { aiFill, maskAtSize } from "../media/ai";
 import { fontStack } from "./fonts";
 import { preloadDepth } from "../anim/living";
+import { matteAt, matteLoad, matteNow } from "../media/matte";
+import { GENERATED_TEXTURES, renderSubject } from "./subject";
+import { setMotionMatte } from "../anim/motion";
+
+setMotionMatte((id) => {
+  const m = matteNow(id);
+  return m ? { alpha: m.data.subarray(0, m.w * m.h), w: m.w, h: m.h } : null;
+});
 /** Turns evaluated layers into pixel sources for the compositor: video frames, images, text, shapes, animation. */
 import { evaluate, type LayerDraw } from "../core/evaluate";
 import { findAsset, findClip, findScene, type Project, type ShapeStyle, type TextStyle } from "../core/model";
@@ -288,12 +296,19 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
       const s = findScene(p, d.sceneId);
       if (!s) return null;
       // Collage photos inside scenes: make sure they are decoded before an export frame is drawn.
-      if (o.wait)
-        for (const l of s.layers) {
-          const id = l.proc?.assetId ?? l.living?.assetId ?? (l.kind === "reference" ? l.assetId : undefined);
-          if (!id || pool.imageNow(id)) continue;
-          const a = findAsset(p, id);
-          if (a?.kind === "image") await pool.image(a);
+      for (const l of s.layers) {
+          const ids = [l.proc?.assetId ?? l.living?.assetId ?? (l.kind === "reference" ? l.assetId : undefined), ...(l.proc?.motion?.els.map((e) => e.assetId) ?? [])];
+          for (const id of ids) {
+            if (!id || pool.imageNow(id)) continue;
+            const a = findAsset(p, id);
+            if (!o.wait) {
+              if (a?.kind === "image") void pool.image(a).then(() => o.onLate?.());
+              void matteLoad(id).then(() => o.onLate?.());
+              continue;
+            }
+            if (a?.kind === "image") await pool.image(a);
+            await matteLoad(id).catch(() => null);
+          }
         }
       for (const l of s.layers) if (l.living?.depth?.map) await preloadDepth(l.living.depth.map).catch(() => {});
       const frame = frameAt(s, d.srcTime, true);
@@ -314,6 +329,11 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
       const a = findAsset(p, d.assetId);
       if (!a) return null;
       const clip = findClip(p, d.clipId);
+      if (clip?.clip.subject) {
+        const base = await mediaLayer(p, pool, { ...d }, o, a, clip.clip.remove);
+        if (!base) return null;
+        return await withSubject(p, pool, base, clip.clip, a.id, d.srcTime, o);
+      }
       const regions = activeRegions(clip?.clip.remove, d.srcTime);
       if (a.kind === "image") {
         const now = pool.imageNow(a.id) ?? (o.wait ? await pool.image(a) : null);
@@ -338,6 +358,53 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
       return null;
     }
   }
+}
+
+/** The plain (or cleaned) media frame as a layer — shared by the subject path. */
+async function mediaLayer(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOptions, a: NonNullable<ReturnType<typeof findAsset>>, remove: RemoveRegion[] | undefined): Promise<LayerInput | null> {
+  const regions = activeRegions(remove, d.srcTime);
+  if (a.kind === "image") {
+    const now = pool.imageNow(a.id) ?? (o.wait ? await pool.image(a) : null);
+    if (!now) {
+      void pool.image(a).then(() => o.onLate?.());
+      return null;
+    }
+    if (regions.length) return cleaned(d, now, now.width, now.height, regions, `${a.id}`, o.purpose, !!o.wait, o.onLate);
+    return { draw: d, source: now, sw: now.width, sh: now.height, version: a.id };
+  }
+  if (a.kind !== "video") return null;
+  const f = await pool.framer(a, o.purpose === "export" ? `export` : "preview", o.purpose === "export" ? undefined : (o.previewMax ?? 960));
+  if (!f) return null;
+  const wc = await f.frameAt(d.srcTime);
+  if (!wc) return null;
+  if (regions.length) return cleaned(d, wc.canvas as CanvasImageSource, wc.canvas.width, wc.canvas.height, regions, `${wc.timestamp}`, o.purpose, !!o.wait, o.onLate);
+  return { draw: d, source: wc.canvas as LayerSource, sw: wc.canvas.width, sh: wc.canvas.height, version: `${wc.timestamp}` };
+}
+
+/** Apply the clip's subject look (needs its matte; until the matte is ready the plain frame shows). */
+async function withSubject(p: Project, pool: MediaPool, base: LayerInput, clip: import("../core/model").Clip, assetId: string, srcTime: number, o: BuildOptions): Promise<LayerInput> {
+  const sp = clip.subject!;
+  const m = o.wait ? await matteLoad(assetId) : matteNow(assetId);
+  if (!m) {
+    if (m === undefined) void matteLoad(assetId).then(() => o.onLate?.());
+    return base;
+  }
+  const alpha = matteAt(m, srcTime);
+  let tex: CanvasImageSource | null = null;
+  if (sp.texture && !(GENERATED_TEXTURES as readonly string[]).includes(sp.texture)) {
+    const ta = findAsset(p, sp.texture);
+    if (ta?.kind === "image") tex = pool.imageNow(ta.id) ?? (o.wait ? await pool.image(ta) : null);
+    else if (ta?.kind === "video") {
+      const tf = await pool.framer(ta, `tex-${o.purpose}`, 720);
+      const local = (srcTime - clip.in) % Math.max(0.1, ta.duration);
+      tex = ((await tf?.frameAt(local))?.canvas as CanvasImageSource | undefined) ?? null;
+    }
+  }
+  const W = base.sw,
+    H = base.sh;
+  const local = (srcTime - clip.in) / Math.max(0.01, clip.speed);
+  const out = renderSubject(`${clip.id}|${o.purpose}`, base.source as CanvasImageSource, W, H, alpha, m.w, m.h, sp, local, local, tex);
+  return { ...base, source: out as LayerSource, version: `${base.version}|subj|${srcTime.toFixed(3)}|${JSON.stringify(sp)}` };
 }
 
 /* Object removal: a cleaned copy of the frame per clip, with clone offsets kept steady across frames. */

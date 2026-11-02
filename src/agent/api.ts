@@ -12,6 +12,8 @@ import * as puppet from "../anim/puppet";
 import { flattenPath } from "../anim/svgpath";
 import { ambience, compose, sfx, SFX, type Ambience, type Mood, type Sfx } from "../audio/compose";
 import * as motion from "../anim/motion";
+import { computeMatte, matteLoad, storeMatte } from "../media/matte";
+import { GENERATED_TEXTURES, type SubjectSpec } from "../render/subject";
 import * as proc from "../anim/proc";
 import { speechEnvelope } from "../media/library";
 import { newScene, newTrack, type BlendMode, type Clip } from "../core/model";
@@ -1214,6 +1216,75 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     help: `{type: ${proc.MOGRAPH_TYPES.join("|")}, start?, dur?=3, x?, y? (0..1), size? (0..1), palette?, bg?, value?} Motion-design element.`,
     run: (s, a) => s.mutate("motion graphic", (p) => procClip(p, specFrom(a, "mograph", a.str("type")), a.num("start", s.time), a.num("dur", 3), { name: `Mograph ${a.str("type")}` })),
   },
+  "media.matte": {
+    help: "{assetId, fps?=15} Find the person in a photo or video on the phone (once per asset; stored). Needed by clip.subject and fx.textBehind. Returns {frames, size}.",
+    run: async (s, a) => {
+      const as = findAsset(s.project, a.str("assetId"));
+      if (!as) throw new ops.OpError("No such asset.");
+      if (a.optStr("mask")) {
+        // A hand-made mask (white/opaque = subject) for a photo, instead of the AI.
+        const mk = await decodeMask(a.str("mask"));
+        const m1 = await storeMatte(as.id, { w: mk.w, h: mk.h, fps: 1, n: 1, data: new Uint8Array(mk.data) });
+        return { frames: m1.n, size: `${m1.w}x${m1.h}`, fps: 1 };
+      }
+      const m = await computeMatte(s.pool, as, { fps: a.optNum("fps"), onProgress: (x) => s.setStatus(x) });
+      s.setStatus("");
+      return { frames: m.n, size: `${m.w}x${m.h}`, fps: m.fps };
+    },
+  },
+  "clip.subject": {
+    help: `{id, mode: cutout|background|fill|neon|double|halo|replace | none, texture? (asset id or ${GENERATED_TEXTURES.join("|")}), bg?: keep|dark|black|white|blur|transparent|texture|#hex, color?, color2?, amount?, edge?, drawOn? (s), detail?} Subject looks from the person matte: cut-out, texture/galaxy/fire inside the silhouette, glowing neon outline that draws on, double exposure with another picture, halo light behind, new background. Computes the matte first if needed.`,
+    run: async (s, a) => {
+      const c0 = ops.getClip(s.project, a.str("id"));
+      const as = findAsset(s.project, c0.assetId);
+      if (!as || (as.kind !== "video" && as.kind !== "image")) throw new ops.OpError("Pick a video or photo clip.");
+      if (a.str("mode") !== "none" && !(await matteLoad(as.id))) {
+        await computeMatte(s.pool, as, { onProgress: (x) => s.setStatus(x) });
+        s.setStatus("");
+      }
+      return s.mutate("subject look", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        if (a.str("mode") === "none") {
+          c.subject = undefined;
+          return { mode: "none" };
+        }
+        const sp: SubjectSpec = { mode: a.str("mode") as SubjectSpec["mode"] };
+        for (const k of ["texture", "bg", "color", "color2"] as const) if (a.optStr(k)) sp[k] = a.str(k);
+        for (const k of ["amount", "edge", "drawOn", "detail"] as const) if (a.optNum(k) !== undefined) sp[k] = a.num(k);
+        c.subject = sp;
+        return sp;
+      });
+    },
+  },
+  "fx.textBehind": {
+    help: "{id (video/photo clip with a person), text, preset?=cinematic (any text preset), font?, color?, size?=0.16 (of frame height), y?=0.42 (0 top..1 bottom), start?, dur?} Big words placed BEHIND the person: the text sits between the background and a cut-out copy of the subject. Returns {textId, cutoutId}.",
+    run: async (s, a) => {
+      const c0 = ops.getClip(s.project, a.str("id"));
+      const as = findAsset(s.project, c0.assetId);
+      if (!as || (as.kind !== "video" && as.kind !== "image")) throw new ops.OpError("Pick a video or photo clip.");
+      if (!(await matteLoad(as.id))) {
+        await computeMatte(s.pool, as, { onProgress: (x) => s.setStatus(x) });
+        s.setStatus("");
+      }
+      return s.mutate("text behind subject", (p) => {
+        const c = ops.getClip(p, a.str("id"));
+        const start = a.num("start", c.start),
+          dur = a.num("dur", c.dur);
+        const tt = ops.addClip(p, { text: a.str("text"), start, dur, trackId: topTrack(p, start, dur) });
+        ops.textPreset(p, tt.id, a.str("preset", "cinematic"));
+        const style: Record<string, unknown> = { size: Math.round(a.num("size", 0.16) * 1920) };
+        if (a.optStr("font")) style.font = a.str("font");
+        if (a.optStr("color")) style.color = a.str("color");
+        ops.patchClip(p, tt.id, { text: style });
+        ops.setConstant(p, tt.id, "y", (a.num("y", 0.42) - 0.5) * p.height);
+        const cut = ops.duplicateClip(p, c.id);
+        ops.moveClip(p, cut.id, c.start, topTrack(p, c.start, c.dur));
+        cut.subject = { mode: "cutout", bg: "transparent" };
+        cut.name = `${c.name} (cut-out)`;
+        return { textId: tt.id, cutoutId: cut.id };
+      });
+    },
+  },
   "shot.depth": {
     help: "{assetId (photo/art), seconds?=8, move?: push|drift|orbit|rack|rise|still, focus? (0 far..1 near), aperture?=1 (depth blur), parallax?=1, wind? (0..2 sway of near things: grass, cloth, hair), fog?, embers?, rays?:{x,y}, light? (0..1 light breathing), look?, pins? (living body pins for breathing/blinks), depth? (PNG data URL to skip measuring), start?=0, name?} 2.5D cinematic shot from one still: on-phone AI measures depth, then the camera moves through the picture with parallax, depth of field, wind and atmosphere. Returns {id, sceneId}.",
     run: async (s, a) => {
@@ -1268,15 +1339,21 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     },
   },
   "motion.promo": {
-    help: "{lines:[{text, sub?}], style?: warm|tech|cinematic, theme?: ember|cream|mono|eclipse|aurora|gold, beat?=2.4 (s per line), logo? (closing wordmark), start?=0, music?=true} A whole premium motion-design promo (glowing dots, sparkles, glow pills, frames, drawn paths, dot rows, particle rings, eclipse, brush titles) from a few lines, with camera moves, grain and an original score. Returns {id, seconds}.",
+    help: "{lines:[{text, sub?}], style?: warm|tech|cinematic|editorial, photos?: [assetId | {id, cut}] (editorial: your photos as printed cut-outs), theme?: ember|cream|mono|eclipse|aurora|gold, beat?=2.4 (s per line), logo? (closing wordmark), start?=0, music?=true} A whole premium motion-design promo (glowing dots, sparkles, glow pills, frames, drawn paths, dot rows, particle rings, eclipse, brush titles) from a few lines, with camera moves, grain and an original score. Returns {id, seconds}.",
     run: async (s, a) => {
       const lines = (a.any("lines") as motion.PromoLine[] | undefined) ?? [];
       if (!lines.length) throw new ops.OpError("Give lines: [{text, sub?}].");
-      const r = motion.buildPromo(lines, { theme: a.optStr("theme"), beat: a.optNum("beat"), logo: a.optStr("logo"), style: a.optStr("style") as "warm" | "tech" | "cinematic" | undefined });
+      const photos = (a.any("photos") as (string | { id: string; cut?: boolean })[] | undefined)?.map((x) => (typeof x === "string" ? { id: x, cut: true } : x));
+      const r = motion.buildPromo(lines, { theme: a.optStr("theme"), beat: a.optNum("beat"), logo: a.optStr("logo"), style: a.optStr("style") as "warm" | "tech" | "cinematic" | "editorial" | undefined, photos });
+      // Cut-outs need each photo's person matte.
+      for (const ph of photos ?? []) {
+        const as = findAsset(s.project, ph.id);
+        if (ph.cut !== false && as && !(await matteLoad(as.id))) await computeMatte(s.pool, as, { onProgress: (x) => s.setStatus(x) }).catch(() => {});
+      }
       const start = a.num("start", 0);
       const clip = s.mutate("motion promo", (p) => procClip(p, { type: "motion", style: r.spec.theme, motion: r.spec }, start, r.seconds, { name: "Motion promo", bottom: true }));
       if (a.bool("music", true)) {
-        const mood = a.optStr("style") === "cinematic" ? "dark" : a.optStr("style") === "tech" ? "tense" : "hopeful";
+        const mood = a.optStr("style") === "editorial" ? "calm" : a.optStr("style") === "cinematic" ? "dark" : a.optStr("style") === "tech" ? "tense" : "hopeful";
         const blob = await compose({ mood: mood as Mood, seconds: r.seconds + 0.5, bpm: Math.round(60 / (r.spec.els.length ? (a.num("beat", 2.4) / 4) : 0.6)) });
         await s.mutateAsync("promo music", async (p) => {
           const asset = await importBlob(p, blob, "Promo score.wav", "agent");

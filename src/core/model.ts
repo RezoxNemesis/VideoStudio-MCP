@@ -198,6 +198,8 @@ export interface Clip {
   transitionOut: Transition;
   /** Camera shake: amplitude in px and frequency in Hz. */
   shake?: { amp: number; freq: number };
+  /** Subject look from the clip's person matte (cut-out, texture fill, neon outline, double exposure, halo…). */
+  subject?: import("../render/subject").SubjectSpec;
   /** Corner pin (perspective): where the clip's corners land, as fractions of the frame (tl, tr, br, bl). */
   pin?: { tl: [number, number]; tr: [number, number]; br: [number, number]; bl: [number, number] };
   fx?: Partial<Fx>;

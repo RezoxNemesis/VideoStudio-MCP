@@ -25,7 +25,16 @@ export type MotionKind =
   | "embers"
   | "rays"
   | "brush"
-  | "flash";
+  | "flash"
+  | "serif"
+  | "barcode"
+  | "grid"
+  | "shape"
+  | "photo"
+  | "tag"
+  | "figure"
+  | "star4"
+  | "panel";
 
 export interface MotionEl {
   k: MotionKind;
@@ -49,6 +58,16 @@ export interface MotionEl {
   font?: string;
   rot?: number;
   seed?: number;
+  /** photo: image asset; cut-out uses the asset's person matte when it has one. */
+  assetId?: string;
+  cut?: boolean;
+  /** shape: circle | beam | arrow | puzzle | ring | square. */
+  shape?: string;
+  /** Entrance: slide (from dir) | pop | wipe | fade. */
+  enter?: string;
+  dir?: "left" | "right" | "up" | "down";
+  /** serif: which word (index) gets the italic accent colour. */
+  accentWord?: number;
 }
 
 export interface MotionCamKey {
@@ -87,6 +106,8 @@ export const THEMES: Record<string, Theme> = {
   mono: { base: "#04060b", blobs: ["#0d1424", "#101a30", "#060a14"], accent: "#ffffff", accent2: "#9fb4ff", text: "#ffffff", sub: "#8a95ad", glow: "#cfe0ff", font: "Space Grotesk" },
   eclipse: { base: "#050304", blobs: ["#2a0508", "#140306", "#1c0a0c"], accent: "#ff1f3d", accent2: "#ff6a3d", text: "#ffe9ea", sub: "#b98c90", glow: "#ff2a45", font: "Playfair Display" },
   aurora: { base: "#05060f", blobs: ["#1b0f3a", "#0c2e3a", "#2a0f33"], accent: "#7cf5d0", accent2: "#a98bff", text: "#f1f5ff", sub: "#9ea8c8", glow: "#8ef0ff", font: "Syne" },
+  editorial: { base: "#efe6d6", blobs: ["#f6eee0", "#e7dbc6", "#f3e9d8"], accent: "#e5482e", accent2: "#1b1714", text: "#1b1714", sub: "#6d6152", glow: "#e5482e", light: true, font: "Playfair Display" },
+  noir: { base: "#121010", blobs: ["#1e1a18", "#151211", "#231d1a"], accent: "#e5482e", accent2: "#efe6d6", text: "#efe6d6", sub: "#a39888", glow: "#e5482e", font: "Playfair Display" },
   gold: { base: "#0a0806", blobs: ["#2b2110", "#1a140a", "#3a2a10"], accent: "#f2c46b", accent2: "#fff1c4", text: "#fff8ea", sub: "#bfa98a", glow: "#ffd98a", font: "Playfair Display" },
 };
 
@@ -271,6 +292,48 @@ function textBlurIn(c: Ctx, text: string, x: number, y: number, size: number, u:
   });
   (c as CanvasRenderingContext2D).letterSpacing = "0px";
   return total;
+}
+
+export type MotionImages = (assetId: string) => CanvasImageSource | null;
+let curImages: MotionImages | undefined;
+let curMatte: ((assetId: string) => { alpha: Uint8Array; w: number; h: number } | null) | undefined;
+export function setMotionMatte(fn: typeof curMatte) {
+  curMatte = fn;
+}
+const cutCache = new Map<string, OffscreenCanvas | HTMLCanvasElement>();
+function cutOut(id: string, img: CanvasImageSource): CanvasImageSource {
+  const m = curMatte?.(id);
+  if (!m) return img;
+  let c = cutCache.get(id);
+  if (c) return c;
+  const iw = (img as { width: number }).width,
+    ih = (img as { height: number }).height;
+  c = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(iw, ih) : Object.assign(document.createElement("canvas"), { width: iw, height: ih });
+  const x = c.getContext("2d") as Ctx;
+  const mc = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(m.w, m.h) : Object.assign(document.createElement("canvas"), { width: m.w, height: m.h });
+  const mx = mc.getContext("2d") as Ctx;
+  const id2 = mx.createImageData(m.w, m.h);
+  for (let i = 0; i < m.w * m.h; i++) {
+    id2.data[i * 4 + 3] = m.alpha[i]!;
+  }
+  mx.putImageData(id2, 0, 0);
+  x.drawImage(img, 0, 0);
+  x.globalCompositeOperation = "destination-in";
+  x.drawImage(mc as CanvasImageSource, 0, 0, iw, ih);
+  cutCache.set(id, c);
+  return c;
+}
+
+/** Entrance transform: returns [dx, dy, scale, alpha] for local time u. */
+function enterT(el: MotionEl, u: number, W: number, H: number): [number, number, number, number] {
+  const p = easeOutExpo(clamp(u / 0.8));
+  const e = el.enter ?? "slide";
+  if (e === "pop") return [0, 0, 0.6 + 0.4 * spring(u * 1.5), clamp(u * 4)];
+  if (e === "fade") return [0, 0, 1, p];
+  if (e === "wipe") return [0, 0, 1, 1];
+  const d = el.dir ?? "up";
+  const k = 1 - p;
+  return [d === "left" ? -W * 0.6 * k : d === "right" ? W * 0.6 * k : 0, d === "up" ? H * 0.25 * k : d === "down" ? -H * 0.25 * k : 0, 1, clamp(u * 3)];
 }
 
 function drawEl(c: Ctx, el: MotionEl, th: Theme, W: number, H: number, t: number) {
@@ -726,6 +789,271 @@ function drawEl(c: Ctx, el: MotionEl, th: Theme, W: number, H: number, t: number
       c.fillRect(0, 0, W, H);
       break;
     }
+    case "serif": {
+      // Big editorial headline: heavy serif, one word in italic accent colour, letters settle with tracking.
+      let fs = (el.s ?? 0.16) * S;
+      const words = (el.text ?? "").split(/\s+/).filter(Boolean);
+      const acc = el.accentWord ?? (words.length > 1 ? words.length - 1 : -1);
+      const [dx, dy, sc, al] = enterT({ ...el, enter: el.enter ?? "fade" }, u, W, H);
+      c.translate(x + dx, y + dy);
+      c.scale(sc, sc);
+      c.globalAlpha *= al;
+      c.textBaseline = "middle";
+      const fam = fontStack(el.font ?? "Playfair Display");
+      const maxW = W * 0.86;
+      const measure = (size: number) =>
+        words.map((w, i) => {
+          c.font = `${i === acc ? "italic 400" : "900"} ${size}px ${fam}`;
+          return c.measureText(w).width;
+        });
+      let meas = measure(fs);
+      // Wrap into lines that fit; shrink a little if a single word is still too wide.
+      const lay = () => {
+        const out: number[][] = [];
+        let cur: number[] = [],
+          wsum = 0;
+        words.forEach((_, i) => {
+          const add = meas[i]! + (cur.length ? fs * 0.22 : 0);
+          if (cur.length && wsum + add > maxW) {
+            out.push(cur);
+            cur = [];
+            wsum = 0;
+          }
+          wsum += cur.length ? meas[i]! + fs * 0.22 : meas[i]!;
+          cur.push(i);
+        });
+        if (cur.length) out.push(cur);
+        return out;
+      };
+      const widest = Math.max(...meas, 1);
+      if (widest > maxW) {
+        fs *= maxW / widest;
+        meas = measure(fs);
+      }
+      const lines = lay();
+      const lh = fs * 1.02;
+      lines.forEach((ln, li) => {
+        const total = ln.reduce((a2, i) => a2 + meas[i]!, 0) + fs * 0.22 * (ln.length - 1);
+        let px = -total / 2;
+        const py = (li - (lines.length - 1) / 2) * lh;
+        ln.forEach((i) => {
+          const it = i === acc;
+          const pp = easeOutExpo(clamp((u - i * 0.12) / 0.7));
+          c.font = `${it ? "italic 400" : "900"} ${fs}px ${fam}`;
+          c.fillStyle = it ? th.accent : (el.color ?? th.text);
+          c.save();
+          c.globalAlpha *= pp;
+          (c as CanvasRenderingContext2D).letterSpacing = `${(1 - pp) * fs * 0.25}px`;
+          c.textAlign = "left";
+          c.fillText(words[i]!, px, py + (1 - pp) * fs * 0.25);
+          c.restore();
+          px += meas[i]! + fs * 0.22;
+        });
+      });
+      (c as CanvasRenderingContext2D).letterSpacing = "0px";
+      if (el.sub) {
+        c.font = `italic 400 ${Math.max(fs * 0.22, S * 0.03)}px ${fam}`;
+        c.textAlign = "center";
+        c.fillStyle = el.color ? rgba(el.color, 0.75) : th.sub;
+        c.globalAlpha *= clamp((u - 0.5) * 2);
+        c.fillText(el.sub, 0, (lines.length / 2) * lh + fs * 0.3);
+      }
+      break;
+    }
+    case "barcode": {
+      const w = (el.s ?? 0.3) * W,
+        h = w * 0.3;
+      const p = easeOutExpo(clamp(u / 0.9));
+      c.fillStyle = th.text;
+      let bx = x - w / 2;
+      for (let i = 0; bx < x - w / 2 + w * p; i++) {
+        const bw = (1 + Math.floor(hash(i * 3.3 + (el.seed ?? 1)) * 3)) * w * 0.006;
+        if (hash(i * 7.1 + (el.seed ?? 1)) > 0.35) c.fillRect(bx, y - h / 2, bw, h);
+        bx += bw + w * 0.006;
+      }
+      if (el.text) {
+        c.font = `500 ${h * 0.18}px ${fontStack("Space Grotesk")}`;
+        c.textAlign = "left";
+        c.fillText(el.text, x - w / 2, y + h * 0.65);
+      }
+      break;
+    }
+    case "grid": {
+      c.strokeStyle = rgba(th.text, 0.12 * clamp(u * 2));
+      c.lineWidth = Math.max(1, S * 0.0015);
+      const n = el.n ?? 12;
+      const p = easeOutExpo(clamp(u / 1.2));
+      for (let i = 1; i < n; i++) {
+        const gx = (i / n) * W;
+        c.beginPath();
+        c.moveTo(gx, 0);
+        c.lineTo(gx, H * p);
+        c.stroke();
+      }
+      for (let i = 1; i < n * (H / W); i++) {
+        const gy = (i / n) * W;
+        c.beginPath();
+        c.moveTo(0, gy);
+        c.lineTo(W * p, gy);
+        c.stroke();
+      }
+      break;
+    }
+    case "shape": {
+      const R = (el.s ?? 0.3) * S;
+      const [dx, dy, sc, al] = enterT({ ...el, enter: el.enter ?? "pop" }, u, W, H);
+      c.translate(x + dx, y + dy);
+      c.rotate((el.rot ?? 0) + Math.sin(u * 0.5) * 0.02);
+      c.scale(sc, sc);
+      c.globalAlpha *= al;
+      c.fillStyle = col;
+      c.strokeStyle = col;
+      switch (el.shape ?? "circle") {
+        case "circle":
+          c.beginPath();
+          c.arc(0, 0, R, 0, Math.PI * 2);
+          c.fill();
+          break;
+        case "ring":
+          c.lineWidth = R * 0.08;
+          c.beginPath();
+          c.arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * easeOutExpo(clamp(u / 1.2)));
+          c.stroke();
+          break;
+        case "square":
+          c.fillRect(-R, -R, R * 2, R * 2);
+          break;
+        case "beam": {
+          // A long diagonal light beam (spotlight cone) growing from a point.
+          const L = Math.max(W, H) * 1.4 * easeOutExpo(clamp(u / 1));
+          c.beginPath();
+          c.moveTo(0, 0);
+          c.lineTo(L, -R * 0.6);
+          c.lineTo(L, R * 0.6);
+          c.closePath();
+          c.fill();
+          c.beginPath();
+          c.arc(0, 0, R * 0.35, 0, Math.PI * 2);
+          c.fill();
+          break;
+        }
+        case "arrow":
+          c.lineWidth = R * 0.12;
+          c.lineCap = "round";
+          c.beginPath();
+          c.moveTo(-R, 0);
+          c.lineTo(R * 0.8, 0);
+          c.stroke();
+          c.beginPath();
+          c.moveTo(R, 0);
+          c.lineTo(R * 0.55, -R * 0.35);
+          c.lineTo(R * 0.55, R * 0.35);
+          c.closePath();
+          c.fill();
+          break;
+        case "puzzle": {
+          const q = R * 0.8;
+          c.beginPath();
+          c.rect(-q, -q, q * 2, q * 2);
+          c.moveTo(q + q * 0.38, 0);
+          c.arc(q + q * 0.05, 0, q * 0.33, 0, Math.PI * 2);
+          c.moveTo(0, -q - q * 0.05);
+          c.arc(0, -q - q * 0.05, q * 0.33, 0, Math.PI * 2);
+          c.fill();
+          break;
+        }
+      }
+      break;
+    }
+    case "photo": {
+      const img = el.assetId ? curImages?.(el.assetId) : null;
+      if (!img) break;
+      const iw = (img as { width: number }).width,
+        ih = (img as { height: number }).height;
+      const hgt = (el.s ?? 0.5) * H;
+      const wid = (hgt * iw) / ih;
+      const [dx, dy, sc, al] = enterT(el, u, W, H);
+      const src = el.cut ? cutOut(el.assetId!, img) : img;
+      c.translate(x + dx, y + dy + Math.sin(u * 0.8) * H * 0.004);
+      c.rotate((el.rot ?? 0) * (1 - 0.3 * easeOutExpo(clamp(u))));
+      c.scale(sc * (1 + u * 0.01), sc * (1 + u * 0.01));
+      c.globalAlpha *= al;
+      // Printed-cutout feel: soft shadow below.
+      c.shadowColor = "rgba(30,20,10,0.35)";
+      c.shadowBlur = S * 0.03;
+      c.shadowOffsetY = S * 0.015;
+      if (el.enter === "wipe") {
+        c.beginPath();
+        c.rect(-wid / 2, -hgt / 2, wid * easeOutExpo(clamp(u / 0.9)), hgt);
+        c.clip();
+      }
+      c.drawImage(src, -wid / 2, -hgt / 2, wid, hgt);
+      break;
+    }
+    case "tag": {
+      const fs = (el.s ?? 0.03) * S;
+      c.font = `600 ${fs}px ${fontStack("Space Grotesk")}`;
+      const w = c.measureText(el.text ?? "").width + fs * 1.2;
+      const p = easeOutExpo(clamp(u / 0.6));
+      c.fillStyle = col;
+      c.fillRect(x - w / 2, y - fs * 0.8, w * p, fs * 1.6);
+      c.save();
+      c.beginPath();
+      c.rect(x - w / 2, y - fs, w * p, fs * 2);
+      c.clip();
+      c.fillStyle = th.light ? "#fff8ef" : "#111";
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillText(el.text ?? "", x, y + fs * 0.05);
+      c.restore();
+      break;
+    }
+    case "figure": {
+      // Tiny walking silhouettes (scale and story, like editorial collages).
+      const n = el.n ?? 1;
+      for (let i = 0; i < n; i++) {
+        const fx = x + (i - (n - 1) / 2) * S * 0.06 + u * S * 0.01 * (i % 2 ? 1 : -1);
+        const hh = (el.s ?? 0.06) * S * (0.85 + 0.3 * hash(i));
+        const step = Math.sin(u * 6 + i) * 0.25;
+        c.fillStyle = th.text;
+        c.beginPath();
+        c.arc(fx, y - hh * 0.88, hh * 0.09, 0, Math.PI * 2);
+        c.fill();
+        c.lineCap = "round";
+        c.strokeStyle = th.text;
+        c.lineWidth = hh * 0.11;
+        c.beginPath();
+        c.moveTo(fx, y - hh * 0.76);
+        c.lineTo(fx, y - hh * 0.4);
+        c.moveTo(fx, y - hh * 0.4);
+        c.lineTo(fx + Math.sin(step) * hh * 0.25, y);
+        c.moveTo(fx, y - hh * 0.4);
+        c.lineTo(fx - Math.sin(step) * hh * 0.25, y);
+        c.moveTo(fx, y - hh * 0.7);
+        c.lineTo(fx - Math.sin(step) * hh * 0.2, y - hh * 0.45);
+        c.stroke();
+      }
+      break;
+    }
+    case "panel": {
+      // A solid backdrop that wipes in (changes the page colour between beats).
+      const p = easeInOut(clamp(u / 0.55));
+      const d = el.dir ?? "up";
+      c.fillStyle = el.color ?? th.base;
+      if (d === "up") c.fillRect(0, H * (1 - p), W, H * p);
+      else if (d === "down") c.fillRect(0, 0, W, H * p);
+      else if (d === "left") c.fillRect(W * (1 - p), 0, W * p, H);
+      else c.fillRect(0, 0, W * p, H);
+      break;
+    }
+    case "star4": {
+      const R = (el.s ?? 0.04) * S;
+      const g = spring(u * 1.4);
+      c.fillStyle = el.color ?? th.text;
+      sparkPath(c, x, y, R * g, u * 0.3);
+      c.fill();
+      break;
+    }
   }
   c.restore();
 }
@@ -749,7 +1077,8 @@ function camAt(cam: MotionCamKey[] | undefined, t: number): Required<Omit<Motion
   return { z: l.z ?? 1, x: l.x ?? 0, y: l.y ?? 0, r: l.r ?? 0 };
 }
 
-export function drawMotion(c: Ctx, spec: MotionSpec, W: number, H: number, t: number): void {
+export function drawMotion(c: Ctx, spec: MotionSpec, W: number, H: number, t: number, images?: MotionImages): void {
+  curImages = images;
   const th = THEMES[spec.theme] ?? THEMES.ember!;
   c.save();
   if (spec.bg !== false) background(c, th, W, H, t);
@@ -775,7 +1104,8 @@ export interface PromoLine {
  * glowing pill, dot row with sweeping arc, path landing on a pill, connected outline, particle ring, logo), with
  * soft camera moves and overlaps. Returns the spec and its length in seconds.
  */
-export function buildPromo(lines: PromoLine[], o: { theme?: string; beat?: number; logo?: string; style?: "warm" | "tech" | "cinematic" } = {}): { spec: MotionSpec; seconds: number } {
+export function buildPromo(lines: PromoLine[], o: { theme?: string; beat?: number; logo?: string; style?: "warm" | "tech" | "cinematic" | "editorial"; photos?: { id: string; cut?: boolean }[] } = {}): { spec: MotionSpec; seconds: number } {
+  if (o.style === "editorial") return buildEditorial(lines, o);
   const theme = o.theme ?? (o.style === "tech" ? "mono" : o.style === "cinematic" ? "eclipse" : "ember");
   const B = o.beat ?? 2.4;
   const els: MotionEl[] = [];
@@ -842,4 +1172,65 @@ export function buildPromo(lines: PromoLine[], o: { theme?: string; beat?: numbe
   }
   cam.push({ t, z: 1 });
   return { spec: { theme, els, cam, grain: 0.07 }, seconds: Math.round(t * 100) / 100 };
+}
+
+/**
+ * Editorial collage promo (magazine motion design): cream paper with a fine grid, heavy serif headlines with an
+ * italic accent word, red accent shapes (sun, beam, puzzle, ring), barcodes and tags, tiny figures for scale, the
+ * person's photos as printed cut-outs, and dark panels that wipe in between beats.
+ */
+export function buildEditorial(lines: PromoLine[], o: { theme?: string; beat?: number; logo?: string; photos?: { id: string; cut?: boolean }[] } = {}): { spec: MotionSpec; seconds: number } {
+  const B = o.beat ?? 2.6;
+  const els: MotionEl[] = [{ k: "grid", t0: 0, n: 10 }];
+  const cam: MotionCamKey[] = [{ t: 0, z: 1.06 }];
+  const ph = o.photos ?? [];
+  let t = 0;
+  const RED = "#e5482e",
+    INK = "#1b1714",
+    PAPER = "#efe6d6";
+  lines.forEach((ln, i) => {
+    const end = t + B;
+    const photo = ph.length ? ph[i % ph.length] : undefined;
+    const beat = i % 6;
+    if (beat === 0) {
+      els.push({ k: "serif", t0: t, t1: end, x: 0.5, y: 0.3, s: 0.2, text: ln.text, sub: ln.sub });
+      if (photo) els.push({ k: "photo", t0: t + 0.3, t1: end, x: 0.62, y: 0.66, s: 0.5, assetId: photo.id, cut: photo.cut, enter: "slide", dir: "right", rot: 0.04 });
+      else els.push({ k: "shape", t0: t + 0.3, t1: end, x: 0.62, y: 0.66, s: 0.2, shape: "circle", color: RED });
+      els.push({ k: "barcode", t0: t + 0.6, t1: end, x: 0.25, y: 0.88, s: 0.3, text: "NO. 0" + (i + 1) });
+    } else if (beat === 1) {
+      els.push({ k: "shape", t0: t, t1: end, x: 0.12, y: 0.86, s: 0.2, shape: "beam", rot: -0.6, color: RED });
+      els.push({ k: "figure", t0: t + 0.3, t1: end, x: 0.14, y: 0.9, s: 0.09, n: 1 });
+      els.push({ k: "serif", t0: t + 0.4, t1: end, x: 0.55, y: 0.32, s: 0.13, text: ln.text, sub: ln.sub });
+    } else if (beat === 2) {
+      els.push({ k: "panel", t0: t, t1: end, color: INK, dir: "up", out: 0.3 });
+      if (photo) els.push({ k: "photo", t0: t + 0.35, t1: end, x: 0.35, y: 0.55, s: 0.62, assetId: photo.id, cut: photo.cut, enter: "slide", dir: "up" });
+      els.push({ k: "serif", t0: t + 0.5, t1: end, x: photo ? 0.7 : 0.5, y: 0.42, s: 0.1, text: ln.text, color: PAPER });
+      els.push({ k: "tag", t0: t + 0.8, t1: end, x: 0.7, y: 0.58, s: 0.028, text: (ln.sub ?? "RETURNS").toUpperCase(), color: RED });
+    } else if (beat === 3) {
+      els.push({ k: "shape", t0: t, t1: end, x: 0.36, y: 0.48, s: 0.16, shape: "puzzle", color: INK, enter: "slide", dir: "left" });
+      els.push({ k: "shape", t0: t + 0.2, t1: end, x: 0.66, y: 0.48, s: 0.16, shape: "puzzle", color: RED, rot: Math.PI, enter: "slide", dir: "right" });
+      els.push({ k: "tag", t0: t + 0.6, t1: end, x: 0.5, y: 0.25, s: 0.03, text: ln.text.toUpperCase(), color: RED });
+      if (ln.sub) els.push({ k: "title", t0: t + 0.8, t1: end, x: 0.5, y: 0.72, s: 0.04, text: ln.sub, color: INK, font: "Playfair Display" });
+    } else if (beat === 4) {
+      if (photo) els.push({ k: "photo", t0: t, t1: end, x: 0.5, y: 0.5, s: 0.55, assetId: photo.id, cut: photo.cut, enter: "pop" });
+      else els.push({ k: "shape", t0: t, t1: end, x: 0.5, y: 0.5, s: 0.22, shape: "ring", color: RED });
+      els.push({ k: "star4", t0: t + 0.4, t1: end, x: 0.22, y: 0.28, s: 0.045, color: INK });
+      els.push({ k: "star4", t0: t + 0.6, t1: end, x: 0.8, y: 0.7, s: 0.03, color: RED });
+      els.push({ k: "serif", t0: t + 0.3, t1: end, x: 0.5, y: 0.82, s: 0.1, text: ln.text, sub: ln.sub });
+    } else {
+      els.push({ k: "shape", t0: t, t1: end, x: 0.5, y: 0.95, s: 0.35, shape: "circle", color: RED, enter: "slide", dir: "up" });
+      els.push({ k: "figure", t0: t + 0.3, t1: end, x: 0.5, y: 0.82, s: 0.1, n: 3 });
+      els.push({ k: "serif", t0: t + 0.2, t1: end, x: 0.5, y: 0.35, s: 0.14, text: ln.text, sub: ln.sub });
+    }
+    cam.push({ t: t + B * 0.95, z: 1 + 0.03 * ((i % 2) + 1), x: i % 2 ? 0.006 : -0.006 });
+    t = end;
+  });
+  if (o.logo) {
+    els.push({ k: "panel", t0: t, color: PAPER, dir: "up" });
+    els.push({ k: "serif", t0: t + 0.3, s: 0.16, text: o.logo });
+    els.push({ k: "shape", t0: t + 0.6, x: 0.5, y: 0.62, s: 0.03, shape: "circle", color: RED });
+    t += 2.6;
+  }
+  cam.push({ t, z: 1 });
+  return { spec: { theme: o.theme ?? "editorial", els, cam, grain: 0.06 }, seconds: Math.round(t * 100) / 100 };
 }

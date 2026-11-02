@@ -307,3 +307,40 @@ export async function depthToPng(d: { data: Uint8Array; w: number; h: number }):
   for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
   return `data:image/png;base64,${btoa(s)}`;
 }
+
+/* ------------------------------ subject matting ----------------------------- */
+
+export const MATTE_MODEL = "Xenova/modnet";
+const MATTE_FILES = ["config.json", "preprocessor_config.json", "onnx/model_fp16.onnx", "onnx/model_quantized.onnx"];
+let matteReady: Promise<void> | null = null;
+let gpuOk: boolean | null = null;
+
+/**
+ * Person matte for one picture (MODNet, on the phone; GPU when available): alpha 0..255 at the model's size.
+ */
+export async function personMatte(src: CanvasImageSource, W: number, H: number, onProgress?: (m: string) => void): Promise<{ alpha: Uint8Array; w: number; h: number }> {
+  matteReady ??= (async () => {
+    for (const f of MATTE_FILES) await cached("transformers-cache", `https://huggingface.co/${MATTE_MODEL}/resolve/main/${f}`, onProgress);
+  })().catch((e) => {
+    matteReady = null;
+    throw e;
+  });
+  await matteReady;
+  if (gpuOk === null) {
+    const g = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
+    try {
+      gpuOk = !!(g && (await g.requestAdapter()));
+    } catch {
+      gpuOk = false;
+    }
+  }
+  const k = Math.min(1, 512 / Math.max(W, H));
+  const w = Math.max(32, Math.round(W * k)),
+    h = Math.max(32, Math.round(H * k));
+  const c = makeCanvas(w, h);
+  const x = ctx2d(c);
+  x.drawImage(src, 0, 0, w, h);
+  const rgba = x.getImageData(0, 0, w, h).data;
+  const r = await call({ type: "matte", model: MATTE_MODEL, device: gpuOk ? "webgpu" : "wasm", rgba, w, h }, [rgba.buffer]);
+  return { alpha: r.alpha as Uint8Array, w: r.w as number, h: r.h as number };
+}

@@ -3,7 +3,7 @@
  * On-phone AI for clean-up: tap-to-select segmentation (SlimSAM) and AI inpainting (LaMa). Models download once
  * (through the phone's own downloader, cached) and run here, off the UI thread. Nothing leaves the phone.
  */
-import { AutoProcessor, RawImage, SamModel, env, pipeline } from "@huggingface/transformers";
+import { AutoModel, AutoProcessor, RawImage, SamModel, env, pipeline } from "@huggingface/transformers";
 import * as ort from "onnxruntime-web";
 
 env.allowLocalModels = false;
@@ -15,11 +15,13 @@ ort.env.wasm.numThreads = threads;
 
 type Msg =
   | { id: number; type: "sam"; model: string; rgba: Uint8ClampedArray; w: number; h: number; points: [number, number, number][]; box?: [number, number, number, number] }
+  | { id: number; type: "matte"; model: string; device: "webgpu" | "wasm"; rgba: Uint8ClampedArray; w: number; h: number }
   | { id: number; type: "depth"; model: string; rgba: Uint8ClampedArray; w: number; h: number }
   | { id: number; type: "lama"; model: ArrayBuffer | null; rgba: Uint8ClampedArray; mask: Uint8Array; size: number };
 
 let sam: { model: SamModel; processor: Awaited<ReturnType<typeof AutoProcessor.from_pretrained>>; id: string } | null = null;
 let lama: ort.InferenceSession | null = null;
+let matteM: { id: string; model: (i: Record<string, unknown>) => Promise<Record<string, { data: Float32Array | Uint16Array; dims: number[]; type?: string }>>; processor: (i: RawImage) => Promise<{ pixel_values: unknown }>; device: string } | null = null;
 let depthPipe: { id: string; run: (i: RawImage) => Promise<{ depth: { data: Uint8Array | Uint8ClampedArray; width: number; height: number } }> } | null = null;
 
 const post = (m: unknown, t: Transferable[] = []) => (self as unknown as Worker).postMessage(m, t);
@@ -54,6 +56,40 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
       const off = best * W * H;
       for (let i = 0; i < W * H; i++) mask[i] = t.data[off + i] ? 255 : 0;
       post({ id: m.id, ok: true, mask, w: W, h: H, score: scores[best] }, [mask.buffer]);
+      return;
+    }
+    if (m.type === "matte") {
+      if (!matteM || matteM.id !== m.model) {
+        let model: unknown;
+        let device = m.device;
+        try {
+          model = await AutoModel.from_pretrained(m.model, m.device === "webgpu" ? { device: "webgpu", dtype: "fp16" } : { dtype: "q8" });
+        } catch {
+          device = "wasm";
+          model = await AutoModel.from_pretrained(m.model, { dtype: "q8" });
+        }
+        const processor = await AutoProcessor.from_pretrained(m.model);
+        matteM = { id: m.model, model: model as never, processor: processor as never, device };
+      }
+      const img = new RawImage(m.rgba, m.w, m.h, 4).rgb();
+      const { pixel_values } = await matteM.processor(img);
+      const out = await matteM.model({ input: pixel_values });
+      const o = (out.output ?? Object.values(out)[0])!;
+      const [, , oh, ow] = o.dims as [number, number, number, number];
+      const a = new Uint8Array(ow * oh);
+      const src = o.data;
+      const half = o.type === "float16" || src instanceof Uint16Array;
+      for (let i = 0; i < a.length; i++) {
+        let v = src[i]!;
+        if (half) {
+          const h = v as number;
+          const e = (h >>> 10) & 0x1f,
+            f = h & 0x3ff;
+          v = e === 0 ? f * 2 ** -24 : (1 + f / 1024) * 2 ** (e - 15);
+        }
+        a[i] = Math.max(0, Math.min(255, Math.round((v as number) * 255)));
+      }
+      post({ id: m.id, ok: true, alpha: a, w: ow, h: oh, device: matteM.device }, [a.buffer]);
       return;
     }
     if (m.type === "depth") {

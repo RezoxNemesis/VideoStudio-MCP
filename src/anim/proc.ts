@@ -182,7 +182,7 @@ export function drawProc(c: Ctx, l: AnimLayer, s: AnimScene, f: number, images?:
         paper(c, p, s);
         break;
       case "motion":
-        if (p.motion) drawMotion(c, p.motion, s.width, s.height, t);
+        if (p.motion) drawMotion(c, p.motion, s.width, s.height, t, images);
         break;
     }
   } finally {
