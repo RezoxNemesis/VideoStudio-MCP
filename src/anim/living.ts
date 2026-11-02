@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import type { AnimLayer, AnimScene } from "../core/model";
 import { getRenderer } from "./three3d";
+import { pullPush } from "../render/inpaint";
 
 export interface LivingPins {
   head: [number, number];
@@ -34,10 +35,39 @@ export interface LivingMotion {
   seed: number;
 }
 
+/** 2.5D: a depth map turns the still into layered space — parallax camera, depth of field and wind. */
+export interface DepthCamKey {
+  t: number;
+  /** Camera shift (fractions of the frame); near things move more than far things. */
+  x?: number;
+  y?: number;
+  /** Dolly: >0 pushes in (near grows faster than far). */
+  dolly?: number;
+  /** Plain zoom of the whole picture. */
+  zoom?: number;
+  /** Depth in focus, 0 (far) .. 1 (near). */
+  focus?: number;
+}
+export interface DepthSpec {
+  /** Depth map as a PNG data URL (white = near), any size. */
+  map: string;
+  cam: DepthCamKey[];
+  /** Depth of field strength (0 = everything sharp). */
+  aperture?: number;
+  /** Parallax strength. */
+  parallax?: number;
+  /** Wind on near things (grass, cloth, hair): amount 0..2, speed. */
+  wind?: { amount: number; speed?: number; near?: number };
+  /** Gentle light breathing (flicker / clouds passing) 0..1. */
+  light?: number;
+}
+
 export interface LivingSpec {
   assetId: string;
-  pins: LivingPins;
+  /** Body pins (optional when only depth motion is wanted). */
+  pins?: LivingPins;
   motion: LivingMotion;
+  depth?: DepthSpec;
   /** Where the picture sits in the scene (fit inside). */
   fit?: "contain" | "cover";
 }
@@ -179,6 +209,10 @@ export function drawLiving(c: CanvasRenderingContext2D | OffscreenCanvasRenderin
     c.restore();
     return;
   }
+  if (sp.depth) {
+    drawDepth(c, l, sp, s, f, W, H, img, r, ox, oy, dw, dh);
+    return;
+  }
   let e = meshes.get(l.id);
   if (!e || e.src !== img) {
     const cols = 64,
@@ -206,7 +240,7 @@ export function drawLiving(c: CanvasRenderingContext2D | OffscreenCanvasRenderin
   for (let i = 0; i < arr.length; i += 3) {
     const u = e.base[i]!,
       v = -e.base[i + 1]!;
-    const [dx, dy] = displace(u, v, t, sp.pins, sp.motion, ar);
+    const [dx, dy] = sp.pins ? displace(u, v, t, sp.pins, sp.motion, ar) : [0, 0];
     arr[i] = u + dx;
     arr[i + 1] = -(v + dy);
   }
@@ -221,4 +255,260 @@ export function drawLiving(c: CanvasRenderingContext2D | OffscreenCanvasRenderin
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.drawImage(r.domElement as CanvasImageSource, ox, oy, dw, dh);
   c.restore();
+}
+
+/* --------------------------------- 2.5D depth -------------------------------- */
+
+const depthCache = new Map<string, { scene: THREE.Scene; mat: THREE.ShaderMaterial; src: unknown; map: string; base: Float32Array; mesh: THREE.Mesh; ready: boolean }>();
+
+const VERT = `
+uniform sampler2D uDepth;
+uniform vec2 uShift;
+uniform float uDolly;
+uniform float uZoom;
+uniform float uParallax;
+uniform float uFocus;
+varying vec2 vUv;
+varying float vDepth;
+void main() {
+  vUv = uv;
+  float d = texture2D(uDepth, uv).r;
+  vDepth = d;
+  vec3 p = position;
+  // Screen-space centre is (0.5,-0.5). Near points (d→1) move and grow more than far ones (d→0).
+  vec2 c = vec2(0.5, -0.5);
+  float rel = d - uFocus;
+  p.xy = c + (p.xy - c) * (uZoom * (1.0 + uDolly * d));
+  p.xy += vec2(uShift.x, -uShift.y) * rel * uParallax;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+}`;
+
+const FRAG = `
+uniform sampler2D uTex;
+uniform sampler2D uBlur;
+uniform sampler2D uBlur2;
+uniform sampler2D uBgBlur;
+uniform sampler2D uBgBlur2;
+uniform sampler2D uDepth;
+uniform float uFocus;
+uniform float uAperture;
+uniform float uTime;
+uniform float uWind;
+uniform float uWindSpeed;
+uniform float uWindNear;
+uniform float uLight;
+varying vec2 vUv;
+varying float vDepth;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+void main() {
+  vec2 uv = vUv;
+  float d = texture2D(uDepth, uv).r;
+  // Wind: near things sway; gusts travel across the picture.
+  float w = smoothstep(uWindNear, 1.0, d) * uWind;
+  if (w > 0.0) {
+    float gust = 0.5 + 0.5 * noise(vec2(uv.x * 2.0 - uTime * 0.35 * uWindSpeed, uTime * 0.2));
+    float sway = sin(uTime * 2.2 * uWindSpeed + uv.x * 18.0 + noise(uv * 9.0) * 6.0) * 0.6 + sin(uTime * 3.7 * uWindSpeed + uv.y * 30.0) * 0.4;
+    uv.x += sway * gust * w * 0.006;
+    uv.y += sway * gust * w * 0.002;
+  }
+  vec4 sharp = texture2D(uTex, uv);
+  float coc = clamp(abs(d - uFocus) * uAperture, 0.0, 1.0);
+  // Behind the focus plane, blur the background-only picture so near subjects don't smear dark halos into it.
+  bool behind = d < uFocus;
+  vec4 b1 = behind ? texture2D(uBgBlur, uv) : texture2D(uBlur, uv);
+  vec4 b2 = behind ? texture2D(uBgBlur2, uv) : texture2D(uBlur2, uv);
+  vec4 col = coc < 0.5 ? mix(sharp, b1, coc * 2.0) : mix(b1, b2, (coc - 0.5) * 2.0);
+  // Light breathing: soft moving brightness (clouds, flicker).
+  float lb = 1.0 + uLight * 0.08 * (noise(uv * 2.0 + vec2(uTime * 0.07, uTime * 0.05)) - 0.5);
+  gl_FragColor = vec4(col.rgb * lb, col.a);
+}`;
+
+function canvasOf(img: CanvasImageSource, w: number, h: number, blur = 0) {
+  const cv = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(w, h) : Object.assign(document.createElement("canvas"), { width: w, height: h });
+  const x = cv.getContext("2d") as CanvasRenderingContext2D;
+  if (blur) {
+    // Pad with the edge so blur does not darken borders.
+    x.filter = `blur(${blur}px)`;
+    x.drawImage(img, -blur * 2, -blur * 2, w + blur * 4, h + blur * 4);
+  } else x.drawImage(img, 0, 0, w, h);
+  return cv;
+}
+/** The picture with its near things removed (filled from what surrounds them) — what blurs behind the subject. */
+export function backgroundOnly(img: CanvasImageSource, dimg: CanvasImageSource, w: number, h: number, near = 0.6) {
+  const cv = canvasOf(img, w, h);
+  const x = cv.getContext("2d") as CanvasRenderingContext2D;
+  const id = x.getImageData(0, 0, w, h);
+  const dc = canvasOf(dimg, w, h);
+  const dd = (dc.getContext("2d") as CanvasRenderingContext2D).getImageData(0, 0, w, h).data;
+  const rgb = new Float32Array(w * h * 3),
+    wt = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const keep = dd[i * 4]! / 255 < near - 0.06 ? 1 : 0;
+    wt[i] = keep;
+    for (let c = 0; c < 3; c++) rgb[i * 3 + c] = keep ? id.data[i * 4 + c]! : 0;
+  }
+  const known = wt.slice();
+  pullPush(rgb, wt, w, h);
+  for (let i = 0; i < w * h; i++) if (!known[i]) for (let c = 0; c < 3; c++) id.data[i * 4 + c] = rgb[i * 3 + c]!;
+  x.putImageData(id, 0, 0);
+  return cv;
+}
+
+function tex(cv: unknown, srgb = true) {
+  const t = new THREE.CanvasTexture(cv as HTMLCanvasElement);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.minFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.needsUpdate = true;
+  return t;
+}
+
+function camAt(keys: DepthCamKey[], t: number): Required<Omit<DepthCamKey, "t">> {
+  const base = { x: 0, y: 0, dolly: 0, zoom: 1.04, focus: 0.5 };
+  if (!keys.length) return base;
+  const k = [...keys].sort((a, b) => a.t - b.t);
+  const val = (o: DepthCamKey) => ({ x: o.x ?? 0, y: o.y ?? 0, dolly: o.dolly ?? 0, zoom: o.zoom ?? 1.04, focus: o.focus ?? 0.5 });
+  if (t <= k[0]!.t) return val(k[0]!);
+  for (let i = 0; i < k.length - 1; i++) {
+    const a = k[i]!,
+      b = k[i + 1]!;
+    if (t <= b.t) {
+      const r = (t - a.t) / Math.max(1e-6, b.t - a.t);
+      const e = r < 0.5 ? 4 * r * r * r : 1 - Math.pow(-2 * r + 2, 3) / 2;
+      const A = val(a),
+        B = val(b);
+      return { x: A.x + (B.x - A.x) * e, y: A.y + (B.y - A.y) * e, dolly: A.dolly + (B.dolly - A.dolly) * e, zoom: A.zoom + (B.zoom - A.zoom) * e, focus: A.focus + (B.focus - A.focus) * e };
+    }
+  }
+  return val(k[k.length - 1]!);
+}
+
+const depthImgs = new Map<string, ImageBitmap | null>();
+function depthImage(url: string): ImageBitmap | null | undefined {
+  if (depthImgs.has(url)) return depthImgs.get(url);
+  depthImgs.set(url, null);
+  void (async () => {
+    try {
+      depthImgs.set(url, await createImageBitmap(await (await fetch(url)).blob()));
+    } catch {
+      /* keep null */
+    }
+  })();
+  return undefined;
+}
+/** Load a depth map ahead of rendering (exports wait on this). */
+export async function preloadDepth(url: string): Promise<void> {
+  if (depthImgs.get(url)) return;
+  depthImgs.set(url, await createImageBitmap(await (await fetch(url)).blob()));
+}
+
+function drawDepth(c: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, l: AnimLayer, sp: LivingSpec, s: AnimScene, f: number, W: number, H: number, img: CanvasImageSource, r: THREE.WebGLRenderer, ox: number, oy: number, dw: number, dh: number) {
+  const ds = sp.depth!;
+  const dimg = depthImage(ds.map);
+  const t = f / s.fps;
+  const iw = (img as { width: number }).width,
+    ih = (img as { height: number }).height;
+  let e = depthCache.get(l.id);
+  if (dimg && (!e || e.src !== img || e.map !== ds.map)) {
+    const cols = 160,
+      rows = Math.round((160 * ih) / iw);
+    const geo = new THREE.PlaneGeometry(1, 1, cols, rows);
+    geo.translate(0.5, -0.5, 0);
+    const k = Math.min(1, 2048 / Math.max(iw, ih));
+    const w = Math.round(iw * k),
+      h = Math.round(ih * k);
+    const small = Math.max(w, h) / 900;
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: VERT,
+      fragmentShader: FRAG,
+      transparent: true,
+      uniforms: {
+        uTex: { value: tex(canvasOf(img, w, h)) },
+        uBlur: { value: tex(canvasOf(img, Math.round(w / 2), Math.round(h / 2), Math.max(2, Math.round(4 / small)))) },
+        uBlur2: { value: tex(canvasOf(img, Math.round(w / 4), Math.round(h / 4), Math.max(3, Math.round(6 / small)))) },
+        uBgBlur: { value: tex(canvasOf(backgroundOnly(img, dimg, Math.round(w / 2), Math.round(h / 2)), Math.round(w / 2), Math.round(h / 2), Math.max(2, Math.round(4 / small)))) },
+        uBgBlur2: { value: tex(canvasOf(backgroundOnly(img, dimg, Math.round(w / 4), Math.round(h / 4)), Math.round(w / 4), Math.round(h / 4), Math.max(3, Math.round(6 / small)))) },
+        uDepth: { value: tex(canvasOf(dimg, dimg.width, dimg.height, 1), false) },
+        uShift: { value: new THREE.Vector2() },
+        uDolly: { value: 0 },
+        uZoom: { value: 1 },
+        uParallax: { value: 1 },
+        uFocus: { value: 0.5 },
+        uAperture: { value: 1 },
+        uTime: { value: 0 },
+        uWind: { value: 0 },
+        uWindSpeed: { value: 1 },
+        uWindNear: { value: 0.6 },
+        uLight: { value: 0 },
+      },
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    const scene = new THREE.Scene();
+    scene.add(mesh);
+    e = { scene, mat, src: img, map: ds.map, base: Float32Array.from(geo.attributes.position!.array as Float32Array), mesh, ready: true };
+    depthCache.set(l.id, e);
+  }
+  if (!e) {
+    c.save();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    c.drawImage(img, ox, oy, dw, dh);
+    c.restore();
+    return;
+  }
+  // Optional body pins still animate (breathing, blinks) on top of the depth motion.
+  if (sp.pins) {
+    const pos = e.mesh.geometry.attributes.position as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    const ar = iw / ih;
+    for (let i = 0; i < arr.length; i += 3) {
+      const u = e.base[i]!,
+        v = -e.base[i + 1]!;
+      const [dx, dy] = displace(u, v, t, sp.pins, sp.motion, ar);
+      arr[i] = u + dx;
+      arr[i + 1] = -(v + dy);
+    }
+    pos.needsUpdate = true;
+  }
+  const cm = camAt(ds.cam, t);
+  const U = e.mat.uniforms;
+  U.uShift!.value.set(cm.x, cm.y);
+  U.uDolly!.value = cm.dolly;
+  U.uZoom!.value = cm.zoom;
+  U.uFocus!.value = cm.focus;
+  U.uParallax!.value = ds.parallax ?? 1;
+  U.uAperture!.value = (ds.aperture ?? 1) * 2.2;
+  U.uTime!.value = t;
+  U.uWind!.value = ds.wind?.amount ?? 0;
+  U.uWindSpeed!.value = ds.wind?.speed ?? 1;
+  U.uWindNear!.value = ds.wind?.near ?? 0.55;
+  U.uLight!.value = ds.light ?? 0;
+  const pw = Math.max(1, Math.round(dw)),
+    ph = Math.max(1, Math.round(dh));
+  if (r.domElement.width !== pw || r.domElement.height !== ph) r.setSize(pw, ph, false);
+  r.setClearColor(0x000000, 0);
+  r.toneMapping = THREE.NoToneMapping;
+  r.render(e.scene, cam);
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.drawImage(r.domElement as CanvasImageSource, ox, oy, dw, dh);
+  c.restore();
+}
+
+/** Where to focus by default: the depth of the main subject (near, central things), 0..1. */
+export async function autoFocus(url: string): Promise<number> {
+  const bmp = await createImageBitmap(await (await fetch(url)).blob());
+  const w = 96,
+    h = Math.max(8, Math.round((96 * bmp.height) / bmp.width));
+  const cv = canvasOf(bmp, w, h);
+  const d = (cv.getContext("2d") as CanvasRenderingContext2D).getImageData(0, 0, w, h).data;
+  const vals: number[] = [];
+  for (let y = Math.floor(h * 0.15); y < h * 0.9; y++) for (let x = Math.floor(w * 0.25); x < w * 0.75; x++) vals.push(d[(y * w + x) * 4]! / 255);
+  vals.sort((a, b) => a - b);
+  return Math.round((vals[Math.floor(vals.length * 0.85)] ?? 0.6) * 100) / 100;
 }

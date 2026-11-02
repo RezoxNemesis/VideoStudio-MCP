@@ -3,7 +3,7 @@
  * On-phone AI for clean-up: tap-to-select segmentation (SlimSAM) and AI inpainting (LaMa). Models download once
  * (through the phone's own downloader, cached) and run here, off the UI thread. Nothing leaves the phone.
  */
-import { AutoProcessor, RawImage, SamModel, env } from "@huggingface/transformers";
+import { AutoProcessor, RawImage, SamModel, env, pipeline } from "@huggingface/transformers";
 import * as ort from "onnxruntime-web";
 
 env.allowLocalModels = false;
@@ -15,10 +15,12 @@ ort.env.wasm.numThreads = threads;
 
 type Msg =
   | { id: number; type: "sam"; model: string; rgba: Uint8ClampedArray; w: number; h: number; points: [number, number, number][]; box?: [number, number, number, number] }
+  | { id: number; type: "depth"; model: string; rgba: Uint8ClampedArray; w: number; h: number }
   | { id: number; type: "lama"; model: ArrayBuffer | null; rgba: Uint8ClampedArray; mask: Uint8Array; size: number };
 
 let sam: { model: SamModel; processor: Awaited<ReturnType<typeof AutoProcessor.from_pretrained>>; id: string } | null = null;
 let lama: ort.InferenceSession | null = null;
+let depthPipe: { id: string; run: (i: RawImage) => Promise<{ depth: { data: Uint8Array | Uint8ClampedArray; width: number; height: number } }> } | null = null;
 
 const post = (m: unknown, t: Transferable[] = []) => (self as unknown as Worker).postMessage(m, t);
 
@@ -52,6 +54,18 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
       const off = best * W * H;
       for (let i = 0; i < W * H; i++) mask[i] = t.data[off + i] ? 255 : 0;
       post({ id: m.id, ok: true, mask, w: W, h: H, score: scores[best] }, [mask.buffer]);
+      return;
+    }
+    if (m.type === "depth") {
+      if (!depthPipe || depthPipe.id !== m.model) {
+        const p = (await pipeline("depth-estimation", m.model, { dtype: "q8" })) as unknown as (i: RawImage) => Promise<{ depth: { data: Uint8Array; width: number; height: number } }>;
+        depthPipe = { id: m.model, run: p };
+      }
+      const img = new RawImage(m.rgba, m.w, m.h, 4).rgb();
+      const out = await depthPipe.run(img);
+      const d = out.depth;
+      const data = new Uint8Array(d.data);
+      post({ id: m.id, ok: true, data, w: d.width, h: d.height }, [data.buffer]);
       return;
     }
     if (m.type === "lama") {

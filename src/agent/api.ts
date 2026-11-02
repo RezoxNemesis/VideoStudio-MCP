@@ -23,7 +23,7 @@ import { to16k, transcribe, type LyricLine } from "../media/asr";
 import { ExportJob, type ExportOptions } from "../render/export";
 import { fetchInbox, listInbox } from "./remote";
 import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot, stillImage } from "../render/snapshot";
-import { decodeMask, dilate, maskAtSize, maskBounds, maskToPng, segment } from "../media/ai";
+import { decodeMask, depthToPng, dilate, estimateDepth, maskAtSize, maskBounds, maskToPng, segment } from "../media/ai";
 import { genDownload, genStatus, smartFill } from "../media/genfill";
 import { memInfo } from "../native/storage";
 import { ctx2d as ctx2dA, makeCanvas as makeCanvasA } from "../anim/render";
@@ -1194,6 +1194,59 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
   "mograph.add": {
     help: `{type: ${proc.MOGRAPH_TYPES.join("|")}, start?, dur?=3, x?, y? (0..1), size? (0..1), palette?, bg?, value?} Motion-design element.`,
     run: (s, a) => s.mutate("motion graphic", (p) => procClip(p, specFrom(a, "mograph", a.str("type")), a.num("start", s.time), a.num("dur", 3), { name: `Mograph ${a.str("type")}` })),
+  },
+  "shot.depth": {
+    help: "{assetId (photo/art), seconds?=8, move?: push|drift|orbit|rack|rise|still, focus? (0 far..1 near), aperture?=1 (depth blur), parallax?=1, wind? (0..2 sway of near things: grass, cloth, hair), fog?, embers?, rays?:{x,y}, light? (0..1 light breathing), look?, pins? (living body pins for breathing/blinks), depth? (PNG data URL to skip measuring), start?=0, name?} 2.5D cinematic shot from one still: on-phone AI measures depth, then the camera moves through the picture with parallax, depth of field, wind and atmosphere. Returns {id, sceneId}.",
+    run: async (s, a) => {
+      const as = findAsset(s.project, a.str("assetId"));
+      if (!as || as.kind !== "image") throw new ops.OpError("Pick an imported photo or artwork.");
+      let map = a.optStr("depth");
+      if (!map) {
+        const bmp = (await s.pool.image(as)) as ImageBitmap;
+        const d = await estimateDepth(bmp, bmp.width, bmp.height, (m) => s.setStatus(m));
+        s.setStatus("");
+        map = await depthToPng(d);
+      }
+      const secs = a.num("seconds", 8);
+      const move = a.str("move", "push");
+      const f0 = a.optNum("focus") ?? (await living.autoFocus(map));
+      const cams: Record<string, living.DepthCamKey[]> = {
+        push: [{ t: 0, dolly: 0, zoom: 1.04, focus: f0 }, { t: secs, dolly: 0.1, zoom: 1.07, focus: f0 }],
+        drift: [{ t: 0, x: -0.035, zoom: 1.06, focus: f0 }, { t: secs, x: 0.035, zoom: 1.06, focus: f0 }],
+        orbit: [{ t: 0, x: -0.045, y: 0.01, dolly: 0.02, zoom: 1.07, focus: f0 }, { t: secs, x: 0.045, y: -0.01, dolly: 0.08, zoom: 1.07, focus: f0 }],
+        rack: [{ t: 0, dolly: 0, zoom: 1.05, focus: 0.92 }, { t: secs * 0.35, dolly: 0.02, zoom: 1.05, focus: 0.92 }, { t: secs * 0.7, dolly: 0.05, zoom: 1.06, focus: 0.2 }, { t: secs, dolly: 0.06, zoom: 1.06, focus: 0.2 }],
+        rise: [{ t: 0, y: 0.035, dolly: 0, zoom: 1.07, focus: f0 }, { t: secs, y: -0.035, dolly: 0.07, zoom: 1.07, focus: f0 }],
+        still: [{ t: 0, zoom: 1.04, focus: f0 }],
+      };
+      const P = s.project;
+      return s.mutate("2.5D shot", (p) => {
+        const sc = newScene(a.str("name", "Depth shot"), p.width, p.height, p.fps);
+        sc.frames = Math.max(1, Math.round(secs * p.fps));
+        sc.background = "#000000";
+        sc.layers = [];
+        const l = anim.addLayer(sc, "Picture", "living");
+        l.living = {
+          assetId: as.id,
+          pins: a.any("pins") as living.LivingPins | undefined,
+          motion: { ...living.DEFAULT_MOTION, ...((a.any("motion") as Partial<living.LivingMotion> | undefined) ?? {}) },
+          fit: "cover",
+          depth: { map: map!, cam: cams[move] ?? cams.push!, aperture: a.num("aperture", 1), parallax: a.num("parallax", 1), wind: { amount: a.num("wind", 0), speed: 1 }, light: a.num("light", 0.4) },
+        };
+        const els: motion.MotionEl[] = [];
+        if (a.bool("fog", false)) els.push({ k: "fog", t0: 0, n: 4, y: 0.8 });
+        const rays = a.any("rays") as { x: number; y: number } | undefined;
+        if (rays) els.push({ k: "rays", t0: 0, x: rays.x, y: rays.y, n: 14, color: "#fff1d0" });
+        if (a.bool("embers", false)) els.push({ k: "embers", t0: 0, n: 50 });
+        if (els.length) {
+          const o = anim.addLayer(sc, "Atmosphere", "proc");
+          o.proc = { type: "motion", style: "atmosphere", motion: { theme: "eclipse", els, bg: false } };
+        }
+        p.scenes.push(sc);
+        const clip = ops.addClip(p, { sceneId: sc.id, start: a.num("start", 0), dur: secs });
+        if (a.optStr("look")) mv.applyLook(ops.getClip(p, clip.id), a.str("look"), a.num("lookStrength", 0.8));
+        return { id: clip.id, sceneId: sc.id, size: `${P.width}x${P.height}` };
+      });
+    },
   },
   "motion.promo": {
     help: "{lines:[{text, sub?}], style?: warm|tech|cinematic, theme?: ember|cream|mono|eclipse|aurora|gold, beat?=2.4 (s per line), logo? (closing wordmark), start?=0, music?=true} A whole premium motion-design promo (glowing dots, sparkles, glow pills, frames, drawn paths, dot rows, particle rings, eclipse, brush titles) from a few lines, with camera moves, grain and an original score. Returns {id, seconds}.",

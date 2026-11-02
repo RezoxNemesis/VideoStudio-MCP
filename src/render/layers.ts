@@ -1,6 +1,7 @@
 import { activeRegions, applyRemovals, regionBox, type RemoveRegion } from "./inpaint";
 import { aiFill, maskAtSize } from "../media/ai";
 import { fontStack } from "./fonts";
+import { preloadDepth } from "../anim/living";
 /** Turns evaluated layers into pixel sources for the compositor: video frames, images, text, shapes, animation. */
 import { evaluate, type LayerDraw } from "../core/evaluate";
 import { findAsset, findClip, findScene, type Project, type ShapeStyle, type TextStyle } from "../core/model";
@@ -294,6 +295,7 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
           const a = findAsset(p, id);
           if (a?.kind === "image") await pool.image(a);
         }
+      for (const l of s.layers) if (l.living?.depth?.map) await preloadDepth(l.living.depth.map).catch(() => {});
       const frame = frameAt(s, d.srcTime, true);
       const maxSide = o.purpose === "preview" ? (o.previewMax ?? 960) : Math.max(o.outW, o.outH);
       const sk = Math.min(1, maxSide / Math.max(s.width, s.height)) * (o.purpose === "export" ? Math.max(1, o.outH / s.height) : 1);

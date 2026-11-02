@@ -7,6 +7,8 @@ import { ctx2d, makeCanvas } from "../anim/render";
 
 export const SAM_MODEL = "Xenova/slimsam-77-uniform";
 const SAM_FILES = ["config.json", "preprocessor_config.json", "onnx/vision_encoder_quantized.onnx", "onnx/prompt_encoder_mask_decoder_quantized.onnx"];
+export const DEPTH_MODEL = "onnx-community/depth-anything-v2-small";
+const DEPTH_FILES = ["config.json", "preprocessor_config.json", "onnx/model_quantized.onnx"];
 export const LAMA_URL = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx";
 const LAMA_SIZE = 512;
 
@@ -268,4 +270,40 @@ export async function maskAtSize(png: string, W: number, H: number): Promise<Uin
     for (let x = 0; x < W; x++) out[y * W + x] = m.data[sy * m.w + Math.min(m.w - 1, Math.floor((x / W) * m.w))]! > 127 ? 255 : 0;
   }
   return out;
+}
+
+/**
+ * Depth of a picture (Depth Anything V2 small, on the phone): returns a grey map, white = near. Used for 2.5D
+ * parallax, depth of field and wind on near things.
+ */
+export async function estimateDepth(src: CanvasImageSource, W: number, H: number, onProgress?: (m: string) => void): Promise<{ data: Uint8Array; w: number; h: number }> {
+  for (const f of DEPTH_FILES) await cached("transformers-cache", `https://huggingface.co/${DEPTH_MODEL}/resolve/main/${f}`, onProgress);
+  const k = Math.min(1, 768 / Math.max(W, H));
+  const w = Math.round(W * k),
+    h = Math.round(H * k);
+  const c = makeCanvas(w, h);
+  const x = ctx2d(c);
+  x.drawImage(src, 0, 0, w, h);
+  const rgba = x.getImageData(0, 0, w, h).data;
+  onProgress?.("Measuring depth (on-phone AI)…");
+  const r = await call({ type: "depth", model: DEPTH_MODEL, rgba, w, h }, [rgba.buffer]);
+  return { data: r.data as Uint8Array, w: r.w as number, h: r.h as number };
+}
+
+/** A grey depth map as a PNG data URL. */
+export async function depthToPng(d: { data: Uint8Array; w: number; h: number }): Promise<string> {
+  const c = makeCanvas(d.w, d.h);
+  const x = ctx2d(c);
+  const im = x.createImageData(d.w, d.h);
+  for (let i = 0; i < d.w * d.h; i++) {
+    const v = d.data[i]!;
+    im.data[i * 4] = im.data[i * 4 + 1] = im.data[i * 4 + 2] = v;
+    im.data[i * 4 + 3] = 255;
+  }
+  x.putImageData(im, 0, 0);
+  const blob = "convertToBlob" in c ? await (c as OffscreenCanvas).convertToBlob({ type: "image/png" }) : await new Promise<Blob>((ok) => (c as HTMLCanvasElement).toBlob((b) => ok(b!), "image/png"));
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s = "";
+  for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return `data:image/png;base64,${btoa(s)}`;
 }
