@@ -35,6 +35,12 @@ export const agentNative = {
   openAutoOpenSettings: () => (hasNativeStorage() ? Native.openAutoOpenSettings() : Promise.resolve()),
 };
 
+/** Free memory on the phone (null on the web). */
+export async function memInfo(): Promise<{ availMB: number; totalMB: number; thresholdMB: number; low: boolean } | null> {
+  if (!hasNativeStorage()) return null;
+  return (await (Native as unknown as { memInfo(): Promise<{ availMB: number; totalMB: number; thresholdMB: number; low: boolean }> }).memInfo().catch(() => null)) ?? null;
+}
+
 const Native = registerPlugin<StudioStoragePlugin>("StudioStorage");
 
 export const hasNativeStorage = (): boolean => Capacitor.getPlatform() === "android" && Capacitor.isPluginAvailable("StudioStorage");

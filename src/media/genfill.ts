@@ -4,7 +4,7 @@
  * through the phone's own downloader into the app's cache; inference runs in a worker on the GPU (WebGPU) when the
  * phone has it.
  */
-import { downloadBlob, hasNativeStorage } from "../native/storage";
+import { downloadBlob, hasNativeStorage, memInfo } from "../native/storage";
 import { ctx2d, makeCanvas } from "../anim/render";
 import { dilate, maskBounds } from "./ai";
 import type { GenFiles } from "./genfill.worker";
@@ -80,7 +80,10 @@ export async function genRemove(): Promise<void> {
   if (typeof caches !== "undefined") await caches.delete(STORE);
 }
 
+const NEED_MB = 2300;
+
 export interface SmartFillOptions {
+  force?: boolean;
   prompt?: string;
   negative?: string;
   steps?: number;
@@ -105,6 +108,11 @@ export async function smartFill(
   if (!b) throw new Error("Nothing selected.");
   const st = await genStatus();
   if (!st.ready) await genDownload(onProgress);
+  // The painter needs ~2 GB of free memory (the phone's GPU shares RAM). Refuse politely instead of letting Android
+  // close the app.
+  const mem = await memInfo();
+  if (mem && mem.availMB - mem.thresholdMB < NEED_MB && !o.force)
+    throw new Error(`Smart fill needs about ${NEED_MB} MB of free memory, your phone has ${Math.max(0, mem.availMB - mem.thresholdMB)} MB free right now. Close other apps (or restart the phone) and try again.`);
   const bw = b.x1 - b.x0,
     bh = b.y1 - b.y0;
   // Context: the crop is ~1.6× the selection, at least 384 px, clamped to the frame.

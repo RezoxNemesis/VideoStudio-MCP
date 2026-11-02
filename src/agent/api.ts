@@ -24,6 +24,7 @@ import { fetchInbox, listInbox } from "./remote";
 import { assetThumb, contactSheet, frameSnapshot, scenePng, sceneSnapshot, stillImage } from "../render/snapshot";
 import { decodeMask, dilate, maskAtSize, maskBounds, maskToPng, segment } from "../media/ai";
 import { genDownload, genStatus, smartFill } from "../media/genfill";
+import { memInfo } from "../native/storage";
 import { ctx2d as ctx2dA, makeCanvas as makeCanvasA } from "../anim/render";
 import { analyseBeats, beatCut } from "../app/autoedit";
 import * as t3 from "../anim/three3d";
@@ -611,7 +612,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       } catch {
         /* no */
       }
-      return { ...st, webgpu };
+      return { ...st, webgpu, memory: await memInfo() };
     },
   },
   "smartfill.download": {
@@ -648,7 +649,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       const work = makeCanvasA(W, H);
       const wx = ctx2dA(work);
       wx.drawImage(src, 0, 0, W, H);
-      const res = await smartFill(wx, W, H, mask, { prompt: a.optStr("prompt"), steps: a.optNum("steps"), guidance: a.optNum("guidance"), seed: a.optNum("seed") }, (m) => s.setStatus(m));
+      const res = await smartFill(wx, W, H, mask, { prompt: a.optStr("prompt"), steps: a.optNum("steps"), guidance: a.optNum("guidance"), seed: a.optNum("seed"), force: a.bool("force", false) }, (m) => s.setStatus(m));
       s.setStatus("");
       // Bake: keep only the repainted pixels (plus the soft edge) in a transparent full-frame patch.
       const keep = dilate(mask, W, H, Math.max(5, Math.round(Math.max(W, H) / 128) + 4));

@@ -264,6 +264,21 @@ public class StudioStoragePlugin extends Plugin {
         call.resolve();
     }
 
+    /** Memory right now (so heavy on-phone AI can refuse politely instead of being closed by Android). */
+    @PluginMethod
+    public void memInfo(PluginCall call) {
+        android.app.ActivityManager am = (android.app.ActivityManager) getContext().getSystemService(android.content.Context.ACTIVITY_SERVICE);
+        android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        JSObject r = new JSObject();
+        r.put("availMB", mi.availMem / 1048576);
+        r.put("totalMB", mi.totalMem / 1048576);
+        r.put("thresholdMB", mi.threshold / 1048576);
+        r.put("low", mi.lowMemory);
+        r.put("largeHeapMB", am.getLargeMemoryClass());
+        call.resolve(r);
+    }
+
     /** Opens the system page where the person can allow VideoStudio to open itself for agent work. */
     @PluginMethod
     public void openAutoOpenSettings(PluginCall call) {
