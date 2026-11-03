@@ -13,6 +13,7 @@
 import * as ops from "../core/ops";
 import { newTrack, type Clip, type Ease, type Project, type TextStyle } from "../core/model";
 import type { MotionEl } from "../anim/motion";
+import { valueAt } from "../core/keyframes";
 
 /* ------------------------------------------------------------------ framing math ------------------------------------------------------------------ */
 
@@ -188,16 +189,15 @@ export function textMotion(p: Project, id: string, o: { in?: TextIn; out?: TextO
     H = p.height;
   const t0 = c.start,
     t1 = c.start + c.dur;
-  const base = (prop: "x" | "y" | "opacity" | "scale") => {
-    const v = c.transform[prop];
-    return typeof v === "number" ? v : (v?.[0]?.v ?? (prop === "opacity" || prop === "scale" ? 1 : 0));
-  };
-  const x0 = base("x"),
-    y0 = base("y"),
-    o0 = base("opacity"),
-    s0 = base("scale");
   const inD = Math.min(o.inDur ?? 0.5, c.dur * 0.45),
     outD = Math.min(o.outDur ?? 0.35, c.dur * 0.45);
+  // Resting values where each transition happens (a clip may already move, e.g. lyric lines shifting up).
+  const at = (prop: "x" | "y" | "opacity" | "scale", t: number) => valueAt(c.transform[prop], t - c.start, prop === "opacity" || prop === "scale" ? 1 : 0);
+  const restIn = t0 + inD;
+  let x0 = at("x", restIn),
+    y0 = at("y", restIn),
+    o0 = at("opacity", restIn),
+    s0 = at("scale", restIn);
   const k = (prop: string, t: number, v: number, e: Ease = "linear") => ops.keyframe(p, id, prop, t, v, e);
   const anim: Partial<Record<TextIn, TextStyle["animate"]>> = { write: "write", typewriter: "typewriter", pop: "pop", blurIn: "blurIn", drop: "drop", scramble: "scramble", track: "track", fade: "fade", zoomOut: "zoomOut", wave: "wave", rise: "rise" };
   if (o.in && o.in !== "none") {
@@ -219,6 +219,10 @@ export function textMotion(p: Project, id: string, o: { in?: TextIn; out?: TextO
   }
   if (o.out && o.out !== "none") {
     const a = t1 - outD;
+    x0 = at("x", a);
+    y0 = at("y", a);
+    o0 = at("opacity", a);
+    s0 = at("scale", a);
     const hold = (prop: "x" | "y" | "opacity" | "scale", v: number) => k(prop, a, v);
     switch (o.out) {
       case "rise":
