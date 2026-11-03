@@ -305,7 +305,12 @@ export function cutoutFor(p: Project, clipId: string): Clip {
     for (const c of t.clips)
       if (c.assetId === src.assetId && c.subject?.mode === "cutout" && c.start <= src.start + 1e-3 && c.start + c.dur >= src.start + src.dur - 1e-3) return c;
   const cut = ops.duplicateClip(p, src.id);
-  ops.moveClip(p, cut.id, src.start, trackOnTop(p, src.start, src.dur));
+  // Directly above the person's own track (not above everything): titles and graphics already placed in front
+  // stay in front; things meant to be behind go between the two.
+  const srcIdx = p.tracks.findIndex((t) => t.clips.some((c) => c.id === src.id));
+  const t = newTrack("video", "Cut-out");
+  p.tracks.splice(Math.max(0, srcIdx), 0, t);
+  ops.moveClip(p, cut.id, src.start, t.id);
   cut.subject = { mode: "cutout", bg: "transparent" };
   cut.name = `${src.name} (cut-out)`;
   cut.volume = 0;
