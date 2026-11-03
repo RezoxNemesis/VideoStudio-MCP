@@ -249,6 +249,8 @@ export interface Asset {
   /** Waveform peaks (for timeline drawing), 100 per second max. */
   peaks?: number[];
   createdBy?: "user" | "agent" | "voice" | "render";
+  /** Light edit copy of a big video (preview and helpers read it; the export reads the original). */
+  proxy?: { ref: string; width: number; height: number };
 }
 
 export interface Project {

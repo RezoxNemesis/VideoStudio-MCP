@@ -13,7 +13,7 @@ import { flattenPath } from "../anim/svgpath";
 import { ambience, compose, sfx, SFX, toWav, type Ambience, type Mood, type Sfx } from "../audio/compose";
 import { enhance, loudness, type EnhanceOptions } from "../audio/enhance";
 import * as motion from "../anim/motion";
-import { computeMatte, matteLoad, storeMatte } from "../media/matte";
+import { computeMatte, matteAt, matteLoad, storeMatte } from "../media/matte";
 import { GENERATED_TEXTURES, type SubjectSpec } from "../render/subject";
 import * as proc from "../anim/proc";
 import { speechEnvelope } from "../media/library";
@@ -31,6 +31,9 @@ import { genDownload, genStatus, smartFill } from "../media/genfill";
 import { memInfo } from "../native/storage";
 import { ctx2d as ctx2dA, makeCanvas as makeCanvasA } from "../anim/render";
 import { analyseBeats, beatCut } from "../app/autoedit";
+import * as cr from "../app/creative";
+import { makeProxy, wantsProxy } from "../media/proxy";
+import { valueAt } from "../core/keyframes";
 import * as t3 from "../anim/three3d";
 import * as living from "../anim/living";
 import * as mv from "../app/musicvideo";
@@ -1222,6 +1225,17 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     run: async (s, a) => {
       const as = findAsset(s.project, a.str("assetId"));
       if (!as) throw new ops.OpError("No such asset.");
+      if (a.optStr("track")) {
+        // A ready-made matte track (e.g. from a green screen or another tool): base64 of n frames of w*h alpha bytes.
+        const bin = atob(a.str("track"));
+        const data = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+        const w = a.num("w"),
+          h = a.num("h"),
+          n = Math.floor(data.length / (w * h));
+        const m2 = await storeMatte(as.id, { w, h, fps: a.num("fps", 15), n, data: data.subarray(0, n * w * h) });
+        return { frames: m2.n, size: `${m2.w}x${m2.h}`, fps: m2.fps };
+      }
       if (a.optStr("mask")) {
         // A hand-made mask (white/opaque = subject) for a photo, instead of the AI.
         const mk = await decodeMask(a.str("mask"));
@@ -1688,6 +1702,134 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         }
         return { titleId };
       }),
+  },
+  "camera.auto": {
+    help: `{id | ids, musicId? (song to cut to; default: the project's music or the clip's own sound), cuts?: [s...] (own cut times), every?=2 (beats per shot), pattern?: ${Object.keys(cr.SHOT_PATTERNS).join("|")} | [${Object.keys(cr.SHOTS).join("|")}...], start?, end?, accent?=1 (cut zoom-blur/RGB kick), follow?=true (frame on the face from the person matte)} Virtual multicam from one take: wide, close-ups, rule-of-thirds and tilted shots cut on the beat, framed on the performer, never showing black edges. Cut-out copies of the clip follow automatically.`,
+    run: async (s, a) => {
+      const ids0 = (a.any("ids") as string[] | undefined) ?? [a.str("id")];
+      const c0 = ops.getClip(s.project, ids0[0]!);
+      const start = a.num("start", c0.start),
+        end = a.num("end", c0.start + c0.dur);
+      let cuts = a.any("cuts") as number[] | undefined;
+      let hits: number[] = [];
+      if (!cuts) {
+        const musicId =
+          a.optStr("musicId") ??
+          s.project.tracks.filter((t) => t.kind === "audio").flatMap((t) => t.clips).find((c) => c.assetId && c.start < end && c.start + c.dur > start)?.assetId ??
+          c0.assetId;
+        if (!musicId) throw new ops.OpError("Give cuts:[...] or a musicId to cut to.");
+        const mclip = s.project.tracks.flatMap((t) => t.clips).find((c) => c.assetId === musicId);
+        const off = mclip ? mclip.start - mclip.in : 0;
+        const info = await analyseBeats(s, musicId);
+        const every = Math.max(1, Math.round(a.num("every", 2)));
+        const beats = info.beats.map((b) => b + off).filter((b) => b > start && b < end);
+        cuts = beats.filter((_, i) => i % every === 0);
+        hits = info.onsets.map((b) => b + off);
+      }
+      // Face positions from the person matte (sampled per shot).
+      const as = findAsset(s.project, c0.assetId);
+      const m = a.bool("follow", true) && as && (as.kind === "video" || as.kind === "image") ? await matteLoad(as.id) : null;
+      const head = m
+        ? (t: number) => {
+            const src = c0.in + (t - c0.start) * c0.speed;
+            const hp = cr.headPoint(matteAt(m, src), m.w, m.h);
+            return hp.found ? hp : null;
+          }
+        : undefined;
+      const pat = a.any("pattern");
+      const pattern = Array.isArray(pat) ? (pat as cr.ShotKind[]) : cr.SHOT_PATTERNS[(pat as string | undefined) ?? "performance"];
+      return s.mutate("auto camera", (p) => {
+        // Every copy of this footage over the same time (cut-outs for text-behind, echoes) moves with the camera.
+        const ids = new Set(ids0);
+        for (const t of p.tracks)
+          for (const c of t.clips) if (c.assetId && c.assetId === c0.assetId && c.subject?.mode === "cutout" && c.start < end && c.start + c.dur > start) ids.add(c.id);
+        const shots = cr.planShots({ W: p.width, H: p.height, cuts: cuts!, start, end, pattern, head });
+        cr.applyShots(p, [...ids], shots, { accent: a.num("accent", 1), hits });
+        return { shots: shots.map((x) => ({ t: r3(x.t0), kind: x.kind })), clips: [...ids], followedFace: !!head };
+      });
+    },
+  },
+  "text.motion": {
+    help: `{id, in?: ${cr.TEXT_IN.join("|")}, out?: ${cr.TEXT_OUT.join("|")}, inDur?, outDur?} Entrance and exit transitions for a title.`,
+    run: (s, a) => s.mutate("text motion", (p) => (cr.textMotion(p, a.str("id"), { in: a.optStr("in") as cr.TextIn, out: a.optStr("out") as cr.TextOut, inDur: a.optNum("inDur"), outDur: a.optNum("outDur") }), true)),
+  },
+  "lyrics.write": {
+    help: `{lines:[{start, end?, text}], style?: ${Object.keys(cr.LYRIC_STYLES).join("|")}, y?=0.12 (top line, 0..1), keep?=2 (lines on the page), behind? (subject clip id: write behind the person), underline?, color?, size?} Handwritten lyrics: each line is inked as it is sung; older lines float up and dissolve as new ones arrive.`,
+    run: async (s, a) => {
+      const behind = a.optStr("behind");
+      if (behind) {
+        const c = ops.getClip(s.project, behind);
+        const as = findAsset(s.project, c.assetId);
+        if (as && !(await matteLoad(as.id))) {
+          await computeMatte(s.pool, as, { onProgress: (x) => s.setStatus(x) });
+          s.setStatus("");
+        }
+      }
+      return s.mutate("handwritten lyrics", (p) => {
+        const r = cr.lyricsWrite(p, { lines: a.any("lines") as cr.LyricIn[], style: a.optStr("style"), y: a.optNum("y"), keep: a.optNum("keep"), behind, underline: a.bool("underline"), color: a.optStr("color"), size: a.optNum("size") });
+        let inkId: string | undefined;
+        if (r.underline) {
+          const t0 = Math.min(...r.underline.map((e) => e.t0));
+          const t1 = Math.max(...r.underline.map((e) => e.t1 ?? e.t0 + 2));
+          const els = r.underline.map((e) => ({ ...e, t0: e.t0 - t0, t1: (e.t1 ?? e.t0 + 2) - t0 }));
+          const cut = behind ? cr.cutoutFor(p, behind) : null;
+          const cutTrack = cut ? p.tracks.find((t) => t.clips.includes(cut))!.id : undefined;
+          inkId = procClip(p, { type: "motion", style: "custom", motion: { theme: "noir", bg: false, els } as unknown as motion.MotionSpec }, t0, t1 - t0, { name: "Lyric ink", trackId: cutTrack ? cr.trackBelow(p, cutTrack, t0, t1 - t0) : undefined }).id;
+        }
+        return { ids: r.ids, inkId };
+      });
+    },
+  },
+  "doodle.add": {
+    help: `{type: ${cr.DOODLES.join("|")}, at?, dur?=1.6, x?, y? (0..1), size?=0.5 (of the width), color?=#ffe7c4, around? (subject clip id: centre on the performer's head, follows the camera), behind?=false (behind the person; needs around), draw? (s to draw)} Hand-drawn ink graphics that draw themselves.`,
+    run: async (s, a) => {
+      const at = a.num("at", s.time),
+        dur = a.num("dur", 1.6);
+      let x = a.num("x", 0.5),
+        y = a.num("y", 0.4);
+      const around = a.optStr("around");
+      let size = a.num("size", 0.5);
+      if (around) {
+        const c = ops.getClip(s.project, around);
+        const as = findAsset(s.project, c.assetId);
+        const m = as ? await matteLoad(as.id) : null;
+        const src = c.in + (at + 0.1 - c.start) * c.speed;
+        const hp = m ? cr.headPoint(matteAt(m, src), m.w, m.h) : { x: 0.5, y: 0.22, found: false };
+        const sc = cr.sourceToScreen(s.project, c, at + 0.1, hp, valueAt as never);
+        x = a.optNum("x") ?? sc.x;
+        y = a.optNum("y") ?? sc.y - (a.str("type") === "emphasis" || a.str("type") === "crown" ? 0.09 : 0);
+        if (a.optNum("size") === undefined) size = Math.min(0.9, 0.5 * valueAt(c.transform.scale, at - c.start, 1));
+      }
+      const color = a.str("color", "#ffe7c4");
+      return s.mutate("doodle", (p) => {
+        const els = cr.doodleEls(a.str("type") as cr.Doodle, { x, y, size, t0: 0, t1: dur, color, aspect: p.width / p.height, draw: a.optNum("draw") });
+        let trackId: string | undefined;
+        if (around && a.bool("behind")) {
+          const cut = cr.cutoutFor(p, around);
+          trackId = cr.trackBelow(p, p.tracks.find((t) => t.clips.includes(cut))!.id, at, dur);
+        }
+        return procClip(p, { type: "motion", style: "custom", motion: { theme: "noir", bg: false, els } as unknown as motion.MotionSpec }, at, dur, { name: `Doodle ${a.str("type")}`, trackId });
+      });
+    },
+  },
+  "media.proxy": {
+    help: "{assetId?} Make a light 720p editing copy of a big (2K/4K) video: smooth preview and scrubbing, no blank preview on phones. The export always uses the original. Runs automatically for new 4K imports.",
+    run: async (s, a) => {
+      const list = a.optStr("assetId") ? [findAsset(s.project, a.str("assetId"))!] : s.project.assets.filter(wantsProxy);
+      const out: { id: string; proxy: string }[] = [];
+      for (const as of list) {
+        if (!as || as.kind !== "video") continue;
+        const px = await makeProxy(as, (f) => s.setStatus(`Preparing editing copy ${Math.round(f * 100)}%`));
+        s.mutate("proxy", (p) => {
+          const cur = p.assets.find((x) => x.id === as.id);
+          if (cur && px) cur.proxy = px;
+        });
+        await s.pool.dropFramers("preview");
+        out.push({ id: as.id, proxy: px ? `${px.width}x${px.height}` : "none" });
+      }
+      s.setStatus("");
+      return out;
+    },
   },
   "layout.strips": {
     help: "{ids:[clip ids, 3..6], start?, hold?=1.6, collapse?=0.8, hero? (index kept full frame)} Strip intro: the clips appear as vertical slices side by side (staggered slide-in), then the slices collapse into the hero shot full frame.",

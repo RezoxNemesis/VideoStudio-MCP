@@ -144,6 +144,12 @@ async function main() {
       return studio.project;
     },
     studio,
+    /** Render the timeline and hand back the MP4 (desktop testing and automation). */
+    async renderBlob(o: Record<string, unknown> = {}) {
+      const { ExportJob } = await import("./render/export");
+      const r = await new ExportJob(studio.project, studio.pool, o).run();
+      return r;
+    },
   };
   (window as unknown as { videostudio: typeof api }).videostudio = api;
 

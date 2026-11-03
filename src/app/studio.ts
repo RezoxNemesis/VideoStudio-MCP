@@ -1,4 +1,5 @@
 /** The single owner of app state. UI panels and the agent API both edit through `mutate`, so undo covers both. */
+import { makeProxy, wantsProxy } from "../media/proxy";
 import { History } from "../core/history";
 import { newProject, projectDuration, uid, type Asset, type Project } from "../core/model";
 import { kvGet, kvSet, listProjects, loadProject, requestPersistence, saveProject, putBlob } from "../core/storage";
@@ -45,6 +46,37 @@ export class Studio {
     }
   }
 
+  private proxyBusy = false;
+  private proxyTimer = 0;
+  /** Make light edit copies of big videos in the background (smooth preview, no blank frames on phones). */
+  ensureProxies(): void {
+    if (this.proxyBusy) return;
+    const todo = this.project.assets.filter(wantsProxy);
+    if (!todo.length) return;
+    this.proxyBusy = true;
+    void (async () => {
+      try {
+        for (const a0 of todo) {
+          const a = this.project.assets.find((x) => x.id === a0.id);
+          if (!a || !wantsProxy(a)) continue;
+          try {
+            const px = await makeProxy(a, (f) => this.setStatus(`Preparing a smooth editing copy of ${a.name}… ${Math.round(f * 100)}%`));
+            const cur = this.project.assets.find((x) => x.id === a.id);
+            if (cur && px) cur.proxy = px;
+            await this.pool.dropFramers("preview");
+            this.setStatus("Smooth editing copy ready");
+            this.touched();
+          } catch (e) {
+            console.warn("proxy failed", e);
+            this.setStatus("");
+          }
+        }
+      } finally {
+        this.proxyBusy = false;
+      }
+    })();
+  }
+
   async boot(): Promise<void> {
     void requestPersistence();
     const last = await kvGet<string>("lastProject").catch(() => undefined);
@@ -53,6 +85,7 @@ export class Studio {
     else await this.save();
     this.emit("project");
     this.emit("change");
+    window.setTimeout(() => this.ensureProxies(), 1500);
   }
 
   /** Apply an edit with undo. Throws through so agents get the error. */
@@ -80,6 +113,10 @@ export class Studio {
     this.emit("change");
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => void this.save(), 800);
+    if (this.project.assets.some(wantsProxy)) {
+      window.clearTimeout(this.proxyTimer);
+      this.proxyTimer = window.setTimeout(() => this.ensureProxies(), 3000);
+    }
   }
 
   async save(): Promise<void> {
@@ -117,6 +154,7 @@ export class Studio {
     this.emit("project");
     this.emit("change");
     this.emit("time");
+    window.setTimeout(() => this.ensureProxies(), 1500);
     return this.project;
   }
 
@@ -174,6 +212,7 @@ export class Studio {
       }
     }
     this.setStatus(out.length ? `Imported ${out.length} file${out.length > 1 ? "s" : ""}` : "");
+    this.ensureProxies();
     return out;
   }
 

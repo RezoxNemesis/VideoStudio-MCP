@@ -241,6 +241,23 @@ export class MediaPool {
     return e;
   }
 
+  /** The proxy's video track (light 720p edit copy) when the asset has one. */
+  private proxyEntry(a: Asset): Promise<Entry> | null {
+    const px = a.proxy;
+    if (!px) return null;
+    const key = `${a.id}|proxy:${px.ref}`;
+    let e = this.entries.get(key);
+    if (!e) {
+      e = (async () => {
+        const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(await getBlob(px.ref)) });
+        return { input, video: await input.getPrimaryVideoTrack(), audio: null };
+      })();
+      this.entries.set(key, e);
+      e.catch(() => this.entries.delete(key));
+    }
+    return e;
+  }
+
   private reaper: ReturnType<typeof setInterval> | null = null;
   /**
    * Phones have only a few hardware video decoders. Helper readers (matte, scenes, thumbnails, selection...) are
@@ -249,13 +266,13 @@ export class MediaPool {
   private reapIdle(): void {
     const now = performance.now();
     for (const [k, f] of this.framers) {
-      if (k.endsWith("|preview") || k.endsWith("|export")) continue;
+      if (/\|(preview|export)(\|px)?$/.test(k)) continue;
       if (now - f.lastUse > 4000 && !f.isBusy) {
         this.framers.delete(k);
         void f.dispose();
       }
     }
-    if (![...this.framers.keys()].some((k) => !k.endsWith("|preview") && !k.endsWith("|export")) && this.reaper) {
+    if (![...this.framers.keys()].some((k) => !/\|(preview|export)(\|px)?$/.test(k)) && this.reaper) {
       clearInterval(this.reaper);
       this.reaper = null;
     }
@@ -263,10 +280,20 @@ export class MediaPool {
 
   /** A framer per (asset, purpose). Preview framers decode at reduced size for speed. */
   async framer(a: Asset, purpose: string, maxDim?: number): Promise<VideoFramer | null> {
-    const key = `${a.id}|${purpose}`;
+    // Everything but the export reads the light proxy when there is one.
+    const usesProxy = purpose !== "export" && !!a.proxy;
+    const key = `${a.id}|${purpose}${usesProxy ? "|px" : ""}`;
     const have = this.framers.get(key);
     if (have) return have;
-    const e = await this.entry(a);
+    if (usesProxy) {
+      // The original-resolution reader for this purpose is no longer needed.
+      const old = this.framers.get(`${a.id}|${purpose}`);
+      if (old) {
+        this.framers.delete(`${a.id}|${purpose}`);
+        void old.dispose();
+      }
+    }
+    const e = usesProxy ? ((await this.proxyEntry(a)!.catch(() => null)) ?? (await this.entry(a))) : await this.entry(a);
     if (!e.video) return null;
     let w: number | undefined;
     let h: number | undefined;
@@ -283,7 +310,7 @@ export class MediaPool {
 
   async dropFramers(purpose: string): Promise<void> {
     for (const [k, f] of this.framers) {
-      if (!k.endsWith(`|${purpose}`)) continue;
+      if (!k.endsWith(`|${purpose}`) && !k.endsWith(`|${purpose}|px`)) continue;
       await f.dispose();
       this.framers.delete(k);
     }

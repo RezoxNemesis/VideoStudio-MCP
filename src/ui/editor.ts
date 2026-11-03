@@ -379,6 +379,63 @@ export class EditorView {
         }, "ghost"),
       ),
     );
+    // Creative director: auto camera, handwritten lyrics, doodles, text transitions, editing copies.
+    const sel = s.selection ? findClip(s.project, s.selection)?.clip : undefined;
+    const selVideo = sel && sel.assetId && ["video", "image"].includes(s.project.assets.find((x) => x.id === sel.assetId)?.kind ?? "") ? sel : undefined;
+    const firstVideo = selVideo ?? s.project.tracks.flatMap((t) => t.clips).find((c) => s.project.assets.find((x) => x.id === c.assetId)?.kind === "video");
+    let camPattern = "performance";
+    let camEvery = "2";
+    const lyr = h("textarea", { rows: "4", style: "width:100%", placeholder: "One line per lyric: start seconds | text\n13.2 | ye na jaane kyun\n14.3 | jabse aaya tu" }) as HTMLTextAreaElement;
+    let lyrStyle = "handwritten";
+    let lyrBehind = true;
+    let lyrUnder = true;
+    let dType = "heart";
+    let dAround = true;
+    let dBehind = true;
+    let tIn = "write";
+    let tOut = "rise";
+    const textSel = sel?.text ? sel : undefined;
+    const director = h(
+      "div",
+      { class: "stack" },
+      h("h3", {}, "Auto camera (virtual multicam)"),
+      h("p", { class: "hint" }, firstVideo ? `Turns “${firstVideo.name}” into a beat-cut sequence of shots — wide, close-up, extreme close-up, left/right thirds and tilts — framed on the face, never showing black edges.` : "Add a video clip first."),
+      select("Shots", [["performance", "Performance (varied)"], ["calm", "Calm (slow, gentle)"], ["hype", "Hype (tight and tilted)"]] as [string, string][], camPattern, (v) => (camPattern = v)),
+      select("Cut every", [["1", "beat"], ["2", "2 beats"], ["4", "bar (4 beats)"]] as [string, string][], camEvery, (v) => (camEvery = v)),
+      btn("Direct the camera", "film", () => {
+        if (!firstVideo) return toast("Add a video clip first", "error");
+        void run("Directing the camera…", [{ op: "camera.auto", id: firstVideo.id, pattern: camPattern, every: Number(camEvery) }], (r) => `${(r as { shots: unknown[] }).shots.length} shots`);
+      }, "primary"),
+      h("h3", {}, "Handwritten lyrics"),
+      h("p", { class: "hint" }, "Each line is written in ink as it is sung; older lines float up and dissolve. Behind the singer when a video clip is selected."),
+      lyr,
+      select("Hand", [["handwritten", "Handwriting"], ["marker", "Marker"], ["signature", "Signature script"], ["hindi", "Hindi (Devanagari)"], ["serif", "Serif"]] as [string, string][], lyrStyle, (v) => (lyrStyle = v)),
+      toggle("Behind the person", lyrBehind, (v) => (lyrBehind = v)),
+      toggle("Ink underline", lyrUnder, (v) => (lyrUnder = v)),
+      btn("Write the lyrics", "text", () => {
+        const ls = lyr.value.split("\n").map((l) => l.split("|")).filter((x) => x.length >= 2 && !isNaN(parseFloat(x[0]!))).map(([t, ...rest]) => ({ start: parseFloat(t!), text: rest.join("|").trim() }));
+        if (!ls.length) return toast("Write lines as: seconds | text", "error");
+        void run("Writing the lyrics…", [{ op: "lyrics.write", lines: ls, style: lyrStyle, underline: lyrUnder, ...(lyrBehind && firstVideo ? { behind: firstVideo.id } : {}) }], () => `${ls.length} lines written`);
+      }, "primary"),
+      h("h3", {}, "Ink doodles"),
+      h("p", { class: "hint" }, "Hand-drawn graphics that draw themselves at the playhead: hearts, loops, arrows, stars, music notes and staff, crowns, sparkles…"),
+      select("Doodle", [["heart", "Heart"], ["circle", "Loop around"], ["underline", "Underline"], ["arrow", "Arrow"], ["emphasis", "Emphasis marks"], ["speedlines", "Speed lines"], ["stars", "Stars"], ["spiral", "Spiral"], ["notes", "Music notes"], ["staff", "Music staff"], ["crown", "Crown"], ["scribble", "Scribble"], ["sparkle", "Sparkle"]] as [string, string][], dType, (v) => (dType = v)),
+      toggle("Around the performer's head", dAround, (v) => (dAround = v)),
+      toggle("Behind the performer", dBehind, (v) => (dBehind = v)),
+      btn("Draw it", "brush", () => void run("Drawing…", [{ op: "doodle.add", type: dType, at: s.time, ...(dAround && firstVideo ? { around: firstVideo.id, behind: dBehind } : {}) }], () => "Doodle added"), "primary"),
+      h("h3", {}, "Title transitions"),
+      h("p", { class: "hint" }, textSel ? `In and out animation for “${textSel.name}”.` : "Select a title on the timeline first."),
+      select("In", [["write", "Write on"], ["rise", "Rise"], ["pop", "Pop"], ["blurIn", "Blur in"], ["slideLeft", "Slide from right"], ["slideRight", "Slide from left"], ["drop", "Drop"], ["typewriter", "Typewriter"], ["scramble", "Decode"], ["track", "Track in"], ["zoomOut", "Zoom out"], ["none", "None"]] as [string, string][], tIn, (v) => (tIn = v)),
+      select("Out", [["rise", "Rise & dissolve"], ["blur", "Blur away"], ["fade", "Fade"], ["slideLeft", "Slide left"], ["slideRight", "Slide right"], ["drop", "Drop"], ["zoom", "Zoom through"], ["shrink", "Shrink"], ["none", "None"]] as [string, string][], tOut, (v) => (tOut = v)),
+      btn("Apply", "check", () => {
+        if (!textSel) return toast("Select a title first", "error");
+        void run("Animating…", [{ op: "text.motion", id: textSel.id, in: tIn, out: tOut }], () => "Transitions added");
+      }, "primary"),
+      h("h3", {}, "Smooth editing copies"),
+      h("p", { class: "hint" }, "4K videos get a light editing copy so the preview stays smooth and never goes blank. Renders still use the full-quality original. Happens automatically; tap to do it now."),
+      btn("Make editing copies", "film", () => void run("Preparing editing copies…", [{ op: "media.proxy" }], (r) => `${(r as unknown[]).length} editing cop${(r as unknown[]).length === 1 ? "y" : "ies"} ready`), "ghost"),
+    );
+    body.prepend(director);
     const sh = sheet("Pro studio", body, { tall: true });
   }
 
