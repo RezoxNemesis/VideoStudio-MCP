@@ -1366,7 +1366,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     },
   },
   "motion.add": {
-    help: `{spec:{theme, els:[{k: ${["dot", "spark", "pill", "frame", "path", "dots", "ring", "stars", "title", "logo", "line", "eclipse", "fog", "embers", "rays", "brush", "flash"].join("|")}, t0, t1?, x?, y?, s?, text?, sub?, pts?, n?, color?, icon?, variant?, font?, rot?}], cam?:[{t,z,x,y,r}], bg?: false to overlay footage, grain?}, start?, dur} Hand-built motion-design sequence.`,
+    help: `{spec:{theme, els:[{k: ${["dot", "spark", "pill", "frame", "path", "dots", "ring", "stars", "title", "logo", "line", "eclipse", "fog", "embers", "rays", "brush", "flash", "ink", "staff", "note", "serif", "shape", "star4"].join("|")}, t0, t1?, x?, y?, s?, text?, sub?, pts?, n?, color?, icon?, variant?, font?, rot?}], cam?:[{t,z,x,y,r}], bg?: false to overlay footage, grain?}, start?, dur} Hand-built motion-design sequence.`,
     run: (s, a) => s.mutate("motion design", (p) => procClip(p, { type: "motion", style: "custom", motion: a.obj("spec") as unknown as motion.MotionSpec }, a.num("start", s.time), a.num("dur"), { name: "Motion", bottom: (a.obj("spec") as { bg?: boolean }).bg !== false })),
   },
   "anim.living": {

@@ -119,6 +119,10 @@ export class VideoFramer {
     this.sink = new CanvasSink(track, { width, height, fit: width && height ? "contain" : undefined, poolSize: 4 });
   }
 
+  get isBusy(): boolean {
+    return !!this.busy;
+  }
+
   /** Last frame that was ready (never waits). */
   get latest(): WrappedCanvas | null {
     return this.cur;
@@ -131,8 +135,42 @@ export class VideoFramer {
     return this.decode(t);
   }
 
+  /** Last time this framer was asked for a frame (the pool closes idle helper decoders). */
+  lastUse = performance.now();
+
   private decode(t: number): Promise<WrappedCanvas | null> {
+    this.lastUse = performance.now();
     const run = (async () => {
+      try {
+        return await this.step(t);
+      } catch (e) {
+        // A failed or reclaimed hardware decoder (phones allow only a few at once) must not leave this reader
+        // broken forever: drop the iterator and try once more from a fresh decoder.
+        console.warn("frame decode failed, restarting decoder", e);
+        await this.resetIter();
+        try {
+          return await this.step(t);
+        } catch {
+          await this.resetIter();
+          return this.cur;
+        }
+      }
+    })();
+    this.busy = run;
+    return run.finally(() => {
+      if (this.busy === run) this.busy = null;
+    });
+  }
+
+  private async resetIter(): Promise<void> {
+    const it = this.iter;
+    this.iter = null;
+    this.next = null;
+    await it?.return().catch(() => {});
+  }
+
+  private async step(t: number): Promise<WrappedCanvas | null> {
+    {
       const covers = (w: WrappedCanvas | null) => !!w && t >= w.timestamp - 1e-4 && t < w.timestamp + Math.max(w.duration, 1e-3) - 1e-4;
       if (covers(this.cur)) return this.cur;
       const ahead = this.cur && t > this.cur.timestamp && t - this.cur.timestamp < 2;
@@ -157,11 +195,7 @@ export class VideoFramer {
         } else break;
       }
       return this.cur;
-    })();
-    this.busy = run;
-    return run.finally(() => {
-      if (this.busy === run) this.busy = null;
-    });
+    }
   }
 
   async dispose(): Promise<void> {
@@ -207,6 +241,26 @@ export class MediaPool {
     return e;
   }
 
+  private reaper: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Phones have only a few hardware video decoders. Helper readers (matte, scenes, thumbnails, selection...) are
+   * closed after a few idle seconds so the preview and the export always get one.
+   */
+  private reapIdle(): void {
+    const now = performance.now();
+    for (const [k, f] of this.framers) {
+      if (k.endsWith("|preview") || k.endsWith("|export")) continue;
+      if (now - f.lastUse > 4000 && !f.isBusy) {
+        this.framers.delete(k);
+        void f.dispose();
+      }
+    }
+    if (![...this.framers.keys()].some((k) => !k.endsWith("|preview") && !k.endsWith("|export")) && this.reaper) {
+      clearInterval(this.reaper);
+      this.reaper = null;
+    }
+  }
+
   /** A framer per (asset, purpose). Preview framers decode at reduced size for speed. */
   async framer(a: Asset, purpose: string, maxDim?: number): Promise<VideoFramer | null> {
     const key = `${a.id}|${purpose}`;
@@ -223,6 +277,7 @@ export class MediaPool {
     }
     const f = new VideoFramer(e.video, w, h);
     this.framers.set(key, f);
+    if (purpose !== "preview" && purpose !== "export" && !this.reaper) this.reaper = setInterval(() => this.reapIdle(), 2000);
     return f;
   }
 

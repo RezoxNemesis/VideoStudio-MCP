@@ -34,7 +34,10 @@ export type MotionKind =
   | "tag"
   | "figure"
   | "star4"
-  | "panel";
+  | "panel"
+  | "ink"
+  | "staff"
+  | "note";
 
 export interface MotionEl {
   k: MotionKind;
@@ -543,6 +546,85 @@ function drawEl(c: Ctx, el: MotionEl, th: Theme, W: number, H: number, t: number
       c.stroke();
       const [hx, hy] = along(pts, p, W, H);
       glowDot(c, hx, hy, S * 0.007, col);
+      break;
+    }
+    case "ink": {
+      // A pen/brush stroke drawing itself: pressure-tapered width, wet glowing tip, slight hand wobble.
+      const pts = el.pts ?? [
+        [0.2, 0.6],
+        [0.5, 0.55],
+        [0.8, 0.6],
+      ];
+      const drawDur = el.n ?? 0.6;
+      const p = easeInOut(clamp(u / Math.max(0.05, drawDur)));
+      const w0 = (el.s ?? 0.012) * S;
+      const N = Math.max(24, pts.length * 28);
+      const seed = el.seed ?? 1;
+      const pp: [number, number][] = [];
+      for (let i = 0; i <= Math.ceil(N * p); i++) pp.push(along(pts, Math.min(p, i / N), W, H));
+      c.lineCap = "round";
+      c.lineJoin = "round";
+      c.shadowColor = rgba(col, 0.6);
+      c.shadowBlur = w0 * 1.6;
+      c.strokeStyle = col;
+      for (let i = 1; i < pp.length; i++) {
+        const f = i / N;
+        // Pressure: thin at the start and end of the whole stroke, fuller in the middle, with a little grain.
+        const press = Math.sin(Math.PI * clamp(f * 0.92 + 0.04)) ** 0.6 * (0.85 + 0.15 * Math.sin(f * 37 + seed * 3.1));
+        c.lineWidth = Math.max(1, w0 * press);
+        c.beginPath();
+        c.moveTo(pp[i - 1]![0], pp[i - 1]![1]);
+        c.lineTo(pp[i]![0], pp[i]![1]);
+        c.stroke();
+      }
+      c.shadowBlur = 0;
+      if (p < 1 && pp.length) {
+        const [hx, hy] = pp[pp.length - 1]!;
+        glowDot(c, hx, hy, w0 * 0.45, col);
+      }
+      break;
+    }
+    case "staff": {
+      // Five flowing lines of sheet music drawing across the frame (a song being written).
+      const gap = (el.s ?? 0.016) * H;
+      const drawDur = el.n ?? 1.2;
+      const p = easeInOut(clamp(u / Math.max(0.05, drawDur)));
+      c.strokeStyle = rgba(col, 0.7);
+      c.lineWidth = Math.max(1.2, S * 0.0028);
+      c.shadowColor = rgba(col, 0.5);
+      c.shadowBlur = S * 0.008;
+      const amp = H * 0.012;
+      for (let l = 0; l < 5; l++) {
+        c.beginPath();
+        const steps = 60;
+        for (let i = 0; i <= steps * p; i++) {
+          const fx = i / steps;
+          const px = fx * W * 1.1 - W * 0.05;
+          const py = y + (l - 2) * gap + Math.sin(fx * 5.5 + u * 1.6 + (el.seed ?? 0)) * amp + Math.sin(fx * 2.1 - u * 0.9) * amp * 0.6;
+          if (i === 0) c.moveTo(px, py);
+          else c.lineTo(px, py);
+        }
+        c.stroke();
+      }
+      break;
+    }
+    case "note": {
+      // A music note that pops in and floats up with a sway.
+      const sz = (el.s ?? 0.05) * S;
+      const pop = 0.6 + 0.4 * spring(u * 2);
+      const rise = u * H * 0.045;
+      const sway = Math.sin(u * 2.4 + (el.seed ?? 0)) * S * 0.015;
+      c.globalAlpha *= clamp(u * 5);
+      c.translate(x + sway, y - rise);
+      c.rotate((el.rot ?? 0) + Math.sin(u * 1.7 + (el.seed ?? 0)) * 0.15);
+      c.scale(pop, pop);
+      c.font = `400 ${sz}px "Noto Music", "Noto Sans Symbols 2", "Segoe UI Symbol", serif`;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.shadowColor = rgba(col, 0.7);
+      c.shadowBlur = sz * 0.4;
+      c.fillStyle = col;
+      c.fillText(el.text ?? "\u266A", 0, 0);
       break;
     }
     case "dots": {
