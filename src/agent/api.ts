@@ -1768,6 +1768,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       // Readable placement: behind a person, pick the height where the person covers the words least
       // (checked at every line with the clip's current camera framing — run camera.auto first).
       let yAuto: number | undefined;
+      let front = false;
       if (behind && a.optNum("y") === undefined) {
         const c = ops.getClip(s.project, behind);
         const as = findAsset(s.project, c.assetId);
@@ -1778,8 +1779,10 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
           const st = cr.LYRIC_STYLES[a.str("style", "handwritten")] ?? cr.LYRIC_STYLES.handwritten!;
           const gap = ((a.optNum("size") ?? st.size) * 1.25) / 1920;
           let best = Infinity;
+          let samples = 0;
           for (const y of [0.07, 0.12, 0.18, 0.56, 0.64, 0.72]) {
             let cov = 0;
+            samples = lines.length * 2;
             for (const ln of lines)
               for (const dt of [0.3, 1.2]) {
                 const t = ln.start + dt;
@@ -1791,20 +1794,26 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
             cov += y > 0.5 ? 0.04 : 0;
             if (cov < best) (best = cov), (yAuto = y);
           }
+          // The person fills the frame everywhere: words behind them would be unreadable, so write in front
+          // (lower third) instead.
+          if (best / Math.max(1, samples) > 0.22) {
+            front = true;
+            yAuto = 0.7;
+          }
         }
       }
       return s.mutate("handwritten lyrics", (p) => {
-        const r = cr.lyricsWrite(p, { lines: a.any("lines") as cr.LyricIn[], style: a.optStr("style"), y: a.optNum("y") ?? yAuto, keep: a.optNum("keep"), behind, underline: a.bool("underline"), color: a.optStr("color"), size: a.optNum("size") });
+        const r = cr.lyricsWrite(p, { lines: a.any("lines") as cr.LyricIn[], style: a.optStr("style"), y: a.optNum("y") ?? yAuto, keep: a.optNum("keep"), behind: front ? undefined : behind, underline: a.bool("underline"), color: a.optStr("color"), size: a.optNum("size") });
         let inkId: string | undefined;
         if (r.underline) {
           const t0 = Math.min(...r.underline.map((e) => e.t0));
           const t1 = Math.max(...r.underline.map((e) => e.t1 ?? e.t0 + 2));
           const els = r.underline.map((e) => ({ ...e, t0: e.t0 - t0, t1: (e.t1 ?? e.t0 + 2) - t0 }));
-          const cut = behind ? cr.cutoutFor(p, behind) : null;
+          const cut = behind && !front ? cr.cutoutFor(p, behind) : null;
           const cutTrack = cut ? p.tracks.find((t) => t.clips.includes(cut))!.id : undefined;
           inkId = procClip(p, { type: "motion", style: "custom", motion: { theme: "noir", bg: false, els } as unknown as motion.MotionSpec }, t0, t1 - t0, { name: "Lyric ink", trackId: cutTrack ? cr.trackBelow(p, cutTrack, t0, t1 - t0) : undefined }).id;
         }
-        return { ids: r.ids, inkId };
+        return { ids: r.ids, inkId, placement: front ? "in front (the person fills the frame)" : behind ? "behind the person" : "on top", y: a.optNum("y") ?? yAuto };
       });
     },
   },

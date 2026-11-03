@@ -445,6 +445,8 @@ async function mediaLayer(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpt
   return { draw: d, source: wc.canvas as LayerSource, sw: wc.canvas.width, sh: wc.canvas.height, version: `${wc.timestamp}` };
 }
 
+const downCanvases = new Map<string, ReturnType<typeof makeCanvas>>();
+
 /** Apply the clip's subject look (needs its matte; until the matte is ready the plain frame shows). */
 async function withSubject(p: Project, pool: MediaPool, base: LayerInput, clip: import("../core/model").Clip, assetId: string, srcTime: number, o: BuildOptions): Promise<LayerInput> {
   const sp = clip.subject!;
@@ -464,10 +466,32 @@ async function withSubject(p: Project, pool: MediaPool, base: LayerInput, clip: 
       tex = ((await tf?.frameAt(local))?.canvas as CanvasImageSource | undefined) ?? null;
     }
   }
-  const W = base.sw,
+  // Work at the size the output needs (a 4K source for a 1080p render is 4× the memory and time for nothing;
+  // phones run out of memory). Close-ups keep their extra detail.
+  let src = base.source as CanvasImageSource;
+  let W = base.sw,
     H = base.sh;
+  // Quantised so a moving camera doesn't reallocate canvases every frame.
+  const need = Math.ceil(((o.purpose === "export" ? o.outH : Math.min(o.outH, o.previewMax ?? 960)) * Math.min(2, Math.max(1, Math.abs(base.draw.scaleY)))) / 240) * 240;
+  if (H > need * 1.1) {
+    const k = need / H;
+    const w2 = Math.max(2, Math.round(W * k)),
+      h2 = Math.max(2, Math.round(H * k));
+    const ckey = `${clip.id}|${o.purpose}|down`;
+    let c = downCanvases.get(ckey);
+    if (!c || c.width !== w2 || c.height !== h2) {
+      c = makeCanvas(w2, h2);
+      downCanvases.set(ckey, c);
+    }
+    const cx = ctx2d(c);
+    cx.imageSmoothingQuality = "high";
+    cx.drawImage(src, 0, 0, w2, h2);
+    src = c as CanvasImageSource;
+    W = w2;
+    H = h2;
+  }
   const local = (srcTime - clip.in) / Math.max(0.01, clip.speed);
-  const out = renderSubject(`${clip.id}|${o.purpose}`, base.source as CanvasImageSource, W, H, alpha, m.w, m.h, sp, local, local, tex);
+  const out = renderSubject(`${clip.id}|${o.purpose}`, src, W, H, alpha, m.w, m.h, sp, local, local, tex);
   return { ...base, source: out as LayerSource, version: `${base.version}|subj|${srcTime.toFixed(3)}|${JSON.stringify(sp)}` };
 }
 
