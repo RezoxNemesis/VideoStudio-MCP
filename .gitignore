@@ -5,3 +5,5 @@ dist
 .env*
 coverage
 .wrangler
+dist2
+dist3
