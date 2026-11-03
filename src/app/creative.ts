@@ -473,3 +473,23 @@ export function sourceToScreen(p: Project, c: Clip, t: number, pt: { x: number; 
     y = valueAt(c.transform.y, local, 0);
   return { x: 0.5 + ((pt.x - 0.5) * p.width * s + x) / p.width, y: 0.5 + ((pt.y - 0.5) * p.height * s + y) / p.height };
 }
+
+/**
+ * How much of a screen band (fractions) the person covers at a moment, given their matte and the clip's framing.
+ * Used to put lyrics where they stay readable (around the person, not hidden behind the head).
+ */
+export function bandCoverage(alpha: Uint8Array, mw: number, mh: number, f: { s: number; x: number; y: number }, W: number, H: number, band: { x0: number; x1: number; y0: number; y1: number }): number {
+  let hit = 0,
+    n = 0;
+  for (let j = 0; j <= 6; j++)
+    for (let i = 0; i <= 24; i++) {
+      const sx = band.x0 + ((band.x1 - band.x0) * i) / 24,
+        sy = band.y0 + ((band.y1 - band.y0) * j) / 6;
+      const u = 0.5 + ((sx - 0.5) * W - f.x) / (W * f.s),
+        v = 0.5 + ((sy - 0.5) * H - f.y) / (H * f.s);
+      n++;
+      if (u < 0 || v < 0 || u >= 1 || v >= 1) continue;
+      if (alpha[Math.floor(v * mh) * mw + Math.floor(u * mw)]! > 128) hit++;
+    }
+  return hit / n;
+}

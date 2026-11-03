@@ -1765,8 +1765,36 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
           s.setStatus("");
         }
       }
+      // Readable placement: behind a person, pick the height where the person covers the words least
+      // (checked at every line with the clip's current camera framing — run camera.auto first).
+      let yAuto: number | undefined;
+      if (behind && a.optNum("y") === undefined) {
+        const c = ops.getClip(s.project, behind);
+        const as = findAsset(s.project, c.assetId);
+        const m = as ? await matteLoad(as.id) : null;
+        if (m) {
+          const lines = a.any("lines") as cr.LyricIn[];
+          const keep = a.num("keep", 2);
+          const st = cr.LYRIC_STYLES[a.str("style", "handwritten")] ?? cr.LYRIC_STYLES.handwritten!;
+          const gap = ((a.optNum("size") ?? st.size) * 1.25) / 1920;
+          let best = Infinity;
+          for (const y of [0.07, 0.12, 0.18, 0.56, 0.64, 0.72]) {
+            let cov = 0;
+            for (const ln of lines)
+              for (const dt of [0.3, 1.2]) {
+                const t = ln.start + dt;
+                const local = t - c.start;
+                const f = { s: valueAt(c.transform.scale, local, 1), x: valueAt(c.transform.x, local, 0), y: valueAt(c.transform.y, local, 0) };
+                cov += cr.bandCoverage(matteAt(m, c.in + local * c.speed), m.w, m.h, f, s.project.width, s.project.height, { x0: 0.18, x1: 0.82, y0: y - gap * 0.4, y1: y + gap * (keep - 0.6) });
+              }
+            // Small preference for the top of the frame (classic lyric position).
+            cov += y > 0.5 ? 0.04 : 0;
+            if (cov < best) (best = cov), (yAuto = y);
+          }
+        }
+      }
       return s.mutate("handwritten lyrics", (p) => {
-        const r = cr.lyricsWrite(p, { lines: a.any("lines") as cr.LyricIn[], style: a.optStr("style"), y: a.optNum("y"), keep: a.optNum("keep"), behind, underline: a.bool("underline"), color: a.optStr("color"), size: a.optNum("size") });
+        const r = cr.lyricsWrite(p, { lines: a.any("lines") as cr.LyricIn[], style: a.optStr("style"), y: a.optNum("y") ?? yAuto, keep: a.optNum("keep"), behind, underline: a.bool("underline"), color: a.optStr("color"), size: a.optNum("size") });
         let inkId: string | undefined;
         if (r.underline) {
           const t0 = Math.min(...r.underline.map((e) => e.t0));
