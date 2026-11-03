@@ -262,10 +262,12 @@ export function parseTarget(path: string): AnimTarget {
 }
 
 /** Add or replace a keyframe. `t` is timeline time; it is stored clip-local. */
-export function keyframe(p: Project, id: string, path: string, t: number, v: number, kind: Ease = "inOut", fallback = 0): void {
+export function keyframe(p: Project, id: string, path: string, t: number, v: number, kind: Ease = "inOut", fallback?: number): void {
   const c = getClip(p, id);
   const local = Math.max(0, Math.min(c.dur, t - c.start));
   const target = parseTarget(path);
+  // What an unset property is worth (the first key must not drag a scale or opacity from 0).
+  if (fallback === undefined) fallback = target.group === "transform" && ["scale", "scaleX", "scaleY", "opacity"].includes(target.prop) ? 1 : target.group === "grade" ? (GRADE_DEFAULTS as Record<string, number>)[target.prop] ?? 0 : 0;
   if (target.group === "volume") c.volume = setKey(c.volume, local, v, kind, 1);
   else if (target.group === "transform") c.transform[target.prop] = setKey(c.transform[target.prop], local, v, kind, fallback);
   else if (target.group === "fx") (c.fx ??= {})[target.prop] = setKey(c.fx[target.prop], local, v, kind, FX_DEFAULTS[target.prop]);

@@ -11,6 +11,34 @@ export type Ambience = (typeof AMBIENCES)[number];
 
 const SR = 44100;
 
+// Scheduling maths with swing/humanise can land a hair before zero (e.g. -0.004 s), which the Web Audio API
+// rejects and the whole composition fails. Clamp every scheduled time to >= 0 once, for all generators here.
+if (typeof AudioParam !== "undefined" && !(AudioParam.prototype as unknown as { __vsClamp?: boolean }).__vsClamp) {
+  const P = AudioParam.prototype as unknown as Record<string, (...a: number[]) => AudioParam> & { __vsClamp?: boolean };
+  for (const [m, idx] of [["setValueAtTime", 1], ["linearRampToValueAtTime", 1], ["exponentialRampToValueAtTime", 1], ["setTargetAtTime", 1], ["setValueCurveAtTime", 1], ["cancelScheduledValues", 0]] as const) {
+    const orig = P[m];
+    if (!orig) continue;
+    P[m] = function (this: AudioParam, ...a: number[]) {
+      if (typeof a[idx] === "number" && !(a[idx]! >= 0)) a[idx] = 0;
+      return orig.apply(this, a);
+    };
+  }
+  P.__vsClamp = true;
+  if (typeof AudioScheduledSourceNode !== "undefined") {
+    const S = AudioScheduledSourceNode.prototype as unknown as { start: (...a: number[]) => void; stop: (...a: number[]) => void };
+    const st = S.start,
+      sp = S.stop;
+    S.start = function (this: AudioScheduledSourceNode, ...a: number[]) {
+      if (typeof a[0] === "number" && !(a[0] >= 0)) a[0] = 0;
+      return st.apply(this, a);
+    };
+    S.stop = function (this: AudioScheduledSourceNode, ...a: number[]) {
+      if (typeof a[0] === "number" && !(a[0] >= 0)) a[0] = 0;
+      return sp.apply(this, a);
+    };
+  }
+}
+
 export interface ComposeOptions {
   mood?: Mood;
   seconds: number;
