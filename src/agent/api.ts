@@ -1779,24 +1779,26 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
           const st = cr.LYRIC_STYLES[a.str("style", "handwritten")] ?? cr.LYRIC_STYLES.handwritten!;
           const gap = ((a.optNum("size") ?? st.size) * 1.25) / 1920;
           let best = Infinity;
-          let samples = 0;
+          let worstAtBest = 0;
           for (const y of [0.07, 0.12, 0.18, 0.56, 0.64, 0.72]) {
             let cov = 0;
-            samples = lines.length * 2;
+            let worst = 0;
             for (const ln of lines)
               for (const dt of [0.3, 1.2]) {
                 const t = ln.start + dt;
                 const local = t - c.start;
                 const f = { s: valueAt(c.transform.scale, local, 1), x: valueAt(c.transform.x, local, 0), y: valueAt(c.transform.y, local, 0) };
-                cov += cr.bandCoverage(matteAt(m, c.in + local * c.speed), m.w, m.h, f, s.project.width, s.project.height, { x0: 0.18, x1: 0.82, y0: y - gap * 0.4, y1: y + gap * (keep - 0.6) });
+                const k = cr.bandCoverage(matteAt(m, c.in + local * c.speed), m.w, m.h, f, s.project.width, s.project.height, { x0: 0.18, x1: 0.82, y0: y - gap * 0.4, y1: y + gap * (keep - 0.6) });
+                cov += k;
+                worst = Math.max(worst, k);
               }
             // Small preference for the top of the frame (classic lyric position).
             cov += y > 0.5 ? 0.04 : 0;
-            if (cov < best) (best = cov), (yAuto = y);
+            if (cov < best) (best = cov), (yAuto = y), (worstAtBest = worst);
           }
-          // The person fills the frame everywhere: words behind them would be unreadable, so write in front
-          // (lower third) instead.
-          if (best / Math.max(1, samples) > 0.22) {
+          // Somewhere in the song the person would hide the words (they fill the frame): write in front, lower
+          // third, so every line stays readable. The heart/doodles can still go behind.
+          if (worstAtBest > 0.12) {
             front = true;
             yAuto = 0.7;
           }
