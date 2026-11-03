@@ -138,22 +138,22 @@ export class VideoFramer {
   /** Last time this framer was asked for a frame (the pool closes idle helper decoders). */
   lastUse = performance.now();
 
+  /** After a decoder failure, wait before opening another one (never hammer the phone's media service). */
+  private failedAt = 0;
+
   private decode(t: number): Promise<WrappedCanvas | null> {
     this.lastUse = performance.now();
+    if (!this.iter && this.failedAt && performance.now() - this.failedAt < 3000) return Promise.resolve(this.cur);
     const run = (async () => {
       try {
         return await this.step(t);
       } catch (e) {
+        this.failedAt = performance.now();
         // A failed or reclaimed hardware decoder (phones allow only a few at once) must not leave this reader
         // broken forever: drop the iterator and try once more from a fresh decoder.
         console.warn("frame decode failed, restarting decoder", e);
         await this.resetIter();
-        try {
-          return await this.step(t);
-        } catch {
-          await this.resetIter();
-          return this.cur;
-        }
+        return this.cur;
       }
     })();
     this.busy = run;
