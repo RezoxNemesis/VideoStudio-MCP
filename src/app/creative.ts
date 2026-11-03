@@ -421,7 +421,7 @@ export function doodleEls(type: Doodle, o: { x: number; y: number; size: number;
     case "speedlines": {
       const els: MotionEl[] = [];
       [-1, 1].forEach((side, si) =>
-        [-0.3, 0, 0.3].forEach((v, i) => els.push(ink([P(side * 0.95, v * 1.1), P(side * 0.55, v * 0.8)], 0.011, 0.14, i * 0.03, si * 3 + i + 1))),
+        [-0.3, 0, 0.3].forEach((v, i) => els.push(ink([P(side * 0.5, v * 1.1), P(side * 0.28, v * 0.8)], 0.011, 0.14, i * 0.03, si * 3 + i + 1))),
       );
       return els;
     }
@@ -442,9 +442,9 @@ export function doodleEls(type: Doodle, o: { x: number; y: number; size: number;
     }
     case "notes":
       return [
-        { k: "note", t0, t1, x: x - s * 0.35, y: y, s: s * 0.22, text: "♪", color, seed: 1, out: 0.4 },
-        { k: "note", t0: t0 + 0.3, t1, x: x + s * 0.35, y: y - sy * 0.1, s: s * 0.2, text: "♫", color, seed: 2, out: 0.4 },
-        { k: "note", t0: t0 + 0.6, t1, x: x, y: y + sy * 0.15, s: s * 0.16, text: "♪", color, seed: 3, out: 0.4 },
+        { k: "note", t0, t1, x: x - s * 0.35, y: y, s: s * 0.34, text: "♪", color, seed: 1, out: 0.4 },
+        { k: "note", t0: t0 + 0.3, t1, x: x + s * 0.35, y: y - sy * 0.1, s: s * 0.3, text: "♫", color, seed: 2, out: 0.4 },
+        { k: "note", t0: t0 + 0.6, t1, x: x, y: y + sy * 0.15, s: s * 0.26, text: "♪", color, seed: 3, out: 0.4 },
       ];
     case "staff":
       return [{ k: "staff", t0, t1, y, s: 0.017, n: o.draw ?? 1.0, color, out: 0.3, seed: o.seed }];
