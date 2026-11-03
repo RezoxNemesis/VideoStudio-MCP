@@ -146,7 +146,7 @@ export interface TextStyle {
   bg: string; // "" for none
   align: "left" | "center" | "right";
   /** Per-character entrance: none, typewriter, pop, rise, wave. */
-  animate: "none" | "typewriter" | "pop" | "rise" | "wave" | "fade" | "slam" | "blurIn" | "track" | "bounce" | "flicker" | "scramble" | "drop" | "shake" | "zoomOut" | "spin" | "swing";
+  animate: "none" | "write" | "typewriter" | "pop" | "rise" | "wave" | "fade" | "slam" | "blurIn" | "track" | "bounce" | "flicker" | "scramble" | "drop" | "shake" | "zoomOut" | "spin" | "swing";
   /** Letter spacing in px (at 1920 tall). */
   tracking?: number;
   /** Outer glow colour ("" for none). */

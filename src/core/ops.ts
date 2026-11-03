@@ -413,6 +413,7 @@ export const TEXT_PRESETS: Record<string, Partial<import("./model").TextStyle> &
   bounce: { font: "Geist Variable, system-ui, sans-serif", weight: 900, size: 150, color: "#ffd23f", stroke: "#2b1055", strokeWidth: 8, shadow: 14, animate: "bounce", animateDur: 1, tracking: 2, glow: "", bg: "" },
   rap: { font: '"Bebas Neue", sans-serif', weight: 400, size: 230, color: "#ffffff", stroke: "#000000", strokeWidth: 6, shadow: 22, animate: "slam", animateDur: 0.3, tracking: 4, glow: "", bg: "" },
   anime: { font: '"Bangers", sans-serif', weight: 400, size: 190, color: "#ffe14d", stroke: "#1a0f2e", strokeWidth: 12, shadow: 0, animate: "pop", animateDur: 0.5, tracking: 6, glow: "", bg: "" },
+  handwritten: { font: '"Caveat", cursive', weight: 700, size: 110, color: "#fff6e6", stroke: "", strokeWidth: 0, shadow: 14, animate: "write", animateDur: 1.2, tracking: 0, glow: "", bg: "" },
   royal: { font: '"Cinzel", serif', weight: 900, size: 120, color: "#f7e3a1", stroke: "", strokeWidth: 0, shadow: 12, glow: "#d4a537", animate: "track", animateDur: 2, tracking: 20, bg: "" },
   love: { font: '"Great Vibes", cursive', weight: 400, size: 170, color: "#ffe6ef", stroke: "", strokeWidth: 0, shadow: 10, glow: "#ff6fa3", animate: "blurIn", animateDur: 1.2, tracking: 0, bg: "" },
   street: { font: '"Permanent Marker", cursive', weight: 400, size: 150, color: "#ffffff", stroke: "#000000", strokeWidth: 4, shadow: 10, animate: "rise", animateDur: 0.5, tracking: 2, glow: "", bg: "" },

@@ -404,7 +404,7 @@ export function openInspector(s: Studio, tab: InspectorTab = "edit"): { close: (
           toggle("Background box", !!st.bg, (v) => upd({ bg: v ? "#000000aa" : "" }, true)),
           st.bg ? colorInput("Box colour", st.bg.slice(0, 7), (v) => upd({ bg: `${v}cc` })) : null,
           select("Align", ["left", "center", "right"] as const, st.align, (v) => upd({ align: v })),
-          select("Animation", ["none", "typewriter", "pop", "rise", "wave", "fade", "slam", "blurIn", "track", "bounce", "flicker", "scramble", "drop", "shake", "zoomOut", "spin", "swing"] as const, st.animate, (v) => upd({ animate: v })),
+          select("Animation", ["none", "write", "typewriter", "pop", "rise", "wave", "fade", "slam", "blurIn", "track", "bounce", "flicker", "scramble", "drop", "shake", "zoomOut", "spin", "swing"] as const, st.animate, (v) => upd({ animate: v })),
           slider("Animation time", 0.1, 5, 0.05, st.animateDur, (v) => upd({ animateDur: v }), { fmt: (v) => `${v.toFixed(2)}s` }).el,
         ].filter(Boolean) as HTMLElement[];
       }

@@ -63,11 +63,75 @@ export function textCanvas(st: TextStyle, k: number, progress: number): { canvas
   x.lineJoin = "round";
   const total = st.text.replace(/\n/g, "").length;
   let index = 0;
+  // Complex scripts (Devanagari etc.) must be shaped as whole words, never glyph by glyph.
+  const complex = (l: string) => /[\u0900-\u0DFF\u0600-\u06FF]/.test(l);
+  const paint = (cv: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, str: string, left: number, cy: number) => {
+    if (st.glow) {
+      cv.save();
+      cv.shadowColor = st.glow;
+      cv.shadowBlur = size * 0.35;
+      cv.fillStyle = st.glow;
+      cv.fillText(str, left, cy);
+      cv.shadowBlur = size * 0.12;
+      cv.fillText(str, left, cy);
+      cv.restore();
+    }
+    cv.save();
+    if (st.shadow > 0) {
+      cv.shadowColor = "rgba(0,0,0,0.55)";
+      cv.shadowBlur = st.shadow * k;
+      cv.shadowOffsetY = st.shadow * k * 0.25;
+    }
+    if (st.strokeWidth > 0) {
+      cv.lineWidth = st.strokeWidth * k * 2;
+      cv.strokeStyle = st.stroke;
+      cv.strokeText(str, left, cy);
+      cv.shadowColor = "transparent";
+    }
+    cv.fillStyle = st.color;
+    cv.fillText(str, left, cy);
+    cv.restore();
+  };
   lines.forEach((line, li) => {
     const lw = widths[li]!;
     let cx = st.align === "left" ? pad : st.align === "right" ? w - pad - lw : (w - lw) / 2;
     const cy = pad + lineH * (li + 0.5);
     const chars = [...line];
+    if (st.animate === "write" || (complex(line) && !trk && ["none", "fade", "rise", "blurIn", "track", "typewriter"].includes(st.animate))) {
+      // Whole-line drawing. "write": the line is inked left to right like a pen (soft wet edge), one line after another.
+      const n = chars.length;
+      const lp = total > 0 ? Math.max(0, Math.min(1, (step * total - index) / Math.max(1, n))) : 1;
+      const prog = st.animate === "write" ? lp : st.animate === "none" ? 1 : st.animate === "typewriter" ? (lp > 0 ? 1 : 0) : easeOut(Math.max(0, Math.min(1, step * 1.4 - li * 0.15)));
+      if (prog > 0) {
+        const lc = makeCanvas(w, Math.ceil(lineH + pad * 2));
+        const lx = ctx2d(lc);
+        lx.font = font;
+        lx.textBaseline = "middle";
+        lx.lineJoin = "round";
+        const ly = pad + lineH / 2;
+        paint(lx, line, cx, ly);
+        if (st.animate === "write" && prog < 1) {
+          const feather = size * 0.35;
+          const edge = cx - feather + (lw + feather * 2) * prog;
+          const g = lx.createLinearGradient(edge - feather, 0, edge + 1, 0);
+          g.addColorStop(0, "rgba(0,0,0,1)");
+          g.addColorStop(1, "rgba(0,0,0,0)");
+          lx.globalCompositeOperation = "destination-in";
+          lx.fillStyle = g;
+          lx.fillRect(0, 0, w, lc.height);
+        }
+        x.save();
+        if (st.animate !== "write" && st.animate !== "none" && st.animate !== "typewriter") {
+          x.globalAlpha = prog;
+          if (st.animate === "blurIn" && prog < 1) x.filter = `blur(${((1 - prog) * size * 0.25).toFixed(1)}px)`;
+        }
+        const dy0 = st.animate === "rise" ? (1 - prog) * size * 0.6 : 0;
+        x.drawImage(lc as CanvasImageSource, 0, cy - ly + dy0);
+        x.restore();
+      }
+      index += n;
+      return;
+    }
     // Tracking-in: letters start spread out and close up.
     const spread = st.animate === "track" ? (1 - easeOut(step)) * size * 0.45 : 0;
     cx -= (spread * (chars.length - 1)) / 2;
