@@ -17,6 +17,13 @@ import { btn, colorInput, confirmBox, h, icon, pickFiles, select, sheet, slider,
 
 type Tool = BrushTool | "fill" | "lasso" | "line" | "rect" | "ellipse" | "picker" | "hand" | "pose";
 
+/** Where a stroke was started: it is kept there even if the playhead or scene moves before release. */
+interface DrawTarget {
+  sceneId: string | null;
+  layerId: string | null;
+  frame: number;
+}
+
 interface View {
   x: number;
   y: number;
@@ -79,7 +86,8 @@ export class AnimateView {
       this.drawStrip();
     });
     s.on("project", () => {
-      this.sceneId = null;
+      // Keep the scene on screen when it still exists (only a different project should jump to its first scene).
+      if (!s.project.scenes.some((x) => x.id === this.sceneId)) this.sceneId = null;
       if (this.active) this.open();
     });
     this.input();
@@ -140,22 +148,46 @@ export class AnimateView {
     const sc = this.scene();
     if (!sc) return;
     const r = this.stage.getBoundingClientRect();
-    this.res = Math.min(1, 2048 / Math.max(sc.width, sc.height));
-    const W = Math.round(sc.width * this.res);
-    const H = Math.round(sc.height * this.res);
-    if (this.base.width !== W || this.base.height !== H) {
-      this.base.width = this.live.width = W;
-      this.base.height = this.live.height = H;
-    }
-    this.fit = Math.min((r.width - 16) / W, (r.height - 16) / H);
+    this.fit = Math.min((r.width - 16) / sc.width, (r.height - 16) / sc.height);
+    this.setRes(this.wantedRes(), true);
     this.applyView();
     this.queue();
   }
 
+  /** Canvas pixels per scene pixel that match what is on screen (fit × zoom × device pixels), so zooming stays sharp. */
+  private wantedRes(): number {
+    const sc = this.scene();
+    if (!sc) return 1;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const want = Math.max(0.25, this.fit * this.view.zoom * dpr);
+    const cap = 4096 / Math.max(sc.width, sc.height);
+    return Math.min(want, cap);
+  }
+
+  /** Resize the drawing canvases; a change re-renders, a small change is ignored to avoid churn while pinching. */
+  private setRes(res: number, force = false) {
+    const sc = this.scene();
+    if (!sc) return;
+    if (!force && Math.abs(res - this.res) / this.res < 0.2) return;
+    this.res = res;
+    const W = Math.max(2, Math.round(sc.width * res));
+    const H = Math.max(2, Math.round(sc.height * res));
+    if (this.base.width !== W || this.base.height !== H) {
+      this.base.width = this.live.width = W;
+      this.base.height = this.live.height = H;
+    }
+    this.queue();
+  }
+
   private applyView() {
+    if (this.scene()) this.setRes(this.wantedRes());
     const v = this.view;
-    this.board.style.width = `${this.base.width}px`;
-    this.board.style.height = `${this.base.height}px`;
+    const sc = this.scene();
+    // The board is laid out in scene pixels; the canvases are rasterised at `res`, so zoom never stretches a blurry bitmap.
+    if (sc) {
+      this.board.style.width = `${sc.width}px`;
+      this.board.style.height = `${sc.height}px`;
+    }
     this.board.style.transform = `translate(-50%, -50%) translate(${v.x}px, ${v.y}px) rotate(${v.rot}deg) scale(${this.fit * v.zoom})`;
   }
 
@@ -167,7 +199,7 @@ export class AnimateView {
     let y = cy - (r.top + r.height / 2) - v.y;
     const a = (-v.rot * Math.PI) / 180;
     [x, y] = [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
-    const k = this.fit * v.zoom * this.res;
+    const k = this.fit * v.zoom;
     const sc = this.scene()!;
     return [x / k + sc.width / 2, y / k + sc.height / 2];
   }
@@ -592,7 +624,7 @@ export class AnimateView {
 
   private input() {
     const pointers = new Map<number, { x: number; y: number; type: string }>();
-    let stroke: { pts: number[]; tool: Tool; sx: number; sy: number; last: [number, number, number]; lastT: number } | null = null;
+    let stroke: { pts: number[]; tool: Tool; sx: number; sy: number; last: [number, number, number]; lastT: number; target: DrawTarget } | null = null;
     let gesture: { view: View; d: number; a: number; cx: number; cy: number } | null = null;
     let lassoMove: { x: number; y: number } | null = null;
     let poseDrag: { mode: "rotate" | "ik" | "root"; part: string; limb?: string; px: number; py: number; a0: number; rot0: number; x0: number; y0: number; sx: number; sy: number } | null = null;
@@ -608,6 +640,8 @@ export class AnimateView {
       this.stage.setPointerCapture(e.pointerId);
       if (e.pointerType === "pen") this.penSeen = true;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+      // Drawing while the animation plays would land strokes on moving frames: stop playback first.
+      if (this.playing && pointers.size === 1 && this.tool !== "hand") this.stop();
       // Two fingers (or a finger while a pen is in use) navigate the canvas.
       const navigate = pointers.size >= 2 || this.tool === "hand" || (this.penSeen && e.pointerType === "touch");
       if (navigate) {
@@ -632,7 +666,9 @@ export class AnimateView {
         return;
       }
       const pr = e.pointerType === "pen" ? e.pressure || 0.5 : 0.55;
-      stroke = { pts: [x, y, pr], tool: this.tool, sx: x, sy: y, last: [x, y, pr], lastT: e.timeStamp };
+      // Remember where the stroke starts, so it lands on that frame even if the view moves while drawing.
+      const target: DrawTarget = { sceneId: this.sceneId, layerId: this.layerId, frame: this.frame };
+      stroke = { pts: [x, y, pr], tool: this.tool, sx: x, sy: y, last: [x, y, pr], lastT: e.timeStamp, target };
     });
 
     this.stage.addEventListener("pointermove", (e) => {
@@ -762,10 +798,11 @@ export class AnimateView {
     if (this.symmetry) drawStroke(x, mirror({ ...s, tool: s.tool === "eraser" ? "marker" : s.tool, color: s.tool === "eraser" ? "#888888" : s.color }, this.scene()!.width));
   }
 
-  private commit(st: { pts: number[]; tool: Tool; sx: number; sy: number; last: [number, number, number] }) {
-    const sc = this.scene();
-    const l = this.layer();
-    if (!sc || !l) return;
+  private commit(st: { pts: number[]; tool: Tool; sx: number; sy: number; last: [number, number, number]; target?: DrawTarget }) {
+    const t = st.target ?? { sceneId: this.sceneId, layerId: this.layerId, frame: this.frame };
+    const sc = this.s.project.scenes.find((x) => x.id === t.sceneId);
+    const l = sc?.layers.find((x) => x.id === t.layerId);
+    if (!sc || !l || l.kind !== "draw") return toast("That drawing layer is gone — the stroke was not kept", "error");
     if (l.locked) {
       toast("This layer is locked", "error");
       return this.drawSelection();
@@ -775,8 +812,8 @@ export class AnimateView {
     if (stroke.pts.length < 3) return;
     this.s.mutate(`stroke ${stroke.id}`, (p) => {
       const S = A.getScene(p, sc.id);
-      A.addStroke(S, l.id, this.frame, stroke);
-      if (this.symmetry) A.addStroke(S, l.id, this.frame, { ...mirror(stroke, S.width), id: uid("stk") });
+      A.addStroke(S, l.id, t.frame, stroke);
+      if (this.symmetry) A.addStroke(S, l.id, t.frame, { ...mirror(stroke, S.width), id: uid("stk") });
     });
   }
 

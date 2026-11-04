@@ -48,8 +48,8 @@ export class Preview {
     const w = Math.round(p.width * k);
     const hh = Math.round(p.height * k);
     this.view = { x: Math.round((this.canvas.width - w) / 2), y: Math.round((this.canvas.height - hh) / 2), w, h: hh };
-    // Internal frame: the view size, capped to keep preview fast on phones.
-    const cap = Math.min(1, 1280 / Math.max(w, hh));
+    // Internal frame: the view size, capped to keep preview fast on phones (1600 keeps it sharp on modern screens).
+    const cap = Math.min(1, 1600 / Math.max(w, hh));
     this.frameW = Math.max(2, Math.round(w * cap));
     this.frameH = Math.max(2, Math.round(hh * cap));
     this.request();
