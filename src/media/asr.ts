@@ -73,12 +73,34 @@ export async function transcribe(
   const id = nextId++;
   const w = worker;
   return await new Promise((resolve, reject) => {
+    // Watchdog: a worker that crashes (out of memory while loading a big model) or goes silent must not hang
+    // the caller forever — kill it so the next call starts a fresh one and the caller can fall back.
+    const QUIET_MS = 240_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      clearTimeout(timer);
+      w.removeEventListener("message", onMsg);
+      w.removeEventListener("error", onErr);
+    };
+    const fail = (msg: string) => {
+      finish();
+      w.terminate();
+      if (worker === w) worker = null;
+      reject(new Error(msg));
+    };
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fail(`The speech model stopped responding (${QUIET_MS / 1000} s without progress).`), QUIET_MS);
+    };
+    const onErr = (e: ErrorEvent) => fail(`The speech worker crashed${e.message ? `: ${e.message}` : ""}.`);
     const onMsg = (e: MessageEvent<{ id: number; type: string; text?: string; chunks?: { text: string; timestamp: [number, number | null] }[]; error?: string; stage?: string; progress?: number }>) => {
       const m = e.data;
       if (m.id !== id) return;
-      if (m.type === "progress") o.onProgress?.(m.stage ?? "", m.progress ?? 0);
-      else {
-        w.removeEventListener("message", onMsg);
+      if (m.type === "progress") {
+        arm();
+        o.onProgress?.(m.stage ?? "", m.progress ?? 0);
+      } else {
+        finish();
         if (m.type === "error") reject(new Error(m.error));
         else {
           const lines = (m.chunks ?? [])
@@ -89,6 +111,8 @@ export async function transcribe(
       }
     };
     w.addEventListener("message", onMsg);
+    w.addEventListener("error", onErr);
+    arm();
     w.postMessage({ id, audio, model: ASR_MODELS[o.model ?? "base"], language: o.language, task: o.translate ? "translate" : "transcribe", device: o.device }, [audio.buffer]);
   });
 }

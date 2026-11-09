@@ -13,7 +13,8 @@ self.onmessage = async (e: MessageEvent<{ id: number; audio: Float32Array; model
   const { id, audio, model, language, task } = e.data;
   // Desktop: big models on the GPU (WebGPU, fp16 encoder + 4-bit decoder); phones: the 8-bit CPU path.
   const gpu = e.data.device === "webgpu" && typeof (self.navigator as Navigator & { gpu?: unknown }).gpu !== "undefined";
-  // Half-precision shaders are not exposed on every GPU/driver (e.g. NVIDIA on Linux via Vulkan): use fp32 then.
+  // Half-precision shaders are not exposed on every GPU/driver (e.g. NVIDIA on Linux via Vulkan): then a 4-bit
+  // encoder (fp32 maths) — the full fp32 large encoder is ~2.5 GB and can kill the worker while loading.
   let f16 = false;
   if (gpu) {
     try {
@@ -30,7 +31,7 @@ self.onmessage = async (e: MessageEvent<{ id: number; audio: Float32Array; model
       loaded.set(
         key,
         pipeline("automatic-speech-recognition", model, {
-          ...(gpu ? { device: "webgpu", dtype: { encoder_model: f16 ? "fp16" : "fp32", decoder_model_merged: "q4" } } : { dtype: "q8" }),
+          ...(gpu ? { device: "webgpu", dtype: { encoder_model: f16 ? "fp16" : "q4", decoder_model_merged: "q4" } } : { dtype: "q8" }),
           progress_callback: (p: { status: string; progress?: number; file?: string }) => {
             if (p.status === "progress") post({ id, type: "progress", stage: "model", progress: Math.round(p.progress ?? 0), file: p.file });
           },

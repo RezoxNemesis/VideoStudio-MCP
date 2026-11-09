@@ -109,7 +109,7 @@ async function sungLyrics(s: Studio, path: string, name: string, vocals: { start
       return x;
     })() : clip;
     const shift = padN / SR;
-    const run = (dev: "webgpu" | "wasm") => transcribe(input.slice(), { model, language: o.language, device: dev, onProgress: (st, pct) => st === "model" && s.setStatus(`Downloading the lyrics model (${model}) ${pct}%`) });
+    const run = (dev: "webgpu" | "wasm") => transcribe(input.slice(), { model, language: o.language, device: dev, onProgress: (st, pct) => st === "model" && s.setStatus(pct >= 100 ? `Loading the lyrics model (${model}) onto the ${dev === "webgpu" ? "GPU" : "CPU"}…` : `Downloading the lyrics model (${model}) ${pct}%`) });
     let r: Awaited<ReturnType<typeof transcribe>> | null = null;
     try {
       r = await run(device);
