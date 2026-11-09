@@ -46,16 +46,24 @@ jobs:
 
       - name: Desktop — bundle the full GPU ffmpeg (NVENC/CUDA, x264, x265, ProRes, vid.stab)
         working-directory: desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -eu
           mkdir -p vendor/ffmpeg /tmp/ff
-          curl -fsSL -o /tmp/ff/ff.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-linux64-gpl-7.1.tar.xz
+          # Newest versioned GPL static build (non-shared); fall back to the rolling master build.
+          name=$(gh api repos/BtbN/FFmpeg-Builds/releases/tags/latest --jq '[.assets[].name | select(test("^ffmpeg-n[0-9.]+-latest-linux64-gpl-[0-9.]+\\.tar\\.xz$"))] | sort | last // empty')
+          [ -n "$name" ] || name="ffmpeg-master-latest-linux64-gpl.tar.xz"
+          echo "Using $name"
+          curl -fsSL -o /tmp/ff/ff.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name"
           tar -xf /tmp/ff/ff.tar.xz -C /tmp/ff
           cp /tmp/ff/ffmpeg-*/bin/ffmpeg /tmp/ff/ffmpeg-*/bin/ffprobe vendor/ffmpeg/
           chmod +x vendor/ffmpeg/*
-          vendor/ffmpeg/ffmpeg -hide_banner -version | head -1
-          for e in h264_nvenc hevc_nvenc libx264 libx265 prores_ks; do vendor/ffmpeg/ffmpeg -hide_banner -encoders | grep -q " $e " && echo "encoder $e: yes" || { echo "missing $e"; exit 1; }; done
-          for f in vidstabdetect minterpolate nlmeans lut3d zscale loudnorm; do vendor/ffmpeg/ffmpeg -hide_banner -filters | grep -q " $f " && echo "filter $f: yes" || echo "filter $f: no"; done
+          vendor/ffmpeg/ffmpeg -hide_banner -version > /tmp/ff/version.txt; head -1 /tmp/ff/version.txt
+          vendor/ffmpeg/ffmpeg -hide_banner -encoders > /tmp/ff/enc.txt
+          vendor/ffmpeg/ffmpeg -hide_banner -filters > /tmp/ff/flt.txt
+          for e in h264_nvenc hevc_nvenc libx264 libx265 prores_ks; do grep -q " $e " /tmp/ff/enc.txt && echo "encoder $e: yes" || { echo "missing $e"; exit 1; }; done
+          for f in vidstabdetect minterpolate nlmeans lut3d zscale loudnorm; do grep -q " $f " /tmp/ff/flt.txt && echo "filter $f: yes" || echo "filter $f: no"; done
 
       - name: Desktop — build .deb and AppImage
         working-directory: desktop
