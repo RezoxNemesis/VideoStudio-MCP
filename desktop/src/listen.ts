@@ -52,7 +52,11 @@ function snapLines(lines: LyricLine[], vocals: { start: number; end: number }[])
 
 /** Drop Whisper's loops ("अगर अगर अगर…") and lines that are mostly one repeated word. */
 export function cleanLine(text: string): string | null {
-  const words = text.split(/\s+/).filter(Boolean);
+  // Loops inside a word ("अदादादादा…"): keep at most two repeats of any 1-4 character pattern.
+  text = text.replace(/(.{1,4}?)\1{2,}/gu, "$1$1");
+  // Repeated phrases ("a b c a b c a b c"): keep one.
+  text = text.replace(/((?:\S+\s+){1,5}?)\1{2,}/gu, "$1");
+  const words = text.split(/\s+/).filter(Boolean).filter((w) => [...w].length <= 22);
   if (!words.length) return null;
   const out: string[] = [];
   for (const w of words) {
@@ -129,6 +133,8 @@ async function sungLyrics(s: Studio, path: string, name: string, vocals: { start
     for (const ln of r.lines) {
       const text = cleanLine(ln.text);
       if (!text) continue;
+      // Physically impossible singing speed = a hallucination.
+      if (text.split(/\s+/).length / Math.max(0.3, ln.end - ln.start) > 7 && text.split(/\s+/).length > 4) continue;
       const start = Math.round((w.start + ln.start) * 100) / 100;
       const end = Math.round(Math.min(w.end, w.start + Math.max(ln.end, ln.start + 0.6)) * 100) / 100;
       if (lines.length && Math.abs(lines[lines.length - 1]!.start - start) < 0.3 && lines[lines.length - 1]!.text === text) continue;
