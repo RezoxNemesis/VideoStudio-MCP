@@ -46,6 +46,7 @@ export interface AudioReport {
   hits?: number[];
   sections: { start: number; end: number; energy: string }[];
   silences: { start: number; end: number }[];
+  vocals?: { segments: { start: number; end: number }[]; mono: boolean; step: number; curve: number[] };
   envelope: { step: number; startsAt: number; rmsDb: number[]; peakDb: number[] };
   waveform?: string;
   spectrogram?: string;
@@ -83,6 +84,9 @@ export interface Vsd {
   };
   process(kind: string, input: string, o?: Record<string, unknown>): Promise<{ path: string; note: string }>;
   needsConversion(p: string): Promise<boolean>;
+  voice16k(p: string, from?: number, seconds?: number): Promise<Uint8Array>;
+  updateCheck(): Promise<{ current: string; latest?: string; available: boolean; notes?: string; size?: number; name?: string }>;
+  updateInstall(): Promise<{ installed: boolean; version?: string; note: string }>;
   workWrite(name: string, bytes: Uint8Array): Promise<string>;
   workClean(): Promise<boolean>;
   onProgress(fn: (m: { tag: string; frac: number }) => void): void;
@@ -99,6 +103,8 @@ export interface EncCaps {
   svtav1: boolean;
   vp9: boolean;
   filters: string[];
+  reasons?: Record<string, string>;
+  driver?: string | null;
 }
 
 /** The bridge, or a stand-in when the page runs in a plain browser (dev preview, tests). */

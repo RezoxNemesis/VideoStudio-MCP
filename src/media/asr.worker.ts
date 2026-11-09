@@ -9,22 +9,25 @@ if (self.crossOriginIsolated) env.backends.onnx.wasm!.numThreads = Math.max(1, M
 type Asr = (audio: Float32Array, o: Record<string, unknown>) => Promise<{ text: string; chunks?: { text: string; timestamp: [number, number | null] }[] }>;
 const loaded = new Map<string, Promise<Asr>>();
 
-self.onmessage = async (e: MessageEvent<{ id: number; audio: Float32Array; model: string; language?: string; task?: string }>) => {
+self.onmessage = async (e: MessageEvent<{ id: number; audio: Float32Array; model: string; language?: string; task?: string; device?: "webgpu" | "wasm" }>) => {
   const { id, audio, model, language, task } = e.data;
+  // Desktop: big models on the GPU (WebGPU, fp16 encoder + 4-bit decoder); phones: the 8-bit CPU path.
+  const gpu = e.data.device === "webgpu" && typeof (self.navigator as Navigator & { gpu?: unknown }).gpu !== "undefined";
+  const key = `${model}|${gpu ? "gpu" : "cpu"}`;
   const post = (m: unknown) => (self as unknown as Worker).postMessage(m);
   try {
-    if (!loaded.has(model)) {
+    if (!loaded.has(key)) {
       loaded.set(
-        model,
+        key,
         pipeline("automatic-speech-recognition", model, {
-          dtype: "q8",
+          ...(gpu ? { device: "webgpu", dtype: { encoder_model: "fp16", decoder_model_merged: "q4" } } : { dtype: "q8" }),
           progress_callback: (p: { status: string; progress?: number; file?: string }) => {
             if (p.status === "progress") post({ id, type: "progress", stage: "model", progress: Math.round(p.progress ?? 0), file: p.file });
           },
         }) as unknown as Promise<Asr>,
       );
     }
-    const asr = await loaded.get(model)!;
+    const asr = await loaded.get(key)!;
     post({ id, type: "progress", stage: "listening", progress: 0 });
     const out = await asr(audio, {
       chunk_length_s: 30,
@@ -35,7 +38,7 @@ self.onmessage = async (e: MessageEvent<{ id: number; audio: Float32Array; model
     });
     post({ id, type: "done", text: out.text, chunks: out.chunks ?? [] });
   } catch (err) {
-    loaded.delete(model);
+    loaded.delete(key);
     post({ id, type: "error", error: (err as Error).message ?? String(err) });
   }
 };

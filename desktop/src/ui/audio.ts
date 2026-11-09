@@ -5,6 +5,7 @@ import { runCommand } from "../../../src/agent/api";
 import * as ops from "../../../src/core/ops";
 import { toast } from "../../../src/ui/dom";
 import { vsd } from "../bridge";
+import { listen, notes, pickSections, type Listening } from "../listen";
 import { b, h, ic, numRow, panel } from "./kit";
 
 interface Report {
@@ -32,6 +33,8 @@ export class AudioWorkspace {
   private current: string | null = null;
   private reports = new Map<string, Report>();
   private busy = false;
+  private heard = new Map<string, Listening>();
+  private pickLen = 60;
 
   constructor(private readonly s: Studio) {
     const l = panel("Sounds in project", "alib", b(null, "folder", () => void this.inspectFile(), "sm ghost", "Read a sound file on this PC"));
@@ -166,8 +169,62 @@ export class AudioWorkspace {
       r.spectrogram ? h("img", { class: "aw-canvas", src: r.spectrogram, alt: "Spectrogram" }) : null,
       r.silences.length ? h("div", { class: "hint", style: "margin-top:8px" }, `Silences: ${r.silences.slice(0, 12).map((x) => `${x.start.toFixed(1)}–${x.end.toFixed(1)}s`).join(", ")}${r.silences.length > 12 ? "…" : ""}`) : null,
       actions,
+      ...this.listenPanel(id, isAsset),
     ];
     this.waveBody.replaceChildren(...(kids.filter(Boolean) as HTMLElement[]));
+  }
+
+  private listenPanel(id: string, isAsset: boolean): HTMLElement[] {
+    const l = this.heard.get(id);
+    const lang = h("select", { class: "sel" }, ...["hindi", "english", "punjabi", "urdu", "tamil", "telugu", "bengali", "marathi", "auto"].map((x) => h("option", { value: x }, x))) as HTMLSelectElement;
+    const go = b(l ? "Listen again" : "Listen fully — lyrics on the GPU", "mic", async () => {
+      go.disabled = true;
+      try {
+        const r = await listen(this.s, isAsset ? { assetId: id } : { path: id.slice(5) }, { lyrics: true, language: lang.value === "auto" ? undefined : lang.value, fresh: !!l });
+        this.heard.set(id, r);
+      } catch (e) {
+        toast((e as Error).message, "error", 6000);
+      }
+      this.renderWave();
+    }, "sm pri");
+    const out: HTMLElement[] = [h("div", { class: "group-title" }, "Listen like an editor"), h("div", { class: "row wrap" }, lang, go)];
+    if (!l) {
+      out.push(h("div", { class: "hint", style: "margin-top:6px" }, "Transcribes the lyrics with Whisper large-v3-turbo on your GPU (the model downloads once, ~1 GB), finds where the voice sings, and suggests the best part of the song for your edit length."));
+      return out;
+    }
+    const lines = l.lyrics && !("error" in l.lyrics) ? l.lyrics.lines : [];
+    if (l.lyrics && "error" in l.lyrics) out.push(h("div", { class: "hint", style: "color:var(--danger)" }, `Lyrics: ${l.lyrics.error}`));
+    const lenSel = h("input", { class: "inp", value: String(this.pickLen), style: "width:70px" }) as HTMLInputElement;
+    lenSel.addEventListener("keydown", (e) => e.stopPropagation());
+    lenSel.addEventListener("change", () => {
+      this.pickLen = Math.max(5, Number(lenSel.value) || 60);
+      this.renderWave();
+    });
+    const picks = pickSections(l, this.pickLen, { count: 3 });
+    out.push(
+      h("div", { class: "group-title" }, "Best parts of the song"),
+      h("div", { class: "row" }, h("span", { class: "muted" }, "Length (s)"), lenSel),
+      ...picks.map((pk, i) =>
+        h(
+          "div",
+          { class: "act", style: "grid-template-columns:auto 1fr auto" },
+          h("b", { class: "mono", style: "color:var(--neon)" }, `${i + 1}`),
+          h("div", {}, h("b", {}, `${pk.start.toFixed(2)} → ${pk.end.toFixed(2)} s`), h("div", { class: "ops" }, pk.why.join(" · ")), pk.lyrics.length ? h("div", { class: "ops", style: "color:var(--ink)" }, pk.lyrics.slice(0, 4).join(" / ")) : null),
+          isAsset
+            ? b("Use", "plus", () => {
+                this.s.mutate("song section", (p) => {
+                  const c = ops.addClip(p, { assetId: id, start: this.s.time, in: pk.start, dur: pk.end - pk.start });
+                  ops.patchClip(p, c.id, { fadeIn: 0.3, fadeOut: 1.5 });
+                });
+                toast("Song section added at the playhead", "ok");
+              }, "sm")
+            : h("span"),
+        ),
+      ),
+      h("div", { class: "group-title" }, `Lyrics (${lines.length} lines) & voice`),
+      h("div", { class: "ops mono", style: "max-height:260px;overflow:auto;white-space:pre-wrap;font-size:11.5px;line-height:1.6" }, notes(l).join("\n")),
+    );
+    return out;
   }
 
   private async cmd(c: Record<string, unknown>, ok: string) {

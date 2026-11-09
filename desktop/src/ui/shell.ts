@@ -188,6 +188,7 @@ export class Shell {
     document.addEventListener("vsd:rendered", () => this.cur === "deliver" && void this.drawRenders());
     vsd?.onProgress((m) => this.s.setStatus(`${m.tag.split(":")[0]} · ${Math.round(m.frac * 100)}%`));
     void vsd?.workClean();
+    setTimeout(() => void this.checkUpdate(false), 15_000);
     document.addEventListener("vsd:openScene", (e) => this.go("animate", (e as CustomEvent<string>).detail));
     (window as unknown as { vsdFullscreen: () => void }).vsdFullscreen = () => void vsd?.win.fullscreen();
     this.keys();
@@ -394,6 +395,7 @@ export class Shell {
   private helpMenu(): MenuItem[] {
     return [
       { label: "Keyboard shortcuts", key: "?", run: () => this.shortcuts() },
+      { label: "Check for updates…", run: () => void this.checkUpdate(true) },
       { label: "About VideoStudio Desktop", run: async () => {
         const i = await vsd?.info();
         modal(
@@ -403,6 +405,35 @@ export class Shell {
         );
       } },
     ];
+  }
+
+  async checkUpdate(manual = false): Promise<void> {
+    if (!vsd) return;
+    try {
+      const u = await vsd.updateCheck();
+      if (!u.available) {
+        if (manual) toast(`VideoStudio Desktop ${u.current} is up to date.`, "ok");
+        return;
+      }
+      const m = modal(
+        `Update ${u.latest} is ready`,
+        h("div", { class: "col" }, h("p", { class: "hint" }, `You have ${u.current}. The update downloads (${Math.round((u.size ?? 0) / 1e6)} MB), your system asks for your password, and the app restarts.`), u.notes ? h("div", { class: "ops", style: "white-space:pre-wrap;max-height:200px;overflow:auto" }, u.notes) : null),
+        [
+          b("Later", null, () => m.close()),
+          b("Install now", "download", async () => {
+            m.close();
+            try {
+              const r = await vsd!.updateInstall();
+              toast(r.note, "ok", 8000);
+            } catch (e) {
+              toast((e as Error).message, "error", 8000);
+            }
+          }, "pri"),
+        ],
+      );
+    } catch (e) {
+      if (manual) toast(`Could not check for updates: ${(e as Error).message}`, "error");
+    }
   }
 
   private shortcuts() {

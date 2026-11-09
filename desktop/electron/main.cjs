@@ -371,6 +371,89 @@ function sections(rmsDb, step) {
   }, []);
 }
 
+/** Stereo PCM (interleaved float32) for analysis. */
+async function pcmStereo(file, rate = 11025, from = 0, seconds = 0) {
+  const args = ["-v", "error"];
+  if (from) args.push("-ss", String(from));
+  args.push("-i", file);
+  if (seconds) args.push("-t", String(seconds));
+  args.push("-vn", "-ac", "2", "-ar", String(rate), "-f", "f32le", "-");
+  const r = await run(FFMPEG, args, { binary: true, maxOut: 1200 * 1024 * 1024, timeout: 10 * 60_000 });
+  if (r.code !== 0) throw new Error(`Could not decode audio: ${r.stderr.trim().split("\n").pop()}`);
+  const b = r.stdout;
+  return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.length / 4));
+}
+
+/**
+ * Where a voice is singing or speaking. Lead vocals sit in the centre of a stereo mix: in the voice band
+ * (≈250-3500 Hz) the centre (mid) carries much more than the sides when someone sings, while instruments are
+ * spread wide. The mid/side ratio, normalised against the song's own quiet passages, gives a 0..1 curve.
+ * Mono files (no stereo image) use voice-band energy against the full band instead.
+ */
+function vocalPresence(x, rate, step = 0.25) {
+  const n = Math.floor(x.length / 2);
+  // Two biquads (band-pass 250..3500) for mid and side.
+  const bp = (f0, q) => {
+    const w = (2 * Math.PI * f0) / rate, a = Math.sin(w) / (2 * q), c = Math.cos(w);
+    const b0 = a, b2 = -a, a0 = 1 + a, a1 = -2 * c, a2 = 1 - a;
+    return { b0: b0 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+  };
+  const k = bp(950, 0.55);
+  const st = () => ({ x1: 0, x2: 0, y1: 0, y2: 0 });
+  const run1 = (s, v) => {
+    const y = k.b0 * v + k.b2 * s.x2 - k.a1 * s.y1 - k.a2 * s.y2;
+    s.x2 = s.x1; s.x1 = v; s.y2 = s.y1; s.y1 = y;
+    return y;
+  };
+  const sm = st(), ss = st();
+  const hop = Math.max(1, Math.round(rate * step));
+  const ratio = [], band = [], full = [];
+  let em = 0, es = 0, ef = 0, c = 0, mono = true;
+  for (let i = 0; i < n; i++) {
+    const l = x[2 * i], r = x[2 * i + 1];
+    const m = (l + r) * 0.5, d = (l - r) * 0.5;
+    if (mono && Math.abs(d) > 1e-4) mono = false;
+    const ym = run1(sm, m), yd = run1(ss, d);
+    em += ym * ym; es += yd * yd; ef += m * m; c++;
+    if (c === hop) {
+      ratio.push(10 * Math.log10((em + 1e-9) / (es + 1e-9)));
+      band.push(em / c); full.push(ef / c);
+      em = es = ef = c = 0;
+    }
+  }
+  const N = ratio.length;
+  if (!N) return { curve: [], segments: [], mono };
+  const vals = mono ? band.map((b, i) => 10 * Math.log10((b + 1e-12) / (full[i] + 1e-12))) : ratio;
+  // Normalise: 10th percentile → 0, 90th → 1, then smooth over ~0.75 s and gate quiet frames.
+  const sorted = [...vals].sort((a, b) => a - b);
+  const lo = sorted[Math.floor(N * 0.1)], hi = sorted[Math.floor(N * 0.9)];
+  const loud = full.map((f) => 10 * Math.log10(f + 1e-12));
+  const ls = [...loud].sort((a, b) => a - b);
+  const gate = ls[Math.floor(N * 0.15)] + 3;
+  const raw = vals.map((v, i) => (loud[i] < gate ? 0 : Math.max(0, Math.min(1, (v - lo) / Math.max(1e-6, hi - lo)))));
+  const W = Math.max(1, Math.round(0.75 / step));
+  const curve = raw.map((_, i) => {
+    let s = 0, n2 = 0;
+    for (let j = Math.max(0, i - W); j <= Math.min(N - 1, i + W); j++) (s += raw[j]), n2++;
+    return Math.round((s / n2) * 100) / 100;
+  });
+  // Segments where the curve stays above 0.5 for at least 1 s (gaps under 0.6 s are bridged).
+  const segs = [];
+  let on = -1;
+  for (let i = 0; i <= N; i++) {
+    const v = i < N ? curve[i] : 0;
+    if (v >= 0.5 && on < 0) on = i;
+    if (v < 0.5 && on >= 0) {
+      const a = on * step, b = i * step;
+      const last = segs[segs.length - 1];
+      if (last && a - last.end < 0.6) last.end = Math.round(b * 100) / 100;
+      else segs.push({ start: Math.round(a * 100) / 100, end: Math.round(b * 100) / 100 });
+      on = -1;
+    }
+  }
+  return { curve, segments: segs.filter((s) => s.end - s.start >= 1), mono };
+}
+
 async function picture(args) {
   const r = await run(FFMPEG, args, { binary: true, maxOut: 20 * 1024 * 1024, timeout: 5 * 60_000 });
   if (r.code !== 0 || !r.stdout.length) return null;
@@ -418,6 +501,16 @@ async function audioInspect(file, o = {}) {
     peakDb.push(db(pk));
   }
   const rhythm = o.rhythm === false ? null : tempoAndBeats(x, rate);
+  let vocals = null;
+  if (o.vocals !== false) {
+    try {
+      const st = await pcmStereo(file, rate, from, len);
+      const v = vocalPresence(st, rate, 0.25);
+      vocals = { segments: v.segments.map((g) => ({ start: Math.round((g.start + from) * 100) / 100, end: Math.round((g.end + from) * 100) / 100 })), mono: v.mono, step: 0.25, curve: v.curve };
+    } catch {
+      vocals = null;
+    }
+  }
   const secs = sections(rmsDb, step).map((s) => ({ ...s, start: Math.round((s.start + from) * 100) / 100, end: Math.round((s.end + from) * 100) / 100 }));
 
   // Pictures the agent can look at: waveform and spectrogram (with time and frequency axes).
@@ -442,6 +535,7 @@ async function audioInspect(file, o = {}) {
     beats: rhythm ? rhythm.beats.map(shift) : undefined,
     hits: rhythm ? rhythm.onsets.map(shift) : undefined,
     sections: secs,
+    vocals: vocals ?? undefined,
     silences,
     envelope: { step, startsAt: from, rmsDb, peakDb },
     waveform: pics.waveform ?? undefined,
@@ -567,9 +661,14 @@ async function encoderCaps() {
   const enc = (await run(FFMPEG, ["-hide_banner", "-encoders"], { timeout: 20_000 }).catch(() => ({ stdout: "" }))).stdout;
   const flt = (await run(FFMPEG, ["-hide_banner", "-filters"], { timeout: 20_000 }).catch(() => ({ stdout: "" }))).stdout;
   const has = (n) => new RegExp(`\\s${n}\\s`).test(enc);
+  const reasons = {};
   const test = async (codec) => {
-    if (!has(codec)) return false;
-    const r = await run(FFMPEG, ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.2", "-frames:v", "3", "-c:v", codec, "-f", "null", "-"], { timeout: 20_000 }).catch(() => ({ code: 1 }));
+    if (!has(codec)) {
+      reasons[codec] = "not in this ffmpeg build";
+      return false;
+    }
+    const r = await run(FFMPEG, ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.2", "-frames:v", "3", "-c:v", codec, "-f", "null", "-"], { timeout: 20_000 }).catch((e) => ({ code: 1, stderr: String(e) }));
+    if (r.code !== 0) reasons[codec] = String(r.stderr || "").split("\n").filter((l) => /driver|nvenc|cuda|device|api/i.test(l)).slice(0, 2).join(" ").slice(0, 300) || "failed";
     return r.code === 0;
   };
   caps = {
@@ -582,6 +681,8 @@ async function encoderCaps() {
     prores: has("prores_ks"),
     svtav1: has("libsvtav1"),
     vp9: has("libvpx-vp9"),
+    reasons,
+    driver: await run("nvidia-smi", ["--query-gpu=name,driver_version", "--format=csv,noheader"], { timeout: 10_000 }).then((r) => (r.code === 0 ? r.stdout.trim() : null)).catch(() => null),
     filters: ["vidstabdetect", "minterpolate", "nlmeans", "hqdn3d", "lut3d", "loudnorm", "zscale", "deshake", "scale_cuda"].filter((f) => new RegExp(`\\s${f}\\s`).test(flt)),
   };
   return caps;
@@ -816,6 +917,57 @@ async function processMedia(kind, input, o = {}) {
   throw new Error(`Unknown process ${kind}. Use convert, stabilize, slowmo, denoise, upscale, lut, reverse, loudnorm, extractAudio, speed.`);
 }
 
+/* ------------------------------------------------------------------ self-update (GitHub releases) */
+
+const REPO = "RezoxNemesis/VideoStudio-MCP";
+const vnum = (v) => String(v).replace(/^desktop-v/, "").split(".").map((x) => Number(x) || 0);
+const newer = (a, b) => {
+  const x = vnum(a), y = vnum(b);
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+};
+async function updateCheck() {
+  const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=20`, { headers: { accept: "application/vnd.github+json", "user-agent": "VideoStudio-Desktop" } });
+  if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
+  const list = await res.json();
+  const rel = list.filter((r) => /^desktop-v\d/.test(r.tag_name) && !r.draft).sort((a, b) => (newer(a.tag_name, b.tag_name) ? -1 : 1))[0];
+  if (!rel) return { current: app.getVersion(), available: false };
+  const deb = rel.assets.find((a) => a.name.endsWith(".deb"));
+  const version = rel.tag_name.replace(/^desktop-v/, "");
+  return { current: app.getVersion(), latest: version, available: newer(version, app.getVersion()) && !!deb, notes: rel.body?.slice(0, 1500) ?? "", url: deb?.browser_download_url, size: deb?.size ?? 0, name: deb?.name };
+}
+async function updateInstall() {
+  const u = await updateCheck();
+  if (!u.available) return { installed: false, note: `Already up to date (${u.current}).` };
+  const file = path.join(DIRS.downloads, u.name);
+  // Download with progress (resumable is overkill: the file is a few hundred MB from GitHub's CDN).
+  const res = await net.fetch(u.url);
+  if (!res.ok || !res.body) throw new Error(`Download failed (${res.status}).`);
+  await fsp.mkdir(DIRS.downloads, { recursive: true });
+  const part = `${file}.part`;
+  const out = fs.createWriteStream(part);
+  let got = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    got += value.length;
+    if (!out.write(Buffer.from(value))) await new Promise((r) => out.once("drain", r));
+    sendProgress("update", u.size ? got / u.size : 0);
+  }
+  await new Promise((r) => out.end(r));
+  if (u.size && got !== u.size) throw new Error(`Download incomplete (${got} of ${u.size} bytes).`);
+  await fsp.rename(part, file);
+  // The system asks for the person's password in its own dialog (polkit); nothing runs without it.
+  const r = await run("pkexec", ["apt-get", "install", "-y", "--allow-downgrades", file], { timeout: 20 * 60_000 });
+  if (r.code !== 0) throw new Error(r.code === 126 || r.code === 127 ? "The password dialog was closed — nothing was installed. The update is saved in Downloads." : `Install failed: ${r.stderr.trim().split("\n").slice(-2).join(" ")}`);
+  setTimeout(() => {
+    app.relaunch();
+    app.exit(0);
+  }, 1500);
+  return { installed: true, version: u.latest, file, note: "Installed — VideoStudio Desktop restarts now." };
+}
+
 /* ------------------------------------------------------------------ window */
 
 let win = null;
@@ -920,6 +1072,18 @@ function setupIpc() {
   handle("media.probe", (p) => probe(mustAllow(p)));
   handle("media.frames", (p, times, max) => videoFrames(mustAllow(p), times, max));
   handle("audio.inspect", (p, o) => audioInspect(mustAllow(p), o));
+  handle("audio.voice16k", async (p, from = 0, seconds = 0) => {
+    // 16 kHz mono for Whisper, voice-focused: centre channel, voice band, gentle de-noise. Returns bytes.
+    const file = mustAllow(p);
+    const args = ["-v", "error"];
+    if (from) args.push("-ss", String(from));
+    args.push("-i", file);
+    if (seconds) args.push("-t", String(seconds));
+    args.push("-vn", "-af", "pan=mono|c0=0.5*c0+0.5*c1,highpass=f=110,lowpass=f=7500,afftdn=nf=-30,dynaudnorm=f=200:g=11", "-ar", "16000", "-f", "f32le", "-");
+    const r = await run(FFMPEG, args, { binary: true, maxOut: 400 * 1024 * 1024, timeout: 10 * 60_000 });
+    if (r.code !== 0) throw new Error(`Could not prepare the voice: ${r.stderr.trim().split("\n").pop()}`);
+    return new Uint8Array(r.stdout.buffer, r.stdout.byteOffset, r.stdout.length);
+  });
   handle("audio.inspectBytes", async (bytes, name, o) => {
     // For project assets that only live inside the app: write a temp copy, inspect, remove.
     const tmp = path.join(os.tmpdir(), `vsd-${crypto.randomUUID()}-${String(name || "audio").replace(/[^\w.-]/g, "_")}`);
@@ -974,6 +1138,8 @@ function setupIpc() {
     return { path: p, bytes: buf.length, url: fileUrl(p) };
   });
   handle("enc.caps", () => encoderCaps());
+  handle("update.check", () => updateCheck());
+  handle("update.install", () => updateInstall());
   handle("enc.open", (o) => encOpen(o));
   handle("enc.frame", (id, data) => encFrame(id, data));
   handle("enc.finish", (id) => encFinish(id));

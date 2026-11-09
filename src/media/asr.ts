@@ -42,7 +42,13 @@ export interface LyricLine {
   text: string;
 }
 
-export const ASR_MODELS = { base: "onnx-community/whisper-base", small: "onnx-community/whisper-small", tiny: "onnx-community/whisper-tiny" } as const;
+export const ASR_MODELS = {
+  base: "onnx-community/whisper-base",
+  small: "onnx-community/whisper-small",
+  tiny: "onnx-community/whisper-tiny",
+  /** Desktop GPU: Whisper large-v3-turbo (much better on sung, non-English lyrics). */
+  turbo: "onnx-community/whisper-large-v3-turbo",
+} as const;
 
 let worker: Worker | null = null;
 let nextId = 1;
@@ -60,9 +66,9 @@ export async function to16k(buf: AudioBuffer, from = 0, to = buf.duration): Prom
 
 export async function transcribe(
   audio: Float32Array,
-  o: { model?: keyof typeof ASR_MODELS; language?: string; translate?: boolean; onProgress?: (stage: string, pct: number) => void } = {},
+  o: { model?: keyof typeof ASR_MODELS; language?: string; translate?: boolean; device?: "webgpu" | "wasm"; onProgress?: (stage: string, pct: number) => void } = {},
 ): Promise<{ text: string; lines: LyricLine[] }> {
-  await prefetchModel(ASR_MODELS[o.model ?? "base"], (d, n) => o.onProgress?.("model", Math.round((d / n) * 100)));
+  if (o.device !== "webgpu") await prefetchModel(ASR_MODELS[o.model ?? "base"], (d, n) => o.onProgress?.("model", Math.round((d / n) * 100)));
   worker ??= new Worker(new URL("./asr.worker.ts", import.meta.url), { type: "module" });
   const id = nextId++;
   const w = worker;
@@ -83,7 +89,7 @@ export async function transcribe(
       }
     };
     w.addEventListener("message", onMsg);
-    w.postMessage({ id, audio, model: ASR_MODELS[o.model ?? "base"], language: o.language, task: o.translate ? "translate" : "transcribe" }, [audio.buffer]);
+    w.postMessage({ id, audio, model: ASR_MODELS[o.model ?? "base"], language: o.language, task: o.translate ? "translate" : "transcribe", device: o.device }, [audio.buffer]);
   });
 }
 

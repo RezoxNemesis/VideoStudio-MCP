@@ -9,6 +9,8 @@ import * as model from "../../src/core/model";
 import { ProRender, type ProCodec } from "./render";
 import { assetPath, importPath } from "./importer";
 import { compile, EXPR_FUNCTIONS } from "./expr";
+import { listen, notes, pickSections } from "./listen";
+import { runCommand } from "../../src/agent/api";
 import { analyseSong } from "../../src/media/song";
 import { need, pathBlob, type AudioReport } from "./bridge";
 
@@ -262,6 +264,73 @@ export function registerDesktopCommands(s: Studio): void {
       });
     },
   );
+
+
+  /* ---------------------------------------------------------------- listening */
+
+  registerCommand(
+    "audio.listen",
+    "{assetId | path, lyrics?=true, language? (hindi, english, punjabi… — set it for best lyrics), model?: turbo|small|base (turbo = Whisper large-v3-turbo on the GPU), fresh?} Listen to a song like an editor: timed lyric lines (snapped to where the voice starts), voice-present stretches, sections (intro/verse/chorus/drop…), downbeats, hits, energy, key, mood, loudness — plus 'notes': one readable timeline of all of it. Cached per file.",
+    async (st, a) => {
+      const l = await listen(st, { assetId: a.optStr("assetId"), path: a.optStr("path") }, { lyrics: a.bool("lyrics", true), language: a.optStr("language"), model: a.optStr("model") as "turbo" | undefined, fresh: a.bool("fresh") });
+      return { file: l.file, duration: l.duration, bpm: l.bpm, key: l.key, mood: l.mood.label, loudness: l.loudness, sections: l.sections, vocals: l.vocals, lyrics: l.lyrics, hits: l.hits.slice(0, 20), downbeats: l.downbeats.slice(0, 200), notes: notes(l) };
+    },
+  );
+
+  registerCommand(
+    "audio.pickSection",
+    "{assetId | path, seconds, prefer?: chorus|vocals|calm|build|intro (=chorus), count?=3, language?} The best stretches of a song for a given length: start on a downbeat at a section/phrase start, end in a breath (not mid-word) on a downbeat, include the hook, build up. Returns ranked options with reasons, sections and the lyrics inside each. Uses audio.listen (lyrics included when available).",
+    async (st, a) => {
+      const l = await listen(st, { assetId: a.optStr("assetId"), path: a.optStr("path") }, { lyrics: a.bool("lyrics", true), language: a.optStr("language") });
+      return pickSections(l, a.num("seconds"), { prefer: a.optStr("prefer") as "chorus" | undefined, count: a.num("count", 3) });
+    },
+  );
+
+  registerCommand(
+    "lyrics.auto",
+    "{musicClipId, style?: cinema|<lyrics.write styles> (=cinema: clean serif subtitles), language?, font?, size?, y? (0..1, =0.86), color?, translate?=false, from?, to? (timeline)} Put the song's own lyrics on screen, timed to the singing, for the part of the song this clip plays (respects the clip's in-point and speed).",
+    async (st, a) => {
+      const id = a.str("musicClipId");
+      const f = model.findClip(st.project, id);
+      if (!f || !f.clip.assetId) throw new Error(`No music clip ${id}.`);
+      const c = f.clip;
+      const l = await listen(st, { assetId: c.assetId }, { lyrics: true, language: a.optStr("language") });
+      if (!l.lyrics || "error" in l.lyrics) throw new Error(`No lyrics: ${l.lyrics && "error" in l.lyrics ? l.lyrics.error : "not transcribed"}`);
+      const sp = c.speed || 1;
+      const from = a.num("from", c.start), to = a.num("to", c.start + c.dur);
+      const lines = l.lyrics.lines
+        .map((ln) => ({ start: c.start + (ln.start - c.in) / sp, end: c.start + (ln.end - c.in) / sp, text: ln.text }))
+        .filter((ln) => ln.start >= from - 0.05 && ln.end <= to + 0.3 && ln.start < to - 0.4)
+        .map((ln) => ({ ...ln, start: Math.round(Math.max(from, ln.start) * 100) / 100, end: Math.round(Math.min(to, ln.end) * 100) / 100 }));
+      if (!lines.length) return { lines: 0, note: "No sung lines inside this clip's part of the song." };
+      const style = a.str("style", "cinema");
+      if (style !== "cinema") {
+        const r = await runCommand(st, { op: "lyrics.write", lines, style, ...(a.optNum("y") !== undefined ? { y: a.num("y") } : {}) });
+        if (!r.ok) throw new Error(r.error);
+        return { lines: lines.length, style, result: r.result };
+      }
+      const devanagari = lines.some((ln) => /[\u0900-\u097F]/.test(ln.text));
+      const font = a.str("font", devanagari ? "Tiro Devanagari Hindi" : "Cormorant Garamond");
+      const H = st.project.height;
+      const y = (a.num("y", 0.86) - 0.5) * H;
+      const ids: string[] = [];
+      st.mutate("lyrics", (p) => {
+        for (const ln of lines) {
+          const dur = Math.max(0.8, ln.end - ln.start + 0.25);
+          const tc = ops.addClip(p, { text: ln.text, start: ln.start, dur });
+          ops.patchClip(p, tc.id, { name: `♪ ${ln.text.slice(0, 30)}`, fadeIn: 0.25, fadeOut: 0.35, text: { font, size: a.num("size", 64), weight: 500, color: a.str("color", "#f7efe0"), shadow: 0.45, animate: "blurIn", animateDur: 0.5 } });
+          ops.setConstant(p, tc.id, "transform.y", y);
+          ids.push(tc.id);
+        }
+      });
+      return { lines: lines.length, style, font, clipIds: ids, text: lines.map((ln) => `${ln.start.toFixed(1)} ${ln.text}`) };
+    },
+  );
+
+  /* ---------------------------------------------------------------- updates */
+
+  registerCommand("app.version", "This app's version and whether a newer VideoStudio Desktop is published.", () => need().updateCheck());
+  registerCommand("app.update", "Download and install the newest VideoStudio Desktop (the person types their password in the system dialog), then restart the app.", () => need().updateInstall());
 
   registerCommand("ui.screenshot", "{max?=1600} See the VideoStudio Desktop window as it is now (JPEG).", async (_s, a) => {
     // Let the window paint what earlier commands changed (workspace switches, new clips) before capturing.
