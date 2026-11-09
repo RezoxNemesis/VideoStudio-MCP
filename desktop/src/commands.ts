@@ -7,7 +7,7 @@ import { registerCommand } from "../../src/agent/api";
 import * as ops from "../../src/core/ops";
 import * as model from "../../src/core/model";
 import { ProRender, type ProCodec } from "./render";
-import { assetPath, importPath } from "./importer";
+import { assetPath, importPath, relinkMissing } from "./importer";
 import { compile, EXPR_FUNCTIONS } from "./expr";
 import { listen, notes, pickSections } from "./listen";
 import { runCommand } from "../../src/agent/api";
@@ -86,6 +86,12 @@ export function registerDesktopCommands(s: Studio): void {
   });
 
   registerCommand(
+    "media.relink",
+    "{assetIds?} Check every asset's stored copy; any that is missing is found again on this PC (its original path, else by file name in Videos/Music/Downloads/Desktop/Documents/home) and re-linked in place — clips and edits stay. Returns relinked / still-missing.",
+    (st, a) => relinkMissing(st, (a.any("assetIds") as string[] | undefined) ?? undefined),
+  );
+
+  registerCommand(
     "media.importPath",
     "{path | paths:[...], add?=true, start?, trackId?, convert?=true} Bring files from the PC into the project. Phone HEVC/HDR, ProRes, DNxHD, rotated or 10-bit video and unusual audio are converted to a visually lossless edit copy first (GPU when available); originals are never changed. Returns asset ids (and clip ids when added).",
     async (st, a) => {
@@ -141,6 +147,9 @@ export function registerDesktopCommands(s: Studio): void {
     "{codec?: auto|h264|hevc|nvenc_h264|nvenc_hevc|nvenc_av1|x264|x265|prores|prores4444|vp9 (auto = NVIDIA GPU H.264 when present, else x264), height? (up to 4320; width follows the frame), fps? (up to 120), quality? 0-100 (=88), from?, to?, name?, audio?=true} Render on this PC: GPU compositing → native ffmpeg (NVENC / x264 / x265 / ProRes), 10-bit HEVC, 48 kHz AAC 320k (PCM in ProRes). Saved to ~/Videos/VideoStudio. Waits until done.";
   const proRun = async (st: Studio, a: import("../../src/agent/api").HostArgs) => {
     if (job) throw new Error("A render is already running.");
+    // Media whose stored copy vanished is found again on disk first, instead of failing deep in the render.
+    const rl = await relinkMissing(st);
+    if (rl.missing.length) throw new Error(`Missing media: ${rl.missing.map((m) => m.name).join(", ")} — not found on this PC. Import it again (media.importPath) or remove those clips.`);
     const q = a.optStr("quality");
     const quality = q === undefined ? 88 : q === "very-high" ? 95 : q === "high" ? 88 : q === "medium" ? 72 : q === "low" ? 55 : Number(q);
     job = new ProRender(st.project, st.pool, {

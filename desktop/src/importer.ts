@@ -67,3 +67,59 @@ export async function importBlobWithPath(s: Studio, blob: Blob, name: string, p:
   await remember(asset.id, p);
   return asset;
 }
+
+/**
+ * Media whose stored copy is gone (storage wiped, imported while storage was unavailable) is found again on
+ * disk — the remembered source path first, then a search by file name in the usual folders — stored again
+ * and re-linked in place, so clips, keys and timing stay exactly as edited.
+ */
+export async function relinkMissing(s: Studio, only?: string[]): Promise<{ relinked: { id: string; name: string; path: string }[]; missing: { id: string; name: string }[]; ok: number }> {
+  const { getBlob, putBlob } = await import("../../src/core/storage");
+  const m = await pathMap();
+  const relinked: { id: string; name: string; path: string }[] = [];
+  const missing: { id: string; name: string }[] = [];
+  let ok = 0;
+  const info = vsd ? await vsd.info() : null;
+  for (const a of s.project.assets) {
+    if (only && !only.includes(a.id)) continue;
+    if (!a.ref) continue;
+    const fine = await getBlob(a.ref).then((b) => b.size > 0).catch(() => false);
+    if (fine) {
+      ok++;
+      continue;
+    }
+    let found: string | undefined;
+    const known = m[a.id];
+    if (known && vsd) found = await vsd.stat(known).then(() => known).catch(() => undefined);
+    if (!found && vsd && info) {
+      const base = a.name.replace(/\.[^.]+$/, "");
+      for (const root of [info.dirs.videos, info.dirs.music, info.dirs.downloads, info.dirs.desktop, info.dirs.documents, info.dirs.home]) {
+        const r = await vsd.find(root, base, { limit: 20, depth: root === info.dirs.home ? 3 : 5 }).catch(() => null);
+        const hit = r?.results.find((e) => e.name === a.name) ?? r?.results.find((e) => e.name.startsWith(base) && !e.name.endsWith(".part"));
+        if (hit) {
+          found = hit.path;
+          break;
+        }
+      }
+    }
+    if (!found) {
+      missing.push({ id: a.id, name: a.name });
+      continue;
+    }
+    s.setStatus(`Re-linking ${a.name}…`);
+    const { blob } = await pathBlob(found);
+    const ref = await putBlob(a.id, blob);
+    await s.pool.forget(a.id);
+    s.mutate("relink media", (p) => {
+      const pa = p.assets.find((x) => x.id === a.id);
+      if (pa) {
+        pa.ref = ref;
+        delete pa.proxy;
+      }
+    });
+    await remember(a.id, found);
+    relinked.push({ id: a.id, name: a.name, path: found });
+  }
+  s.setStatus("");
+  return { relinked, missing, ok };
+}
