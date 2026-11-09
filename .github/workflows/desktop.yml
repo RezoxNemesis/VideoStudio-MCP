@@ -53,11 +53,11 @@ jobs:
           mkdir -p vendor/ffmpeg /tmp/ff
           # Newest versioned GPL static build (non-shared); fall back to the rolling master build.
           # NVENC API by ffmpeg release: 9.x needs driver 610+, 8.0 needs 570+ (API 13.0), 7.1 needs 550+.
-          # Ship 8.0 so current drivers (e.g. 595) get the GPU encoder; fall back to 7.1.
+          # Ship 8.x (NVENC API 13.0) so current drivers (e.g. 595) get the GPU encoder; fall back to 7.x.
           assets=$(gh api repos/BtbN/FFmpeg-Builds/releases/tags/latest --jq '.assets[].name')
-          name=$(echo "$assets" | grep -E '^ffmpeg-n8\.0-latest-linux64-gpl-8\.0\.tar\.xz$' | head -1 || true)
-          [ -n "$name" ] || name=$(echo "$assets" | grep -E '^ffmpeg-n7\.1-latest-linux64-gpl-7\.1\.tar\.xz$' | head -1 || true)
-          [ -n "$name" ] || { echo "No ffmpeg 8.0/7.1 build found"; echo "$assets" | grep linux64-gpl; exit 1; }
+          name=$(echo "$assets" | grep -E '^ffmpeg-n8\.[0-9]+-latest-linux64-gpl-8\.[0-9]+\.tar\.xz$' | sort -V | tail -1 || true)
+          [ -n "$name" ] || name=$(echo "$assets" | grep -E '^ffmpeg-n7\.[0-9]+-latest-linux64-gpl-7\.[0-9]+\.tar\.xz$' | sort -V | tail -1 || true)
+          [ -n "$name" ] || { echo "No ffmpeg 8.x/7.x build found"; echo "$assets" | grep linux64-gpl; exit 1; }
           echo "Using $name"
           curl -fsSL -o /tmp/ff/ff.tar.xz "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name"
           tar -xf /tmp/ff/ff.tar.xz -C /tmp/ff

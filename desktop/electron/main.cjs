@@ -655,6 +655,7 @@ async function toAacIfNeeded(file) {
 /* ------------------------------------------------------------------ GPU / pro encoding */
 
 let caps = null;
+let ENC_BIN = null; // set when GPU encoding must use a different ffmpeg than the bundled one
 /** What this PC's ffmpeg can do: encoders, filters, and whether NVENC really works on the GPU (a 1-frame test). */
 async function encoderCaps() {
   if (caps) return caps;
@@ -671,10 +672,22 @@ async function encoderCaps() {
     if (r.code !== 0) reasons[codec] = String(r.stderr || "").split("\n").filter((l) => /driver|nvenc|cuda|device|api/i.test(l)).slice(0, 2).join(" ").slice(0, 300) || "failed";
     return r.code === 0;
   };
+  let nv = await test("h264_nvenc");
+  if (!nv && FFMPEG !== "ffmpeg") {
+    // The bundled build may need a newer NVIDIA driver than this PC has; the system ffmpeg is built against
+    // the distro's NVENC headers and often works with the installed driver.
+    const sys = await run("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.2", "-frames:v", "3", "-c:v", "h264_nvenc", "-f", "null", "-"], { timeout: 20_000 }).catch(() => ({ code: 1 }));
+    if (sys.code === 0) {
+      ENC_BIN = "ffmpeg";
+      nv = true;
+      reasons.h264_nvenc = "bundled ffmpeg needs a newer driver; using the system ffmpeg for GPU encoding";
+    }
+  }
   caps = {
     ffmpeg: FFMPEG,
-    nvenc_h264: await test("h264_nvenc"),
-    nvenc_hevc: await test("hevc_nvenc"),
+    encoderBinary: ENC_BIN,
+    nvenc_h264: nv,
+    nvenc_hevc: ENC_BIN ? true : await test("hevc_nvenc"),
     nvenc_av1: await test("av1_nvenc"),
     x264: has("libx264"),
     x265: has("libx265"),
@@ -738,7 +751,8 @@ async function encOpen(o) {
   if (wav) args.push(...(v.audio || ["-c:a", "aac", "-b:a", "320k", "-ar", "48000"]), "-shortest");
   if (v.ext === "mp4") args.push("-movflags", "+faststart");
   args.push(`${out}.part.${v.ext}`);
-  const p = spawn(FFMPEG, args, { stdio: ["pipe", "ignore", "pipe"] });
+  const binary = codec.startsWith("nvenc") && ENC_BIN ? ENC_BIN : FFMPEG;
+  const p = spawn(binary, args, { stdio: ["pipe", "ignore", "pipe"] });
   let err = "";
   p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-8000)));
   const done = new Promise((res) => p.on("close", (code) => res(code)));
