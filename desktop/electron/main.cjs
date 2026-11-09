@@ -1002,10 +1002,21 @@ async function updateCheck() {
   const version = rel.tag_name.replace(/^desktop-v/, "");
   return { current: app.getVersion(), latest: version, available: newer(version, app.getVersion()) && !!deb, notes: rel.body?.slice(0, 1500) ?? "", url: deb?.browser_download_url, size: deb?.size ?? 0, name: deb?.name };
 }
-async function updateInstall() {
+// One install at a time: a second caller (the startup check plus a remote job, say) joins the first.
+let installing = null;
+function updateInstall() {
+  if (!installing) installing = doUpdateInstall().finally(() => { installing = null; });
+  return installing;
+}
+async function doUpdateInstall() {
   const u = await updateCheck();
   if (!u.available) return { installed: false, note: `Already up to date (${u.current}).` };
   const file = path.join(DIRS.downloads, u.name);
+  const have = await fsp.stat(file).catch(() => null);
+  if (!(have && u.size && have.size === u.size)) await downloadUpdate(u, file);
+  return installDeb(u, file);
+}
+async function downloadUpdate(u, file) {
   // Download with progress (resumable is overkill: the file is a few hundred MB from GitHub's CDN).
   const res = await net.fetch(u.url);
   if (!res.ok || !res.body) throw new Error(`Download failed (${res.status}).`);
@@ -1024,6 +1035,8 @@ async function updateInstall() {
   await new Promise((r) => out.end(r));
   if (u.size && got !== u.size) throw new Error(`Download incomplete (${got} of ${u.size} bytes).`);
   await fsp.rename(part, file);
+}
+async function installDeb(u, file) {
   // The system asks for the person's password in its own dialog (polkit); nothing runs without it.
   const r = await run("pkexec", ["apt-get", "install", "-y", "--allow-downgrades", file], { timeout: 20 * 60_000 });
   if (r.code !== 0) throw new Error(r.code === 126 || r.code === 127 ? "The password dialog was closed — nothing was installed. The update is saved in Downloads." : `Install failed: ${r.stderr.trim().split("\n").slice(-2).join(" ")}`);
