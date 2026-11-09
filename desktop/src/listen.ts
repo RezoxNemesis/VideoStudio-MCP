@@ -97,16 +97,35 @@ async function sungLyrics(s: Studio, path: string, name: string, vocals: { start
     const w = windows[i]!;
     const clip = all.slice(Math.floor(w.start * SR), Math.ceil(w.end * SR));
     s.setStatus(`Lyrics of ${name}: passage ${i + 1}/${windows.length} (${model} on ${device === "webgpu" ? "GPU" : "CPU"})…`);
-    let r;
+    // Pad short passages with a little silence: Whisper decodes them more reliably.
+    const padN = Math.max(0, Math.round((8 - (w.end - w.start)) * SR * 0.5));
+    const input = padN ? (() => {
+      const x = new Float32Array(clip.length + padN * 2);
+      x.set(clip, padN);
+      return x;
+    })() : clip;
+    const shift = padN / SR;
+    const run = (dev: "webgpu" | "wasm") => transcribe(input.slice(), { model, language: o.language, device: dev, onProgress: (st, pct) => st === "model" && s.setStatus(`Downloading the lyrics model (${model}) ${pct}%`) });
+    let r: Awaited<ReturnType<typeof transcribe>> | null = null;
     try {
-      r = await transcribe(clip, { model, language: o.language, device, onProgress: (st, pct) => st === "model" && s.setStatus(`Downloading the lyrics model (${model}) ${pct}%`) });
+      r = await run(device);
     } catch (e) {
-      if (device !== "webgpu") throw e;
-      gpuError = (e as Error).message;
-      device = "wasm";
-      model = model === "turbo" ? "small" : model;
-      r = await transcribe(all.slice(Math.floor(w.start * SR), Math.ceil(w.end * SR)), { model, language: o.language, device });
+      const msg = (e as Error).message ?? String(e);
+      if (/token_ids|non-empty|empty array/i.test(msg)) {
+        r = null; // nothing recognisable sung in this passage — skip it, keep the device
+      } else if (device === "webgpu") {
+        gpuError = msg;
+        device = "wasm";
+        model = model === "turbo" ? "small" : model;
+        try {
+          r = await run(device);
+        } catch (e2) {
+          if (!/token_ids|non-empty|empty array/i.test((e2 as Error).message ?? "")) throw e2;
+        }
+      } else throw e;
     }
+    if (!r) continue;
+    r = { ...r, lines: r.lines.map((ln) => ({ ...ln, start: Math.max(0, ln.start - shift), end: Math.max(0, ln.end - shift) })) };
     for (const ln of r.lines) {
       const text = cleanLine(ln.text);
       if (!text) continue;

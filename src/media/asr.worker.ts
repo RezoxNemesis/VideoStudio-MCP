@@ -29,9 +29,10 @@ self.onmessage = async (e: MessageEvent<{ id: number; audio: Float32Array; model
     }
     const asr = await loaded.get(key)!;
     post({ id, type: "progress", stage: "listening", progress: 0 });
+    // Chunking only for long audio: a short passage chunked to 30 s can decode to nothing and throw.
+    const long = audio.length > 29 * 16000;
     const out = await asr(audio, {
-      chunk_length_s: 30,
-      stride_length_s: 5,
+      ...(long ? { chunk_length_s: 30, stride_length_s: 5 } : {}),
       return_timestamps: true,
       ...(language ? { language } : {}),
       task: task ?? "transcribe",
