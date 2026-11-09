@@ -22,7 +22,7 @@ export interface Listening {
   hits: number[];
   energy: number[]; // every 0.5 s, 0..1
   vocals: { start: number; end: number }[];
-  lyrics?: { language?: string; model: string; lines: LyricLine[] } | { error: string };
+  lyrics?: { language?: string; model: string; device: string; gpuError?: string; lines: LyricLine[] } | { error: string };
   loudness: AudioReport["loudness"];
 }
 
@@ -48,6 +48,75 @@ function snapLines(lines: LyricLine[], vocals: { start: number; end: number }[])
     const start = Math.round(best * 100) / 100;
     return { ...l, start, end: Math.max(start + 0.6, l.end) };
   });
+}
+
+/** Drop Whisper's loops ("अगर अगर अगर…") and lines that are mostly one repeated word. */
+export function cleanLine(text: string): string | null {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const out: string[] = [];
+  for (const w of words) {
+    const n = out.length;
+    if (n >= 2 && out[n - 1] === w && out[n - 2] === w) continue; // at most two in a row
+    out.push(w);
+  }
+  const counts = new Map<string, number>();
+  for (const w of out) counts.set(w, (counts.get(w) ?? 0) + 1);
+  const top = Math.max(...counts.values());
+  if (out.length >= 6 && top / out.length > 0.45) return null;
+  if (/�/.test(text) && out.filter((w) => /�/.test(w)).length > 2) return null;
+  const t = out.join(" ").replace(/\s*�+\s*/g, " ").trim();
+  return t.length >= 2 ? t : null;
+}
+
+/**
+ * Transcribe only where the voice map says someone sings: each sung passage (merged into ≤ 25 s windows with a
+ * little padding) goes to Whisper on its own, so instrumentals can't produce hallucinated loops and timings stay
+ * anchored. Tries the GPU (large-v3-turbo) first and reports which device and model actually ran.
+ */
+async function sungLyrics(s: Studio, path: string, name: string, vocals: { start: number; end: number }[], o: { language?: string; model?: "turbo" | "small" | "base" | "tiny" }) {
+  const vsd = need();
+  const raw = await vsd.voice16k(path);
+  const all = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
+  const SR = 16000;
+  const dur = all.length / SR;
+  const segs = vocals.length ? vocals : [{ start: 0, end: dur }];
+  const windows: { start: number; end: number }[] = [];
+  for (const v of segs) {
+    const a = Math.max(0, v.start - 0.4), b = Math.min(dur, v.end + 0.5);
+    const last = windows[windows.length - 1];
+    if (last && a - last.end < 1.2 && b - last.start <= 25) last.end = b;
+    else if (b - a > 25) for (let t = a; t < b; t += 24) windows.push({ start: t, end: Math.min(b, t + 25) });
+    else windows.push({ start: a, end: b });
+  }
+  let model: "turbo" | "small" | "base" | "tiny" = o.model ?? "turbo";
+  let device: "webgpu" | "wasm" = "webgpu";
+  let gpuError: string | undefined;
+  const lines: LyricLine[] = [];
+  for (let i = 0; i < windows.length; i++) {
+    const w = windows[i]!;
+    const clip = all.slice(Math.floor(w.start * SR), Math.ceil(w.end * SR));
+    s.setStatus(`Lyrics of ${name}: passage ${i + 1}/${windows.length} (${model} on ${device === "webgpu" ? "GPU" : "CPU"})…`);
+    let r;
+    try {
+      r = await transcribe(clip, { model, language: o.language, device, onProgress: (st, pct) => st === "model" && s.setStatus(`Downloading the lyrics model (${model}) ${pct}%`) });
+    } catch (e) {
+      if (device !== "webgpu") throw e;
+      gpuError = (e as Error).message;
+      device = "wasm";
+      model = model === "turbo" ? "small" : model;
+      r = await transcribe(all.slice(Math.floor(w.start * SR), Math.ceil(w.end * SR)), { model, language: o.language, device });
+    }
+    for (const ln of r.lines) {
+      const text = cleanLine(ln.text);
+      if (!text) continue;
+      const start = Math.round((w.start + ln.start) * 100) / 100;
+      const end = Math.round(Math.min(w.end, w.start + Math.max(ln.end, ln.start + 0.6)) * 100) / 100;
+      if (lines.length && Math.abs(lines[lines.length - 1]!.start - start) < 0.3 && lines[lines.length - 1]!.text === text) continue;
+      lines.push({ start, end, text });
+    }
+  }
+  return { language: o.language, model, device: device === "webgpu" ? "GPU (WebGPU)" : "CPU", gpuError, lines: snapLines(lines, vocals) };
 }
 
 export async function listen(
@@ -88,21 +157,8 @@ export async function listen(
     loudness: rep.loudness,
   };
   if (o.lyrics !== false) {
-    const model = o.model ?? "turbo";
     try {
-      s.setStatus(`Listening to ${name}: lyrics (Whisper ${model} on the GPU — the model downloads once)…`);
-      const raw = await vsd.voice16k(path);
-      const audio = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
-      let r;
-      try {
-        r = await transcribe(audio, { model, language: o.language, device: "webgpu", onProgress: (st, pct) => s.setStatus(`Lyrics: ${st} ${pct}%`) });
-      } catch (gpuErr) {
-        // No usable GPU path: the CPU with a smaller model still works.
-        s.setStatus("Lyrics: GPU unavailable, using the CPU model…");
-        r = await transcribe(new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength)), { model: "small", language: o.language, onProgress: (st, pct) => s.setStatus(`Lyrics (CPU): ${st} ${pct}%`) });
-        void gpuErr;
-      }
-      out.lyrics = { language: o.language, model, lines: snapLines(r.lines, vocals) };
+      out.lyrics = await sungLyrics(s, path, name, vocals, o);
     } catch (e) {
       out.lyrics = { error: (e as Error).message };
     }

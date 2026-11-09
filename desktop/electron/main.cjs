@@ -19,6 +19,30 @@ const HOME = os.homedir();
 const DEV_URL = process.env.VSD_DEV_URL || "";
 
 // GPU: WebGPU (on-device AI) and GPU rasterisation for the compositor.
+// On Linux, Chromium's WebGPU needs Vulkan to reach the real GPU (otherwise it falls back to SwiftShader on the
+// CPU). Crash guard: a marker is written at start and cleared once the window has been up for a while; if the
+// previous start never got that far, Vulkan is left off this time.
+const GUARD = path.join(app.getPath("userData"), "gpu-boot.marker");
+const GPU_CFG = path.join(app.getPath("userData"), "gpu.json");
+let vulkan = true;
+try {
+  const cfg = JSON.parse(fs.readFileSync(GPU_CFG, "utf8"));
+  if (cfg.vulkan === false) vulkan = false;
+} catch {
+  /* default on */
+}
+try {
+  if (fs.existsSync(GUARD)) {
+    vulkan = false;
+    fs.mkdirSync(path.dirname(GPU_CFG), { recursive: true });
+    fs.writeFileSync(GPU_CFG, JSON.stringify({ vulkan: false, reason: "previous start with Vulkan did not finish" }));
+  }
+  fs.mkdirSync(path.dirname(GUARD), { recursive: true });
+  fs.writeFileSync(GUARD, String(Date.now()));
+} catch {
+  /* ignore */
+}
+if (vulkan && process.env.VSD_NO_VULKAN !== "1") app.commandLine.appendSwitch("enable-features", "Vulkan,VaapiVideoDecodeLinuxGL");
 app.commandLine.appendSwitch("enable-unsafe-webgpu");
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
@@ -695,6 +719,7 @@ async function encoderCaps() {
     svtav1: has("libsvtav1"),
     vp9: has("libvpx-vp9"),
     reasons,
+    vulkan,
     driver: await run("nvidia-smi", ["--query-gpu=name,driver_version", "--format=csv,noheader"], { timeout: 10_000 }).then((r) => (r.code === 0 ? r.stdout.trim() : null)).catch(() => null),
     filters: ["vidstabdetect", "minterpolate", "nlmeans", "hqdn3d", "lut3d", "loudnorm", "zscale", "deshake", "scale_cuda"].filter((f) => new RegExp(`\\s${f}\\s`).test(flt)),
   };
@@ -1009,6 +1034,7 @@ function createWindow() {
   });
   win.setMenuBarVisibility(false);
   win.once("ready-to-show", () => {
+    setTimeout(() => fs.rm(GUARD, { force: true }, () => {}), 12_000);
     win.show();
     if (process.env.VSD_MAXIMIZE !== "0") win.maximize();
   });
