@@ -10,7 +10,7 @@ import * as anim from "../anim/ops";
 import * as rig from "../anim/rig";
 import * as puppet from "../anim/puppet";
 import { flattenPath } from "../anim/svgpath";
-import { ambience, compose, sfx, SFX, toWav, type Ambience, type Mood, type Sfx } from "../audio/compose";
+import { AMBIENCES, ambience, compose, sfx, SFX, toWav, type Ambience, type Mood, type Sfx } from "../audio/compose";
 import { enhance, loudness, type EnhanceOptions } from "../audio/enhance";
 import * as motion from "../anim/motion";
 import { computeMatte, matteAt, matteLoad, storeMatte } from "../media/matte";
@@ -2162,7 +2162,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     },
   },
   "sfx.ambience": {
-    help: "{type: river|wind|city|rain|night, seconds, start?=0, volume?=0.6} Environmental sound bed generated on the phone.",
+    help: `{type: ${AMBIENCES.join("|")}, seconds, start?=0, volume?=0.6} Environmental sound bed generated on the device (sea = calm open water, shore = gentle waves on a beach).`,
     run: async (s, a) => {
       const blob = await ambience(a.str("type") as Ambience, a.num("seconds"), a.num("seed", 3));
       return await s.mutateAsync("ambience", async (p) => {
@@ -2220,6 +2220,12 @@ export interface LiveHooks {
 }
 export const STOPPED = "Stopped by you in the app.";
 /** App-level events other parts of the app listen to (notifications). */
+/** Extra commands from a host (VideoStudio Desktop adds file-system, audio-reading and window commands). */
+export type HostArgs = Args;
+export function registerCommand(op: string, help: string, run: (s: Studio, a: Args) => unknown | Promise<unknown>): void {
+  HANDLERS[op] = { help, run: run as Handler };
+}
+
 export const agentEvents: { onRender?: (r: { name: string; path?: string; seconds: number }) => void } = {};
 let live: LiveHooks | null = null;
 let depth = 0;

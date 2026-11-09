@@ -285,7 +285,14 @@ export interface InboxFile {
   created: number;
 }
 
+/** A host with its own link (VideoStudio Desktop) points the inbox at its own relay. */
+let relayOverride: (() => Promise<{ base: string; key: string }>) | null = null;
+export function setRelayBase(fn: (() => Promise<{ base: string; key: string }>) | null): void {
+  relayOverride = fn;
+}
+
 async function relayBase(): Promise<{ base: string; key: string }> {
+  if (relayOverride) return relayOverride();
   const c = await kvGet<RemoteConfig>("remote").catch(() => undefined);
   if (!c?.relay || !c.key) throw new Error("Set up the remote link (Agent tab) first.");
   return { base: `${c.relay.replace(/\/+$/, "")}/device/${c.key}`, key: c.key };

@@ -139,7 +139,7 @@ export class ExportJob {
       const saved = await file.finish();
       const renderSeconds = (performance.now() - t0) / 1000;
       this.onProgress({ frame: frames, frames, fps: frames / renderSeconds, stage: "done", etaSec: 0 });
-      return { ...saved, name, bytes: file.bytes, seconds: to - from, width: W, height: H, fps, codec, audioCodec, renderSeconds, warnings: this.warnings };
+      return { ...saved, name, bytes: file.bytes, seconds: to - from, width: W, height: H, fps, codec, audioCodec: file.desktopAudio ?? audioCodec, renderSeconds, warnings: this.warnings };
     } catch (e) {
       await output.cancel().catch(() => {});
       await file.abort();

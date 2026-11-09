@@ -43,6 +43,16 @@ export async function memInfo(): Promise<{ availMB: number; totalMB: number; thr
 
 const Native = registerPlugin<StudioStoragePlugin>("StudioStorage");
 
+/** VideoStudio Desktop (Electron) exposes real file saving into ~/Videos, ~/Music… through its preload bridge. */
+interface DesktopSaver {
+  saveOpen(collection: string, name: string): Promise<{ id: string; path: string }>;
+  saveWrite(id: string, position: number, data: Uint8Array): Promise<void>;
+  saveFinish(id: string): Promise<{ path: string; audio?: string | null }>;
+  saveAbort(id: string): Promise<void>;
+  download(url: string, headers?: Record<string, string>): Promise<{ path: string; bytes: number; url: string }>;
+}
+const desktop = (): DesktopSaver | null => ((globalThis as { vsd?: DesktopSaver }).vsd ?? null);
+
 export const hasNativeStorage = (): boolean => Capacitor.getPlatform() === "android" && Capacitor.isPluginAvailable("StudioStorage");
 
 function b64(bytes: Uint8Array): string {
@@ -55,6 +65,10 @@ function b64(bytes: Uint8Array): string {
 /** A random-access file that ends up in shared storage (or a browser download on the web). */
 export class OutputFile {
   private id: string | null = null;
+  private desk: { id: string; path: string } | null = null;
+  private deskPending: Promise<void> = Promise.resolve();
+  /** Desktop only: the audio codec after the app's AAC conversion (null when untouched). */
+  desktopAudio: string | null = null;
   private chunks: { position: number; data: Uint8Array }[] = [];
   private pending: Promise<void> = Promise.resolve();
   private buffered: { position: number; parts: Uint8Array[]; size: number } | null = null;
@@ -67,12 +81,24 @@ export class OutputFile {
   ) {}
 
   async open(): Promise<void> {
+    const d = desktop();
+    if (d) {
+      this.desk = await d.saveOpen(this.collection, this.name);
+      return;
+    }
     if (hasNativeStorage()) this.id = (await Native.open({ name: this.name })).id;
   }
 
   /** Writes are coalesced into ~4 MB sequential runs to keep the bridge fast. */
   write(position: number, data: Uint8Array): Promise<void> {
     this.bytes = Math.max(this.bytes, position + data.length);
+    if (this.desk) {
+      const d = desktop()!;
+      const id = this.desk.id;
+      const copy = data.slice();
+      this.deskPending = this.deskPending.then(() => d.saveWrite(id, position, copy));
+      return this.deskPending;
+    }
     if (!this.id) {
       this.chunks.push({ position, data: data.slice() });
       return Promise.resolve();
@@ -109,6 +135,12 @@ export class OutputFile {
   }
 
   async finish(): Promise<{ uri: string; path: string; blob?: Blob }> {
+    if (this.desk) {
+      await this.deskPending;
+      const r = await desktop()!.saveFinish(this.desk.id);
+      this.desktopAudio = r.audio ?? null;
+      return { uri: `file://${r.path}`, path: r.path };
+    }
     if (this.id) {
       this.flush();
       await this.pending;
@@ -127,6 +159,7 @@ export class OutputFile {
   }
 
   async abort(): Promise<void> {
+    if (this.desk) await desktop()!.saveAbort(this.desk.id).catch(() => {});
     if (this.id) await Native.abort({ id: this.id }).catch(() => {});
     this.chunks = [];
   }
@@ -165,6 +198,13 @@ let wakeLockHandle: { release(): Promise<void> } | null = null;
  */
 export async function downloadBlob(url: string, headers: Record<string, string> = {}): Promise<Blob> {
   if (!/^https:\/\//i.test(url)) throw new Error("Only https links can be downloaded.");
+  const d = desktop();
+  if (d) {
+    const r = await d.download(url, headers);
+    const res = await fetch(r.url);
+    if (!res.ok) throw new Error(`Download failed (${res.status}).`);
+    return await res.blob();
+  }
   if (hasNativeStorage()) {
     const r = await Native.download({ url, headers });
     try {

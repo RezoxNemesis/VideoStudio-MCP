@@ -5,6 +5,9 @@ import { Share } from "@capacitor/share";
 import { Capacitor } from "@capacitor/core";
 import { btn, fmtBytes, fmtTime, h, select, toast } from "./dom";
 
+/** Running inside VideoStudio Desktop (Electron bridge present). */
+const DESKTOP = !!(globalThis as { vsd?: unknown }).vsd;
+
 export class ExportView {
   readonly el: HTMLElement;
   private body: HTMLElement;
@@ -32,7 +35,7 @@ export class ExportView {
       select("Codec", [["avc", "H.264 (plays everywhere)"], ["hevc", "HEVC / H.265 (smaller, if supported)"]] as const, (this.opts.codec ?? "avc") as "avc", (v) => (this.opts.codec = v)),
       h("div", { class: "row wrap" }, btn("Render video", "export", () => void this.run(), "primary"), btn("Cancel", "close", () => this.job?.cancel(), "ghost")),
       h("div", { class: "progress big" }, h("i", {})),
-      h("p", { class: "render-status muted" }, "Hardware encoding through the phone's video encoder. The file goes to Movies/VideoStudio."),
+      h("p", { class: "render-status muted" }, DESKTOP ? "Encoded on this PC. The file goes to Videos/VideoStudio, with AAC sound that Instagram and YouTube accept." : "Hardware encoding through the phone's video encoder. The file goes to Movies/VideoStudio."),
       h("div", { class: "render-result" }),
     );
   }
@@ -64,7 +67,7 @@ export class ExportView {
         ...(Capacitor.isNativePlatform() && r.uri.startsWith("content:") ? [btn("Share", "share", () => void Share.share({ title: r.name, url: r.uri }).catch(() => {}), "primary")] : []),
       );
       for (const w of r.warnings) toast(w, "error", 6000);
-      toast("Video saved to Movies/VideoStudio", "ok", 4000);
+      toast(DESKTOP ? "Video saved to Videos/VideoStudio" : "Video saved to Movies/VideoStudio", "ok", 4000);
     } catch (e) {
       status.textContent = e instanceof Error ? e.message : String(e);
       toast(status.textContent, "error", 6000);

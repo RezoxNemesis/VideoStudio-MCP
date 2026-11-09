@@ -1,0 +1,107 @@
+/** Typed access to the desktop bridge (desktop/electron/preload.cjs). */
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  kind: "folder" | "video" | "audio" | "image" | "model" | "project" | "other";
+  size: number;
+  modified: number;
+}
+
+export interface DesktopInfo {
+  version: string;
+  platform: string;
+  arch: string;
+  host: string;
+  user: string;
+  cpus: number;
+  cpuModel?: string;
+  memoryGB: number;
+  dirs: Record<"home" | "desktop" | "documents" | "downloads" | "music" | "pictures" | "videos", string>;
+  out: Record<"Movies" | "Music" | "Pictures" | "Documents", string>;
+  drives: { name: string; path: string }[];
+  ffmpeg: string;
+  gpu: Record<string, string>;
+}
+
+export interface Probe {
+  path: string;
+  name: string;
+  size: number;
+  duration: number;
+  format: string;
+  bitrate: number;
+  video: { codec: string; width: number; height: number; fps: number; pixfmt: string; rotation: number; hdr: boolean } | null;
+  audio: { codec: string; sampleRate: number; channels: number; layout?: string } | null;
+  tags: Record<string, string | undefined>;
+}
+
+export interface AudioReport {
+  file: string;
+  path: string;
+  duration: number;
+  loudness: { integratedLUFS: number | null; rangeLU: number | null; truePeakDBFS: number | null; samplePeakDB: number };
+  tempo?: { bpm: number; confidence: number };
+  beats?: number[];
+  hits?: number[];
+  sections: { start: number; end: number; energy: string }[];
+  silences: { start: number; end: number }[];
+  envelope: { step: number; startsAt: number; rmsDb: number[]; peakDb: number[] };
+  waveform?: string;
+  spectrogram?: string;
+  [k: string]: unknown;
+}
+
+export interface Vsd {
+  desktop: true;
+  info(): Promise<DesktopInfo>;
+  list(dir: string, o?: { kinds?: string[]; hidden?: boolean; sort?: "name" | "modified"; limit?: number }): Promise<{ dir: string; parent: string | null; entries: FsEntry[]; total: number }>;
+  find(root: string, q: string, o?: { kinds?: string[]; limit?: number; depth?: number }): Promise<{ root: string; query: string; results: FsEntry[] }>;
+  stat(p: string): Promise<{ path: string; size: number; dir: boolean; modified: number; kind: string }>;
+  fileUrl(p: string): Promise<string>;
+  reveal(p: string): Promise<void>;
+  openPath(p: string): Promise<void>;
+  pick(o?: { title?: string; dir?: string; folder?: boolean; multiple?: boolean }): Promise<string[]>;
+  pickSave(o?: { title?: string; dir?: string; name?: string }): Promise<string | null>;
+  writeText(p: string, t: string): Promise<string>;
+  readText(p: string): Promise<string>;
+  probe(p: string): Promise<Probe>;
+  frames(p: string, times: number[], max?: number): Promise<{ t: number; image: string | null }[]>;
+  audioInspect(p: string, o?: Record<string, unknown>): Promise<AudioReport>;
+  audioInspectBytes(bytes: Uint8Array, name: string, o?: Record<string, unknown>): Promise<AudioReport>;
+  capture(max?: number, quality?: number): Promise<string>;
+  download(url: string, headers?: Record<string, string>): Promise<{ path: string; bytes: number; url: string }>;
+  win: { minimize(): Promise<void>; maximize(): Promise<void>; close(): Promise<void>; fullscreen(): Promise<void>; isMaximized(): Promise<boolean>; onState(fn: (s: { maximized: boolean }) => void): void };
+  openExternal(url: string): Promise<void>;
+}
+
+/** The bridge, or a stand-in when the page runs in a plain browser (dev preview, tests). */
+export const vsd: Vsd | null = (globalThis as { vsd?: Vsd }).vsd ?? null;
+
+export function need(): Vsd {
+  if (!vsd) throw new Error("This needs VideoStudio Desktop (not a browser tab).");
+  return vsd;
+}
+
+/** Bring a file from the PC into memory as a Blob (streamed through vsfile://, never base64 over IPC). */
+export async function pathBlob(p: string): Promise<{ blob: Blob; name: string }> {
+  const url = await need().fileUrl(p);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Could not read ${p} (${res.status})`);
+  const blob = await res.blob();
+  const name = p.split("/").pop() || "file";
+  return { blob: blob.type ? blob : new Blob([blob], { type: guessMime(name) }), name };
+}
+
+export function guessMime(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  const m: Record<string, string> = {
+    mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", mkv: "video/x-matroska", webm: "video/webm", avi: "video/x-msvideo",
+    mp3: "audio/mpeg", wav: "audio/wav", flac: "audio/flac", m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", opus: "audio/ogg",
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", bmp: "image/bmp", avif: "image/avif", svg: "image/svg+xml",
+    glb: "model/gltf-binary", gltf: "model/gltf+json",
+  };
+  return m[ext] ?? "application/octet-stream";
+}
+
+export const fmtSize = (n: number): string => (n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n > 1e3 ? `${Math.round(n / 1e3)} KB` : `${n} B`);

@@ -1,12 +1,12 @@
 /**
  * On-device music and ambience. Everything is synthesised with an OfflineAudioContext (no samples, no downloads):
  * pads, piano, strings, bass and soft drums following a chord plan, with a "lift" where the score brightens,
- * plus river / wind / city / rain beds. Output is a 16-bit stereo WAV blob.
+ * plus river / wind / city / rain / night / calm sea / shore-wave beds. Output is a 16-bit stereo WAV blob.
  */
 
 export const MOODS = ["melancholy", "hopeful", "dark", "tense", "calm", "epic", "battle"] as const;
 export type Mood = (typeof MOODS)[number];
-export const AMBIENCES = ["river", "wind", "city", "rain", "night"] as const;
+export const AMBIENCES = ["river", "wind", "city", "rain", "night", "sea", "shore"] as const;
 export type Ambience = (typeof AMBIENCES)[number];
 
 const SR = 44100;
@@ -405,6 +405,65 @@ export async function ambience(type: Ambience, seconds: number, seed = 3): Promi
       o.connect(dg).connect(out);
       o.start(t);
       o.stop(t + 0.08);
+    }
+  } else if (type === "sea" || type === "shore") {
+    // Calm sea: a deep, slowly breathing swell bed. Shore: gentle waves rolling in on sand, each a filtered wash
+    // that rises, crests with a little foam hiss and draws back, panned left/right so the beach feels wide.
+    const r = rng(seed);
+    const bed = loop(true);
+    const blp = ctx.createBiquadFilter();
+    blp.type = "lowpass";
+    blp.frequency.value = type === "sea" ? 520 : 380;
+    lfo(0.045, 160, blp.frequency);
+    const bg = ctx.createGain();
+    bg.gain.value = type === "sea" ? 0.55 : 0.32;
+    lfo(0.06, type === "sea" ? 0.22 : 0.12, bg.gain);
+    bed.connect(blp).connect(bg).connect(out);
+    const white = noiseBuffer(ctx, 6, seed + 7, false);
+    const pink = noiseBuffer(ctx, 6, seed + 9, true);
+    const gap = type === "sea" ? [7, 11] : [5.5, 9];
+    for (let t = r() * 2; t < secs; t += gap[0]! + r() * (gap[1]! - gap[0]!)) {
+      const rise = 1.6 + r() * 1.2;
+      const fall = 2.8 + r() * 2.2;
+      const peak = (type === "sea" ? 0.16 : 0.3) * (0.65 + r() * 0.5);
+      const pan = ctx.createStereoPanner();
+      pan.pan.value = (r() * 2 - 1) * 0.6;
+      pan.connect(out);
+      // The body of the wave.
+      const w = ctx.createBufferSource();
+      w.buffer = pink;
+      w.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.Q.value = 0.4;
+      lp.frequency.setValueAtTime(220, t);
+      lp.frequency.exponentialRampToValueAtTime(type === "sea" ? 900 : 1700 + r() * 600, t + rise);
+      lp.frequency.exponentialRampToValueAtTime(260, t + rise + fall);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + rise);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + rise + fall);
+      w.connect(lp).connect(g).connect(pan);
+      w.start(t, r() * 5);
+      w.stop(t + rise + fall + 0.1);
+      // Foam hiss as it breaks and fizzes back.
+      const f = ctx.createBufferSource();
+      f.buffer = white;
+      f.loop = true;
+      const hp = ctx.createBiquadFilter();
+      hp.type = "bandpass";
+      hp.frequency.value = 3800 + r() * 2200;
+      hp.Q.value = 0.5;
+      const fg = ctx.createGain();
+      const crest = t + rise * 0.92;
+      const foam = (type === "sea" ? 0.012 : 0.035) * (0.6 + r() * 0.6);
+      fg.gain.setValueAtTime(0.0001, t);
+      fg.gain.exponentialRampToValueAtTime(foam, crest);
+      fg.gain.exponentialRampToValueAtTime(foam * 0.35, crest + 0.9);
+      fg.gain.exponentialRampToValueAtTime(0.0001, crest + fall * 0.9);
+      f.connect(hp).connect(fg).connect(pan);
+      f.start(t, r() * 5);
+      f.stop(t + rise + fall + 0.1);
     }
   } else if (type === "wind") {
     const src = loop(false);

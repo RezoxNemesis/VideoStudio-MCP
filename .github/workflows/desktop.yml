@@ -1,0 +1,79 @@
+name: VideoStudio Desktop
+
+on:
+  push:
+    branches: [desktop, studio5]
+    paths: ["desktop/**", "src/**", ".github/workflows/desktop.yml", "package.json", "package-lock.json"]
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      VERSION: "1.0.${{ github.run_number }}"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      - name: Engine — install, typecheck, test
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm test
+
+      - name: Desktop — install and typecheck
+        working-directory: desktop
+        run: |
+          npm ci
+          npx tsc --noEmit -p tsconfig.json
+          npm version --no-git-tag-version --allow-same-version "$VERSION"
+
+      - name: Desktop — build .deb and AppImage
+        working-directory: desktop
+        run: npm run dist
+
+      - name: Smoke test — the packaged app starts and renders its window
+        working-directory: desktop
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb > /dev/null
+          app=$(ls release/*.AppImage | head -1)
+          chmod +x "$app"
+          "$app" --appimage-extract > /dev/null
+          (VSD_NO_SANDBOX=1 xvfb-run -a -s "-screen 0 1600x960x24" ./squashfs-root/videostudio-desktop --no-sandbox --remote-debugging-port=9333 > smoke.log 2>&1 &)
+          for i in $(seq 1 40); do
+            if curl -s http://127.0.0.1:9333/json/list | grep -q "app://studio"; then echo "Window is up"; break; fi
+            sleep 1
+          done
+          curl -s http://127.0.0.1:9333/json/list | grep -q "VideoStudio Desktop" || { cat smoke.log; exit 1; }
+          pkill -f squashfs-root/videostudio-desktop || true
+
+      - name: Publish release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="desktop-v${VERSION}"
+          notes="VideoStudio Desktop ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ).
+
+          • VideoStudio-Desktop-${VERSION}-amd64.deb — double-click to install (Discover / package installer).
+          • VideoStudio-Desktop-${VERSION}-x86_64.AppImage — portable: allow executing, then open.
+
+          Built from ${GITHUB_SHA::7}."
+          gh release create "$tag" desktop/release/*.deb desktop/release/*.AppImage --title "VideoStudio Desktop ${VERSION}" --notes "$notes" --target "$GITHUB_SHA" --latest=false

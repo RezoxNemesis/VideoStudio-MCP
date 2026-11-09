@@ -1,0 +1,87 @@
+{
+  "name": "videostudio-desktop",
+  "productName": "VideoStudio Desktop",
+  "version": "1.0.0",
+  "description": "VideoStudio for the desktop: pro editing, colour, 2D/3D animation, VolTune voices, sound and a Claude link.",
+  "author": {
+    "name": "RezoxNemesis",
+    "email": "vikastandon4510c@gmail.com"
+  },
+  "homepage": "https://github.com/RezoxNemesis/videostudio-mcp",
+  "license": "MIT",
+  "private": true,
+  "main": "electron/main.cjs",
+  "scripts": {
+    "web": "vite build --config vite.config.ts",
+    "dev:web": "vite --config vite.config.ts",
+    "start": "electron .",
+    "dist": "npm run web && electron-builder --linux deb AppImage --publish never"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.rezoxnemesis.videostudio.desktop",
+    "productName": "VideoStudio Desktop",
+    "executableName": "videostudio-desktop",
+    "artifactName": "VideoStudio-Desktop-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**",
+      "dist-web/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**"
+    ],
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "category": "AudioVideo",
+      "icon": "build/icon.png",
+      "synopsis": "Pro video editor, animation studio and voices \u2014 with Claude",
+      "maintainer": "RezoxNemesis <vikastandon4510c@gmail.com>",
+      "desktop": {
+        "entry": {
+          "Name": "VideoStudio Desktop",
+          "Comment": "Edit, animate and render \u2014 with Claude",
+          "Categories": "AudioVideo;Video;AudioVideoEditing;Graphics;",
+          "StartupWMClass": "VideoStudio Desktop"
+        }
+      }
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0"
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "RezoxNemesis",
+        "repo": "videostudio-mcp",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
