@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld("vsd", {
   process: (kind, input, o) => call("media.process", kind, input, o),
   voice16k: (p, from, seconds) => call("audio.voice16k", p, from, seconds),
   updateCheck: () => call("update.check"),
+  crashLog: () => call("app.crashLog"),
   updateInstall: () => call("update.install"),
   needsConversion: (p) => call("media.needsConversion", p),
   workWrite: (name, bytes) => call("work.write", name, bytes),

@@ -85,6 +85,7 @@ export interface Vsd {
   process(kind: string, input: string, o?: Record<string, unknown>): Promise<{ path: string; note: string }>;
   needsConversion(p: string): Promise<boolean>;
   voice16k(p: string, from?: number, seconds?: number): Promise<Uint8Array>;
+  crashLog(): Promise<string>;
   updateCheck(): Promise<{ current: string; latest?: string; available: boolean; notes?: string; size?: number; name?: string }>;
   updateInstall(): Promise<{ installed: boolean; version?: string; note: string }>;
   workWrite(name: string, bytes: Uint8Array): Promise<string>;

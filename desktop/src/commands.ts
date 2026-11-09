@@ -329,6 +329,7 @@ export function registerDesktopCommands(s: Studio): void {
 
   /* ---------------------------------------------------------------- updates */
 
+  registerCommand("app.crashLog", "The app's own log of crashes, GPU process exits and Vulkan guard decisions (last 40 lines).", () => need().crashLog());
   registerCommand("app.version", "This app's version and whether a newer VideoStudio Desktop is published.", () => need().updateCheck());
   registerCommand("app.update", "Download and install the newest VideoStudio Desktop (the person types their password in the system dialog), then restart the app.", () => need().updateInstall());
 

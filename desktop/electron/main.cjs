@@ -24,23 +24,37 @@ const DEV_URL = process.env.VSD_DEV_URL || "";
 // previous start never got that far, Vulkan is left off this time.
 const GUARD = path.join(app.getPath("userData"), "gpu-boot.marker");
 const GPU_CFG = path.join(app.getPath("userData"), "gpu.json");
-let vulkan = true;
-try {
-  const cfg = JSON.parse(fs.readFileSync(GPU_CFG, "utf8"));
-  if (cfg.vulkan === false) vulkan = false;
-} catch {
-  /* default on */
-}
-try {
-  if (fs.existsSync(GUARD)) {
-    vulkan = false;
-    fs.mkdirSync(path.dirname(GPU_CFG), { recursive: true });
-    fs.writeFileSync(GPU_CFG, JSON.stringify({ vulkan: false, reason: "previous start with Vulkan did not finish" }));
+const CRASH_LOG = path.join(app.getPath("userData"), "crash.log");
+const crashLog = (m) => {
+  try {
+    fs.mkdirSync(path.dirname(CRASH_LOG), { recursive: true });
+    fs.appendFileSync(CRASH_LOG, `${new Date().toISOString()} ${m}\n`);
+  } catch {
+    /* ignore */
   }
-  fs.mkdirSync(path.dirname(GUARD), { recursive: true });
-  fs.writeFileSync(GUARD, String(Date.now()));
-} catch {
-  /* ignore */
+};
+// Only the first copy of the app takes part in the GPU guard (a duplicate launch quits at once).
+const firstInstance = app.requestSingleInstanceLock();
+let vulkan = true;
+if (firstInstance) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(GPU_CFG, "utf8"));
+    if (cfg.vulkan === false) vulkan = false;
+  } catch {
+    /* default on */
+  }
+  try {
+    if (fs.existsSync(GUARD)) {
+      vulkan = false;
+      fs.mkdirSync(path.dirname(GPU_CFG), { recursive: true });
+      fs.writeFileSync(GPU_CFG, JSON.stringify({ vulkan: false, reason: "previous start with Vulkan did not finish", at: new Date().toISOString() }));
+      crashLog("previous start did not finish: Vulkan switched off");
+    }
+    fs.mkdirSync(path.dirname(GUARD), { recursive: true });
+    fs.writeFileSync(GUARD, String(Date.now()));
+  } catch {
+    /* ignore */
+  }
 }
 if (vulkan && process.env.VSD_NO_VULKAN !== "1") app.commandLine.appendSwitch("enable-features", "Vulkan,VaapiVideoDecodeLinuxGL");
 app.commandLine.appendSwitch("enable-unsafe-webgpu");
@@ -1040,6 +1054,11 @@ function createWindow() {
   });
   win.on("maximize", () => win.webContents.send("win:state", { maximized: true }));
   win.on("unmaximize", () => win.webContents.send("win:state", { maximized: false }));
+  win.webContents.on("render-process-gone", (_e, d) => {
+    crashLog(`window gone: ${d.reason} code=${d.exitCode}`);
+    if (d.reason !== "clean-exit") setTimeout(() => win && !win.isDestroyed() && win.reload(), 1500);
+  });
+  win.webContents.on("unresponsive", () => crashLog("window unresponsive"));
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -1178,6 +1197,13 @@ function setupIpc() {
     return { path: p, bytes: buf.length, url: fileUrl(p) };
   });
   handle("enc.caps", () => encoderCaps());
+  handle("app.crashLog", async () => {
+    try {
+      return (await fsp.readFile(CRASH_LOG, "utf8")).split("\n").slice(-40).join("\n");
+    } catch {
+      return "";
+    }
+  });
   handle("update.check", () => updateCheck());
   handle("update.install", () => updateInstall());
   handle("enc.open", (o) => encOpen(o));
@@ -1224,7 +1250,9 @@ function setupIpc() {
 
 /* ------------------------------------------------------------------ boot */
 
-if (!app.requestSingleInstanceLock()) app.quit();
+process.on("uncaughtException", (e) => crashLog(`main uncaught: ${e?.stack ?? e}`));
+app.on("child-process-gone", (_e, d) => crashLog(`child gone: ${d.type} ${d.reason} code=${d.exitCode}`));
+if (!firstInstance) app.quit();
 else {
   app.on("second-instance", () => {
     if (win) {
