@@ -21,6 +21,7 @@ const EXTRA: Record<string, string> = {
   marker: "M6 3h12v13l-6 5-6-5z",
   fit: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
   claude: "M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4",
+  curve: "M3 20c6 0 6-16 12-16 3 0 4 4 6 4M3 4v16h18",
   gear: "M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1",
 };
 

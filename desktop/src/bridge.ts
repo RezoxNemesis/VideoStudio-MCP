@@ -54,6 +54,7 @@ export interface AudioReport {
 
 export interface Vsd {
   desktop: true;
+  pathOf(file: File): string;
   info(): Promise<DesktopInfo>;
   list(dir: string, o?: { kinds?: string[]; hidden?: boolean; sort?: "name" | "modified"; limit?: number }): Promise<{ dir: string; parent: string | null; entries: FsEntry[]; total: number }>;
   find(root: string, q: string, o?: { kinds?: string[]; limit?: number; depth?: number }): Promise<{ root: string; query: string; results: FsEntry[] }>;
@@ -73,6 +74,31 @@ export interface Vsd {
   download(url: string, headers?: Record<string, string>): Promise<{ path: string; bytes: number; url: string }>;
   win: { minimize(): Promise<void>; maximize(): Promise<void>; close(): Promise<void>; fullscreen(): Promise<void>; isMaximized(): Promise<boolean>; onState(fn: (s: { maximized: boolean }) => void): void };
   openExternal(url: string): Promise<void>;
+  enc: {
+    caps(): Promise<EncCaps>;
+    open(o: { width: number; height: number; fps: number; codec: string; quality?: number; name: string; audio?: Uint8Array | null }): Promise<{ id: string; path: string; codec: string }>;
+    frame(id: string, data: Uint8Array): Promise<void>;
+    finish(id: string): Promise<{ path: string; bytes: number; codec: string; frames: number }>;
+    abort(id: string): Promise<void>;
+  };
+  process(kind: string, input: string, o?: Record<string, unknown>): Promise<{ path: string; note: string }>;
+  needsConversion(p: string): Promise<boolean>;
+  workWrite(name: string, bytes: Uint8Array): Promise<string>;
+  workClean(): Promise<boolean>;
+  onProgress(fn: (m: { tag: string; frac: number }) => void): void;
+}
+
+export interface EncCaps {
+  ffmpeg: string;
+  nvenc_h264: boolean;
+  nvenc_hevc: boolean;
+  nvenc_av1: boolean;
+  x264: boolean;
+  x265: boolean;
+  prores: boolean;
+  svtav1: boolean;
+  vp9: boolean;
+  filters: string[];
 }
 
 /** The bridge, or a stand-in when the page runs in a plain browser (dev preview, tests). */

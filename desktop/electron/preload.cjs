@@ -1,5 +1,5 @@
 /** The only bridge between the editor window and the desktop: a small, explicit API (no Node in the page). */
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 async function call(name, ...args) {
   const r = await ipcRenderer.invoke(name, ...args);
@@ -9,6 +9,13 @@ async function call(name, ...args) {
 
 contextBridge.exposeInMainWorld("vsd", {
   desktop: true,
+  pathOf: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || "";
+    } catch {
+      return "";
+    }
+  },
   info: () => call("info"),
   list: (dir, o) => call("fs.list", dir, o),
   find: (root, q, o) => call("fs.find", root, q, o),
@@ -30,6 +37,18 @@ contextBridge.exposeInMainWorld("vsd", {
   saveAbort: (id) => call("save.abort", id),
   download: (url, headers) => call("net.download", url, headers),
   capture: (max, quality) => call("win.capture", max, quality),
+  enc: {
+    caps: () => call("enc.caps"),
+    open: (o) => call("enc.open", o),
+    frame: (id, data) => call("enc.frame", id, data),
+    finish: (id) => call("enc.finish", id),
+    abort: (id) => call("enc.abort", id),
+  },
+  process: (kind, input, o) => call("media.process", kind, input, o),
+  needsConversion: (p) => call("media.needsConversion", p),
+  workWrite: (name, bytes) => call("work.write", name, bytes),
+  workClean: () => call("work.clean"),
+  onProgress: (fn) => ipcRenderer.on("ffmpeg:progress", (_e, m) => fn(m)),
   win: {
     minimize: () => call("win.minimize"),
     maximize: () => call("win.maximize"),

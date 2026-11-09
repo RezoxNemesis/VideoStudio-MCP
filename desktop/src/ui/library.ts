@@ -7,7 +7,8 @@ import * as proc from "../../../src/anim/proc";
 import { AMBIENCES, MOODS, SFX } from "../../../src/audio/compose";
 import * as ops from "../../../src/core/ops";
 import { toast } from "../../../src/ui/dom";
-import { fmtSize, pathBlob, vsd, type FsEntry } from "../bridge";
+import { fmtSize, vsd, type FsEntry } from "../bridge";
+import { importPath } from "../importer";
 import { b, h, ic, menu, tabs } from "./kit";
 
 type Tab = "media" | "files" | "titles" | "motion" | "effects" | "sound";
@@ -79,8 +80,8 @@ export class Library {
     for (const p of paths) {
       try {
         this.s.setStatus(`Importing ${p.split("/").pop()}…`);
-        const { blob, name } = await pathBlob(p);
-        await this.s.importFiles([new File([blob], name, { type: blob.type })], false);
+        const r = await importPath(this.s, p, false);
+        if (r.converted) toast(`${r.asset.name}: ${r.converted}`, "ok", 4000);
       } catch (e) {
         toast((e as Error).message, "error");
       }

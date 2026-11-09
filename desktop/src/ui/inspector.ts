@@ -283,6 +283,41 @@ export class Inspector {
       }
     }
 
+    if (!color && c.kind === "media" && asset) {
+      const proc = (kind: string, label: string, extra: Record<string, unknown> = {}) =>
+        b(label, null, async () => {
+          this.s.setStatus(`${label}…`);
+          const r = await runCommand(this.s, { op: "media.process", kind, assetId: asset.id, clipId: c.id, ...extra });
+          toast(r.ok ? (r.result as { note: string }).note : r.error ?? "Failed", r.ok ? "ok" : "error", 5000);
+          this.s.setStatus("");
+        }, "sm");
+      out.push(
+        this.sec(
+          "Pro tools (this PC)",
+          asset.kind === "video"
+            ? h(
+                "div",
+                { class: "row wrap" },
+                proc("stabilize", "Stabilise"),
+                proc("slowmo", "Slow-mo 2×", { factor: 2 }),
+                proc("slowmo", "Slow-mo 4×", { factor: 4 }),
+                proc("denoise", "Denoise"),
+                proc("upscale", "Upscale 4K", { height: 2160 }),
+                proc("reverse", "Reverse"),
+                b("Apply LUT…", null, async () => {
+                  const [lut] = (await (await import("../bridge")).vsd?.pick({ title: "Pick a .cube LUT", multiple: false })) ?? [];
+                  if (!lut) return;
+                  const r = await runCommand(this.s, { op: "media.process", kind: "lut", lut, assetId: asset.id, clipId: c.id });
+                  toast(r.ok ? "LUT applied" : r.error ?? "Failed", r.ok ? "ok" : "error");
+                }, "sm"),
+              )
+            : null,
+          asset.kind !== "image" ? h("div", { class: "row wrap", style: "margin-top:6px" }, proc("loudnorm", "Loudness −14 LUFS"), asset.kind === "video" ? proc("extractAudio", "Extract sound") : null) : null,
+          h("div", { class: "hint", style: "margin-top:6px" }, "Runs on your GPU/CPU with ffmpeg; the result replaces this clip as a new media item (undo brings the original back)."),
+        ),
+      );
+    }
+
     if (!color && (c.kind === "media" || c.kind === "anim")) {
       out.push(
         this.sec(

@@ -2,19 +2,21 @@
 import type { Studio } from "../../../src/app/studio";
 import { AnimateView } from "../../../src/ui/animate";
 import { VoiceView } from "../../../src/ui/voice";
-import { ExportView } from "../../../src/ui/export";
 import { runCommand } from "../../../src/agent/api";
 import { deleteProject } from "../../../src/core/storage";
 import { toast } from "../../../src/ui/dom";
 import { setShellHooks } from "../commands";
 import type { DesktopLink } from "../link";
 import { fmtSize, vsd } from "../bridge";
+import { importPath } from "../importer";
 import { AudioWorkspace } from "./audio";
 import { ClaudeWorkspace } from "./claude";
 import { ASPECTS, Inspector } from "./inspector";
 import { b, h, ic, menu, modal, panel, selectEl, type MenuItem } from "./kit";
 import { Library } from "./library";
 import { DesktopTimeline } from "./timeline";
+import { Deliver } from "./deliver";
+import { GraphEditor } from "./graph";
 import { Viewer } from "./viewer";
 
 export type WsName = "edit" | "color" | "audio" | "animate" | "voice" | "deliver" | "claude";
@@ -63,9 +65,13 @@ export class Shell {
   readonly viewer: Viewer;
   readonly timeline: DesktopTimeline;
   private tlPanel: HTMLElement;
+  private tlBody!: HTMLElement;
+  private graph: GraphEditor;
+  private graphBtn!: HTMLButtonElement;
+  private graphOn = false;
   private library: Library;
   private animate: AnimateView;
-  private exportView: ExportView;
+  private deliver: Deliver;
   private rendersBody: HTMLElement | null = null;
 
   constructor(
@@ -74,10 +80,14 @@ export class Shell {
   ) {
     this.viewer = new Viewer(s);
     this.timeline = new DesktopTimeline(s);
-    const tl = panel(h("span", { class: "row", style: "gap:6px" }, ic("layers", 14), "Timeline"), "tlp", this.timeline.toolbar);
+    this.graph = new GraphEditor(s);
+    const graphBtn = b("Graph", "curve", () => this.toggleGraph(), "sm", "Animation curves of the selected clip (G)");
+    this.graphBtn = graphBtn;
+    const tl = panel(h("span", { class: "row", style: "gap:6px" }, ic("layers", 14), "Timeline"), "tlp", graphBtn, this.timeline.toolbar);
     tl.body.style.padding = "0";
     tl.body.style.display = "flex";
     tl.body.append(this.timeline.el);
+    this.tlBody = tl.body;
     this.tlPanel = tl.el;
     this.addSplitH(this.tlPanel);
     this.library = new Library(s);
@@ -106,10 +116,9 @@ export class Shell {
     vo.body.append(new VoiceView(s).el);
     this.ws.voice = h("div", { class: "d-ws ws-full" }, vo.el);
     // Deliver.
-    this.exportView = new ExportView(s);
-    const ex = panel("Render");
-    ex.body.className = "hosted";
-    ex.body.append(this.exportView.el);
+    this.deliver = new Deliver(s);
+    const ex = panel("Render · GPU");
+    ex.body.replaceWith(this.deliver.el);
     const rn = panel("Renders on this PC", "", b(null, "loop", () => void this.drawRenders(), "sm ghost", "Refresh"), b(null, "folder", async () => vsd && void vsd.openPath((await vsd.info()).out.Movies), "sm ghost", "Open the folder"));
     this.rendersBody = rn.body;
     this.ws.deliver = h("div", { class: "d-ws", style: "grid-template-columns:1fr 420px" }, ex.el, rn.el);
@@ -176,6 +185,9 @@ export class Shell {
     s.on("change", () => this.drawProj());
     s.on("time", () => this.drawStatus());
     link.on(() => this.drawLink());
+    document.addEventListener("vsd:rendered", () => this.cur === "deliver" && void this.drawRenders());
+    vsd?.onProgress((m) => this.s.setStatus(`${m.tag.split(":")[0]} · ${Math.round(m.frac * 100)}%`));
+    void vsd?.workClean();
     document.addEventListener("vsd:openScene", (e) => this.go("animate", (e as CustomEvent<string>).detail));
     (window as unknown as { vsdFullscreen: () => void }).vsdFullscreen = () => void vsd?.win.fullscreen();
     this.keys();
@@ -196,6 +208,14 @@ export class Shell {
 
   /* ------------------------------------------------------------ layout */
 
+  toggleGraph(on = !this.graphOn): void {
+    this.graphOn = on;
+    this.graphBtn.classList.toggle("on", on);
+    this.tlBody.replaceChildren(on ? this.graph.el : this.timeline.el);
+    if (on) this.graph.redraw();
+    else this.timeline.redraw();
+  }
+
   go(n: WsName, arg?: string): void {
     if (this.cur === "animate" && n !== "animate") this.animate.hide();
     this.cur = n;
@@ -211,7 +231,7 @@ export class Shell {
     } else if (n === "audio") host.append(this.tlPanel);
     if (n === "animate") this.animate.open(arg);
     if (n === "deliver") {
-      this.exportView.draw();
+      this.deliver.draw();
       void this.drawRenders();
     }
     if (n !== "edit" && n !== "color") this.s.pause();
@@ -401,6 +421,7 @@ export class Shell {
       ["Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"],
       ["Ctrl + wheel", "Zoom the timeline"],
       ["Shift+Z", "Fit the edit"],
+      ["G", "Graph editor (animation curves)"],
       ["Alt+1…7", "Workspaces"],
       ["Ctrl+I", "Import media"],
       ["Ctrl+S", "Save backup"],
@@ -572,6 +593,10 @@ export class Shell {
         case "?":
           this.shortcuts();
           break;
+        case "g":
+        case "G":
+          this.toggleGraph();
+          break;
         case "Escape":
           this.s.select(null);
           tl.setTool("select");
@@ -603,7 +628,11 @@ export class Shell {
       if (!files.length) return;
       this.s.setStatus(`Importing ${files.length} file${files.length > 1 ? "s" : ""}…`);
       try {
-        await this.s.importFiles(files, false);
+        for (const f of files) {
+          const p = vsd?.pathOf(f);
+          if (p) await importPath(this.s, p, false);
+          else await this.s.importFiles([f], false);
+        }
         toast(`Imported ${files.length} file${files.length > 1 ? "s" : ""}`, "ok");
       } catch (err) {
         toast((err as Error).message, "error");

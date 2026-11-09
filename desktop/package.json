@@ -82,6 +82,16 @@
         "repo": "videostudio-mcp",
         "releaseType": "release"
       }
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/ffmpeg",
+        "to": "ffmpeg",
+        "filter": [
+          "ffmpeg",
+          "ffprobe"
+        ]
+      }
     ]
   }
 }

@@ -34,7 +34,10 @@ protocol.registerSchemesAsPrivileged([
 /* ------------------------------------------------------------------ binaries */
 
 function bin(name) {
-  // Bundled ffmpeg/ffprobe (inside the package, unpacked from the asar), else the system one.
+  // 1) The full GPU build shipped with the installer (resources/ffmpeg: BtbN GPL build with NVENC/CUDA),
+  // 2) the small bundled build (ffmpeg-static), 3) the system one.
+  const vendor = [path.join(process.resourcesPath || "", "ffmpeg", name), path.join(__dirname, "..", "vendor", "ffmpeg", name)];
+  for (const v of vendor) if (v && fs.existsSync(v)) return v;
   try {
     let p = name === "ffmpeg" ? require("ffmpeg-static") : require("ffprobe-static").path;
     if (p) {
@@ -555,6 +558,264 @@ async function toAacIfNeeded(file) {
   return "aac";
 }
 
+/* ------------------------------------------------------------------ GPU / pro encoding */
+
+let caps = null;
+/** What this PC's ffmpeg can do: encoders, filters, and whether NVENC really works on the GPU (a 1-frame test). */
+async function encoderCaps() {
+  if (caps) return caps;
+  const enc = (await run(FFMPEG, ["-hide_banner", "-encoders"], { timeout: 20_000 }).catch(() => ({ stdout: "" }))).stdout;
+  const flt = (await run(FFMPEG, ["-hide_banner", "-filters"], { timeout: 20_000 }).catch(() => ({ stdout: "" }))).stdout;
+  const has = (n) => new RegExp(`\\s${n}\\s`).test(enc);
+  const test = async (codec) => {
+    if (!has(codec)) return false;
+    const r = await run(FFMPEG, ["-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.2", "-frames:v", "3", "-c:v", codec, "-f", "null", "-"], { timeout: 20_000 }).catch(() => ({ code: 1 }));
+    return r.code === 0;
+  };
+  caps = {
+    ffmpeg: FFMPEG,
+    nvenc_h264: await test("h264_nvenc"),
+    nvenc_hevc: await test("hevc_nvenc"),
+    nvenc_av1: await test("av1_nvenc"),
+    x264: has("libx264"),
+    x265: has("libx265"),
+    prores: has("prores_ks"),
+    svtav1: has("libsvtav1"),
+    vp9: has("libvpx-vp9"),
+    filters: ["vidstabdetect", "minterpolate", "nlmeans", "hqdn3d", "lut3d", "loudnorm", "zscale", "deshake", "scale_cuda"].filter((f) => new RegExp(`\\s${f}\\s`).test(flt)),
+  };
+  return caps;
+}
+
+const BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"];
+function videoArgs(codec, q, c) {
+  // q: quality 0 (smallest) .. 100 (best). Maps to CQ/CRF per encoder.
+  const cq = (lo, hi) => String(Math.round(hi - (Math.max(0, Math.min(100, q)) / 100) * (hi - lo)));
+  switch (codec) {
+    case "nvenc_h264":
+      return { ext: "mp4", args: ["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", cq(12, 30), "-b:v", "0", "-maxrate", "200M", "-bufsize", "400M", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "32", "-bf", "3", "-profile:v", "high", "-pix_fmt", "yuv420p", ...BT709] };
+    case "nvenc_hevc":
+      return { ext: "mp4", args: ["-c:v", "hevc_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", cq(14, 32), "-b:v", "0", "-maxrate", "200M", "-bufsize", "400M", "-spatial-aq", "1", "-temporal-aq", "1", "-profile:v", "main10", "-pix_fmt", "p010le", "-tag:v", "hvc1", ...BT709] };
+    case "nvenc_av1":
+      return { ext: "mp4", args: ["-c:v", "av1_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", cq(18, 40), "-b:v", "0", "-pix_fmt", "p010le", ...BT709] };
+    case "x265":
+      return { ext: "mp4", args: ["-c:v", "libx265", "-preset", "medium", "-crf", cq(12, 30), "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1", "-x265-params", "aq-mode=3:log-level=error", ...BT709] };
+    case "prores":
+      return { ext: "mov", audio: ["-c:a", "pcm_s24le"], args: ["-c:v", "prores_ks", "-profile:v", "3", "-vendor", "apl0", "-bits_per_mb", "8000", "-pix_fmt", "yuv422p10le", ...BT709] };
+    case "prores4444":
+      return { ext: "mov", audio: ["-c:a", "pcm_s24le"], args: ["-c:v", "prores_ks", "-profile:v", "4", "-vendor", "apl0", "-pix_fmt", "yuva444p10le", ...BT709] };
+    case "vp9":
+      return { ext: "webm", audio: ["-c:a", "libopus", "-b:a", "256k"], args: ["-c:v", "libvpx-vp9", "-crf", cq(15, 40), "-b:v", "0", "-row-mt", "1", "-deadline", "good", "-cpu-used", "2", "-pix_fmt", "yuv420p"] };
+    case "x264":
+    default:
+      return { ext: "mp4", args: ["-c:v", "libx264", "-preset", "slow", "-crf", cq(10, 28), "-profile:v", "high", "-pix_fmt", "yuv420p", "-x264-params", "aq-mode=3", ...BT709] };
+  }
+}
+
+const encoders = new Map();
+async function encOpen(o) {
+  const c = await encoderCaps();
+  let codec = o.codec || "auto";
+  if (codec === "auto") codec = c.nvenc_h264 ? "nvenc_h264" : "x264";
+  if (codec === "hevc") codec = c.nvenc_hevc ? "nvenc_hevc" : "x265";
+  if (codec === "h264") codec = c.nvenc_h264 ? "nvenc_h264" : "x264";
+  if (codec.startsWith("nvenc") && !c[codec]) throw new Error(`${codec} is not available on this PC (no NVIDIA encoder found). Use auto, x264 or x265.`);
+  const v = videoArgs(codec, o.quality ?? 85, c);
+  const dir = OUT.Movies;
+  const out = await uniquePath(dir, `${String(o.name || "VideoStudio").replace(/\.(mp4|mov|webm)$/i, "")}.${v.ext}`);
+  const args = ["-hide_banner", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${o.width}x${o.height}`, "-framerate", String(o.fps), "-i", "pipe:0"];
+  let wav = null;
+  if (o.audio && o.audio.byteLength) {
+    wav = path.join(os.tmpdir(), `vsd-mix-${crypto.randomUUID()}.wav`);
+    await fsp.writeFile(wav, Buffer.from(o.audio.buffer, o.audio.byteOffset, o.audio.byteLength));
+    args.push("-i", wav);
+  }
+  // RGBA from the compositor → broadcast BT.709 YUV with correct matrix and range.
+  // WebGL readPixels rows are bottom-up: flip, then RGBA → broadcast BT.709 YUV with the right matrix and range.
+  const vf = codec === "prores4444" ? "vflip,format=rgba" : "vflip,scale=in_range=full:out_range=tv:out_color_matrix=bt709:flags=accurate_rnd+full_chroma_int";
+  args.push("-map", "0:v", ...(wav ? ["-map", "1:a"] : []), "-vf", vf, ...v.args, "-r", String(o.fps));
+  if (wav) args.push(...(v.audio || ["-c:a", "aac", "-b:a", "320k", "-ar", "48000"]), "-shortest");
+  if (v.ext === "mp4") args.push("-movflags", "+faststart");
+  args.push(`${out}.part.${v.ext}`);
+  const p = spawn(FFMPEG, args, { stdio: ["pipe", "ignore", "pipe"] });
+  let err = "";
+  p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-8000)));
+  const done = new Promise((res) => p.on("close", (code) => res(code)));
+  p.stdin.on("error", () => {});
+  const id = crypto.randomUUID();
+  encoders.set(id, { p, out, tmp: `${out}.part.${v.ext}`, wav, done, err: () => err, codec, frames: 0, bytesPerFrame: o.width * o.height * 4 });
+  return { id, path: out, codec };
+}
+async function encFrame(id, data) {
+  const e = encoders.get(id);
+  if (!e) throw new Error("Encoder closed.");
+  if (data.byteLength !== e.bytesPerFrame) throw new Error(`Frame size ${data.byteLength} != ${e.bytesPerFrame}`);
+  const buf = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  if (e.p.exitCode !== null) throw new Error(`Encoder stopped: ${e.err().trim().split("\n").slice(-3).join(" ")}`);
+  e.frames++;
+  if (!e.p.stdin.write(buf)) await new Promise((r) => e.p.stdin.once("drain", r));
+}
+async function encFinish(id) {
+  const e = encoders.get(id);
+  if (!e) throw new Error("Encoder closed.");
+  encoders.delete(id);
+  e.p.stdin.end();
+  const code = await e.done;
+  if (e.wav) fsp.rm(e.wav, { force: true }).catch(() => {});
+  if (code !== 0) {
+    await fsp.rm(e.tmp, { force: true });
+    throw new Error(`Encoding failed: ${e.err().trim().split("\n").slice(-4).join(" ")}`);
+  }
+  await fsp.rename(e.tmp, e.out);
+  const st = await fsp.stat(e.out);
+  return { path: e.out, bytes: st.size, codec: e.codec, frames: e.frames };
+}
+async function encAbort(id) {
+  const e = encoders.get(id);
+  if (!e) return;
+  encoders.delete(id);
+  e.p.kill("SIGKILL");
+  await e.done;
+  await fsp.rm(e.tmp, { force: true });
+  if (e.wav) await fsp.rm(e.wav, { force: true });
+}
+
+/* ------------------------------------------------------------------ pro media tools (fixed, safe recipes) */
+
+const WORK = () => path.join(app.getPath("userData"), "work");
+let progressTarget = null;
+function sendProgress(tag, frac) {
+  progressTarget?.send("ffmpeg:progress", { tag, frac });
+}
+
+/** Run ffmpeg with -progress, reporting 0..1 for a known duration. */
+function runProgress(args, duration, tag) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(FFMPEG, ["-hide_banner", "-v", "error", "-y", "-progress", "pipe:1", "-nostats", ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let err = "";
+    p.stderr.on("data", (d) => (err = (err + d.toString()).slice(-6000)));
+    p.stdout.on("data", (d) => {
+      const m = /out_time_us=(\d+)/.exec(d.toString());
+      if (m && duration > 0) sendProgress(tag, Math.min(1, Number(m[1]) / 1e6 / duration));
+    });
+    p.on("error", reject);
+    p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(err.trim().split("\n").slice(-3).join(" ") || `ffmpeg exited ${code}`))));
+  });
+}
+
+/** Video/audio codecs Chromium decodes itself; anything else is converted to an edit-friendly copy on import. */
+function needsConversion(info) {
+  const v = info.video;
+  const a = info.audio;
+  const okV = !v || (["h264", "vp8", "vp9", "av1", "mjpeg", "png", "gif", "webp"].includes(v.codec) && !/10|12|422|444/.test(v.pixfmt || "") && !v.rotation);
+  const okA = !a || ["aac", "mp3", "opus", "vorbis", "flac", "pcm_s16le", "pcm_s24le", "pcm_f32le", "pcm_u8"].includes(a.codec);
+  return !(okV && okA);
+}
+
+async function processMedia(kind, input, o = {}) {
+  const src = mustAllow(input);
+  const info = await probe(src);
+  await fsp.mkdir(WORK(), { recursive: true });
+  const base = path.basename(src).replace(/\.[^.]+$/, "");
+  const c = await encoderCaps();
+  const hq = c.nvenc_h264 ? ["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "14", "-b:v", "0", "-pix_fmt", "yuv420p"] : ["-c:v", "libx264", "-preset", "medium", "-crf", "13", "-pix_fmt", "yuv420p"];
+  const aac = ["-c:a", "aac", "-b:a", "320k", "-ar", "48000"];
+  const out = (suffix, ext = "mp4") => path.join(WORK(), `${base} ${suffix}.${ext}`);
+  const dur = info.duration;
+  const v = info.video;
+  const tag = `${kind}:${path.basename(src)}`;
+  switch (kind) {
+    case "convert": {
+      if (!v) {
+        const f = out("edit", "flac");
+        await runProgress(["-i", src, "-vn", "-c:a", "flac", f], dur, tag);
+        return { path: f, note: "Converted to lossless FLAC" };
+      }
+      const f = out("edit");
+      // Phone HEVC/HDR, ProRes, DNxHD, MPEG-2…: visually lossless H.264 with rotation applied and HDR tone-mapped to SDR.
+      const hdr = v.hdr && c.filters.includes("zscale") ? "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p" : "format=yuv420p";
+      await runProgress(["-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", hdr, ...hq, ...BT709, ...aac, "-movflags", "+faststart", f], dur, tag);
+      return { path: f, note: v.hdr ? "Converted to H.264, HDR tone-mapped to SDR" : "Converted to edit-friendly H.264" };
+    }
+    case "stabilize": {
+      if (!v) throw new Error("Stabilise needs a video.");
+      if (!c.filters.includes("vidstabdetect")) throw new Error("This ffmpeg has no vid.stab; using deshake instead is possible with mode: deshake.");
+      const trf = path.join(WORK(), `${crypto.randomUUID()}.trf`);
+      const shake = Math.max(1, Math.min(10, Number(o.shakiness ?? 6)));
+      const smooth = Math.max(1, Math.min(100, Number(o.smoothing ?? 30)));
+      sendProgress(tag, 0);
+      await runProgress(["-i", src, "-vf", `vidstabdetect=shakiness=${shake}:accuracy=15:result=${trf}`, "-f", "null", "-"], dur * 2, tag);
+      const f = out("stabilised");
+      await runProgress(["-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", `vidstabtransform=input=${trf}:smoothing=${smooth}:optzoom=${o.zoom === false ? 0 : 1}:interpol=bicubic,unsharp=5:5:0.6:3:3:0.2`, ...hq, ...aac, "-movflags", "+faststart", f], dur, tag);
+      fsp.rm(trf, { force: true }).catch(() => {});
+      return { path: f, note: `Stabilised (smoothing ${smooth})` };
+    }
+    case "slowmo": {
+      if (!v) throw new Error("Slow motion needs a video.");
+      const factor = Math.max(1.5, Math.min(8, Number(o.factor ?? 2)));
+      const fps = v.fps || 30;
+      const f = out(`slowmo ${factor}x`);
+      // Motion-compensated interpolation (optical-flow style): new in-between frames, then played at the source rate.
+      const mode = o.mode === "blend" ? "mi_mode=blend" : "mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1";
+      await runProgress(["-i", src, "-an", "-vf", `minterpolate=fps=${Math.round(fps * factor)}:${mode},setpts=${factor}*PTS`, "-r", String(fps), ...hq, "-movflags", "+faststart", f], dur * factor, tag);
+      return { path: f, note: `${factor}× slow motion with interpolated frames` };
+    }
+    case "denoise": {
+      if (!v) throw new Error("Denoise needs a video.");
+      const s = Math.max(0.5, Math.min(10, Number(o.strength ?? 4)));
+      const f = out("denoised");
+      const vf = o.quality === "best" && c.filters.includes("nlmeans") ? `nlmeans=s=${(s * 0.8).toFixed(1)}:p=7:r=15` : `hqdn3d=${s}:${s * 0.75}:${s * 1.5}:${s * 1.1}`;
+      await runProgress(["-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf, ...hq, ...aac, "-movflags", "+faststart", f], dur, tag);
+      return { path: f, note: "Video noise removed" };
+    }
+    case "upscale": {
+      if (!v) throw new Error("Upscale needs a video or picture.");
+      const H = Math.max(240, Math.min(4320, Number(o.height ?? 2160)));
+      const f = out(`${H}p`);
+      await runProgress(["-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", `scale=-2:${H}:flags=lanczos,unsharp=5:5:0.5:5:5:0.0`, ...hq, ...aac, "-movflags", "+faststart", f], dur, tag);
+      return { path: f, note: `Upscaled to ${H}p` };
+    }
+    case "lut": {
+      const lut = mustAllow(String(o.lut || ""));
+      if (!/\.(cube|3dl|dat|m3d|csp)$/i.test(lut)) throw new Error("LUT must be a .cube / .3dl file.");
+      const f = out(`lut ${path.basename(lut).replace(/\.[^.]+$/, "")}`);
+      const k = Math.max(0, Math.min(1, Number(o.amount ?? 1)));
+      const vf = k >= 0.999 ? `lut3d=file='${lut.replace(/'/g, "\\'")}'` : `split[a][b];[b]lut3d=file='${lut.replace(/'/g, "\\'")}'[l];[a][l]blend=all_expr='A*(1-${k})+B*${k}'`;
+      await runProgress(["-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf, ...hq, ...aac, "-movflags", "+faststart", f], dur, tag);
+      return { path: f, note: `LUT applied (${Math.round(k * 100)}%)` };
+    }
+    case "reverse": {
+      if (dur > 120) throw new Error("Reverse works on clips up to 2 minutes (trim first).");
+      const f = out("reversed");
+      await runProgress(["-i", src, "-map", "0:v:0?", "-map", "0:a:0?", "-vf", "reverse", "-af", "areverse", ...hq, ...aac, "-movflags", "+faststart", f], dur, tag);
+      return { path: f, note: "Reversed" };
+    }
+    case "loudnorm": {
+      const I = Math.max(-30, Math.min(-8, Number(o.target ?? -14)));
+      const f = out(`${I}LUFS`, v ? "mp4" : "m4a");
+      await runProgress(["-i", src, ...(v ? ["-map", "0:v:0", "-c:v", "copy"] : ["-vn"]), "-map", "0:a:0", "-af", `loudnorm=I=${I}:TP=-1:LRA=11`, ...aac, f], dur, tag);
+      return { path: f, note: `Loudness normalised to ${I} LUFS` };
+    }
+    case "extractAudio": {
+      const f = out("audio", "flac");
+      await runProgress(["-i", src, "-vn", "-map", "0:a:0", "-c:a", "flac", f], dur, tag);
+      return { path: f, note: "Sound extracted (lossless)" };
+    }
+    case "speed": {
+      const k = Math.max(0.25, Math.min(4, Number(o.factor ?? 2)));
+      const f = out(`${k}x`);
+      const atempo = [];
+      let rem = k;
+      while (rem > 2) (atempo.push("atempo=2"), (rem /= 2));
+      while (rem < 0.5) (atempo.push("atempo=0.5"), (rem /= 0.5));
+      atempo.push(`atempo=${rem.toFixed(4)}`);
+      await runProgress(["-i", src, "-map", "0:v:0?", "-map", "0:a:0?", "-vf", `setpts=PTS/${k}`, "-af", atempo.join(","), ...hq, ...aac, "-movflags", "+faststart", f], dur / k, tag);
+      return { path: f, note: `${k}× speed (pitch kept)` };
+    }
+  }
+  throw new Error(`Unknown process ${kind}. Use convert, stabilize, slowmo, denoise, upscale, lut, reverse, loudnorm, extractAudio, speed.`);
+}
+
 /* ------------------------------------------------------------------ window */
 
 let win = null;
@@ -594,6 +855,7 @@ function createWindow() {
   win.webContents.on("before-input-event", (e, input) => {
     if (input.type === "keyDown" && input.control && input.shift && input.key.toLowerCase() === "i") win.webContents.toggleDevTools();
   });
+  progressTarget = win.webContents;
   win.loadURL(DEV_URL || "app://studio/index.html");
 }
 
@@ -710,6 +972,32 @@ function setupIpc() {
     await fsp.writeFile(p, buf);
     setTimeout(() => fsp.rm(p, { force: true }).catch(() => {}), 10 * 60_000);
     return { path: p, bytes: buf.length, url: fileUrl(p) };
+  });
+  handle("enc.caps", () => encoderCaps());
+  handle("enc.open", (o) => encOpen(o));
+  handle("enc.frame", (id, data) => encFrame(id, data));
+  handle("enc.finish", (id) => encFinish(id));
+  handle("enc.abort", (id) => encAbort(id));
+  handle("media.process", (kind, input, o) => processMedia(kind, input, o));
+  handle("media.needsConversion", async (p) => needsConversion(await probe(mustAllow(p))));
+  handle("work.write", async (name, bytes) => {
+    await fsp.mkdir(WORK(), { recursive: true });
+    const f = path.join(WORK(), `${crypto.randomUUID()}-${String(name).replace(/[^\w.-]+/g, "_").slice(-80)}`);
+    await fsp.writeFile(f, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    return f;
+  });
+  handle("work.clean", async () => {
+    // Drop work files older than a day.
+    try {
+      for (const f of await fsp.readdir(WORK())) {
+        const p = path.join(WORK(), f);
+        const st = await fsp.stat(p);
+        if (Date.now() - st.mtimeMs > 86_400_000) await fsp.rm(p, { force: true, recursive: true });
+      }
+    } catch {
+      /* none yet */
+    }
+    return true;
   });
   handle("win.capture", async (max = 1600, quality = 78) => {
     const img = await win.webContents.capturePage();

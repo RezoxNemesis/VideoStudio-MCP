@@ -13,3 +13,4 @@ dist6
 desktop/dist-web
 desktop/release
 desktop-relay/dist
+desktop/vendor
