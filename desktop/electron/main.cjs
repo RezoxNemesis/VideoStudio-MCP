@@ -34,12 +34,20 @@ const crashLog = (m) => {
   }
 };
 // Only the first copy of the app takes part in the GPU guard (a duplicate launch quits at once).
+if (process.argv.includes("--vsd-relaunch-wait")) {
+  // Started by the updater: give the old process a moment to release the profile locks.
+  const until = Date.now() + 4000;
+  while (Date.now() < until) {
+    /* short busy wait before any profile access */
+  }
+}
 const firstInstance = app.requestSingleInstanceLock();
 let vulkan = true;
 if (firstInstance) {
   try {
     const cfg = JSON.parse(fs.readFileSync(GPU_CFG, "utf8"));
-    if (cfg.vulkan === false) vulkan = false;
+    // A "Vulkan off" decision made before X11 mode existed (1.0.8 and older) gets one fresh try.
+    if (cfg.vulkan === false && cfg.x11 === true) vulkan = false;
   } catch {
     /* default on */
   }
@@ -47,7 +55,7 @@ if (firstInstance) {
     if (fs.existsSync(GUARD)) {
       vulkan = false;
       fs.mkdirSync(path.dirname(GPU_CFG), { recursive: true });
-      fs.writeFileSync(GPU_CFG, JSON.stringify({ vulkan: false, reason: "previous start with Vulkan did not finish", at: new Date().toISOString() }));
+      fs.writeFileSync(GPU_CFG, JSON.stringify({ vulkan: false, x11: true, reason: "previous start with Vulkan did not finish", at: new Date().toISOString() }));
       crashLog("previous start did not finish: Vulkan switched off");
     }
     fs.mkdirSync(path.dirname(GUARD), { recursive: true });
@@ -56,7 +64,11 @@ if (firstInstance) {
     /* ignore */
   }
 }
-if (vulkan && process.env.VSD_NO_VULKAN !== "1") app.commandLine.appendSwitch("enable-features", "Vulkan,VaapiVideoDecodeLinuxGL");
+if (vulkan && process.env.VSD_NO_VULKAN !== "1") {
+  // Chromium cannot use Vulkan on native Wayland; run the window through XWayland instead (KDE handles it).
+  app.commandLine.appendSwitch("ozone-platform", "x11");
+  app.commandLine.appendSwitch("enable-features", "Vulkan,VaapiVideoDecodeLinuxGL");
+}
 app.commandLine.appendSwitch("enable-unsafe-webgpu");
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
@@ -734,6 +746,7 @@ async function encoderCaps() {
     vp9: has("libvpx-vp9"),
     reasons,
     vulkan,
+    windowing: vulkan ? "x11 (XWayland)" : process.env.XDG_SESSION_TYPE || "auto",
     driver: await run("nvidia-smi", ["--query-gpu=name,driver_version", "--format=csv,noheader"], { timeout: 10_000 }).then((r) => (r.code === 0 ? r.stdout.trim() : null)).catch(() => null),
     filters: ["vidstabdetect", "minterpolate", "nlmeans", "hqdn3d", "lut3d", "loudnorm", "zscale", "deshake", "scale_cuda"].filter((f) => new RegExp(`\\s${f}\\s`).test(flt)),
   };
@@ -1015,7 +1028,7 @@ async function updateInstall() {
   const r = await run("pkexec", ["apt-get", "install", "-y", "--allow-downgrades", file], { timeout: 20 * 60_000 });
   if (r.code !== 0) throw new Error(r.code === 126 || r.code === 127 ? "The password dialog was closed — nothing was installed. The update is saved in Downloads." : `Install failed: ${r.stderr.trim().split("\n").slice(-2).join(" ")}`);
   setTimeout(() => {
-    app.relaunch();
+    app.relaunch({ args: process.argv.slice(1).concat(["--vsd-relaunch-wait"]) });
     app.exit(0);
   }, 1500);
   return { installed: true, version: u.latest, file, note: "Installed — VideoStudio Desktop restarts now." };
