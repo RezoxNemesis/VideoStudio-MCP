@@ -36,8 +36,9 @@ export function lutFor(id: string): Entry | undefined {
       registerLut(id, lut);
       return reg.get(id);
     }
+    // Only an unknown built-in is remembered as missing; a project LUT may simply not be decoded yet.
+    failed.add(id);
   }
-  failed.add(id);
   return undefined;
 }
 

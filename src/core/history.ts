@@ -2,6 +2,8 @@
 export class History<T> {
   private past: { state: string; label: string; at: number }[] = [];
   private future: { state: string; label: string }[] = [];
+  /** How many steps have ever been recorded (so a group can tell which steps are its own, even after old ones fell off the end). */
+  count = 0;
   constructor(
     private readonly limit = 120,
     private readonly coalesceMs = 600,
@@ -27,7 +29,24 @@ export class History<T> {
       return;
     }
     this.past.push({ state: typeof state === "string" ? state : JSON.stringify(state), label, at: now });
+    this.count++;
     if (this.past.length > this.limit) this.past.shift();
+    this.future = [];
+  }
+
+  /**
+   * Fold every step recorded since `since` (a value of `count` taken earlier) into one step that undoes back to
+   * `state` — or, with no state, simply forget those steps (after a roll-back).
+   */
+  collapse(since: number, state?: string, label = "edit"): void {
+    const mine = Math.min(this.past.length, Math.max(0, this.count - since));
+    this.past.length -= mine;
+    this.count = since;
+    if (state !== undefined) {
+      this.past.push({ state, label, at: 0 });
+      this.count++;
+      if (this.past.length > this.limit) this.past.shift();
+    }
     this.future = [];
   }
 

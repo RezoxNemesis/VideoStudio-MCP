@@ -228,7 +228,7 @@ interface Entry {
 }
 
 /** Most native decoders one video can have running for one purpose (clips showing it at the same time). */
-const MAX_LANES = 12;
+const MAX_LANES = 6;
 
 export class MediaPool {
   /** Set once by the desktop app at start. */
@@ -240,10 +240,15 @@ export class MediaPool {
   private laneUser = new Map<string, { user: string; tick: number }>();
   private laneSeq = 0;
   private ticks = new Map<string, number>();
+  private onScreen = new Map<string, Set<string>>();
 
-  /** Called once before the layers of a frame are gathered, so decoder lanes know which clips are on screen together. */
-  beginFrame(purpose: string): void {
+  /**
+   * Called once before the layers of a frame are gathered, with the clips that are on screen in it, so decoder lanes
+   * know which clips need a decoder at the same moment (and which lanes have just become free).
+   */
+  beginFrame(purpose: string, clipIds: string[] = []): void {
     this.ticks.set(purpose, (this.ticks.get(purpose) ?? 0) + 1);
+    this.onScreen.set(purpose, new Set(clipIds));
   }
   private images = new Map<string, Promise<ImageBitmap>>();
   private imagesReady = new Map<string, ImageBitmap>();
@@ -317,7 +322,7 @@ export class MediaPool {
    * the same moment — split screens, picture-in-picture, a blurred copy behind — gets its own decoder ("lane"), so
    * each one plays forward smoothly instead of all of them fighting over one decoder and re-seeking for every frame.
    */
-  async framer(a: Asset, purpose: string, maxDim?: number, user = ""): Promise<VideoFramer | null> {
+  async framer(a: Asset, purpose: string, maxDim?: number, user = "", at?: number): Promise<VideoFramer | null> {
     if (MediaPool.native && a.kind === "video") {
       const head = `${a.id}|native:`;
       const tail = `|${purpose}`;
@@ -328,8 +333,19 @@ export class MediaPool {
         this.laneUser.get(mine[0])!.tick = tick;
         return mine[1];
       }
-      // A lane nobody used during this frame or the one before is free to take over (a cut to the next clip).
-      const free = lanes.filter(([k]) => (this.laneUser.get(k)?.tick ?? -9) < tick - 1).sort((x, y) => (this.laneUser.get(x[0])?.tick ?? 0) - (this.laneUser.get(y[0])?.tick ?? 0));
+      // A lane is free as soon as its clip is no longer on screen (a cut to the next clip takes it over at once).
+      // Among free lanes, one already standing just before the wanted moment plays straight on without a seek.
+      const active = this.onScreen.get(purpose);
+      const ahead = (f: VideoFramer) => {
+        const ts = f.latest?.timestamp;
+        return at !== undefined && ts !== undefined && at >= ts - 1e-3 && at - ts < 2 ? at - ts : Infinity;
+      };
+      const free = lanes
+        .filter(([k]) => {
+          const u = this.laneUser.get(k);
+          return !u || (active ? !active.has(u.user) && u.tick < tick : u.tick < tick - 1);
+        })
+        .sort((x, y) => ahead(x[1]) - ahead(y[1]) || (this.laneUser.get(x[0])?.tick ?? 0) - (this.laneUser.get(y[0])?.tick ?? 0));
       if (free.length) {
         // Spare lanes beyond the one being taken are let go so their pictures do not pile up in memory.
         for (const [k, f] of free.slice(1)) {

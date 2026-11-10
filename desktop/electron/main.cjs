@@ -866,7 +866,8 @@ async function encOpen(o) {
   const out = await uniquePath(dir, `${String(o.name || "VideoStudio").replace(/\.(mp4|mov|webm)$/i, "")}.${v.ext}`);
   // Frames arrive either as RGBA (bottom row first, as the GPU reads them) or — for 4:2:0 outputs — already converted on
   // the GPU to broadcast BT.709 NV12, top row first: under half the bytes to read back, send and encode.
-  const nv12 = o.input === "nv12" && codec !== "prores" && codec !== "prores4444";
+  // Only for 8-bit 4:2:0 outputs: 10-bit and 4:2:2 encoders keep the full-precision RGBA → YUV conversion.
+  const nv12 = o.input === "nv12" && ["nvenc_h264", "x264", "vp9"].includes(codec);
   const args = ["-hide_banner", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", nv12 ? "nv12" : "rgba", "-s", `${o.width}x${o.height}`, "-framerate", String(o.fps), ...(nv12 ? ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"] : []), "-i", "pipe:0"];
   let wav = null;
   if (o.audio && o.audio.byteLength) {

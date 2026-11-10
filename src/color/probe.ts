@@ -78,7 +78,7 @@ export async function clipPixels(p: Project, pool: MediaPool, clipId: string, o:
   const comp = new Compositor(canvas);
   try {
     comp.bypass = o.graded === false && c.kind !== "adjust";
-    const layers = await buildLayers(project, pool, t, { purpose: "export", wait: true, outW: w, outH: h });
+    const layers = await buildLayers(project, pool, t, { purpose: "export", wait: true, outW: w, outH: h, framerPurpose: "probe", framerMax: 640 });
     comp.render(layers, w, h, "#000000");
     const data = new Uint8Array(w * h * 4);
     comp.gl.readPixels(0, 0, w, h, comp.gl.RGBA, comp.gl.UNSIGNED_BYTE, data);

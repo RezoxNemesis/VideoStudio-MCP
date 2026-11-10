@@ -1,4 +1,5 @@
 /** The single owner of app state. UI panels and the agent API both edit through `mutate`, so undo covers both. */
+import { cleanNodes } from "../core/ops";
 import { makeProxy, wantsProxy } from "../media/proxy";
 import { History } from "../core/history";
 import { newProject, projectDuration, uid, type Asset, type Project } from "../core/model";
@@ -105,6 +106,30 @@ export class Studio {
     this.history.push(before, label);
     this.touched();
     return out;
+  }
+
+  /**
+   * Run several edits (commands, awaits in between) as ONE undo step. When `keep` says no — or anything throws —
+   * every change made inside is rolled back and no undo step is left behind.
+   */
+  async group<T>(label: string, fn: () => Promise<T>, keep?: (r: T) => boolean): Promise<T> {
+    const before = JSON.stringify(this.project);
+    const mark = this.history.count;
+    const rollback = () => {
+      this.history.collapse(mark);
+      this.project = JSON.parse(before) as Project;
+      this.touched();
+    };
+    let r: T;
+    try {
+      r = await fn();
+    } catch (e) {
+      rollback();
+      throw e;
+    }
+    if (keep && !keep(r)) rollback();
+    else if (this.history.count !== mark) this.history.collapse(mark, before, label);
+    return r;
   }
 
   touched(): void {
@@ -320,6 +345,9 @@ function migrate(p: Project): Project {
     c.grade ??= {};
     c.transitionIn ??= { kind: "none", dur: 0.5 };
     c.transitionOut ??= { kind: "none", dur: 0.5 };
+    // Grading nodes from any file are cleaned on the way in, so a damaged or hand-edited project cannot stop the picture.
+    if (c.nodes !== undefined) c.nodes = cleanNodes(c.nodes);
   }
+  if (p.luts !== undefined && !Array.isArray(p.luts)) p.luts = undefined;
   return p;
 }

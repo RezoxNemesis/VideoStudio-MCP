@@ -10,7 +10,7 @@
  */
 import type { Studio } from "../../../src/app/studio";
 import { runCommand } from "../../../src/agent/api";
-import { SIGNATURE, dnaLibrary, evolveEdit, extractDna, latestLens, onDnaLibrary, onLens, projectDna, runLens, transplantDna } from "../../../src/agent/smart";
+import { SIGNATURE, dnaLibrary, evolveEdit, extractDna, latestLens, latestLensMeta, onDnaLibrary, onLens, projectDna, runLens, transplantDna, type LensMeta } from "../../../src/agent/smart";
 import { findClip } from "../../../src/core/model";
 import { describeDna, type Dna } from "../../../src/smart/dna";
 import { AREA_WEIGHTS, PLATFORMS, evolve, safeArea, type Finding, type LensReport, type Platform, type Severity } from "../../../src/smart/lens";
@@ -146,6 +146,12 @@ interface EvolveSummary {
   after: number;
   applied: { id: string; title: string; fix: string }[];
   remaining: Finding[];
+  /** A round did not improve the predicted score and was undone. */
+  rolledBack: boolean;
+  /** Fixes offered in the first round (what the confirm dialog listed). */
+  tried: number;
+  /** Commands that failed in the rounds that were kept. */
+  failed: number;
 }
 
 /** One drawn marker on the attention chart, for hover and click. */
@@ -230,11 +236,12 @@ export class LensPanel {
     );
 
     const first = latestLens();
-    if (first) this.adopt(first, s.revision);
+    const firstMeta = latestLensMeta();
+    if (first && firstMeta) this.adopt(first, firstMeta);
 
     this.offs.push(
-      onLens((r) => {
-        this.adopt(r, this.s.revision);
+      onLens((r, meta) => {
+        this.adopt(r, meta);
         this.render();
       }),
       s.on("change", () => this.onChange()),
@@ -255,14 +262,19 @@ export class LensPanel {
 
   /* ------------------------------------------------------------ state */
 
-  private adopt(r: LensReport, rev: number): void {
+  /**
+   * Take a report with what it was measured from (revision and project at the start of the run, whoever started it).
+   * A report measured from another project is not shown.
+   */
+  private adopt(r: LensReport, meta: LensMeta): void {
+    if (meta.projectId !== this.s.project.id) return;
     this.report = r;
-    this.reportRev = rev;
-    this.reportProject = this.s.project.id;
+    this.reportRev = meta.revision;
+    this.reportProject = meta.projectId;
   }
 
   private get stale(): boolean {
-    return !!this.report && this.s.revision !== this.reportRev;
+    return !!this.report && (this.reportProject !== this.s.project.id || this.s.revision !== this.reportRev);
   }
 
   private get chosen(): Platform | undefined {
@@ -300,7 +312,6 @@ export class LensPanel {
   /** Run the lens on the current edit. */
   private async look(keepEvolve = false): Promise<void> {
     if (this.busy || timelineEmpty(this.s)) return;
-    const startRev = this.s.revision;
     this.error = null;
     if (!keepEvolve) {
       this.evolveRes = null;
@@ -308,9 +319,8 @@ export class LensPanel {
     }
     this.setBusy(WORKING_LOOK);
     try {
+      // The report arrives through onLens, dated from the revision at the start of the run.
       const r = await runLens(this.s, { platform: this.chosen });
-      // Edits made while it was measuring are not in this report, so date it from the start.
-      this.adopt(r, startRev);
       this.s.setStatus(`Audience Lens: predicted score ${r.score}`);
     } catch (e) {
       this.fail(e);
@@ -378,18 +388,18 @@ export class LensPanel {
     const body = h(
       "div",
       { class: "col in-dialog" },
-      h("div", { class: "in-dialog-text" }, `Evolve will apply ${n} safe ${n === 1 ? "fix" : "fixes"}. Each one can be undone.`),
+      h("div", { class: "in-dialog-text" }, `Evolve will apply ${n} safe ${n === 1 ? "fix" : "fixes"} as one undo step.`),
       list,
-      h("div", { class: "hint" }, "Afterwards it looks again and, while the predicted score improves, applies the next safe fixes (at most two rounds)."),
+      h("div", { class: "hint" }, "Afterwards it looks again. A round that does not improve the predicted score is undone; while the score improves it applies the next safe fixes (at most two rounds)."),
     );
     const go = await confirmBox("Evolve the edit", body, "Evolve");
     if (!go) return;
     this.setBusy("Applying the safe fixes, then looking again…");
     try {
+      // The resulting report (or, after a roll-back, the one from before) arrives through onLens with its meta.
       const res = await evolveEdit(this.s, { platform: this.chosen });
-      this.adopt(res.after, this.s.revision);
-      this.evolveRes = { before: res.before.score, after: res.after.score, applied: res.applied, remaining: res.after.findings.filter((f) => f.severity !== "good") };
-      this.s.setStatus(`Evolve: predicted score ${res.before.score} → ${res.after.score}`);
+      this.evolveRes = { before: res.before.score, after: res.after.score, applied: res.applied, remaining: res.after.findings.filter((f) => f.severity !== "good"), rolledBack: res.rolledBack, tried: n, failed: res.failed };
+      this.s.setStatus(res.rolledBack && !res.applied.length ? "Evolve: the predicted score did not improve, so the fixes were undone" : `Evolve: predicted score ${res.before.score} → ${res.after.score}`);
     } catch (e) {
       this.fail(e);
     } finally {
@@ -611,8 +621,12 @@ export class LensPanel {
         h("span", { class: "sp" }),
         b(null, "close", () => ((this.evolveRes = null), this.render()), "sm ghost", "Dismiss"),
       ),
-      h("div", { class: "in-evolve-sub" }, r.applied.length ? `Changed (${r.applied.length}) — every change is an ordinary edit you can undo:` : "No fix could be applied safely."),
+      r.rolledBack && !r.applied.length
+        ? noteBox("warn", `Evolve tried ${r.tried} ${r.tried === 1 ? "fix" : "fixes"} but the predicted score did not improve, so they were undone.`)
+        : h("div", { class: "in-evolve-sub" }, r.applied.length ? `Changed (${r.applied.length}) — all of it is one undo step:` : "No fix could be applied safely."),
       r.applied.length ? h("ul", { class: "in-list" }, ...r.applied.map((a) => h("li", {}, h("b", {}, a.fix), h("span", { class: "muted" }, ` — ${a.title}`)))) : null,
+      r.rolledBack && r.applied.length ? h("div", { class: "in-evolve-sub" }, "A further round of fixes did not improve the predicted score, so it was undone.") : null,
+      r.failed > 0 ? h("div", { class: "in-evolve-sub" }, `${r.failed} ${r.failed === 1 ? "change" : "changes"} could not be applied and ${r.failed === 1 ? "was" : "were"} left out.`) : null,
       r.remaining.length
         ? h(
             "div",
@@ -983,7 +997,9 @@ export class DnaPanel {
       this.loadError = null;
     } catch (e) {
       if (my !== this.seq) return;
+      // Keep the list already on screen; only say that it could not be refreshed.
       this.loadError = errText(e);
+      this.s.setStatus(`Style DNA: the library could not be read: ${this.loadError}`);
     }
     this.loaded = true;
     this.render();
@@ -1164,9 +1180,9 @@ export class DnaPanel {
       h("div", { class: "in-dialog-text" }, `Transplant “${d.name}” onto the current edit.`),
       check("rhythm", "Rhythm", "Re-time the cuts to its pacing and beat pattern (same shots, same total length).", true, ""),
       check("type", "Titles", "Restyle the titles: font, size, colour, position and entrance.", !!d.type, "This DNA has no titles to copy."),
-      check("colour", "Colour", "Add a “Style DNA” grading node to every shot that brings its colour closer.", !!d.colour, "This DNA carries no colour."),
+      check("colour", "Colour", "Add a “Style DNA” node (editable curves) to every shot that brings its colour closer to this style.", !!d.colour, "This DNA carries no colour."),
       strengthRow,
-      h("div", { class: "hint" }, "Every change is an ordinary edit you can undo. Anything that cannot be changed safely is left alone, and the notes will say why."),
+      h("div", { class: "hint" }, "The whole transplant is one undo step. Anything that cannot be changed safely is left alone, and the notes will say why."),
     );
     let close = () => {};
     close = openDialog("Apply style DNA", body, [b("Cancel", null, () => close()), go], () => {});
@@ -1180,24 +1196,28 @@ export class DnaPanel {
     if (!res.ok) return;
     const x = res.value;
     const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-    const colour = x.colour && typeof x.colour === "object" ? (x.colour as { shots?: unknown; before?: unknown; after?: unknown }) : undefined;
+    const colour = x.colour && typeof x.colour === "object" ? (x.colour as { shots?: unknown; before?: unknown; after?: unknown; failed?: unknown }) : undefined;
     let notes = Array.isArray(x.notes) ? x.notes.map(String) : [];
-    // applyDna always adds a hint to use the colour-match tool; it does not apply when the colour was just matched here.
+    // Older engines add a hint to use the colour-match tool even when the colour was just brought closer here.
     if (colour) notes = notes.filter((n) => !/match it with the colour-match tool/i.test(n));
     const failed = Array.isArray(x.failed) ? x.failed.filter((v) => v !== undefined && v !== null).map(String) : [];
     const lines = [...notes];
+    let colourMissed = 0;
     if (colour) {
       const shots = num(colour.shots) ?? 0;
       const cb = num(colour.before);
       const ca = num(colour.after);
-      lines.push(shots ? `Colour: a “Style DNA” grade on ${shots} ${shots === 1 ? "shot" : "shots"}${cb !== undefined && ca !== undefined ? ` (colour difference ${cb.toFixed(2)} → ${ca.toFixed(2)})` : ""}.` : "Colour: there were no full-frame shots to grade.");
+      const colourFailed = Array.isArray(colour.failed) ? colour.failed.filter((v) => v !== undefined && v !== null).map(String) : [];
+      lines.push(shots ? `Colour: ${shots} ${shots === 1 ? "shot was" : "shots were"} brought closer to this style${cb !== undefined && ca !== undefined ? ` (colour difference ${cb.toFixed(2)} → ${ca.toFixed(2)})` : ""}.` : colourFailed.length ? "Colour: no shot could be brought closer." : "Colour: there were no full-frame shots to grade.");
+      colourMissed = colourFailed.length;
+      if (colourFailed.length) lines.push(`Colour left as it was on ${colourFailed.length} ${colourFailed.length === 1 ? "shot" : "shots"} that could not be measured: ${colourFailed.join(", ")}.`);
     }
     for (const f of failed) lines.push(`Could not apply: ${f}`);
     const before = num(x.distanceBefore);
     const after = num(x.distanceAfter);
     const cmds = num(x.commands) ?? 0;
     this.note(d.name, {
-      tone: failed.length ? "warn" : "ok",
+      tone: failed.length || colourMissed ? "warn" : "ok",
       head: after !== undefined ? `Applied — distance ${before !== undefined ? `${before.toFixed(2)} → ` : ""}${after.toFixed(2)} (${distanceReading(after)})` : "Applied",
       lines: lines.length ? lines : [cmds ? `${cmds} edits made.` : "Nothing needed to change."],
       linesTitle: "Notes",
@@ -1289,8 +1309,9 @@ export class DnaPanel {
       this.listEl.replaceChildren(h("div", { class: "in-quiet" }, "Opening the library…"));
       return;
     }
-    if (this.loadError) {
-      this.listEl.replaceChildren(noteBox("err", `The library could not be read: ${this.loadError}`));
+    const loadNote = this.loadError ? noteBox("err", `The library could not be read: ${this.loadError}${this.lib.length ? " (showing the list from before)" : ""}`, () => ((this.loadError = null), this.render())) : null;
+    if (!this.lib.length && loadNote) {
+      this.listEl.replaceChildren(loadNote);
       return;
     }
     if (!this.lib.length) {
@@ -1307,7 +1328,7 @@ export class DnaPanel {
     }
     const sig = this.lib.filter((d) => d.name === SIGNATURE);
     const rest = this.lib.filter((d) => d.name !== SIGNATURE).reverse();
-    this.listEl.replaceChildren(...[...sig, ...rest].map((d) => this.card(d, empty)));
+    this.listEl.replaceChildren(...(loadNote ? [loadNote] : []), ...[...sig, ...rest].map((d) => this.card(d, empty)));
   }
 
   private card(d: Dna, empty: boolean): HTMLElement {

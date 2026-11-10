@@ -155,6 +155,9 @@ export function ask(title: string, label: string, value = ""): Promise<string | 
         res(inp.value);
       }, "pri"),
     ]);
+    // Clicking outside the dialog closes it: answer "cancelled" so nobody waits forever.
+    const bg = inp.closest(".modal-bg");
+    bg?.addEventListener("mousedown", (e) => e.target === bg && res(null));
     inp.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         m.close();

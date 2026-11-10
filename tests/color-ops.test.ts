@@ -95,8 +95,9 @@ describe("colour page operations", () => {
   });
   it("copies a grade with fresh node ids and prunes unused LUTs", () => {
     const { p, a, b, sound } = project();
-    const lut = cops.addProjectLut(p, { name: "L", source: "data", size: 2, data: "AAAA" });
-    expect(cops.addProjectLut(p, { name: "L", source: "data", size: 2, data: "AAAA" }).id).toBe(lut.id); // same LUT is reused
+    const lut = cops.addProjectLut(p, { name: "L", source: "data", size: 2, data: "AAAA", auto: true });
+    expect(cops.addProjectLut(p, { name: "L", source: "data", size: 2, data: "AAAA", auto: true }).id).toBe(lut.id); // same LUT is reused
+    const imported = cops.addProjectLut(p, { name: "Mine", source: "data", size: 2, data: "BBBB" });
     const n = cops.addNode(p, a, { lut: { id: lut.id, mix: 1 }, sat: 1.3 });
     p.tracks[0]!.clips[0]!.grade = { exposure: 0.5 };
     expect(cops.copyGrade(p, a, [a, b, sound])).toBe(1); // itself and the sound clip are skipped
@@ -107,8 +108,8 @@ describe("colour page operations", () => {
     expect(cops.pruneLuts(p)).toBe(0);
     cops.removeNode(p, a, 1);
     cops.removeNode(p, b, 1);
-    expect(cops.pruneLuts(p)).toBe(1);
-    expect(p.luts).toBeUndefined();
+    expect(cops.pruneLuts(p)).toBe(1); // the tool-made one goes…
+    expect(p.luts!.map((l) => l.id)).toEqual([imported.id]); // …a LUT the person imported stays, used or not
     expect(cops.describeNodes(p, copy)).toEqual([]);
   });
 });

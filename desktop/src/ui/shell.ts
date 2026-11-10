@@ -237,6 +237,29 @@ export class Shell {
         );
       }, 1400);
     }
+    // VideoStudio 2.1: say what is new, once (after the first-start note, if that is showing).
+    if (!localStorage.getItem("vs21.news")) {
+      setTimeout(
+        () => {
+          localStorage.setItem("vs21.news", "1");
+          const li = (t: string, d: string) => h("div", { style: "margin:0 0 9px" }, h("b", {}, t), h("div", { class: "muted", style: "font-size:12.5px;line-height:1.45" }, d));
+          const m = modal(
+            "New in VideoStudio 2.1",
+            h(
+              "div",
+              { class: "col", style: "max-width:540px" },
+              li("A real colour page", "Grading nodes (serial and layer), colour wheels, custom and hue curves, an HSL qualifier with an eyedropper, soft power windows you can animate, LUTs (.cube import, camera log transforms, film looks, export your grade as a LUT), bypass and a compare wipe. Select a clip and open Color."),
+              li("Shot Match and Auto balance", "Match one clip's look to another clip or to any reference picture, as a LUT, as editable curves or as primaries — the app measures both and shows how close it got."),
+              li("Audience Lens", "On the Insight page: a predicted score for the edit, the moments where attention is likely to drop, titles hidden behind a platform's buttons, text that is too quick to read — each with a one-click fix, and Evolve to apply every safe fix at once. Predictions to guide you, not guarantees."),
+              li("Style DNA", "Measure the feel of any finished video — cut rhythm against the music, pacing, colour — and transplant it onto your edit. Your own projects build a personal signature. Everything stays on this PC."),
+              li("Faster heavy renders", "Split screens and picture-in-picture no longer share one decoder, and frames reach the encoder already converted on the graphics card."),
+            ),
+            [b("Got it", null, () => m.close(), "pri")],
+          );
+        },
+        localStorage.getItem("vs2.welcome") ? 1600 : 60_000,
+      );
+    }
     // Claude at work: every command is acted out in the window (pointer, pages, timeline, flashes, progress bar).
     setLiveHooks(
       new AgentStage(s, {
@@ -510,7 +533,7 @@ export class Shell {
       ["Middle-drag / Alt-drag", "Pan the zoomed picture"],
       ["+ / − / 0", "Viewer zoom in · out · fit"],
       ["G", "Graph editor (animation curves)"],
-      ["Alt+1…7", "Workspaces"],
+      ["Alt+1…8", "Workspaces"],
       ["Ctrl+I", "Import media"],
       ["Ctrl+S", "Save backup"],
       ["F11", "Full screen"],
@@ -594,7 +617,7 @@ export class Shell {
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key;
-      if (e.altKey && /^[1-7]$/.test(k)) {
+      if (e.altKey && /^[1-8]$/.test(k)) {
         this.go(WS[Number(k) - 1]![0]);
         return e.preventDefault();
       }

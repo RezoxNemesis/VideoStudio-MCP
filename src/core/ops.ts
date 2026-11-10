@@ -1,4 +1,6 @@
 /** Editing operations shared by the touch UI and the agent API. Each mutates the project in place. */
+import { sanitizeNode } from "../color/engine";
+import { MAX_NODES } from "../color/types";
 import { removeKey, setKey, shiftKeys } from "./keyframes";
 import { rampIntegral, sourceTime } from "./model";
 import {
@@ -148,6 +150,8 @@ export function splitClip(p: Project, id: string, t: number): Clip {
   right.volume = shiftKeys(right.volume, -leftDur) ?? 1;
   // Frame windows (band reveals, strips) are clip-local too: the right half continues where the left stopped.
   if (right.win) right.win = right.win.map((k) => ({ ...k, t: k.t - leftDur }));
+  // Grading-node windows are animated in clip time too: the right half continues where the left half stopped.
+  if (right.nodes) right.nodes = shiftNodeKeys(right.nodes, leftDur);
   right.transitionIn = { kind: "none", dur: right.transitionIn.dur };
   right.fadeIn = 0;
   c.transitionOut = { kind: "none", dur: c.transitionOut.dur };
@@ -181,6 +185,7 @@ export function trimClip(p: Project, id: string, edge: "start" | "end", t: numbe
     c.dur -= delta;
     for (const k of Object.keys(c.transform) as TransformProp[]) c.transform[k] = shiftKeys(c.transform[k], -delta);
     if (c.win) c.win = c.win.map((k) => ({ ...k, t: k.t - delta }));
+    if (c.nodes) c.nodes = shiftNodeKeys(c.nodes, delta);
   } else {
     let ne = Math.max(t, c.start + 0.05);
     const srcEnd = c.in + (ne - c.start) * c.speed;
@@ -221,6 +226,21 @@ export function setSpeed(p: Project, id: string, speed: number): Clip {
   return c;
 }
 
+/** Any incoming list of nodes as valid nodes (at most MAX_NODES), or undefined when there are none. */
+export function cleanNodes(raw: unknown): Clip["nodes"] {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw
+    .filter((n) => n && typeof n === "object")
+    .slice(0, MAX_NODES)
+    .map((n) => sanitizeNode({ ...(n as object), id: typeof (n as { id?: unknown }).id === "string" && (n as { id: string }).id ? (n as { id: string }).id : uid("nod") }));
+  return out.length ? out : undefined;
+}
+
+/** Move the animated windows of grading nodes `delta` seconds earlier (after the clip's start moved later by `delta`). */
+function shiftNodeKeys(nodes: NonNullable<Clip["nodes"]>, delta: number): NonNullable<Clip["nodes"]> {
+  return nodes.map((n) => (n.win?.keys?.length ? { ...n, win: { ...n.win, keys: n.win.keys.map((k) => ({ ...k, t: k.t - delta })) } } : { ...n }));
+}
+
 const PATCHABLE = new Set<keyof Clip>([
   "name", "start", "dur", "in", "speed", "reverse", "volume", "fadeIn", "fadeOut", "text", "shape", "color", "fit",
   "transform", "grade", "blend", "chroma", "mask", "flipX", "flipY", "transitionIn", "transitionOut", "shake",
@@ -238,6 +258,11 @@ export function patchClip(p: Project, id: string, patch: Record<string, unknown>
     } else {
       (c as unknown as Record<string, unknown>)[k] = v;
     }
+  }
+  if (patch.nodes !== undefined) {
+    // Grading nodes arriving as raw data are cleaned first: the renderer must never meet a half-formed node.
+    if (patch.nodes !== null && !Array.isArray(patch.nodes)) throw new OpError('"nodes" must be a list of grading nodes (or null to remove them).');
+    c.nodes = cleanNodes(patch.nodes);
   }
   if (patch.speed !== undefined) setSpeed(p, id, Number(patch.speed));
   if (patch.start !== undefined) moveClip(p, id, Number(patch.start));

@@ -14,11 +14,13 @@
 import type { Studio } from "../../../src/app/studio";
 import type { Preview } from "../../../src/ui/preview";
 import { runCommand } from "../../../src/agent/api";
-import { cleanCurve, curveFn, isHueCurve, isIdentityCurve, qualKey, windowAt } from "../../../src/color/engine";
+import { applyNodes, cleanCurve, curveFn, gradeBasic, isHueCurve, isIdentityCurve, qualKey, windowAt } from "../../../src/color/engine";
+import { lutTable } from "../../../src/color/luts";
 import * as cops from "../../../src/color/ops";
 import { MAX_NODES, QUAL_DEFAULT, WIN_DEFAULT, type ColorNode, type CurveKey, type CurvePts, type NodeBlend, type PowerWindow, type Qualifier } from "../../../src/color/types";
-import { colorView, onColorView, setColorView, type ColorView } from "../../../src/color/view";
-import { findClip, type Clip, type Project } from "../../../src/core/model";
+import { colorView, onColorView, setColorView } from "../../../src/color/view";
+import { evaluateClip } from "../../../src/core/evaluate";
+import { findAsset, findClip, type Clip, type Project } from "../../../src/core/model";
 import { getClip } from "../../../src/core/ops";
 import { vsd } from "../bridge";
 import { ask, b, h, ic, menu, modal, selectEl, tabs, tc, type MenuItem } from "./kit";
@@ -85,8 +87,8 @@ const CURVE_HINT: Record<CurveKey, string> = {
   hh: "Click a hue, then drag up or down to turn it toward its neighbours (up to ±90°).",
   hs: "Click a hue, then drag up for more saturation, down for less (centre = no change).",
   hl: "Click a hue, then drag up to brighten it, down to darken it (centre = no change).",
-  ls: "Saturation by brightness: left is shadows, right is highlights (centre = no change).",
-  ss: "Saturation by saturation: left is muted colours, right is vivid ones (centre = no change).",
+  ls: "Saturation by brightness: left is shadows, right is highlights (centre = no change). One point moves the whole line; add a second to shape it.",
+  ss: "Saturation by saturation: left is muted colours, right is vivid ones (centre = no change). One point moves the whole line; add a second to shape it.",
 };
 
 const CURVE_COLOR: Record<string, string> = { m: "#e8edf4", r: "#ff6b6b", g: "#5ee08a", b: "#6b9bff" };
@@ -261,10 +263,33 @@ export class ColorPage {
   private lutsFor: string | null = null;
   private lutsLoading = false;
 
-  private pick: { prev: ColorView; started: number; clipId: string; nodeId: string; down: (e: PointerEvent) => void; click: (e: MouseEvent) => void; key: (e: KeyboardEvent) => void } | null = null;
+  /** The clip and node a drag started on: the drag keeps writing there (or stops quietly once they are gone). */
+  private dragTarget: { clipId: string; nodeId: string } | null = null;
+  /** Rename on a second click: kept on the page because selecting a chip rebuilds the strip. */
+  private lastChipClick = { id: "", at: 0 };
+  /** Whether the shell shows the page, and whether the window itself is visible. */
+  private shownFlag = true;
+
+  /**
+   * The eyedropper. `set` records what it changed in the viewer (and the value it put there), so cancelling puts
+   * back only those, and only if nobody changed them since. `reading` is true while the pixel is being read.
+   */
+  private pick: {
+    started: number;
+    clipId: string;
+    nodeId: string;
+    reading: boolean;
+    set: { bypass?: { was: boolean }; showKey?: { was: { clipId: string; nodeId: string } | null } };
+    down: (e: PointerEvent) => void;
+    click: (e: MouseEvent) => void;
+    key: (e: KeyboardEvent) => void;
+  } | null = null;
+
+  private readonly onVisibility = () => this.setHidden(!this.shownFlag || document.hidden);
 
   private readonly onUp = () => {
     this.dragTok = null;
+    this.dragTarget = null;
     if (!this.interacting) return;
     this.interacting = false;
     if (this.pendingBuild) this.schedule();
@@ -281,19 +306,23 @@ export class ColorPage {
     window.addEventListener("blur", this.onUp);
     const req = () => this.schedule();
     this.offs.push(s.on("select", req), s.on("change", req), s.on("project", req), s.on("time", req), onColorView(req));
-    // Notice the page being hidden (another workspace) even if the shell never calls shown().
-    const io = new IntersectionObserver((es) => {
-      const e = es[es.length - 1];
-      if (e) this.setHidden(!e.isIntersecting);
-    });
-    io.observe(this.el);
-    this.offs.push(() => io.disconnect());
+    // The window being minimised or hidden counts as hidden too (the shell reports workspace switches).
+    document.addEventListener("visibilitychange", this.onVisibility);
+    this.offs.push(() => document.removeEventListener("visibilitychange", this.onVisibility));
     this.build();
   }
 
-  /** Tell the page whether it is on screen. Hidden: "show selection" and the eyedropper are switched off. */
+  /**
+   * The shell tells the page whether its workspace is on screen. Leaving the page puts the viewer back to normal
+   * (no bypass, no compare wipe, no key view) so other pages never show an ungraded picture, and stops the eyedropper.
+   */
   shown(visible: boolean): void {
-    this.setHidden(!visible);
+    this.shownFlag = visible;
+    if (!visible) {
+      this.cancelPick();
+      if (colorView.bypass || colorView.split >= 0 || colorView.showKey) setColorView({ bypass: false, split: -1, showKey: null });
+    }
+    this.onVisibility();
   }
 
   /** Remove every listener this page registered (window, studio, colour view) and stop any eyedropper. */
@@ -314,10 +343,8 @@ export class ColorPage {
   private setHidden(hidden: boolean): void {
     if (hidden === this.hidden) return;
     this.hidden = hidden;
-    if (hidden) {
-      this.cancelPick();
-      if (colorView.showKey) setColorView({ showKey: null });
-    } else if (this.dirty) this.schedule();
+    if (hidden) this.cancelPick();
+    else if (this.dirty) this.schedule();
   }
 
   /* ------------------------------------------------------------------ state */
@@ -360,19 +387,37 @@ export class ColorPage {
     this.schedule();
   }
 
-  /** Edit the active node directly (continuous drags). The node is looked up by id inside the edit. */
-  private edit(label: string, fn: (p: Project, c: Clip, n: ColorNode) => void): void {
+  /** A drag starts: remember the control (so it is not refreshed under the pointer) and the clip and node it edits. */
+  private beginDrag(tok: object): void {
+    this.dragTok = tok;
     const cur = this.cur();
-    if (!cur?.n) return;
-    const clipId = cur.c.id;
-    const nodeId = cur.n.id;
+    this.dragTarget = cur?.n ? { clipId: cur.c.id, nodeId: cur.n.id } : null;
+  }
+
+  /**
+   * Edit a node directly (continuous drags). During a drag it is the clip and node the drag started on; otherwise
+   * the active node. The node is looked up by id inside the edit. Returns false when there is nothing to edit (for
+   * a drag: its clip or node was deleted or undone away), quietly.
+   */
+  private edit(label: string, fn: (p: Project, c: Clip, n: ColorNode) => void): boolean {
+    let target = this.dragTok ? this.dragTarget : null;
+    if (!target) {
+      const cur = this.cur();
+      if (!cur?.n) return false;
+      target = { clipId: cur.c.id, nodeId: cur.n.id };
+    }
+    const { clipId, nodeId } = target;
+    const f = findClip(this.s.project, clipId);
+    if (!f || !(f.clip.nodes ?? []).some((x) => x.id === nodeId)) return false;
     try {
       this.s.mutate(label, (p) => {
         const c = getClip(p, clipId);
         fn(p, c, cops.findNode(c, nodeId).node);
       });
+      return true;
     } catch (e) {
       this.s.setStatus(errText(e));
+      return false;
     }
   }
 
@@ -540,7 +585,7 @@ export class ColorPage {
       show(x);
       o.set(x);
     };
-    range.addEventListener("pointerdown", () => (this.dragTok = tok));
+    range.addEventListener("pointerdown", () => this.beginDrag(tok));
     range.addEventListener("input", () => {
       lastV = NaN;
       const v = Number(range.value);
@@ -570,7 +615,7 @@ export class ColorPage {
       lab.addEventListener("pointerdown", (e) => {
         if (e.button !== 0 || range.disabled) return;
         lab.setPointerCapture(e.pointerId);
-        this.dragTok = tok;
+        this.beginDrag(tok);
         scrub = { x: e.clientX, v: Number(range.value) };
       });
       lab.addEventListener("pointermove", (e) => {
@@ -648,7 +693,6 @@ export class ColorPage {
 
     const strip = h("div", { class: "cp-strip", role: "listbox", "aria-label": "Grading nodes" });
     let stripSig = "";
-    let lastClick = { id: "", at: 0 };
     const chip = (n: ColorNode, i: number, active: boolean): HTMLElement => {
       const pw = h("button", { class: "cp-chip-pw", type: "button", title: n.on ? "Switch this node off" : "Switch this node on", "aria-label": n.on ? "Switch node off" : "Switch node on" });
       pw.addEventListener("click", (e) => {
@@ -673,17 +717,24 @@ export class ColorPage {
       // Rename on a second click within the double-click time (a first click may rebuild the strip).
       el.addEventListener("click", () => {
         const now = performance.now();
-        const again = lastClick.id === n.id && now - lastClick.at < 450;
-        lastClick = { id: n.id, at: now };
+        const last = this.lastChipClick;
+        const again = last.id === n.id && now - last.at < 450;
+        // A rename resets the pair, so a third click starts over.
+        this.lastChipClick = again ? { id: "", at: 0 } : { id: n.id, at: now };
         if (again) void this.rename(clipId, n);
         else this.selectNode(clipId, n.id);
       });
       el.addEventListener("keydown", (e) => {
+        // Keys handled here must not also reach the app's shortcuts (Space is play / pause).
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          e.stopPropagation();
           this.selectNode(clipId, n.id);
+        } else if (e.key === "F2") {
+          e.preventDefault();
+          e.stopPropagation();
+          void this.rename(clipId, n);
         }
-        if (e.key === "F2") void this.rename(clipId, n);
       });
       return el;
     };
@@ -900,10 +951,10 @@ export class ColorPage {
       cancelAnimationFrame(raf);
     });
 
-    const write = () => {
+    const write = (pointerId: number) => {
       if (!drag) return;
       const d = drag;
-      this.edit(`${w.key} wheel`, (p, c, n) => {
+      const ok = this.edit(`${w.key} wheel`, (p, c, n) => {
         const cur = n[w.key];
         // Only the balanced (colour) part follows the puck; the mean of r, g, b is kept as it was.
         const mean = ((cur[0] ?? 0) + (cur[1] ?? 0) + (cur[2] ?? 0)) / 3;
@@ -911,13 +962,19 @@ export class ColorPage {
         if (w.key === "offset") cops.setNode(p, c.id, n.id, { offset: rgb });
         else cops.setNode(p, c.id, n.id, { [w.key]: [rgb[0], rgb[1], rgb[2], cur[3] ?? 0] } as Partial<ColorNode>);
       });
+      // The clip or node the drag started on is gone (deleted, undone): end the drag quietly.
+      if (!ok) {
+        drag = null;
+        if (cv.hasPointerCapture(pointerId)) cv.releasePointerCapture(pointerId);
+        request();
+      }
     };
     cv.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       const vals = values();
       if (!vals) return;
       cv.setPointerCapture(e.pointerId);
-      this.dragTok = tok;
+      this.beginDrag(tok);
       const pk = rgbToPuck(vals, w.range);
       drag = { u: pk.u, v: pk.v, lim: Math.max(1, Math.hypot(pk.u, pk.v)), x: e.clientX, y: e.clientY };
       request();
@@ -935,7 +992,7 @@ export class ColorPage {
         drag.u *= drag.lim / rad;
         drag.v *= drag.lim / rad;
       }
-      write();
+      write(e.pointerId);
     });
     const end = () => {
       if (!drag) return;
@@ -996,7 +1053,10 @@ export class ColorPage {
     return `${clipId}|${nodeId}|${key}`;
   }
 
-  /** The points to store for the points being edited (a single hue-curve point becomes a flat pair). */
+  /**
+   * The points to store for the points being edited. setCurve needs two points, so a lone point becomes a flat
+   * pair (a hue curve with one point left shifts every hue alike; on Lum→Sat / Sat→Sat it lifts the whole line).
+   */
   private toStore(key: CurveKey, pts: CurvePts): CurvePts | null {
     if (!pts.length) return null;
     if (pts.length === 1) {
@@ -1038,7 +1098,14 @@ export class ColorPage {
     const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#3ee6c4";
     const color = hue ? accent : CURVE_COLOR[key] ?? "#e8edf4";
 
-    const ids = () => {
+    /** The clip and node a drag started on; while dragging, the editor keeps working on them. */
+    let dragIds: { clipId: string; nodeId: string } | null = null;
+    const ids = (): { clipId: string; nodeId: string; n: ColorNode } | null => {
+      if (dragIds) {
+        const { clipId, nodeId } = dragIds;
+        const n = findClip(this.s.project, clipId)?.clip.nodes?.find((x) => x.id === nodeId);
+        return n ? { clipId, nodeId, n } : null;
+      }
       const cur = this.cur();
       return cur?.n ? { clipId: cur.c.id, nodeId: cur.n.id, n: cur.n } : null;
     };
@@ -1063,14 +1130,16 @@ export class ColorPage {
       this.drafts.set(dk, fresh);
       return fresh;
     };
-    const commit = (pts: CurvePts) => {
+    /** Store the points; false when the clip or node is gone. */
+    const commit = (pts: CurvePts): boolean => {
       const id = ids();
-      if (!id) return;
+      if (!id) return false;
       this.drafts.set(this.draftKey(id.clipId, id.nodeId, key), pts);
       this.lastPreset = null;
       const out = this.toStore(key, pts);
-      this.edit("curve", (p, c, n) => void cops.setCurve(p, c.id, n.id, key, out));
+      const ok = this.edit("curve", (p, c, n) => void cops.setCurve(p, c.id, n.id, key, out));
       request();
+      return ok;
     };
 
     /** The graph area in CSS px. */
@@ -1242,9 +1311,14 @@ export class ColorPage {
         return;
       }
       if (e.button !== 0) return;
+      const start = ids();
+      if (!start) return;
+      // From here on this press is a drag on this clip and node, wherever the selection goes.
+      this.beginDrag(tok);
+      dragIds = { clipId: start.clipId, nodeId: start.nodeId };
       let i = i0;
       if (i < 0) {
-        const pts = draft().slice();
+        let pts = draft().slice();
         const pt = toCurve(e);
         const x = clamp01(pt.x);
         const near = pts.findIndex((p) => Math.abs(p[0] - x) < 0.01);
@@ -1256,16 +1330,25 @@ export class ColorPage {
           }
           // New points start on the curve (so a click alone changes nothing), then follow the drag.
           const y = clamp01(curveFn(key, stored())(x));
-          pts.push([x, y]);
+          if (!pts.length && (key === "hh" || key === "hs" || key === "hl")) {
+            // First point on a hue curve: neutral anchors a sixth of the circle either side, so dragging it
+            // changes only the hues near the one clicked (the curve wraps round the 0/1 seam). The anchors are
+            // ordinary points afterwards: they can be dragged or deleted.
+            const wrap = (v: number) => (v < 0 ? v + 1 : v >= 1 ? v - 1 : v);
+            pts = [
+              [wrap(x - 1 / 6), 0.5],
+              [x, y],
+              [wrap(x + 1 / 6), 0.5],
+            ];
+          } else pts.push([x, y]);
           pts.sort((a, bb) => a[0] - bb[0]);
           i = pts.findIndex((p) => p[0] === x);
-          commit(pts);
+          if (!commit(pts)) return endDrag();
         }
       }
       const p = draft()[i];
-      if (!p) return;
+      if (!p) return endDrag();
       cv.setPointerCapture(e.pointerId);
-      this.dragTok = tok;
       dragIdx = i;
       drag = { vx: p[0], vy: p[1], x: e.clientX, y: e.clientY };
       request();
@@ -1282,12 +1365,25 @@ export class ColorPage {
       drag.x = e.clientX;
       drag.y = e.clientY;
       const pts = draft().slice();
+      if (!ids() || dragIdx >= pts.length) {
+        // The clip or node the drag started on is gone (deleted, undone): end the drag quietly.
+        if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId);
+        return endDrag();
+      }
       const lo = dragIdx > 0 ? pts[dragIdx - 1]![0] + 0.005 : 0;
       const hi = dragIdx < pts.length - 1 ? pts[dragIdx + 1]![0] - 0.005 : 1;
       pts[dragIdx] = [clamp(drag.vx, lo, Math.max(lo, hi)), clamp01(drag.vy)];
-      commit(pts);
+      if (!commit(pts)) {
+        if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId);
+        endDrag();
+      }
     });
+    function endDrag(): void {
+      dragIds = null;
+      end();
+    }
     const end = () => {
+      dragIds = null;
       if (!drag) return;
       drag = null;
       dragIdx = -1;
@@ -1350,12 +1446,12 @@ export class ColorPage {
     const setQ = (label: string, patch: Partial<Qualifier>) =>
       this.edit(label, (p, c, n) => void cops.setQualifier(p, c.id, n.id, { on: n.qual ? n.qual.on : true, ...patch }));
 
-    const onBox = this.check("Qualifier", "Limit this node to the colours selected below", () => !!q()?.on, (v) => setQ("qualifier", { on: v }));
+    const onBox = this.check("Qualifier", "Limit this node to the colours selected below", () => !!q()?.on, (v) => void this.nodeCmd("color.qualifier", { on: v }));
     const pickBtn = b(null, "dropper", () => (this.pick ? this.cancelPick() : this.startPick()), "sm ic cp-pickbtn", "Pick a colour from the viewer (shows the ungraded picture while picking; Esc cancels)");
     this.ups.push(() => pickBtn.classList.toggle("on", !!this.pick));
     const clear = b("Clear", null, () => void this.nodeCmd("color.qualifier", { off: true }), "sm ghost", "Remove the qualifier from this node");
     this.ups.push(() => (clear.disabled = !q()));
-    const top = h("div", { class: "cp-bar" }, onBox, pickBtn, this.keyToggle(), h("span", { class: "sp" }), this.check("Invert", "Work on everything except the selection", () => !!q()?.invert, (v) => setQ("qualifier", { invert: v })), clear);
+    const top = h("div", { class: "cp-bar" }, onBox, pickBtn, this.keyToggle(), h("span", { class: "sp" }), this.check("Invert", "Work on everything except the selection", () => !!q()?.invert, (v) => void this.nodeCmd("color.qualifier", { invert: v })), clear);
 
     const presets = h(
       "div",
@@ -1434,7 +1530,12 @@ export class ColorPage {
     ];
   }
 
-  /** Eyedropper: the next click on the viewer picks that pixel's ungraded colour for the qualifier. */
+  /**
+   * Eyedropper: the next click on the viewer picks a colour for the active node's qualifier. The viewer is put in
+   * bypass so the pixel read is the clip's own picture; that colour is then run through the basic grade (and, for
+   * a serial node, the switched-on nodes before it) with the CPU mirror of the shader, so the qualifier is built
+   * around the colour the node actually receives.
+   */
   private startPick(): void {
     const cur = this.cur();
     if (!cur?.n) return;
@@ -1444,32 +1545,31 @@ export class ColorPage {
       return;
     }
     this.cancelPick();
-    const prev: ColorView = { bypass: colorView.bypass, split: colorView.split, showKey: colorView.showKey ? { ...colorView.showKey } : null };
+    const inViewer = (e: MouseEvent) => {
+      const r = this.viewerCanvas()?.getBoundingClientRect();
+      return !!r && e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
+    };
     const down = (e: PointerEvent) => {
-      if (!this.pick) return;
-      const cv = this.viewerCanvas();
-      const r = cv?.getBoundingClientRect();
-      const inside = !!r && e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
-      if (!inside || e.button !== 0) {
-        // A click anywhere else ends picking (and does what it normally does).
-        // The eyedropper button itself toggles picking off on its own click.
-        if (!(e.target instanceof Element && e.target.closest(".cp-pickbtn"))) this.cancelPick();
+      const pk = this.pick;
+      if (!pk) return;
+      if (!inViewer(e) || e.button !== 0) {
+        // A click anywhere else ends picking (and does what it normally does). The eyedropper button toggles itself.
+        if (!pk.reading && !(e.target instanceof Element && e.target.closest(".cp-pickbtn"))) this.cancelPick();
         return;
       }
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      void this.finishPick(e.clientX, e.clientY);
+      // A second click while the first is being read is ignored.
+      if (pk.reading) return;
+      void this.finishPick(pk, e.clientX, e.clientY);
     };
-    // Swallow the click that follows the picking press, so the viewer does not act on it.
+    // Swallow the click that follows a picking press, so the viewer does not act on it.
     const click = (e: MouseEvent) => {
-      const cv = this.viewerCanvas();
-      const r = cv?.getBoundingClientRect();
-      if (r && e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-      }
+      if (!inViewer(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !this.pick) return;
@@ -1481,14 +1581,25 @@ export class ColorPage {
     window.addEventListener("pointerdown", down, true);
     window.addEventListener("click", click, true);
     window.addEventListener("keydown", key, true);
-    this.pick = { prev, started: performance.now(), clipId: c.id, nodeId: cur.n.id, down, click, key };
+    // Change only what picking needs, and remember it, so cancelling restores exactly that.
+    const set: NonNullable<ColorPage["pick"]>["set"] = {};
+    const patch: Parameters<typeof setColorView>[0] = {};
+    if (!colorView.bypass) {
+      set.bypass = { was: false };
+      patch.bypass = true;
+    }
+    if (colorView.showKey) {
+      set.showKey = { was: { ...colorView.showKey } };
+      patch.showKey = null;
+    }
+    this.pick = { started: performance.now(), clipId: c.id, nodeId: cur.n.id, reading: false, set, down, click, key };
     this.preview.el.classList.add("cp-picking");
-    setColorView({ bypass: true, split: -1, showKey: null });
+    if (Object.keys(patch).length) setColorView(patch);
     this.s.setStatus("Click the picture to pick a colour (Esc cancels)");
     this.schedule();
   }
 
-  /** End picking and put the viewer back the way it was. */
+  /** End picking. Puts back only what the eyedropper changed, and only where nobody has changed it since. */
   private cancelPick(): void {
     const pk = this.pick;
     if (!pk) return;
@@ -1498,7 +1609,10 @@ export class ColorPage {
     // The click of the picking press arrives after pointerdown: remove its swallower a moment later.
     setTimeout(() => window.removeEventListener("click", pk.click, true), 400);
     this.preview.el.classList.remove("cp-picking");
-    setColorView({ bypass: pk.prev.bypass, split: pk.prev.split, showKey: pk.prev.showKey });
+    const patch: Parameters<typeof setColorView>[0] = {};
+    if (pk.set.bypass && colorView.bypass) patch.bypass = pk.set.bypass.was;
+    if (pk.set.showKey && colorView.showKey === null) patch.showKey = pk.set.showKey.was;
+    if (Object.keys(patch).length) setColorView(patch);
     this.schedule();
   }
 
@@ -1506,19 +1620,21 @@ export class ColorPage {
     return this.preview.el.querySelector<HTMLCanvasElement>("canvas.pv-canvas") ?? this.preview.el.querySelector<HTMLCanvasElement>("canvas");
   }
 
-  private async finishPick(clientX: number, clientY: number): Promise<void> {
-    const pk = this.pick;
-    if (!pk) return;
-    const cv = this.viewerCanvas();
-    if (!cv) return this.cancelPick();
-    // The viewer must have drawn the ungraded frame before it is read.
+  private async finishPick(pk: NonNullable<ColorPage["pick"]>, clientX: number, clientY: number): Promise<void> {
+    pk.reading = true;
+    // The viewer must have drawn the bypassed frame before it is read.
     const wait = 250 - (performance.now() - pk.started);
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    // Esc (or leaving the page) during the wait cancels: nothing is set.
+    if (this.pick !== pk) return;
+    const cv = this.viewerCanvas();
+    if (!cv) return this.cancelPick();
     const r = cv.getBoundingClientRect();
     const vr = this.preview.viewRect();
     const lx = clientX - r.left;
     const ly = clientY - r.top;
     if (lx < vr.x || ly < vr.y || lx >= vr.x + vr.w || ly >= vr.y + vr.h) {
+      pk.reading = false;
       this.s.setStatus("That is outside the picture. Click inside the frame (Esc cancels).");
       return;
     }
@@ -1526,7 +1642,7 @@ export class ColorPage {
     const ky = cv.height / Math.max(1, r.height);
     const sx = Math.round(lx * kx);
     const sy = Math.round(ly * ky);
-    let rgb: [number, number, number] | null = null;
+    let raw: [number, number, number] | null = null;
     try {
       const tmp = document.createElement("canvas");
       tmp.width = 3;
@@ -1543,16 +1659,80 @@ export class ColorPage {
         gg += d[i + 1]!;
         bb += d[i + 2]!;
       }
-      rgb = [rr / 9, gg / 9, bb / 9];
+      raw = [rr / 9 / 255, gg / 9 / 255, bb / 9 / 255];
     } catch (e) {
       this.s.setStatus(`Could not read the viewer: ${errText(e)}`);
     }
     const { clipId, nodeId } = pk;
     this.cancelPick();
-    if (!rgb) return;
-    const hex = "#" + rgb.map((v) => Math.round(clamp(v, 0, 255)).toString(16).padStart(2, "0")).join("");
-    const res = await this.cmd("color.qualifier", { id: clipId, node: nodeId, color: hex });
-    if (res) this.s.setStatus(`Qualifier set around ${hex}`);
+    if (!raw) return;
+    const input = this.nodeInput(clipId, nodeId, raw, (lx - vr.x) / vr.w, (ly - vr.y) / vr.h);
+    if (!input) {
+      this.s.setStatus("The clip or node changed while picking; nothing was set.");
+      return;
+    }
+    const q = cops.qualifierFromColor(input);
+    const hex = "#" + input.map((v) => Math.round(clamp01(v) * 255).toString(16).padStart(2, "0")).join("");
+    const res = await this.cmd("color.qualifier", { id: clipId, node: nodeId, on: true, h: q.h, hw: q.hw, hs: q.hs, s0: q.s0, s1: q.s1, ss: q.ss, l0: q.l0, l1: q.l1, ls: q.ls, invert: false });
+    if (res) this.s.setStatus(`Qualifier set around ${hex} (the colour this node receives)`);
+  }
+
+  /**
+   * The colour a node receives for an ungraded picture colour `raw` at frame position (fx, fy): the basic grade,
+   * then for a serial node the switched-on nodes before it (windows resolved for this moment, at the pixel's place
+   * in the clip's picture). A layer node receives the picture after the basic grade only.
+   */
+  private nodeInput(clipId: string, nodeId: string, raw: [number, number, number], fx: number, fy: number): [number, number, number] | null {
+    const p = this.s.project;
+    const c = findClip(p, clipId)?.clip;
+    const nodes = c?.nodes ?? [];
+    const idx = nodes.findIndex((n) => n.id === nodeId);
+    const node = nodes[idx];
+    if (!c || !node) return null;
+    const d = evaluateClip(p, c, this.s.time);
+    const base = gradeBasic(raw, d.grade, d.wheels, { shadows: d.fx.shadows, highlights: d.fx.highlights });
+    if (node.kind === "layer") return base;
+    const earlier = new Set(nodes.slice(0, idx).filter((n) => n.on).map((n) => n.id));
+    // d.nodes holds the switched-on nodes in order with their windows resolved for this moment.
+    const before = (d.nodes ?? []).filter((n) => earlier.has(n.id));
+    if (!before.length) return base;
+    const pos = this.picturePos(c, d, fx, fy);
+    return applyNodes(before, base, { u: pos?.u ?? 0.5, v: pos?.v ?? 0.5, aspect: pos?.aspect ?? p.width / p.height, luts: lutTable });
+  }
+
+  /**
+   * Where frame position (fx, fy) (0..1) falls inside the clip's own picture, from its fit, position, scale,
+   * rotation and flips at this moment. Null when it cannot be worked out (not a media clip) or falls outside it.
+   * Crop and the anchor point are not taken into account.
+   */
+  private picturePos(c: Clip, d: ReturnType<typeof evaluateClip>, fx: number, fy: number): { u: number; v: number; aspect: number } | null {
+    const p = this.s.project;
+    const a = findAsset(p, c.assetId);
+    if (c.kind !== "media" || !a || !a.width || !a.height) return null;
+    const W = p.width;
+    const H = p.height;
+    let pw = W;
+    let ph = H;
+    if (c.fit === "contain" || c.fit === "cover") {
+      const k = c.fit === "contain" ? Math.min(W / a.width, H / a.height) : Math.max(W / a.width, H / a.height);
+      pw = a.width * k;
+      ph = a.height * k;
+    } else if (c.fit === "none") {
+      pw = a.width;
+      ph = a.height;
+    }
+    pw *= Math.abs(d.scaleX) || 1e-6;
+    ph *= Math.abs(d.scaleY) || 1e-6;
+    let px = fx * W - (W / 2 + d.x);
+    let py = fy * H - (H / 2 + d.y);
+    const r = (-d.rotation * Math.PI) / 180;
+    [px, py] = [px * Math.cos(r) - py * Math.sin(r), px * Math.sin(r) + py * Math.cos(r)];
+    let u = px / pw + 0.5;
+    let v = py / ph + 0.5;
+    if (d.flipX) u = 1 - u;
+    if (d.flipY) v = 1 - v;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+    return { u, v, aspect: a.width / a.height };
   }
 
   /* ---------------------------------------------- window */
@@ -1718,11 +1898,7 @@ export class ColorPage {
       const bt = h("button", { type: "button", class: "cp-lut", title: about ?? (id ? `Apply ${name} to this node` : "Remove the LUT from this node") }, h("span", {}, name));
       bt.addEventListener("click", () => {
         if (id) void this.nodeCmd("color.lut.apply", { lut: id, mix: lutOf()?.mix ?? 1 }).then((r) => r && this.s.setStatus(`${name} applied to the node`));
-        else
-          // No command removes a LUT from one node; setNode keeps the LUT when given undefined, so clear it here.
-          this.edit("remove LUT", (_p, _c, n) => {
-            n.lut = undefined;
-          });
+        else void this.nodeCmd("color.lut.apply", { lut: "none" }).then((r) => r && this.s.setStatus("LUT taken off the node"));
       });
       rows.push({ id, el: bt });
       return bt;

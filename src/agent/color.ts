@@ -4,8 +4,8 @@
  */
 import type { Studio } from "../app/studio";
 import { applyNodes, gradeBasic, sanitizeNode } from "../color/engine";
-import { BUILTIN_LUTS, lutToProject, parseCube, resizeLut, writeCube } from "../color/lut";
-import { lutTable, registerLut } from "../color/luts";
+import { BUILTIN_LUTS, lutToProject, parseCube, projectToLut, resizeLut, writeCube } from "../color/lut";
+import { lutTable, registerLut, syncProjectLuts } from "../color/luts";
 import { autoBalance, describeMatch, matchCurves, matchLut, matchPrimaries, statsDistance } from "../color/match";
 import * as cops from "../color/ops";
 import { assetStats, clipStats } from "../color/probe";
@@ -80,13 +80,23 @@ function findLut(p: Project, ref: string): { id: string; name: string } {
   throw new OpError(`No LUT "${ref}". Run color.lut.list to see the built-in ones and the ones in this project.`);
 }
 
-/** Keep a table with the project (stored at 33³ at most so undo stays light). */
-function storeLut(p: Project, lut: Lut3D, name: string): { id: string; name: string; size: number; storedSize: number } {
+/**
+ * Keep a table with the project (stored at 33³ at most so undo stays light). `auto` marks a LUT a tool made (shot
+ * match): those are dropped again once nothing uses them; imported LUTs stay until the person removes them.
+ */
+function storeLut(p: Project, lut: Lut3D, name: string, auto = false): { id: string; name: string; size: number; storedSize: number } {
   const stored = lut.size > 33 ? resizeLut(lut, 33) : lut;
   const id = uid("lut");
-  const entry = cops.addProjectLut(p, lutToProject(stored, id, name.slice(0, 60)));
-  registerLut(entry.id, stored);
+  const entry = cops.addProjectLut(p, { ...lutToProject(stored, id, name.slice(0, 60)), ...(auto ? { auto: true } : {}) });
+  // Register exactly what the project stores (16-bit, clamped), so the picture is the same after reopening.
+  registerLut(entry.id, projectToLut(entry));
   return { id: entry.id, name: entry.name, size: lut.size, storedSize: stored.size };
+}
+
+/** Every id must be a clip before anything is changed, so a bad id never leaves half the work done. */
+function checkedIds(s: Studio, ids: string[]): string[] {
+  for (const id of ids) getClip(s.project, id);
+  return ids;
 }
 
 function briefStats(s: ColourStats): Record<string, unknown> {
@@ -121,6 +131,9 @@ function dropNamed(p: Project, clipId: string, name: string): void {
 export async function matchClipsToStats(s: Studio, ids: string[], ref: ColourStats, refName: string, mode: "lut" | "curves" | "primaries", strength: number, nodeName: string): Promise<{ differences: string[]; results: { id: string; nodeId: string; before: number; after: number }[] }> {
   const results: { id: string; nodeId: string; before: number; after: number }[] = [];
   let differences: string[] = [];
+  checkedIds(s, ids);
+  // Each LUT-mode match keeps one small LUT with the project; say so before starting rather than stopping half way.
+  if (mode === "lut" && (s.project.luts?.length ?? 0) + ids.length > 40) throw new OpError(`Matching ${ids.length} clips as LUTs would pass the 40 LUTs a project can hold. Use mode "curves" (editable, no LUT) for this many clips, or match fewer at a time.`);
   for (const id of ids) {
     const old = getClip(s.project, id).nodes?.filter((n) => n.name === nodeName).map((n) => n.id) ?? [];
     const src = await clipStats(s.project, s.pool, id, { dropNodes: old });
@@ -130,7 +143,8 @@ export async function matchClipsToStats(s: Studio, ids: string[], ref: ColourSta
       dropNamed(p, id, nodeName);
       let node: ColorNode;
       if (mode === "lut") {
-        const l = storeLut(p, matchLut(src, ref, { size: 33, strength }), `Match to ${refName}`);
+        // 17³ is plenty for the smooth move a match makes, and keeps the project (and every undo step) small.
+        const l = storeLut(p, matchLut(src, ref, { size: 17, strength }), `Match to ${refName}`, true);
         node = cops.addNode(p, id, { name: nodeName, lut: { id: l.id, mix: 1 } });
       } else if (mode === "curves") node = cops.addNode(p, id, { name: nodeName, curves: matchCurves(src, ref, { strength }) });
       else node = cops.addNode(p, id, { name: nodeName, ...matchPrimaries(src, ref, { strength }) });
@@ -181,7 +195,7 @@ export function registerColorCommands(): void {
   );
   registerCommand("color.reset", "{id | ids, nodesOnly?=false} Remove all grading nodes from the clip(s) (and, unless nodesOnly, the basic grade and wheels too).", (s, a) =>
     s.mutate("reset colour", (p) => {
-      for (const id of idsOf(a)) {
+      for (const id of checkedIds(s, idsOf(a))) {
         const c = getClip(p, id);
         c.nodes = undefined;
         if (!a.bool("nodesOnly")) {
@@ -291,7 +305,7 @@ export function registerColorCommands(): void {
       s.mutate("apply LUT", (p) => {
         if (/^(none|off)$/i.test(a.str("lut").trim())) {
           const cleared: { id: string; nodeId: string }[] = [];
-          for (const id of idsOf(a)) {
+          for (const id of checkedIds(s, idsOf(a))) {
             const n = cops.clearLut(p, id, (a.any("node") as string | number | undefined) ?? getClip(p, id).nodes?.length ?? 1);
             cleared.push({ id, nodeId: n.id });
           }
@@ -301,7 +315,7 @@ export function registerColorCommands(): void {
         const l = findLut(p, a.str("lut"));
         const mix = Math.max(0, Math.min(1, a.num("mix", 1)));
         const out: { id: string; nodeId: string }[] = [];
-        for (const id of idsOf(a)) {
+        for (const id of checkedIds(s, idsOf(a))) {
           const ref = a.any("node");
           const n = ref === undefined || ref === null ? cops.addNode(p, id, { name: l.name.slice(0, 40) }) : cops.findNode(getClip(p, id), ref as string | number).node;
           cops.setNode(p, id, n.id, { lut: { id: l.id, mix } });
@@ -327,6 +341,7 @@ export function registerColorCommands(): void {
     "{id, size?=33, name?, t? (timeline time for animated grades; default the clip's middle), save?=true} Generate a .cube LUT of the clip's whole grade (basic grade, wheels and nodes; windows cannot be part of a LUT and are ignored). Saved in Documents/VideoStudio unless save:false, which returns the text.",
     async (s, a) => {
       const p = s.project;
+      syncProjectLuts(p);
       const c = getClip(p, a.str("id"));
       const size = Math.max(2, Math.min(65, Math.round(a.num("size", 33))));
       const d = evaluateClip(p, c, a.num("t", c.start + c.dur / 2));
@@ -356,6 +371,7 @@ export function registerColorCommands(): void {
     "color.sample",
     "{id, colors: ['#hex', ...], t?, x?=0.5, y?=0.5} What the clip's grade does to given colours (basic grade, wheels and nodes; x,y = position inside the picture, for windows). Computed with the same maths as the picture.",
     (s, a) => {
+      syncProjectLuts(s.project);
       const c = getClip(s.project, a.str("id"));
       const d = evaluateClip(s.project, c, a.num("t", c.start + c.dur / 2));
       const list = a.any("colors");
@@ -389,6 +405,7 @@ export function registerColorCommands(): void {
       const ref = refClip ? await clipStats(p0, s.pool, refClip, { t: a.optNum("refT") }) : await assetStats(p0, s.pool, refAsset!, { t: a.optNum("refT") });
       const refName = refClip ? getClip(p0, refClip).name : findAsset(p0, refAsset)?.name ?? "reference";
       const ids = idsOf(a).filter((id) => id !== refClip);
+      if (!ids.length) throw new OpError("The reference is the only clip given. Name the clip(s) to change in id/ids and a different clip or picture as the reference.");
       return { reference: refName, mode, ...(await matchClipsToStats(s, ids, ref, refName, mode as "lut" | "curves" | "primaries", strength, MATCH_NODE)) };
     },
   );
@@ -399,9 +416,10 @@ export function registerColorCommands(): void {
     async (s, a) => {
       const strength = Math.max(0, Math.min(1, a.num("strength", 1)));
       const out: Record<string, unknown>[] = [];
-      for (const id of idsOf(a)) {
-        const old = getClip(s.project, id).nodes?.filter((n) => n.name === AUTO_NODE).map((n) => n.id) ?? [];
-        const stats = await clipStats(s.project, s.pool, id, { dropNodes: old });
+      for (const id of checkedIds(s, idsOf(a))) {
+        // The balance node goes first, so it is worked out from the picture before any node touches it.
+        const all = getClip(s.project, id).nodes?.map((n) => n.id) ?? [];
+        const stats = await clipStats(s.project, s.pool, id, { dropNodes: all });
         const fix = autoBalance(stats, { strength });
         const nodeId = s.mutate("auto balance", (p) => {
           dropNamed(p, id, AUTO_NODE);

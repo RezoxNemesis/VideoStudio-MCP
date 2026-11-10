@@ -5,7 +5,7 @@
 import { findAsset, uid, type Clip, type Project } from "../core/model";
 import { OpError, getClip } from "../core/ops";
 import { cleanCurve, hsvOf, isHueCurve, isIdentityCurve, sanitizeNode } from "./engine";
-import { CURVE_KEYS, MAX_NODES, QUAL_DEFAULT, WIN_DEFAULT, newColorNode, type ColorNode, type CurveKey, type CurvePts, type PowerWindow, type ProjectLut, type Qualifier } from "./types";
+import { CURVE_KEYS, MAX_CLIP_LUTS, MAX_NODES, QUAL_DEFAULT, WIN_DEFAULT, newColorNode, type ColorNode, type CurveKey, type CurvePts, type PowerWindow, type ProjectLut, type Qualifier } from "./types";
 
 /** Find a node by id, by 1-based position ("1", 2) or by name (case-insensitive). */
 export function findNode(c: Clip, ref: string | number): { node: ColorNode; index: number } {
@@ -27,6 +27,12 @@ export function nodeOrNew(p: Project, clipId: string, ref?: string | number): Co
   return c.nodes[c.nodes.length - 1]!;
 }
 
+/** The renderer has four LUT slots per clip: refuse a fifth different LUT instead of silently dropping it. */
+function checkLuts(nodes: ColorNode[]): void {
+  const ids = new Set(nodes.filter((n) => n.lut && n.lut.mix > 0).map((n) => n.lut!.id));
+  if (ids.size > MAX_CLIP_LUTS) throw new OpError(`One clip can use ${MAX_CLIP_LUTS} different LUTs across its nodes. Take one off another node first, or put the extra LUT on an adjustment clip above.`);
+}
+
 export function addNode(p: Project, clipId: string, fields: Partial<ColorNode>, after?: string | number): ColorNode {
   const c = getClip(p, clipId);
   if (!isPicture(p, c)) throw new OpError("Grading nodes go on picture clips, not on sound.");
@@ -34,6 +40,7 @@ export function addNode(p: Project, clipId: string, fields: Partial<ColorNode>, 
   if (nodes.length >= MAX_NODES) throw new OpError(`A clip can carry ${MAX_NODES} nodes. Remove one, or put more on an adjustment clip above.`);
   const n = sanitizeNode({ ...newColorNode(uid("nod"), `Node ${nodes.length + 1}`), ...fields, id: uid("nod") });
   if (!fields.name) n.name = `Node ${nodes.length + 1}`;
+  checkLuts([...nodes, n]);
   const at = after === undefined ? nodes.length : findNode(c, after).index + 1;
   nodes.splice(at, 0, n);
   return n;
@@ -44,6 +51,7 @@ export function setNode(p: Project, clipId: string, ref: string | number, patch:
   const c = getClip(p, clipId);
   const { node, index } = findNode(c, ref);
   const merged = sanitizeNode({ ...node, ...patch, id: node.id, curves: patch.curves === undefined ? node.curves : patch.curves, qual: patch.qual === undefined ? node.qual : patch.qual, win: patch.win === undefined ? node.win : patch.win, lut: patch.lut === undefined ? node.lut : patch.lut });
+  checkLuts(c.nodes!.map((n, i) => (i === index ? merged : n)));
   c.nodes![index] = merged;
   return merged;
 }
@@ -157,13 +165,13 @@ export function addProjectLut(p: Project, lut: Omit<ProjectLut, "id"> & { id?: s
   return entry;
 }
 
-/** Drop project LUTs no node uses any more. */
+/** Drop tool-made LUTs (shot match…) that no node uses any more. LUTs the person imported are never removed here. */
 export function pruneLuts(p: Project): number {
   if (!p.luts?.length) return 0;
   const used = new Set<string>();
   for (const t of p.tracks) for (const c of t.clips) for (const n of c.nodes ?? []) if (n.lut) used.add(n.lut.id);
   const before = p.luts.length;
-  p.luts = p.luts.filter((l) => used.has(l.id));
+  p.luts = p.luts.filter((l) => !l.auto || used.has(l.id));
   if (!p.luts.length) p.luts = undefined;
   return before - (p.luts?.length ?? 0);
 }

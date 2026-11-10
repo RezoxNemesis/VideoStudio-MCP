@@ -116,6 +116,8 @@ export interface ProjectLut {
   size?: number;
   /** base64 of Uint16 little-endian RGB triples (0..65535 = 0..1), present when source is "data". */
   data?: string;
+  /** Made by a tool (shot match, style DNA) rather than imported: removed automatically once no node uses it. */
+  auto?: boolean;
 }
 
 /** What a picture looks like, in numbers: used for shot matching, look transfer and style DNA. */
@@ -150,6 +152,9 @@ export const WIN_DEFAULT: PowerWindow = { shape: "none", x: 0.5, y: 0.5, w: 0.5,
 export function newColorNode(id: string, name = "Node"): ColorNode {
   return { id, name, on: true, kind: "serial", blend: "normal", mix: 1, lift: [0, 0, 0, 0], gamma: [0, 0, 0, 0], gain: [0, 0, 0, 0], offset: [0, 0, 0], contrast: 1, pivot: 0.435, sat: 1, hue: 0, temp: 0, tint: 0 };
 }
+
+/** The most different LUTs the nodes of one clip can use together (GPU texture slots). */
+export const MAX_CLIP_LUTS = 4;
 
 /** The most nodes one clip can carry (a GPU uniform budget, not a creative one). */
 export const MAX_NODES = 8;

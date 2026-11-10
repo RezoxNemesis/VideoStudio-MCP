@@ -78,6 +78,7 @@ uniform vec4 uLutSize;
 uniform float uNodeAspect;   // picture width / height
 uniform float uBypass;       // 1 = show the picture without any colour work
 uniform float uSplitX;       // frame px: left of this line the picture is shown ungraded (compare wipe); < 0 off
+uniform float uNodeFlipY;    // 1 when uv.y runs bottom-up (adjustment clips grade the frame buffer): windows count y from the top
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + uSeed) * 43758.5453); }
 float hash0(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -279,7 +280,7 @@ vec4 grade(sampler2D tex, vec2 uv) {
     c = toRgb * y;
   }
   if (uBypass > 0.5 || gl_FragCoord.x < uSplitX) c = ungraded;
-  else if (uNodeCount > 0) c = nodes(c, uv);
+  else if (uNodeCount > 0) c = nodes(c, uNodeFlipY > 0.5 ? vec2(uv.x, 1.0 - uv.y) : uv);
   if (uVignette > 0.0) {
     float v = smoothstep(0.85, 0.2, length((uv - 0.5) * vec2(1.0, 1.0)) * (0.6 + uVignette));
     c *= mix(1.0, v, uVignette);
@@ -696,6 +697,7 @@ export class Compositor {
     gl.uniform1i(this.loc(pr, "uLut3"), 8);
     gl.uniform1f(this.loc(pr, "uBypass"), this.bypass ? 1 : 0);
     gl.uniform1f(this.loc(pr, "uSplitX"), this.split >= 0 ? this.split * this.width : -1);
+    gl.uniform1f(this.loc(pr, "uNodeFlipY"), pr === this.progs.adjust ? 1 : 0);
     const nodes: ColorNode[] = (d.nodes ?? []).slice(0, MAX_NODES);
     gl.uniform1i(this.loc(pr, "uNodeCount"), nodes.length);
     if (!nodes.length) return;
@@ -1025,6 +1027,13 @@ export class Compositor {
     this.last = null;
     this.texCache.clear();
     this.targets = [];
+    // Give the GPU context back now: browsers keep only a handful alive, and throwaway compositors (probes, snapshots,
+    // renders) would otherwise push the viewer's own context out before the garbage collector gets to them.
+    try {
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch {
+      /* already gone */
+    }
   }
 }
 

@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      VERSION: "2.0.${{ github.run_number }}"
+      VERSION: "2.1.${{ github.run_number }}"
     steps:
       - uses: actions/checkout@v4
 
@@ -96,12 +96,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="desktop-v${VERSION}"
-          notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ) — the new app that replaces VideoStudio Desktop 1.0.x.
+          notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ). Installs over VideoStudio 2.0 (and replaces VideoStudio Desktop 1.0.x); projects and the Claude link are kept.
 
           • VideoStudio-${VERSION}-amd64.deb — double-click to install (Discover / package installer). It removes the old VideoStudio Desktop package by itself and keeps your projects and the Claude link.
           • VideoStudio-${VERSION}-x86_64.AppImage — portable: allow executing, then open.
 
-          New: native media core (no more green picture, instant import of any file), professional player (10 s jumps, J/K/L shuttle, in/out, loop, speeds, scrub bar), video scopes, live view of every step Claude takes.
+          New in 2.1: a colour page (grading nodes, wheels, custom and hue curves, HSL qualifier, animated power windows, .cube LUTs with camera transforms and film looks, LUT export, compare wipe), Shot Match and Auto balance, Audience Lens (predicted score, attention curve, one-click fixes, Evolve), Style DNA (measure and transplant the feel of any video), faster split-screen and 4K renders.
+          From 2.0: native media core, professional player, video scopes, live view of every step Claude takes.
 
           Built from ${GITHUB_SHA::7}."
           gh release create "$tag" desktop/release/*.deb desktop/release/*.AppImage --title "VideoStudio ${VERSION}" --notes "$notes" --target "$GITHUB_SHA" --latest=false

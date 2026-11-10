@@ -792,13 +792,15 @@ export function lens(p: Project, ctx: LensContext = {}): LensReport {
     add({ id: "pacing:still", area: "pacing", severity: sev, title: "A long stretch without change", detail: `From ${fmt(longest.start)} to ${fmt(longest.end)} (${fmt(len)}) nothing in the edit changes. Viewers often drift away in long unchanged stretches; a cut, a move or a text beat there may help.${note}`, at: r3(longest.start), clipIds: uc ? [uc.id] : undefined });
   } else add({ id: "pacing:still", area: "pacing", severity: "good", title: "No long still stretches", detail: `Something changes at least every ${fmt(medStatic)}, which is likely to keep the eye busy.` });
 
-  // Cuts on beats.
-  if (beatsAll.length && cuts.length >= 2) {
-    const hit = cuts.filter((c) => onBeat(c.t)).length;
-    const ratio = hit / cuts.length;
+  // Cuts on beats. Only cuts made on the timeline are judged: cuts found inside footage sit on the sampling grid,
+  // so their times are not precise enough for an 80 ms test.
+  const editCuts = cuts.filter((c) => c.source === "edit");
+  if (beatsAll.length && editCuts.length >= 2) {
+    const hit = editCuts.filter((c) => onBeat(c.t)).length;
+    const ratio = hit / editCuts.length;
     facts.cutsOnBeat = r3(ratio);
-    if (ratio >= 0.5) add({ id: "pacing:beats", area: "pacing", severity: "good", title: "Cuts land on the beat", detail: `${hit} of ${cuts.length} cuts land within ${Math.round(BEAT_TOLERANCE * 1000)} ms of a beat, which usually makes an edit feel tight.` });
-    else add({ id: "pacing:beats", area: "pacing", severity: "low", title: "Cuts drift off the beat", detail: `Only ${hit} of ${cuts.length} cuts land within ${Math.round(BEAT_TOLERANCE * 1000)} ms of a beat. Snapping cuts to the music often makes an edit feel tighter.`, at: r3(cuts.find((c) => !onBeat(c.t))?.t ?? 0) });
+    if (ratio >= 0.5) add({ id: "pacing:beats", area: "pacing", severity: "good", title: "Cuts land on the beat", detail: `${hit} of ${editCuts.length} cuts land within ${Math.round(BEAT_TOLERANCE * 1000)} ms of a beat, which usually makes an edit feel tight.` });
+    else add({ id: "pacing:beats", area: "pacing", severity: "low", title: "Cuts drift off the beat", detail: `Only ${hit} of ${editCuts.length} cuts land within ${Math.round(BEAT_TOLERANCE * 1000)} ms of a beat. Snapping cuts to the music often makes an edit feel tighter.`, at: r3(editCuts.find((c) => !onBeat(c.t))?.t ?? 0) });
   }
 
   // Total length.

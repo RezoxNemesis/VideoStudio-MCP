@@ -311,13 +311,19 @@ export interface BuildOptions {
   /** Scale animation/text against this output size instead of the project size. */
   outW: number;
   outH: number;
+  /**
+   * Measuring tools (colour probes, the Audience Lens) read video through their own decoders — named here, with their
+   * own size limit — so they never disturb, or get shut down with, the decoders of a running render.
+   */
+  framerPurpose?: string;
+  framerMax?: number;
 }
 
 /** Gather sources for every visible layer at time t. */
 export async function buildLayers(p: Project, pool: MediaPool, t: number, o: BuildOptions): Promise<LayerInput[]> {
   syncProjectLuts(p);
-  pool.beginFrame(o.purpose);
   const draws = evaluate(p, t);
+  pool.beginFrame(o.framerPurpose ?? o.purpose, draws.map((d) => d.clipId));
   const k = o.outH / p.height;
   const scaled = (d: LayerDraw): LayerDraw =>
     k === 1
@@ -412,7 +418,7 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
         return null;
       }
       if (a.kind === "video") {
-        const f = await pool.framer(a, o.purpose === "export" ? `export` : "preview", o.purpose === "export" ? undefined : (o.previewMax ?? 960), d.clipId);
+        const f = await pool.framer(a, o.framerPurpose ?? (o.purpose === "export" ? `export` : "preview"), o.framerPurpose ? o.framerMax : o.purpose === "export" ? undefined : (o.previewMax ?? 960), d.clipId, d.srcTime);
         if (!f) return null;
         let wc = f.latest;
         const near = wc && Math.abs(wc.timestamp - d.srcTime) < Math.max(wc.duration, 0.04) * 1.01 && d.srcTime >= wc.timestamp - 1e-4;
@@ -440,7 +446,7 @@ async function mediaLayer(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpt
     return { draw: d, source: now, sw: now.width, sh: now.height, version: a.id };
   }
   if (a.kind !== "video") return null;
-  const f = await pool.framer(a, o.purpose === "export" ? `export` : "preview", o.purpose === "export" ? undefined : (o.previewMax ?? 960), d.clipId);
+  const f = await pool.framer(a, o.framerPurpose ?? (o.purpose === "export" ? `export` : "preview"), o.framerPurpose ? o.framerMax : o.purpose === "export" ? undefined : (o.previewMax ?? 960), d.clipId, d.srcTime);
   if (!f) return null;
   const wc = await f.frameAt(d.srcTime);
   if (!wc) return null;

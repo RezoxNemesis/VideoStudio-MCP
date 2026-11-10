@@ -109,10 +109,17 @@ export class NativeFramer implements FramerLike {
     const ahead = this.stream && t >= next - 1e-4 && t - next < 2;
     if (!ahead) await this.open(t);
     // Frames between the stream position and t are dropped in the media core, not sent over.
-    const skip = Math.max(0, Math.floor((t - (this.base + this.index * fd)) / fd + 1e-4));
-    const data = await vsd!.mediaRead(this.stream!, skip);
+    let skip = Math.max(0, Math.floor((t - (this.base + this.index * fd)) / fd + 1e-4));
+    let data = await vsd!.mediaRead(this.stream!, skip);
+    if ((!data || data.length < this.bytes) && t < this.duration - 3 * fd) {
+      // Not the end of the file, so the decoder went away (shut down to make room for others): start it again here
+      // and read the wanted frame, instead of repeating the old picture.
+      await this.open(t);
+      skip = 0;
+      data = await vsd!.mediaRead(this.stream!, 0);
+    }
     if (!data || data.length < this.bytes) {
-      // End of the file (or the decoder went away): keep the last picture.
+      // End of the file: keep the last picture.
       await this.close();
       return this.cur;
     }

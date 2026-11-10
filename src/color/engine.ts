@@ -187,8 +187,8 @@ export function windowAt(w: PowerWindow, local: number): PowerWindow {
 
 /** The nodes that will actually run at `local` seconds into the clip: switched-on ones, windows resolved, at most MAX_NODES. */
 export function resolveNodes(nodes: ColorNode[] | undefined, local: number): ColorNode[] | undefined {
-  if (!nodes || !nodes.length) return undefined;
-  const on = nodes.filter((n) => n.on).slice(0, MAX_NODES);
+  if (!Array.isArray(nodes) || !nodes.length) return undefined;
+  const on = nodes.filter((n) => n && n.on).slice(0, MAX_NODES);
   if (!on.length) return undefined;
   return on.map((n) => (n.win?.keys?.length ? { ...n, win: windowAt(n.win, local) } : n));
 }

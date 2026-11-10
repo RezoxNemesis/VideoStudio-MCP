@@ -2276,6 +2276,16 @@ export async function runCommand(s: Studio, cmd: Command, previous: CommandResul
 }
 
 /** Run commands in order. Stops at the first error unless `continueOnError`. */
+/** Run commands on behalf of the app itself (a panel button, a tool): no "Claude at work" acting, no page switches. */
+export async function runQuiet(s: Studio, cmds: Command[], continueOnError = false): Promise<CommandResult[]> {
+  depth++;
+  try {
+    return await runBatch(s, cmds, continueOnError);
+  } finally {
+    depth--;
+  }
+}
+
 export async function runBatch(s: Studio, cmds: Command[], continueOnError = false, onProgress?: (done: number, op: string) => void): Promise<CommandResult[]> {
   const results: CommandResult[] = [];
   const d = depth;

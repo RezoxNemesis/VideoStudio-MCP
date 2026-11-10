@@ -24,12 +24,15 @@ import { fontStack } from "../render/fonts";
 import { buildLayers } from "../render/layers";
 import { applyDna, describeDna, dnaDistance, dnaFromCuts, dnaFromProject, isShotClip, mergeDna, validateDna, type Dna } from "../smart/dna";
 import { evolve, lens, type Finding, type LensContext, type LensReport, type Platform } from "../smart/lens";
-import { registerCommand, runBatch, type Command } from "./api";
+import { registerCommand, runQuiet, type Command } from "./api";
 import { matchClipsToStats } from "./color";
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /* ----------------------------------- measuring the edit ----------------------------------- */
+
+/** The longest stretch of the mix that is analysed, in seconds. */
+export const HEAR_LIMIT = 900;
 
 export interface Heard {
   beats: number[];
@@ -43,9 +46,12 @@ export interface Heard {
 
 /** Listen to the whole mix: loudness, peak, silent stretches and (when there is music) the beat grid, in timeline time. */
 export async function hearEdit(p: Project, pool: MediaPool): Promise<Heard | null> {
-  const end = projectDuration(p);
-  if (end <= 0) return null;
-  const mix = await mixdown(p, pool, 0, end, 44_100).catch(() => null);
+  const full = projectDuration(p);
+  if (full <= 0) return null;
+  // 16 kHz is plenty for loudness, silences and beats, and the first 15 minutes are plenty to judge an edit:
+  // listening to a whole feature at full quality would need gigabytes of memory.
+  const end = Math.min(full, HEAR_LIMIT);
+  const mix = await mixdown(p, pool, 0, end, 16_000).catch(() => null);
   if (!mix) return null;
   const chs = [mix.getChannelData(0), mix.getChannelData(mix.numberOfChannels > 1 ? 1 : 0)];
   const sr = mix.sampleRate;
@@ -70,7 +76,14 @@ export async function hearEdit(p: Project, pool: MediaPool): Promise<Heard | nul
     }
   }
   // Music = a sound-only file on the timeline for at least 5 seconds (voice-overs made by the voice engine do not count).
-  const hasMusic = p.tracks.some((t) => !t.muted && t.clips.some((c) => c.kind === "media" && c.dur >= 5 && findAsset(p, c.assetId)?.kind === "audio" && !findAsset(p, c.assetId)?.mouth));
+  const hasMusic = p.tracks.some(
+    (t) =>
+      !t.muted &&
+      t.clips.some((c) => {
+        const a = findAsset(p, c.assetId);
+        return c.kind === "media" && c.dur >= 5 && a?.kind === "audio" && !a.mouth && a.createdBy !== "voice";
+      }),
+  );
   let beats: number[] = [];
   let downbeats: number[] = [];
   let bpm = 0;
@@ -93,7 +106,7 @@ export async function watchEdit(p: Project, pool: MediaPool, maxSamples = 96): P
   const canvas = new OffscreenCanvas(w, h);
   const comp = new Compositor(canvas);
   const grab = async (t: number): Promise<Float32Array> => {
-    const layers = await buildLayers(p, pool, t, { purpose: "export", wait: true, outW: w, outH: h });
+    const layers = await buildLayers(p, pool, t, { purpose: "export", wait: true, outW: w, outH: h, framerPurpose: "lens", framerMax: 256 });
     comp.render(layers, w, h, p.background);
     const px = new Uint8Array(w * h * 4);
     comp.gl.readPixels(0, 0, w, h, comp.gl.RGBA, comp.gl.UNSIGNED_BYTE, px);
@@ -121,7 +134,8 @@ export async function watchEdit(p: Project, pool: MediaPool, maxSamples = 96): P
     return { frames, loopDiff: first ? r3(diff(first, last)) : undefined };
   } finally {
     comp.dispose();
-    await pool.dropFramers("export").catch(() => {});
+    // Only the Lens's own decoders: a render running at the same time keeps its own.
+    await pool.dropFramers("lens").catch(() => {});
   }
 }
 
@@ -135,8 +149,17 @@ export function measureTextBlock(p: Project): (text: string, st: TextStyle) => {
     measureCtx.font = `${st.weight} ${size}px ${/[,"']/.test(st.font) ? st.font : fontStack(st.font)}`;
     const trk = (st.tracking ?? 0) * k;
     const lines = text.split("\n");
-    const w = Math.max(1, ...lines.map((l) => measureCtx!.measureText(l).width + Math.max(0, [...l].length - 1) * trk));
-    return { w, h: lines.length * size * 1.2 };
+    const widest = Math.max(1, ...lines.map((l) => measureCtx!.measureText(l).width + Math.max(0, [...l].length - 1) * trk));
+    // The outline and the background panel are part of what can be covered (same rules as the Lens's own estimate).
+    const stroke = st.strokeWidth > 0 ? st.strokeWidth * k : 0;
+    let w = widest + stroke * 2;
+    let h = lines.length * size * 1.2 + stroke * 2;
+    if (st.bg) {
+      const pad = size * 0.35 + st.strokeWidth * k + st.shadow * k + (st.glow ? size * 0.4 : 0);
+      w = widest + pad * 1.2;
+      h = lines.length * size * 1.2 + pad * 1.2;
+    }
+    return { w, h };
   };
 }
 
@@ -151,6 +174,8 @@ export interface LensOptions {
 /** Run the Audience Lens on the current edit with everything this device can measure. */
 export async function runLens(s: Studio, o: LensOptions = {}): Promise<LensReport> {
   const p = s.project;
+  // The report describes the edit as it was when measuring started.
+  const meta: LensMeta = { revision: s.revision, projectId: p.id };
   const ctx: LensContext = { platform: o.platform, measureText: measureTextBlock(p) };
   if (o.sound !== false) {
     const heard = await hearEdit(p, s.pool).catch(() => null);
@@ -171,42 +196,72 @@ export async function runLens(s: Studio, o: LensOptions = {}): Promise<LensRepor
     }
   }
   const report = lens(p, ctx);
-  lastReport = report;
-  for (const f of lensListeners) f(report);
+  publishLens(report, meta);
   return report;
 }
 
+/** Which edit a report was measured from: the studio's revision counter and the project. */
+export interface LensMeta {
+  revision: number;
+  projectId: string;
+}
 let lastReport: LensReport | null = null;
-const lensListeners = new Set<(r: LensReport) => void>();
-/** The latest report (for the panel), and a way to hear about new ones. */
+let lastMeta: LensMeta | null = null;
+const lensListeners = new Set<(r: LensReport, meta: LensMeta) => void>();
+function publishLens(r: LensReport, meta: LensMeta): void {
+  lastReport = r;
+  lastMeta = meta;
+  for (const f of lensListeners) f(r, meta);
+}
+/** The latest report and what it was measured from (for the panel), and a way to hear about new ones. */
 export const latestLens = (): LensReport | null => lastReport;
-export function onLens(f: (r: LensReport) => void): () => void {
+export const latestLensMeta = (): LensMeta | null => lastMeta;
+export function onLens(f: (r: LensReport, meta: LensMeta) => void): () => void {
   lensListeners.add(f);
   return () => lensListeners.delete(f);
 }
 
-/** Apply every safe fix, look again, repeat (at most `rounds` times) while the score improves. */
-export async function evolveEdit(s: Studio, o: LensOptions & { rounds?: number } = {}): Promise<{ before: LensReport; after: LensReport; applied: { id: string; title: string; fix: string }[] }> {
+/**
+ * Evolve: apply every safe fix, look again, and keep the round only if the predicted score went up — otherwise undo
+ * it. Repeats (at most `rounds` times) while it keeps improving. Whatever is kept is ONE undo step.
+ */
+export async function evolveEdit(s: Studio, o: LensOptions & { rounds?: number } = {}): Promise<{ before: LensReport; after: LensReport; applied: { id: string; title: string; fix: string }[]; failed: number; rolledBack: boolean }> {
   const before = await runLens(s, o);
   let cur = before;
+  let curMeta: LensMeta = { revision: s.revision, projectId: s.project.id };
   const applied: { id: string; title: string; fix: string }[] = [];
-  for (let round = 0; round < Math.max(1, Math.min(4, o.rounds ?? 2)); round++) {
-    const ev = evolve(s.project, cur);
-    if (!ev.commands.length) break;
-    const res = await runBatch(s, ev.commands as Command[], true);
-    const failed = res.filter((r) => !r.ok).length;
-    for (const id of ev.applied) {
-      const f = cur.findings.find((x) => x.id === id);
-      if (f?.fix) applied.push({ id, title: f.title, fix: f.fix.label });
+  let failed = 0;
+  let rolledBack = false;
+  await s.group("evolve", async () => {
+    for (let round = 0; round < Math.max(1, Math.min(4, o.rounds ?? 2)); round++) {
+      const ev = evolve(s.project, cur);
+      if (!ev.commands.length) break;
+      const base = cur;
+      const r = await s.group(
+        "evolve",
+        async () => {
+          const res = await runQuiet(s, ev.commands as Command[], true);
+          return { bad: res.filter((x) => !x.ok).length, next: await runLens(s, o) };
+        },
+        (x) => x.next.score > base.score,
+      );
+      if (r.next.score <= base.score) {
+        // The round was undone: the report from before it is the true one again.
+        rolledBack = true;
+        curMeta = { revision: s.revision, projectId: s.project.id };
+        publishLens(base, curMeta);
+        break;
+      }
+      failed += r.bad;
+      for (const id of ev.applied) {
+        const f = base.findings.find((x) => x.id === id);
+        if (f?.fix) applied.push({ id, title: f.title, fix: f.fix.label });
+      }
+      cur = r.next;
     }
-    const next = await runLens(s, o);
-    if (next.score <= cur.score && failed === 0 && round > 0) {
-      cur = next;
-      break;
-    }
-    cur = next;
-  }
-  return { before, after: cur, applied };
+  });
+  if (!rolledBack) publishLens(cur, { revision: s.revision, projectId: s.project.id });
+  return { before, after: cur, applied, failed, rolledBack };
 }
 
 function briefFinding(f: Finding): Record<string, unknown> {
@@ -231,23 +286,52 @@ function briefReport(r: LensReport, all = false): Record<string, unknown> {
 const DNA_KEY = "dna.library";
 export const SIGNATURE = "My signature";
 
+const sameName = (a: unknown, b: string) => typeof a === "string" && a.trim().toLowerCase() === b.trim().toLowerCase();
+const isSignature = (name: string) => sameName(name, SIGNATURE);
+
+/** Everything stored, as stored. A storage error is an error — never "an empty library", which a later save would then overwrite. */
+async function rawLibrary(): Promise<unknown[]> {
+  const raw = await kvGet<unknown[]>(DNA_KEY);
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** The usable DNAs. Records this version cannot read are left out here but kept in storage. */
 export async function dnaLibrary(): Promise<Dna[]> {
-  const raw = (await kvGet<unknown[]>(DNA_KEY).catch(() => undefined)) ?? [];
   const out: Dna[] = [];
-  for (const x of Array.isArray(raw) ? raw : []) {
+  for (const x of await rawLibrary()) {
     try {
       out.push(validateDna(x));
     } catch {
-      /* a broken record is skipped, never fatal */
+      /* unreadable here (perhaps written by a newer version): skipped, not deleted */
     }
   }
   return out;
 }
-async function saveDna(d: Dna): Promise<void> {
-  const lib = (await dnaLibrary()).filter((x) => x.name.toLowerCase() !== d.name.toLowerCase());
-  lib.push(d);
-  await kvSet(DNA_KEY, lib.slice(-60));
-  for (const f of dnaListeners) f();
+
+// Library writes run one after another, so a panel action and a command at the same moment cannot lose an entry.
+let libQueue: Promise<unknown> = Promise.resolve();
+function libWrite(change: (raw: unknown[]) => unknown[]): Promise<void> {
+  const run = libQueue.then(async () => {
+    let next = change(await rawLibrary());
+    // Keep the newest 60; the personal signature is never the one to go.
+    if (next.length > 60) {
+      const sig = next.filter((x) => isSignature(String((x as { name?: unknown })?.name ?? "")));
+      next = [...sig, ...next.filter((x) => !sig.includes(x)).slice(-(60 - sig.length))];
+    }
+    await kvSet(DNA_KEY, next);
+    for (const f of dnaListeners) f();
+  });
+  libQueue = run.catch(() => {});
+  return run;
+}
+const saveDna = (d: Dna): Promise<void> => libWrite((raw) => [...raw.filter((x) => !sameName((x as { name?: unknown })?.name, d.name)), d]);
+const removeDna = (name: string): Promise<void> => libWrite((raw) => raw.filter((x) => !sameName((x as { name?: unknown })?.name, name)));
+/** "My signature" is built only by learning from projects; nothing else may take that name. */
+function freeName(name: string): string {
+  const n = name.trim().slice(0, 60);
+  if (!n) throw new OpError("Give the style DNA a name.");
+  if (isSignature(n)) throw new OpError(`"${SIGNATURE}" is kept for the style learned from your own projects (dna.fromProject with signature:true). Choose another name.`);
+  return n;
 }
 async function findDna(name: string): Promise<Dna> {
   const lib = await dnaLibrary();
@@ -283,9 +367,12 @@ export async function extractDna(s: Studio, assetId: string, name?: string): Pro
   const duration = Math.max(0.1, sc.contentEnd || sc.duration || a.duration);
   const beat = await analyseBeats(s, assetId).catch(() => null);
   const colour = await assetStats(s.project, s.pool, assetId, { samples: 6 }).catch(() => undefined);
+  // Flash frames and flares can read as two cuts a few frames apart: keep the first of any pair closer than 0.3 s.
+  const cuts: number[] = [];
+  for (const t of sc.cuts.filter((x) => x > 0 && x < duration).sort((x, y) => x - y)) if (!cuts.length || t - cuts[cuts.length - 1]! >= 0.3) cuts.push(t);
   const d = dnaFromCuts({
-    name: (name ?? a.name.replace(/\.[^.]+$/, "")).slice(0, 60),
-    cuts: sc.cuts.filter((t) => t > 0 && t < duration),
+    name: freeName(name ?? a.name.replace(/\.[^.]+$/, "")),
+    cuts,
     duration,
     ...(beat && beat.beats.length >= 4 ? { beats: beat.beats.filter((t) => t <= duration), downbeats: beat.downbeats.filter((t) => t <= duration), bpm: beat.bpm } : {}),
     colour,
@@ -298,10 +385,12 @@ export async function extractDna(s: Studio, assetId: string, name?: string): Pro
 export async function projectDna(s: Studio, o: { name?: string; signature?: boolean } = {}): Promise<Dna> {
   const heard = await hearEdit(s.project, s.pool).catch(() => null);
   const colour = await shotsColour(s).catch(() => undefined);
-  const d = dnaFromProject(s.project, { name: (o.name ?? s.project.name).slice(0, 60), ...(heard?.hasMusic && heard.beats.length >= 4 ? { beats: heard.beats, downbeats: heard.downbeats, bpm: heard.bpm } : {}), colour });
+  const name = o.name && !o.signature ? freeName(o.name) : (o.name ?? s.project.name).slice(0, 60);
+  const d = dnaFromProject(s.project, { name, ...(heard?.hasMusic && heard.beats.length >= 4 ? { beats: heard.beats, downbeats: heard.downbeats, bpm: heard.bpm } : {}), colour });
   if (o.signature) {
-    const lib = await dnaLibrary();
-    const old = lib.find((x) => x.name === SIGNATURE);
+    const old = (await dnaLibrary()).find((x) => isSignature(x.name));
+    // A project whose colour could not be measured must not wipe the colour the signature already carries.
+    if (old?.colour && !d.colour) d.colour = old.colour;
     const merged = mergeDna(old ? [old, d] : [d], SIGNATURE);
     await saveDna(merged);
     return merged;
@@ -310,29 +399,47 @@ export async function projectDna(s: Studio, o: { name?: string; signature?: bool
   return d;
 }
 
-/** Transplant a DNA onto the current timeline: rhythm (re-timed cuts), titles, and colour (a "Style DNA" node per shot). */
+/**
+ * Transplant a DNA onto the current timeline: rhythm (re-timed cuts), titles, and colour (an editable "Style DNA"
+ * curves node per shot that brings its colour closer to the DNA's). The whole transplant is ONE undo step.
+ */
 export async function transplantDna(s: Studio, d: Dna, o: { parts?: string[]; seed?: number; colourStrength?: number } = {}): Promise<Record<string, unknown>> {
   const parts = (o.parts?.length ? o.parts : ["rhythm", "type", "colour"]).map((x) => (x === "color" ? "colour" : x));
   const heard = parts.includes("rhythm") ? await hearEdit(s.project, s.pool).catch(() => null) : null;
   // Distances include colour (when the DNA has it), so the number reflects everything that was transplanted.
-  const beatsOf = heard?.hasMusic ? { beats: heard.beats, downbeats: heard.downbeats, bpm: heard.bpm } : {};
+  const beatsOf = heard?.hasMusic && heard.beats.length >= 4 ? { beats: heard.beats, downbeats: heard.downbeats, bpm: heard.bpm } : {};
   const measure = async () => dnaDistance(dnaFromProject(s.project, { ...beatsOf, colour: d.colour ? await shotsColour(s).catch(() => undefined) : undefined }), d);
   const before = await measure();
-  const plan = applyDna(s.project, d, { ...(heard?.hasMusic && heard.beats.length >= 4 ? { beats: heard.beats, downbeats: heard.downbeats, bpm: heard.bpm } : {}), seed: o.seed, parts: parts.filter((x) => x === "rhythm" || x === "type" || x === "motion") as ("rhythm" | "type" | "motion")[] });
-  const res = plan.commands.length ? await runBatch(s, plan.commands as Command[], true) : [];
-  // When the colour is matched here, the planner's hint to "match it with the colour tool" would only confuse.
-  const notes = plan.notes.filter((n) => !(parts.includes("colour") && d.colour && /colour look/i.test(n)));
-  let colour: Record<string, unknown> | undefined;
-  if (parts.includes("colour")) {
-    if (!d.colour) notes.push("This DNA carries no colour, so the colour was left as it is.");
-    else {
-      const ids = s.project.tracks.flatMap((t) => (t.hidden ? [] : t.clips.filter((c) => isShotClip(s.project, c)).map((c) => c.id)));
-      const m = await matchClipsToStats(s, ids, d.colour, d.name, "lut", Math.max(0, Math.min(1, o.colourStrength ?? 0.8)), "Style DNA");
-      colour = { shots: m.results.length, before: m.results.length ? r3(m.results.reduce((x, y) => x + y.before, 0) / m.results.length) : 0, after: m.results.length ? r3(m.results.reduce((x, y) => x + y.after, 0) / m.results.length) : 0, differences: m.differences };
+  return s.group("style DNA", async () => {
+    const plan = applyDna(s.project, d, { ...beatsOf, seed: o.seed, parts: parts.filter((x) => x === "rhythm" || x === "type" || x === "motion") as ("rhythm" | "type" | "motion")[] });
+    const res = plan.commands.length ? await runQuiet(s, plan.commands as Command[], true) : [];
+    // When the colour is brought over here, the planner's hint to "match it with the colour tool" would only confuse.
+    const notes = plan.notes.filter((n) => !(parts.includes("colour") && d.colour && /colour look/i.test(n)));
+    let colour: Record<string, unknown> | undefined;
+    if (parts.includes("colour")) {
+      if (!d.colour) notes.push("This DNA carries no colour, so the colour was left as it is.");
+      else {
+        const ids = s.project.tracks.flatMap((t) => (t.hidden ? [] : t.clips.filter((c) => isShotClip(s.project, c)).map((c) => c.id)));
+        const done: { before: number; after: number }[] = [];
+        const failedShots: string[] = [];
+        let differences: string[] = [];
+        for (const id of ids) {
+          try {
+            // Curves, not a LUT per shot: editable afterwards, and the project stays small however many shots there are.
+            const m = await matchClipsToStats(s, [id], d.colour, d.name, "curves", Math.max(0, Math.min(1, o.colourStrength ?? 0.8)), "Style DNA");
+            if (!differences.length) differences = m.differences;
+            done.push(...m.results);
+          } catch (e) {
+            failedShots.push(`${s.project.tracks.flatMap((t) => t.clips).find((c) => c.id === id)?.name ?? id}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        const avg = (k: "before" | "after") => (done.length ? r3(done.reduce((x, y) => x + y[k], 0) / done.length) : 0);
+        colour = { shots: done.length, before: avg("before"), after: avg("after"), differences, failed: failedShots };
+      }
     }
-  }
-  const after = await measure();
-  return { dna: d.name, commands: plan.commands.length, failed: res.filter((r) => !r.ok).map((r) => r.error), notes, colour, distanceBefore: r3(before), distanceAfter: r3(after) };
+    const after = await measure();
+    return { dna: d.name, commands: plan.commands.length, failed: res.filter((r) => !r.ok).map((r) => r.error), notes, colour, distanceBefore: r3(before), distanceAfter: r3(after) };
+  });
 }
 
 /* ----------------------------------- commands ----------------------------------- */
@@ -344,19 +451,21 @@ export function registerSmartCommands(): void {
     async (s, a) => briefReport(await runLens(s, { platform: a.optStr("platform") as Platform | undefined, sound: a.bool("sound", true), picture: a.bool("picture", true) }), a.bool("all")),
   );
   registerCommand("lens.fix", "{finding (a finding id from lens.run)} Apply the fix one finding offers.", async (s, a) => {
-    const rep = lastReport ?? (await runLens(s));
+    // A report from before the latest edits (or from another project) would apply out-of-date positions: look again first.
+    const fresh = lastReport && lastMeta && lastMeta.revision === s.revision && lastMeta.projectId === s.project.id;
+    const rep = fresh ? lastReport! : await runLens(s);
     const f = rep.findings.find((x) => x.id === a.str("finding"));
-    if (!f) throw new OpError("No such finding in the latest report. Run lens.run again.");
+    if (!f) throw new OpError(fresh ? "No such finding in the latest report. Run lens.run again." : "The edit changed since that report, and after looking again this finding is gone.");
     if (!f.fix) throw new OpError("That finding has no automatic fix; it needs an editing decision.");
-    const res = await runBatch(s, f.fix.commands as Command[], true);
+    const res = await s.group("lens fix", () => runQuiet(s, f.fix!.commands as Command[], true));
     return { applied: f.fix.label, failed: res.filter((r) => !r.ok).map((r) => r.error) };
   });
   registerCommand(
     "lens.evolve",
-    "{platform?, rounds?=2, sound?=true, picture?=true} Evolve: apply every safe fix the Audience Lens offers (moving titles into the safe area, giving text time to be read, fades, trims…), look again, and repeat while the score improves. Every change is an ordinary undoable edit. Returns the score before and after, what was changed, and what still needs a decision.",
+    "{platform?, rounds?=2, sound?=true, picture?=true} Evolve: apply every safe fix the Audience Lens offers (moving titles into the safe area, giving text time to be read, fades, trims…), look again, and keep the round only if the predicted score went up (otherwise it is undone). The result is one undo step. Returns the score before and after, what was changed, and what still needs a decision.",
     async (s, a) => {
       const r = await evolveEdit(s, { platform: a.optStr("platform") as Platform | undefined, rounds: a.num("rounds", 2), sound: a.bool("sound", true), picture: a.bool("picture", true) });
-      return { before: r.before.score, after: r.after.score, applied: r.applied, remaining: r.after.findings.filter((f) => f.severity !== "good").map(briefFinding), verdict: r.after.verdict };
+      return { before: r.before.score, after: r.after.score, rolledBack: r.rolledBack, applied: r.applied, failedCommands: r.failed, remaining: r.after.findings.filter((f) => f.severity !== "good").map(briefFinding), verdict: r.after.verdict };
     },
   );
 
@@ -374,13 +483,13 @@ export function registerSmartCommands(): void {
   registerCommand("dna.get", "{name} A saved style DNA as JSON (to keep or share).", async (_s, a) => findDna(a.str("name")));
   registerCommand("dna.add", "{dna (a style DNA record, as returned by dna.get)} Add a style DNA to the library.", async (_s, a) => {
     const d = validateDna(a.any("dna"));
+    d.name = freeName(d.name);
     await saveDna(d);
     return briefDna(d);
   });
   registerCommand("dna.remove", "{name} Delete a style DNA from the library.", async (_s, a) => {
     const d = await findDna(a.str("name"));
-    await kvSet(DNA_KEY, (await dnaLibrary()).filter((x) => x.name !== d.name));
-    for (const f of dnaListeners) f();
+    await removeDna(d.name);
     return true;
   });
   registerCommand("dna.compare", "{name} How close the current timeline is to a saved style DNA (0 = same feel; under 0.1 same style, over 0.5 different).", async (s, a) => {
@@ -390,7 +499,7 @@ export function registerSmartCommands(): void {
   });
   registerCommand(
     "dna.apply",
-    "{name, parts?: [rhythm, type, colour], seed?, colourStrength?=0.8} Transplant a style DNA onto the current timeline: re-time the cuts to its rhythm (only when the shots form one clean sequence; same shots, same total length), restyle the titles, and add a \"Style DNA\" grading node to every shot that brings its colour to the DNA's. Everything is undoable; notes explain anything that was left alone.",
+    "{name, parts?: [rhythm, type, colour], seed?, colourStrength?=0.8} Transplant a style DNA onto the current timeline: re-time the cuts to its rhythm (only when the shots form one clean sequence; same shots, same total length), restyle the titles, and add an editable \"Style DNA\" curves node to every shot that brings its colour closer to the DNA's. The whole transplant is one undo step; notes explain anything that was left alone.",
     async (s, a) => {
       const parts = a.any("parts");
       return transplantDna(s, await findDna(a.str("name")), { parts: Array.isArray(parts) ? parts.map(String) : undefined, seed: a.optNum("seed"), colourStrength: a.optNum("colourStrength") });
