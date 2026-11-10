@@ -10,7 +10,7 @@ import { ProRender, type ProCodec } from "./render";
 import { assetPath, importPath, relinkMissing } from "./importer";
 import { compile, EXPR_FUNCTIONS } from "./expr";
 import { listen, notes, pickSections } from "./listen";
-import { runCommand } from "../../src/agent/api";
+import { runBatch, runCommand, type Command } from "../../src/agent/api";
 import { analyseSong } from "../../src/media/song";
 import { need, pathBlob, type AudioReport } from "./bridge";
 
@@ -382,6 +382,25 @@ export function registerDesktopCommands(s: Studio): void {
   registerCommand("ui.notify", "{text} Show the person a short message in the app.", (_s, a) => {
     hooks?.toast(a.str("text").slice(0, 300));
     return true;
+  });
+
+  registerCommand("batch.runFile", "{path, continueOnError?=false, results?=false} Run a JSON file of commands that sits on this PC (an array of {op,...}; later commands can use \"$N.path\" references). For batches too large to send over the link: put the file in a folder, then run it. Returns how many ran, the failures and the last result.", async (st, a) => {
+    const text = await need().readText(a.str("path"));
+    let cmds: unknown;
+    try {
+      cmds = JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (!Array.isArray(cmds) || !cmds.length) throw new Error("The file must hold a non-empty array of commands.");
+    const res = await runBatch(st, cmds as Command[], a.bool("continueOnError", false));
+    const failed = res.map((r, i) => ({ i, op: r.op, error: r.error })).filter((r) => r.error);
+    return { commands: cmds.length, ran: res.length, ok: res.length - failed.length, failed: failed.slice(0, 20), last: res[res.length - 1]?.result, ...(a.bool("results", false) ? { results: res } : {}) };
+  });
+
+  registerCommand("project.importFile", "{path} Open a .vsproj / .videostudio.json project file from this PC as a new project (edit decisions and drawings; media is re-linked from disk when it is found).", async (st, a) => {
+    const p = await st.importJson(await need().readText(a.str("path")));
+    return { id: p.id, name: p.name, size: `${p.width}x${p.height}`, tracks: p.tracks.length, scenes: p.scenes.length };
   });
 
   registerCommand("project.backup", "{path?} Save the project (edit decisions, not the media) as a .vsproj file; default ~/Documents/VideoStudio/<name>.vsproj.", async (st, a) => {
