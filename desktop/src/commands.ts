@@ -350,8 +350,10 @@ export function registerDesktopCommands(s: Studio): void {
     // but never wait on animation frames alone: a hidden or covered window does not produce any.
     await Promise.race([new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))), new Promise<void>((r) => setTimeout(r, 400))]);
     await new Promise<void>((r) => setTimeout(r, 250));
-    if (a.bool("save", false)) return { ...(await need().captureSave(a.optStr("name"))), workspace: hooks?.current() };
-    return { image: await need().capture(Math.min(2400, a.num("max", 1600))), workspace: hooks?.current() };
+    const limit = <T,>(p: Promise<T>): Promise<T> =>
+      Promise.race([p, new Promise<T>((_r, rej) => setTimeout(() => rej(new Error("The window gave no picture within 10 seconds — it is probably minimised or completely covered. Bring VideoStudio to the front and try again.")), 10_000))]);
+    if (a.bool("save", false)) return { ...(await limit(need().captureSave(a.optStr("name")))), workspace: hooks?.current() };
+    return { image: await limit(need().capture(Math.min(2400, a.num("max", 1600)))), workspace: hooks?.current() };
   });
 
   registerCommand("timeline.zoom", "{fit?=false, start?, end?, pps? (pixels per second, 4..600)} Zoom or scroll the timeline view: fit the whole edit, show a time span, or set the zoom level. The person sees it move.", async (st, a) => {

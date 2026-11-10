@@ -70,6 +70,9 @@ export interface Vsd {
   probe(p: string): Promise<Probe>;
   /** Native media core (VideoStudio 2). */
   mediaDescribe(p: string): Promise<import("./native-media").MediaDescription>;
+  mediaOpen(o: { path: string; ss: number; w: number; h: number; fps: number; quality: "preview" | "export" }): Promise<{ id: string; w: number; h: number; fps: number; src: string; hw: boolean }>;
+  mediaRead(id: string, skip?: number): Promise<Uint8Array | null>;
+  mediaClose(id: string): Promise<boolean>;
   mediaStatus(): Promise<{ gpuDecode: boolean | null; note: string; decodersRunning: number; streamsOpened: number; gpuFallbacks: number; editingCopiesMade: number; editingCopyFailures: number; lastError: string; ffmpeg: string }>;
   mediaSelfTest(): Promise<unknown>;
   mediaEnsureProxy(p: string): Promise<{ proxy: boolean; ready?: boolean; failed?: boolean }>;

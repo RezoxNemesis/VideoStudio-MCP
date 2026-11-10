@@ -14,6 +14,11 @@ const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const crypto = require("node:crypto");
 
+// VideoStudio 2 is a new app (new package, new name) that keeps the data of VideoStudio Desktop: projects, media
+// links and — above all — the Claude link key, so the connector the person already added keeps working untouched.
+// This must run before anything asks for the data folder.
+app.setPath("userData", path.join(app.getPath("appData"), "VideoStudio Desktop"));
+
 const WEB_ROOT = path.join(__dirname, "..", "dist-web");
 const HOME = os.homedir();
 const DEV_URL = process.env.VSD_DEV_URL || "";
@@ -124,7 +129,7 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 if (process.env.VSD_NO_SANDBOX) app.commandLine.appendSwitch("no-sandbox");
-app.setName("VideoStudio Desktop");
+app.setName("VideoStudio");
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, codeCache: true } },
@@ -1063,7 +1068,7 @@ const newer = (a, b) => {
   return false;
 };
 async function updateCheck() {
-  const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=20`, { headers: { accept: "application/vnd.github+json", "user-agent": "VideoStudio-Desktop" } });
+  const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=20`, { headers: { accept: "application/vnd.github+json", "user-agent": "VideoStudio" } });
   if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
   const list = await res.json();
   const rel = list.filter((r) => /^desktop-v\d/.test(r.tag_name) && !r.draft).sort((a, b) => (newer(a.tag_name, b.tag_name) ? -1 : 1))[0];
@@ -1115,7 +1120,7 @@ async function installDeb(u, file) {
     clearGuard();
     app.exit(0);
   }, 1500);
-  return { installed: true, version: u.latest, file, note: "Installed — VideoStudio Desktop restarts now." };
+  return { installed: true, version: u.latest, file, note: "Installed — VideoStudio restarts now." };
 }
 
 /* ------------------------------------------------------------------ window */
@@ -1131,7 +1136,7 @@ function createWindow() {
     minHeight: 680,
     frame: false,
     backgroundColor: "#07090d",
-    title: "VideoStudio Desktop",
+    title: "VideoStudio",
     icon: icon.isEmpty() ? undefined : icon,
     show: false,
     webPreferences: {
@@ -1227,6 +1232,9 @@ function setupIpc() {
   handle("fs.readText", async (p) => fsp.readFile(mustAllow(p), "utf8"));
   handle("media.probe", (p) => probe(mustAllow(p)));
   handle("media.describe", (p) => media().describe(p));
+  handle("media.open", (o) => media().openFrames(o));
+  handle("media.read", (id, skip) => media().readFrame(id, skip));
+  handle("media.close", (id) => media().closeFrames(id));
   handle("media.status", () => media().status());
   handle("media.selfTest", () => media().selfTest());
   handle("media.ensureProxy", (p) => media().ensureProxy(p));

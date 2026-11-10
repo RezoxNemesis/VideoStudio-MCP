@@ -17,7 +17,7 @@ import { installNativeMedia } from "./native-media";
 
 async function main() {
   const app = document.getElementById("app")!;
-  app.innerHTML = `<div style="height:100%;display:grid;place-items:center;color:#8a94a6;font:14px system-ui">Starting VideoStudio Desktop…</div>`;
+  app.innerHTML = `<div style="height:100%;display:grid;place-items:center;color:#8a94a6;font:14px system-ui">Starting VideoStudio 2…</div>`;
   const studio = new Studio();
   try {
     await studio.boot();
@@ -34,7 +34,7 @@ async function main() {
   const link = new DesktopLink(studio);
   const info = await vsd?.info().catch(() => null);
   link.appInfo = () => ({
-    app: "VideoStudio Desktop",
+    app: "VideoStudio 2",
     version: info?.version ?? "dev",
     host: info?.host,
     os: `${info?.platform ?? "web"} ${info?.arch ?? ""}`.trim(),

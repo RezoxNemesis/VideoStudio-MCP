@@ -1,8 +1,8 @@
 {
-  "name": "videostudio-desktop",
-  "productName": "VideoStudio Desktop",
-  "version": "1.0.0",
-  "description": "VideoStudio for the desktop: pro editing, colour, 2D/3D animation, VolTune voices, sound and a Claude link.",
+  "name": "videostudio",
+  "productName": "VideoStudio",
+  "version": "2.0.0",
+  "description": "VideoStudio 2: pro editing with a native media core, colour and scopes, 2D/3D animation, VolTune voices, sound and a live Claude link.",
   "author": {
     "name": "RezoxNemesis",
     "email": "vikastandon4510c@gmail.com"
@@ -26,10 +26,10 @@
     "electron-builder": "^26.0.12"
   },
   "build": {
-    "appId": "com.rezoxnemesis.videostudio.desktop",
-    "productName": "VideoStudio Desktop",
-    "executableName": "videostudio-desktop",
-    "artifactName": "VideoStudio-Desktop-${version}-${arch}.${ext}",
+    "appId": "com.rezoxnemesis.videostudio",
+    "productName": "VideoStudio",
+    "executableName": "videostudio",
+    "artifactName": "VideoStudio-${version}-${arch}.${ext}",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -51,14 +51,14 @@
       ],
       "category": "AudioVideo",
       "icon": "build/icon.png",
-      "synopsis": "Pro video editor, animation studio and voices \u2014 with Claude",
+      "synopsis": "Pro video editor, animation studio and voices — with Claude",
       "maintainer": "RezoxNemesis <vikastandon4510c@gmail.com>",
       "desktop": {
         "entry": {
-          "Name": "VideoStudio Desktop",
-          "Comment": "Edit, animate and render \u2014 with Claude",
+          "Name": "VideoStudio",
+          "Comment": "Edit, animate and render — with Claude",
           "Categories": "AudioVideo;Video;AudioVideoEditing;Graphics;",
-          "StartupWMClass": "VideoStudio Desktop"
+          "StartupWMClass": "VideoStudio"
         }
       }
     },
@@ -73,6 +73,12 @@
         "libatspi2.0-0",
         "libuuid1",
         "libsecret-1-0"
+      ],
+      "fpm": [
+        "--replaces",
+        "videostudio-desktop",
+        "--conflicts",
+        "videostudio-desktop"
       ]
     },
     "publish": [

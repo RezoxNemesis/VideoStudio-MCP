@@ -34,14 +34,10 @@ export const nativeStats = { framesShown: 0, streamsOpened: 0, errors: 0, lastEr
 /** Sequential-friendly reader: plays forward by reading the stream, seeks by reopening it at the new time. */
 export class NativeFramer implements FramerLike {
   private cur: Wrapped | null = null;
-  private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  private abort: AbortController | null = null;
+  private stream: string | null = null;
   private base = 0;
   private index = 0;
-  private chunk: Uint8Array | null = null;
-  private chunkOff = 0;
   private readonly bytes: number;
-  private readonly buf: Uint8ClampedArray<ArrayBuffer>;
   private pool: { c: OffscreenCanvas; x: OffscreenCanvasRenderingContext2D }[] = [];
   private slot = 0;
   private tail: Promise<unknown> = Promise.resolve();
@@ -61,7 +57,6 @@ export class NativeFramer implements FramerLike {
     private readonly coalesce = false,
   ) {
     this.bytes = width * height * 4;
-    this.buf = new Uint8ClampedArray(new ArrayBuffer(this.bytes));
     liveFramers.add(this);
   }
 
@@ -85,7 +80,7 @@ export class NativeFramer implements FramerLike {
         this.lastUse = performance.now();
         if (this.disposed) return this.cur;
         if (this.coalesce && this.wanted !== t && this.cur) return this.cur;
-        if (!this.reader && this.failedAt && performance.now() - this.failedAt < 1500) return this.cur;
+        if (!this.stream && this.failedAt && performance.now() - this.failedAt < 1500) return this.cur;
         try {
           return await this.step(t);
         } catch (e) {
@@ -111,25 +106,30 @@ export class NativeFramer implements FramerLike {
     const c = this.cur;
     if (c && t >= c.timestamp - 1e-4 && t < c.timestamp + fd - 1e-4) return c;
     const next = this.base + this.index * fd; // time of the next frame the open stream will deliver
-    const ahead = this.reader && t >= next - 1e-4 && t - next < 2;
+    const ahead = this.stream && t >= next - 1e-4 && t - next < 2;
     if (!ahead) await this.open(t);
-    for (;;) {
-      const ts = this.base + this.index * fd;
-      const wantThis = ts + fd > t + 1e-4; // this frame covers t (or is already past it)
-      const ok = await this.readFrame(wantThis);
-      if (!ok) {
-        // End of the file (or the decoder went away): keep the last picture.
-        await this.close();
-        return this.cur;
-      }
-      this.index++;
-      if (wantThis) {
-        const s = this.pool[this.slot]!;
-        this.cur = { canvas: s.c, timestamp: ts, duration: fd };
-        nativeStats.framesShown++;
-        return this.cur;
-      }
+    // Frames between the stream position and t are dropped in the media core, not sent over.
+    const skip = Math.max(0, Math.floor((t - (this.base + this.index * fd)) / fd + 1e-4));
+    const data = await vsd!.mediaRead(this.stream!, skip);
+    if (!data || data.length < this.bytes) {
+      // End of the file (or the decoder went away): keep the last picture.
+      await this.close();
+      return this.cur;
     }
+    this.index += skip;
+    const ts = this.base + this.index * fd;
+    this.index++;
+    if (this.pool.length < 3) {
+      const cv = new OffscreenCanvas(this.width, this.height);
+      const x = cv.getContext("2d", { willReadFrequently: true, alpha: true }) as OffscreenCanvasRenderingContext2D;
+      this.pool.push({ c: cv, x });
+      this.slot = this.pool.length - 1;
+    } else this.slot = (this.slot + 1) % this.pool.length;
+    const px = new Uint8ClampedArray(data.buffer as ArrayBuffer, data.byteOffset, this.bytes);
+    this.pool[this.slot]!.x.putImageData(new ImageData(px, this.width, this.height), 0, 0);
+    this.cur = { canvas: this.pool[this.slot]!.c, timestamp: ts, duration: fd };
+    nativeStats.framesShown++;
+    return this.cur;
   }
 
   private async open(t: number): Promise<void> {
@@ -137,63 +137,26 @@ export class NativeFramer implements FramerLike {
     const snap = Math.floor(t * this.fps + 1e-6) / this.fps;
     // A third of a frame early: the wanted frame is the first one out, and the frame-rate filter never sees a tie.
     const ss = Math.max(0, snap - 0.3 / this.fps);
-    this.abort = new AbortController();
-    const url = `vsmedia://m/frames?p=${enc(this.path)}&ss=${ss.toFixed(6)}&w=${this.width}&h=${this.height}&fps=${this.fps}&q=${this.quality}`;
-    const res = await fetch(url, { signal: this.abort.signal, cache: "no-store" });
-    if (!res.ok || !res.body) throw new Error(`The media core could not read ${this.path.split("/").pop()}: ${await res.text().catch(() => res.status)}`);
-    this.reader = res.body.getReader();
+    const o = await vsd!.mediaOpen({ path: this.path, ss, w: this.width, h: this.height, fps: this.fps, quality: this.quality });
+    if (this.disposed) {
+      void vsd!.mediaClose(o.id);
+      return;
+    }
+    this.stream = o.id;
     this.base = snap;
     this.index = 0;
-    this.chunk = null;
-    this.chunkOff = 0;
     nativeStats.streamsOpened++;
-  }
-
-  /** Read one frame from the stream; draw it only when it will be shown. False at end of stream. */
-  private async readFrame(draw: boolean): Promise<boolean> {
-    const r = this.reader;
-    if (!r) return false;
-    let got = 0;
-    while (got < this.bytes) {
-      if (!this.chunk || this.chunkOff >= this.chunk.length) {
-        const { done, value } = await r.read();
-        if (done || !value) return false;
-        this.chunk = value;
-        this.chunkOff = 0;
-      }
-      const n = Math.min(this.bytes - got, this.chunk.length - this.chunkOff);
-      if (draw) this.buf.set(this.chunk.subarray(this.chunkOff, this.chunkOff + n), got);
-      this.chunkOff += n;
-      got += n;
-    }
-    if (draw) {
-      if (this.pool.length < 3) {
-        const c = new OffscreenCanvas(this.width, this.height);
-        const x = c.getContext("2d", { willReadFrequently: true, alpha: true }) as OffscreenCanvasRenderingContext2D;
-        this.pool.push({ c, x });
-        this.slot = this.pool.length - 1;
-      } else this.slot = (this.slot + 1) % this.pool.length;
-      this.pool[this.slot]!.x.putImageData(new ImageData(this.buf, this.width, this.height), 0, 0);
-    }
-    return true;
   }
 
   /** Stop the decoder but keep the last picture (called when idle, on seeks and on dispose). */
   async close(): Promise<void> {
-    const r = this.reader;
-    this.reader = null;
-    this.chunk = null;
-    try {
-      this.abort?.abort();
-    } catch {
-      /* already closed */
-    }
-    this.abort = null;
-    if (r) await r.cancel().catch(() => {});
+    const id = this.stream;
+    this.stream = null;
+    if (id) await vsd!.mediaClose(id).catch(() => {});
   }
 
   get streaming(): boolean {
-    return !!this.reader;
+    return !!this.stream;
   }
 
   async dispose(): Promise<void> {

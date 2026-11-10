@@ -113,7 +113,8 @@ export class AgentStage implements LiveHooks {
       return;
     }
     this.set(words);
-    if (QUIET.test(op) || this.stepMs < 1) return;
+    // Nobody is looking (window hidden or minimised): do the work at full speed, without the show.
+    if (QUIET.test(op) || this.stepMs < 1 || document.visibilityState !== "visible") return;
     const animate = this.stepMs >= 60;
     const move = Math.min(260, this.stepMs * 0.6);
     // 1) The page this kind of work happens on.

@@ -347,6 +347,131 @@ module.exports = function createMediaCore({ FFMPEG, probe, mustAllow, cacheDir, 
     return st.response();
   }
 
+  /* ---------------------------------------------------------------- frame streams over IPC (fast path)
+   * Whole frames are assembled here and handed to the window one per call. This moves 4K frames several times
+   * faster than a network-style stream, which arrives in 64 KB pieces. */
+  const fstreams = new Map();
+  let fseq = 0;
+  async function openFrames(o) {
+    const file = mustAllow(String(o.path || ""));
+    const i = await info(file);
+    const s = shape(i);
+    if (!s) throw new Error(`${i.name} has no picture.`);
+    const quality = o.quality === "export" ? "export" : "preview";
+    const ss = Math.max(0, Number(o.ss) || 0);
+    const fps = Math.min(240, Math.max(1, Number(o.fps) || s.fps));
+    const w = even(Number(o.w) || s.w);
+    const h = even(Number(o.h) || s.h);
+    let src = file;
+    let si = i;
+    const px = quality === "preview" && Math.max(w, h) <= 1300 ? proxyReady(i) : null;
+    if (px && fs.existsSync(px)) {
+      src = px;
+      si = await info(px);
+    } else if (quality === "preview") void ensureProxy(file).catch(() => {});
+    const chain = `fps=${fps}:round=near,${colourChain(si, w, h, quality)},setsar=1`;
+    const hw = src === file && wantHw(i);
+    const id = `f${++fseq}`;
+    const st = { id, bytes: w * h * 4, queue: [], cur: null, have: 0, waiters: [], ended: false, closed: false, child: null, produced: 0, at: Date.now(), label: `frames ${i.name}` };
+    fstreams.set(id, st);
+    const wake = () => {
+      while (st.waiters.length && (st.queue.length || st.ended)) st.waiters.shift()();
+    };
+    const start = (tryHw) => {
+      if (st.closed) return;
+      const args = ["-hide_banner", "-v", "error", "-nostdin", ...(tryHw ? ["-hwaccel", "cuda"] : ["-threads", "0"]), "-ss", ss.toFixed(6), "-i", src, "-an", "-sn", "-dn", "-vf", chain, "-f", "rawvideo", "-pix_fmt", "rgba", "-"];
+      let err = "";
+      const c = spawn(FFMPEG, args, { stdio: ["ignore", "pipe", "pipe"] });
+      st.child = c;
+      live.set(id, { child: c, at: Date.now(), label: st.label });
+      reap();
+      state.started++;
+      c.stdout.on("data", (d) => {
+        let off = 0;
+        while (off < d.length) {
+          if (!st.cur) {
+            st.cur = Buffer.allocUnsafe(st.bytes);
+            st.have = 0;
+          }
+          const n = Math.min(st.bytes - st.have, d.length - off);
+          d.copy(st.cur, st.have, off, off + n);
+          st.have += n;
+          off += n;
+          if (st.have === st.bytes) {
+            st.queue.push(st.cur);
+            st.cur = null;
+            st.produced++;
+          }
+        }
+        if (st.queue.length >= 3) c.stdout.pause();
+        wake();
+      });
+      c.stderr.on("data", (d) => (err = (err + d.toString()).slice(-2000)));
+      c.on("error", (e) => {
+        state.lastError = `${st.label}: ${e.message || e}`;
+        st.ended = true;
+        wake();
+      });
+      c.on("close", (code) => {
+        live.delete(id);
+        if (st.closed) return;
+        if (tryHw && st.produced === 0) {
+          state.hwFallbacks++;
+          return start(false);
+        }
+        if (code !== 0 && st.produced === 0) {
+          state.lastError = `${st.label}: ${(err.trim().split("\n").pop() || `ffmpeg exited ${code}`).slice(0, 240)}`;
+          log(`media core: ${state.lastError}`);
+        }
+        st.ended = true;
+        wake();
+      });
+    };
+    start(hw);
+    state.streams++;
+    return { id, w, h, fps, src: src === file ? "original" : "proxy", hw };
+  }
+  /** The next frame (after dropping `skip` frames the window does not need), or null at the end. */
+  async function readFrame(id, skip = 0) {
+    const st = fstreams.get(id);
+    if (!st) return null;
+    st.at = Date.now();
+    for (;;) {
+      if (st.queue.length) {
+        const f = st.queue.shift();
+        if (st.queue.length < 2 && st.child && !st.ended) st.child.stdout.resume();
+        if (skip > 0) {
+          skip--;
+          continue;
+        }
+        return f;
+      }
+      if (st.ended || st.closed) return null;
+      await new Promise((r) => st.waiters.push(r));
+    }
+  }
+  function closeFrames(id) {
+    const st = fstreams.get(id);
+    if (!st) return false;
+    st.closed = true;
+    st.ended = true;
+    fstreams.delete(id);
+    live.delete(id);
+    try {
+      st.child?.kill("SIGKILL");
+    } catch {
+      /* gone */
+    }
+    st.queue.length = 0;
+    while (st.waiters.length) st.waiters.shift()();
+    return true;
+  }
+  // A window that went away (reload, crash) must not leave decoders behind.
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, st] of fstreams) if (now - st.at > 20_000) closeFrames(id);
+  }, 5000).unref?.();
+
   async function audio(q) {
     const file = mustAllow(q.get("p") || "");
     const i = await info(file);
@@ -417,7 +542,8 @@ module.exports = function createMediaCore({ FFMPEG, probe, mustAllow, cacheDir, 
       }
     }
     live.clear();
+    for (const id of [...fstreams.keys()]) closeFrames(id);
   }
 
-  return { handle, selfTest, status, describe, ensureProxy: (f) => ensureProxy(mustAllow(f)), cleanProxies, stopAll };
+  return { handle, openFrames, readFrame, closeFrames, selfTest, status, describe, ensureProxy: (f) => ensureProxy(mustAllow(f)), cleanProxies, stopAll };
 };

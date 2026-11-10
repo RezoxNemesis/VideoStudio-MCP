@@ -195,19 +195,29 @@ export class DesktopTimeline {
       this.syncScroll();
       this.redraw();
     };
-    if (!animate || (Math.abs(pps - p0) < 0.5 && Math.abs(sx - s0) < 2)) {
+    if (!animate || document.hidden || (Math.abs(pps - p0) < 0.5 && Math.abs(sx - s0) < 2)) {
       apply(1);
       return Promise.resolve();
     }
     return new Promise((done) => {
       const t0 = performance.now();
+      let finished = false;
+      const end = () => {
+        if (finished) return;
+        finished = true;
+        apply(1);
+        done();
+      };
       const step = () => {
+        if (finished) return;
         const k = Math.min(1, (performance.now() - t0) / 220);
         apply(1 - Math.pow(1 - k, 3));
         if (k < 1) requestAnimationFrame(step);
-        else done();
+        else end();
       };
       requestAnimationFrame(step);
+      // A covered or minimised window gets no animation frames: never let Claude's job wait on them.
+      setTimeout(end, 450);
     });
   }
 

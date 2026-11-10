@@ -1,4 +1,4 @@
-name: VideoStudio Desktop
+name: VideoStudio 2 (desktop)
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      VERSION: "1.0.${{ github.run_number }}"
+      VERSION: "2.0.${{ github.run_number }}"
     steps:
       - uses: actions/checkout@v4
 
@@ -81,14 +81,14 @@ jobs:
           app=$(ls release/*.AppImage | head -1)
           chmod +x "$app"
           "$app" --appimage-extract > /dev/null
-          (VSD_NO_SANDBOX=1 xvfb-run -a -s "-screen 0 1600x960x24" ./squashfs-root/videostudio-desktop --no-sandbox --remote-debugging-port=9333 > smoke.log 2>&1 &)
+          (VSD_NO_SANDBOX=1 xvfb-run -a -s "-screen 0 1600x960x24" ./squashfs-root/videostudio --no-sandbox --remote-debugging-port=9333 > smoke.log 2>&1 &)
           for i in $(seq 1 40); do
-            if curl -s http://127.0.0.1:9333/json/list | grep -q '"title": "VideoStudio Desktop"'; then echo "Window is up"; break; fi
+            if curl -s http://127.0.0.1:9333/json/list | grep -q '"title": "VideoStudio"'; then echo "Window is up"; break; fi
             sleep 1
           done
-          curl -s http://127.0.0.1:9333/json/list | grep -q "VideoStudio Desktop" || { cat smoke.log; exit 1; }
+          curl -s http://127.0.0.1:9333/json/list | grep -q '"title": "VideoStudio"' || { cat smoke.log; exit 1; }
           test -x squashfs-root/resources/ffmpeg/ffmpeg && echo "GPU ffmpeg is inside the package"
-          pkill -f squashfs-root/videostudio-desktop || true
+          pkill -f squashfs-root/videostudio || true
 
       - name: Publish release
         if: github.event_name != 'pull_request'
@@ -96,10 +96,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="desktop-v${VERSION}"
-          notes="VideoStudio Desktop ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ).
+          notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ) — the new app that replaces VideoStudio Desktop 1.0.x.
 
-          • VideoStudio-Desktop-${VERSION}-amd64.deb — double-click to install (Discover / package installer).
-          • VideoStudio-Desktop-${VERSION}-x86_64.AppImage — portable: allow executing, then open.
+          • VideoStudio-${VERSION}-amd64.deb — double-click to install (Discover / package installer). It removes the old VideoStudio Desktop package by itself and keeps your projects and the Claude link.
+          • VideoStudio-${VERSION}-x86_64.AppImage — portable: allow executing, then open.
+
+          New: native media core (no more green picture, instant import of any file), professional player (10 s jumps, J/K/L shuttle, in/out, loop, speeds, scrub bar), video scopes, live view of every step Claude takes.
 
           Built from ${GITHUB_SHA::7}."
-          gh release create "$tag" desktop/release/*.deb desktop/release/*.AppImage --title "VideoStudio Desktop ${VERSION}" --notes "$notes" --target "$GITHUB_SHA" --latest=false
+          gh release create "$tag" desktop/release/*.deb desktop/release/*.AppImage --title "VideoStudio ${VERSION}" --notes "$notes" --target "$GITHUB_SHA" --latest=false

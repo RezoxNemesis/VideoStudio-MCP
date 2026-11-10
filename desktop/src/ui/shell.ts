@@ -206,6 +206,26 @@ export class Shell {
       preview: () => this.viewer.preview,
       timeline: () => this.timeline,
     });
+    // First start of VideoStudio 2: say what changed, once.
+    if (!localStorage.getItem("vs2.welcome")) {
+      setTimeout(() => {
+        localStorage.setItem("vs2.welcome", "1");
+        const li = (t: string, d: string) => h("div", { style: "margin:0 0 9px" }, h("b", {}, t), h("div", { class: "muted", style: "font-size:12.5px;line-height:1.45" }, d));
+        const m = modal(
+          "Welcome to VideoStudio 2",
+          h(
+            "div",
+            { class: "col", style: "max-width:520px" },
+            li("Native media core", "Video and sound are decoded by the built-in ffmpeg engine (graphics card when it is free, processor otherwise). The green picture is gone, and any file — 4K, HEVC, ProRes, 10-bit — is on the timeline the moment you import it, without copying or converting."),
+            li("A real player", "−10 s / +10 s, frame steps, J K L shuttle up to 8× both ways, slow motion, in and out marks (I / O), loop, play range (/), click the timecode to type a time, and a scrub bar under the picture."),
+            li("Scopes", "Waveform, RGB parade, vectorscope and histogram on the Color page."),
+            li("Claude at work", "When Claude edits, you see it: the pointer moves, pages open, the timeline scrolls and zooms, clips flash as they change. Set the pace (Watch · Fast · Off) on the bar at the bottom."),
+            h("p", { class: "hint" }, "Your projects and the Claude link carried over from VideoStudio Desktop."),
+          ),
+          [b("Start editing", null, () => m.close(), "pri")],
+        );
+      }, 1400);
+    }
     // Claude at work: every command is acted out in the window (pointer, pages, timeline, flashes, progress bar).
     setLiveHooks(
       new AgentStage(s, {
@@ -418,10 +438,10 @@ export class Shell {
     return [
       { label: "Keyboard shortcuts", key: "?", run: () => this.shortcuts() },
       { label: "Check for updates…", run: () => void this.checkUpdate(true) },
-      { label: "About VideoStudio Desktop", run: async () => {
+      { label: "About VideoStudio 2", run: async () => {
         const i = await vsd?.info();
         modal(
-          "VideoStudio Desktop",
+          "VideoStudio 2",
           h("div", { class: "hint", style: "line-height:1.8" }, `Version ${i?.version ?? "dev"} · ${i?.platform ?? "web"} ${i?.arch ?? ""}`, h("br"), `${i?.cpuModel ?? ""} · ${i?.cpus ?? "?"} threads · ${i?.memoryGB ?? "?"} GB`, h("br"), `GPU: WebGL ${i?.gpu?.webgl ?? "?"} · WebGPU ${i?.gpu?.webgpu ?? "?"} · video decode ${i?.gpu?.video_decode ?? "?"}`, h("br"), `Renders: ${i?.out.Movies ?? ""}`),
           [b("Close", null, () => document.querySelector(".modal-bg")?.remove(), "pri")],
         );
@@ -434,7 +454,7 @@ export class Shell {
     try {
       const u = await vsd.updateCheck();
       if (!u.available) {
-        if (manual) toast(`VideoStudio Desktop ${u.current} is up to date.`, "ok");
+        if (manual) toast(`VideoStudio ${u.current} is up to date.`, "ok");
         return;
       }
       const m = modal(
