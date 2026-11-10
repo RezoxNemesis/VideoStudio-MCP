@@ -83,7 +83,7 @@ jobs:
           "$app" --appimage-extract > /dev/null
           (VSD_NO_SANDBOX=1 xvfb-run -a -s "-screen 0 1600x960x24" ./squashfs-root/videostudio-desktop --no-sandbox --remote-debugging-port=9333 > smoke.log 2>&1 &)
           for i in $(seq 1 40); do
-            if curl -s http://127.0.0.1:9333/json/list | grep -q "app://studio"; then echo "Window is up"; break; fi
+            if curl -s http://127.0.0.1:9333/json/list | grep -q '"title": "VideoStudio Desktop"'; then echo "Window is up"; break; fi
             sleep 1
           done
           curl -s http://127.0.0.1:9333/json/list | grep -q "VideoStudio Desktop" || { cat smoke.log; exit 1; }
