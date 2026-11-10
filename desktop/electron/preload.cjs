@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("vsd", {
   needsConversion: (p) => call("media.needsConversion", p),
   workWrite: (name, bytes) => call("work.write", name, bytes),
   workClean: () => call("work.clean"),
+  onGpuLost: (fn) => ipcRenderer.on("gpu:lost", (_e, m) => fn(m)),
   onProgress: (fn) => ipcRenderer.on("ffmpeg:progress", (_e, m) => fn(m)),
   win: {
     minimize: () => call("win.minimize"),

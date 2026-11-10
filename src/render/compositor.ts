@@ -299,11 +299,25 @@ export class Compositor {
   private frame = 0;
   width = 0;
   height = 0;
+  /** The GPU (or software renderer) behind this context, for diagnostics. */
+  renderer = "";
+
+  /** True once the GPU context has gone away (driver or GPU process restart); the compositor must be rebuilt. */
+  get lost(): boolean {
+    return this.gl.isContextLost();
+  }
 
   constructor(readonly canvas: HTMLCanvasElement | OffscreenCanvas) {
     const gl = canvas.getContext("webgl2", { premultipliedAlpha: true, alpha: false, antialias: false, preserveDrawingBuffer: true }) as WebGL2RenderingContext | null;
-    if (!gl) throw new Error("This device does not support WebGL2.");
+    if (!gl) throw new Error("The GPU did not give this window a WebGL2 context.");
+    if (gl.isContextLost()) throw new Error("The GPU context is not ready yet.");
     this.gl = gl;
+    try {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      this.renderer = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? "");
+    } catch {
+      this.renderer = "";
+    }
     this.quad = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);

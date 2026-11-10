@@ -200,6 +200,12 @@ export class Shell {
       },
       current: () => this.cur,
       toast: (m) => toast(m, "info", 5000),
+      preview: () => this.viewer.preview,
+    });
+    // The GPU process restarted (driver hiccup): rebuild the viewer's picture straight away.
+    vsd?.onGpuLost?.(() => {
+      this.viewer.preview.rebuild();
+      toast("Graphics restarted — the viewer was rebuilt.", "info", 4000);
     });
     this.go("edit");
     this.drawProj();
@@ -452,6 +458,9 @@ export class Shell {
       ["Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"],
       ["Ctrl + wheel", "Zoom the timeline"],
       ["Shift+Z", "Fit the edit"],
+      ["Wheel on the viewer", "Zoom the picture at the pointer"],
+      ["Middle-drag / Alt-drag", "Pan the zoomed picture"],
+      ["+ / − / 0", "Viewer zoom in · out · fit"],
       ["G", "Graph editor (animation curves)"],
       ["Alt+1…7", "Workspaces"],
       ["Ctrl+I", "Import media"],
@@ -620,6 +629,16 @@ export class Shell {
           break;
         case "Z":
           if (e.shiftKey) tl.fit();
+          break;
+        case "0":
+          this.viewer.preview.resetView();
+          break;
+        case "=":
+        case "+":
+          this.viewer.preview.zoomTo(this.viewer.preview.zoomLevel * 1.25);
+          break;
+        case "-":
+          this.viewer.preview.zoomTo(this.viewer.preview.zoomLevel / 1.25);
           break;
         case "?":
           this.shortcuts();

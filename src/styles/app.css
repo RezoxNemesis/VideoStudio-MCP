@@ -303,6 +303,39 @@ h3 {
   pointer-events: none;
   display: none;
 }
+.pv-notice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+  background: #07090d;
+  color: #9aa4b6;
+  font-size: 13px;
+  z-index: 2;
+}
+.pv-notice strong {
+  color: #e8edf4;
+  font-size: 15px;
+  font-weight: 600;
+}
+.pv-retry {
+  margin-top: 6px;
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.preview.panning {
+  cursor: grabbing;
+}
 .pv-error {
   position: absolute;
   inset: auto 12px 12px;

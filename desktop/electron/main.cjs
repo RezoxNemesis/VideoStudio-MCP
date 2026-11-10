@@ -64,11 +64,22 @@ if (firstInstance) {
     /* ignore */
   }
 }
-if (vulkan && process.env.VSD_NO_VULKAN !== "1") {
-  // Chromium cannot use Vulkan on native Wayland; run the window through XWayland instead (KDE handles it).
-  app.commandLine.appendSwitch("ozone-platform", "x11");
-  app.commandLine.appendSwitch("enable-features", "Vulkan,VaapiVideoDecodeLinuxGL");
+// NVIDIA's driver on native Wayland can stall Chromium's GPU process (the watchdog then kills it and every
+// picture in the window is lost), so with that driver the window always runs through XWayland. Vulkan needs
+// XWayland too. VSD_OZONE=wayland forces native Wayland.
+const NVIDIA = fs.existsSync("/proc/driver/nvidia/version");
+const useVulkan = vulkan && process.env.VSD_NO_VULKAN !== "1";
+const useX11 = process.platform === "linux" && process.env.VSD_OZONE !== "wayland" && !!process.env.DISPLAY && (useVulkan || NVIDIA);
+if (useX11) app.commandLine.appendSwitch("ozone-platform", "x11");
+if (useVulkan) app.commandLine.appendSwitch("enable-features", "Vulkan,VaapiVideoDecodeLinuxGL");
+// A GPU process restart must never leave the editor without a picture: keep WebGL allowed for this window
+// after GPU crashes, and let Chromium fall back to its software renderer if the GPU cannot come back.
+try {
+  app.disableDomainBlockingFor3DAPIs();
+} catch {
+  /* older Electron */
 }
+app.commandLine.appendSwitch("enable-unsafe-swiftshader");
 app.commandLine.appendSwitch("enable-unsafe-webgpu");
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
@@ -745,8 +756,9 @@ async function encoderCaps() {
     svtav1: has("libsvtav1"),
     vp9: has("libvpx-vp9"),
     reasons,
-    vulkan,
-    windowing: vulkan ? "x11 (XWayland)" : process.env.XDG_SESSION_TYPE || "auto",
+    vulkan: useVulkan,
+    windowing: useX11 ? "x11 (XWayland)" : process.env.XDG_SESSION_TYPE || "auto",
+    gpuRestarts,
     driver: await run("nvidia-smi", ["--query-gpu=name,driver_version", "--format=csv,noheader"], { timeout: 10_000 }).then((r) => (r.code === 0 ? r.stdout.trim() : null)).catch(() => null),
     filters: ["vidstabdetect", "minterpolate", "nlmeans", "hqdn3d", "lut3d", "loudnorm", "zscale", "deshake", "scale_cuda"].filter((f) => new RegExp(`\\s${f}\\s`).test(flt)),
   };
@@ -1042,6 +1054,11 @@ async function installDeb(u, file) {
   if (r.code !== 0) throw new Error(r.code === 126 || r.code === 127 ? "The password dialog was closed — nothing was installed. The update is saved in Downloads." : `Install failed: ${r.stderr.trim().split("\n").slice(-2).join(" ")}`);
   setTimeout(() => {
     app.relaunch({ args: process.argv.slice(1).concat(["--vsd-relaunch-wait"]) });
+    try {
+      fs.rmSync(GUARD, { force: true });
+    } catch {
+      /* ignore */
+    }
     app.exit(0);
   }, 1500);
   return { installed: true, version: u.latest, file, note: "Installed — VideoStudio Desktop restarts now." };
@@ -1277,7 +1294,24 @@ function setupIpc() {
 /* ------------------------------------------------------------------ boot */
 
 process.on("uncaughtException", (e) => crashLog(`main uncaught: ${e?.stack ?? e}`));
-app.on("child-process-gone", (_e, d) => crashLog(`child gone: ${d.type} ${d.reason} code=${d.exitCode}`));
+let gpuRestarts = 0;
+app.on("child-process-gone", (_e, d) => {
+  crashLog(`child gone: ${d.type} ${d.reason} code=${d.exitCode}`);
+  if (d.type === "GPU") {
+    gpuRestarts++;
+    // Tell the window so the viewer rebuilds its picture as soon as the GPU process is back.
+    for (const ms of [800, 3000]) setTimeout(() => win && !win.isDestroyed() && win.webContents.send("gpu:lost", { reason: d.reason, code: d.exitCode, restarts: gpuRestarts }), ms);
+  }
+});
+// A normal quit is not a failed start: clear the GPU guard so the next start keeps its GPU settings.
+const clearGuard = () => {
+  try {
+    fs.rmSync(GUARD, { force: true });
+  } catch {
+    /* ignore */
+  }
+};
+app.on("will-quit", clearGuard);
 if (!firstInstance) app.quit();
 else {
   app.on("second-instance", () => {

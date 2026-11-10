@@ -18,6 +18,7 @@ export interface ShellHooks {
   workspace(name: string): void;
   current(): string;
   toast(msg: string): void;
+  preview(): { status(): unknown; rebuild(): void; setQuality(q: "auto" | "full" | "half" | "quarter"): void; resetView(): void; zoomTo(z: number): void };
 }
 
 let hooks: ShellHooks | null = null;
@@ -346,6 +347,29 @@ export function registerDesktopCommands(s: Studio): void {
     // Let the window paint what earlier commands changed (workspace switches, new clips) before capturing.
     await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 250))));
     return { image: await need().capture(Math.min(2400, a.num("max", 1600))), workspace: hooks?.current() };
+  });
+
+  registerCommand("viewer.status", "Is the viewer's picture alive? GPU behind it, how often the graphics context was lost and rebuilt, preview quality, zoom, internal frame size.", () => {
+    if (!hooks) throw new Error("The window is still loading.");
+    return hooks.preview().status();
+  });
+  registerCommand("viewer.restart", "Rebuild the viewer's GPU picture from scratch (use when the viewer is blank or white).", async () => {
+    if (!hooks) throw new Error("The window is still loading.");
+    hooks.preview().rebuild();
+    await new Promise((r) => setTimeout(r, 400));
+    return hooks.preview().status();
+  });
+  registerCommand("viewer.set", "{quality?: auto|full|half|quarter, zoom?: 1..16 (1 = fit)} Preview quality and zoom of the viewer (renders are not affected).", (_s, a) => {
+    if (!hooks) throw new Error("The window is still loading.");
+    const pv = hooks.preview();
+    const q = a.optStr("quality");
+    if (q) {
+      if (!["auto", "full", "half", "quarter"].includes(q)) throw new Error("quality is auto, full, half or quarter");
+      pv.setQuality(q as "auto");
+    }
+    const z = a.any("zoom");
+    if (typeof z === "number") z <= 1 ? pv.resetView() : pv.zoomTo(z);
+    return pv.status();
   });
 
   registerCommand("ui.workspace", "{name: edit|animate|audio|color|voice|deliver|claude} Switch the workspace the person sees.", (_s, a) => {

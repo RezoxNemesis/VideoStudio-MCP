@@ -953,6 +953,19 @@ input[type="checkbox"] {
 }
 .vbar .sel {
   max-width: 190px;
+  flex: 0 1 auto;
+}
+.vbar .sel.vq {
+  max-width: 74px;
+}
+.vbar .vzoom {
+  min-width: 46px;
+  font-variant-numeric: tabular-nums;
+}
+.vbar .tc,
+.vbar .play,
+.vbar .btn {
+  flex: none;
 }
 .tc.dur {
   color: var(--muted);

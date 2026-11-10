@@ -91,6 +91,8 @@ export interface Vsd {
   workWrite(name: string, bytes: Uint8Array): Promise<string>;
   workClean(): Promise<boolean>;
   onProgress(fn: (m: { tag: string; frac: number }) => void): void;
+  /** The GPU process went away and restarted (driver hiccup); pictures in the window must be rebuilt. */
+  onGpuLost?(fn: (m: { reason: string; code: number; restarts: number }) => void): void;
 }
 
 export interface EncCaps {

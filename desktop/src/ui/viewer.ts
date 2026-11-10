@@ -1,6 +1,6 @@
 /** Program monitor: the engine's GPU preview with transport, timecode, frame presets and safe-area guides. */
 import type { Studio } from "../../../src/app/studio";
-import { Preview } from "../../../src/ui/preview";
+import { Preview, type PreviewQuality } from "../../../src/ui/preview";
 import { runCommand } from "../../../src/agent/api";
 import { ASPECTS } from "./inspector";
 import { b, h, ic, selectEl, tc } from "./kit";
@@ -18,7 +18,7 @@ export class Viewer {
 
   constructor(private readonly s: Studio, title = "Viewer") {
     this.preview = new Preview(s);
-    this.guides = h("div", { style: "position:absolute;inset:0;pointer-events:none" });
+    this.guides = h("div", { style: "position:absolute;inset:0;pointer-events:none;overflow:hidden" });
     this.stage = h("div", { class: "vstage" }, this.preview.el, this.guides);
     this.tcEl = h("span", { class: "tc" }, "00:00:00:00");
     this.durEl = h("span", { class: "tc dur" }, "/ 00:00:00:00");
@@ -34,6 +34,27 @@ export class Viewer {
       });
     };
     let aspectSel = aspect();
+    // Zoom: wheel on the picture zooms at the pointer; this shows the level and returns to fit.
+    const zoomBtn = h("button", { class: "btn sm vzoom", type: "button", title: "Zoom (wheel on the picture; middle-drag to pan). Click to fit." }, "Fit") as HTMLButtonElement;
+    zoomBtn.addEventListener("click", () => this.preview.resetView());
+    this.preview.onView = () => {
+      const z = this.preview.zoomLevel;
+      zoomBtn.textContent = z <= 1.001 ? "Fit" : `${Math.round(z * 100)}%`;
+      zoomBtn.classList.toggle("on", z > 1.001);
+      this.drawGuides();
+    };
+    const qualitySel = selectEl<PreviewQuality>(
+      [
+        ["auto", "Auto"],
+        ["full", "Full"],
+        ["half", "1/2"],
+        ["quarter", "1/4"],
+      ],
+      this.preview.quality,
+      (v) => this.preview.setQuality(v),
+    );
+    qualitySel.classList.add("vq");
+    qualitySel.title = "Preview quality. Lower it if playback stutters; renders always use full quality.";
     const guideBtn = b(null, "grid", () => {
       this.showGuides = !this.showGuides;
       guideBtn.classList.toggle("on", this.showGuides);
@@ -57,6 +78,8 @@ export class Viewer {
       h("span", { class: "sp" }),
       loopBtn,
       guideBtn,
+      zoomBtn,
+      qualitySel,
       aspectSel,
       b(null, "fit", () => void (window as unknown as { vsdFullscreen?: () => void }).vsdFullscreen?.(), "sm", "Full screen (F11)"),
     );
@@ -97,15 +120,12 @@ export class Viewer {
   private drawGuides() {
     this.guides.replaceChildren();
     if (!this.showGuides) return;
-    const r = this.stage.getBoundingClientRect();
-    const p = this.s.project;
-    const W = r.width - 20;
-    const H = r.height - 20;
-    const k = Math.min(W / p.width, H / p.height);
-    const w = p.width * k;
-    const hh = p.height * k;
-    const x = 10 + (W - w) / 2;
-    const y = 10 + (H - hh) / 2;
+    // The frame as the preview shows it now (follows zoom and pan); the preview sits 10px inside the stage.
+    const v = this.preview.viewRect();
+    const w = v.w;
+    const hh = v.h;
+    const x = 10 + v.x;
+    const y = 10 + v.y;
     for (const f of [0.9, 0.8]) {
       const g = h("div", { class: "vguide" });
       Object.assign(g.style, { left: `${x + (w * (1 - f)) / 2}px`, top: `${y + (hh * (1 - f)) / 2}px`, width: `${w * f}px`, height: `${hh * f}px` });

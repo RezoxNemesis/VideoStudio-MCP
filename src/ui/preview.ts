@@ -7,9 +7,12 @@ import { isAnimated, valueAt } from "../core/keyframes";
 import * as ops from "../core/ops";
 import { h } from "./dom";
 
+export type PreviewQuality = "auto" | "full" | "half" | "quarter";
+const QUALITY_KEY = "vs.preview.quality";
+
 export class Preview {
   readonly el: HTMLElement;
-  private canvas: HTMLCanvasElement;
+  private canvas!: HTMLCanvasElement;
   private comp: Compositor | null = null;
   private pending = false;
   private drawing = false;
@@ -18,40 +21,244 @@ export class Preview {
   private frameW = 2;
   private frameH = 2;
   private overlay: HTMLElement;
+  private notice: HTMLElement;
+  private recoverTimer: ReturnType<typeof setTimeout> | null = null;
+  private attempts = 0;
+  /** View zoom (1 = fit) and pan in CSS px from the centred position. */
+  private zoom = 1;
+  private panX = 0;
+  private panY = 0;
+  quality: PreviewQuality = "auto";
+  /** How many times the graphics context was lost and rebuilt in this session. */
+  losses = 0;
   error: string | null = null;
+  /** Called when zoom or pan changes (the desktop viewer redraws its guides and zoom readout). */
+  onView: (() => void) | null = null;
 
   constructor(private readonly studio: Studio) {
-    this.canvas = h("canvas", { class: "pv-canvas" });
     this.overlay = h("div", { class: "pv-sel" });
-    this.el = h("div", { class: "preview" }, this.canvas, this.overlay);
+    this.notice = h("div", { class: "pv-notice" });
+    this.notice.style.display = "none";
+    this.el = h("div", { class: "preview" }, this.overlay, this.notice);
     try {
-      this.comp = new Compositor(this.canvas);
-    } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
-      this.el.append(h("p", { class: "pv-error" }, this.error));
+      const q = localStorage.getItem(QUALITY_KEY);
+      if (q === "full" || q === "half" || q === "quarter") this.quality = q;
+    } catch {
+      /* storage unavailable */
     }
+    this.mount();
     new ResizeObserver(() => this.resize()).observe(this.el);
     studio.on("time", () => this.request());
     studio.on("change", () => this.request());
     studio.on("select", () => this.request());
-    studio.on("project", () => this.resize());
+    studio.on("project", () => {
+      this.resetView();
+      this.resize();
+    });
+    // Coming back to the window: make sure the picture is still alive (a GPU restart can happen while hidden).
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) this.check();
+    });
+    window.addEventListener("focus", () => this.check());
     this.gestures();
+    this.viewGestures();
+  }
+
+  /**
+   * (Re)create the canvas and its GPU compositor. A WebGL context that was lost (GPU process restart, driver reset,
+   * suspend/resume) cannot be reused reliably, so recovery always starts from a fresh canvas.
+   */
+  private mount(): boolean {
+    const old = this.canvas as HTMLCanvasElement | undefined;
+    try {
+      this.comp?.dispose();
+    } catch {
+      /* the old context is already gone */
+    }
+    this.comp = null;
+    const canvas = h("canvas", { class: "pv-canvas" });
+    canvas.addEventListener("webglcontextlost", (e) => {
+      e.preventDefault();
+      if (canvas === this.canvas) this.lost("The graphics driver restarted");
+    });
+    canvas.addEventListener("webglcontextrestored", () => {
+      if (canvas === this.canvas && !this.comp) this.recover();
+    });
+    if (old) old.replaceWith(canvas);
+    else this.el.prepend(canvas);
+    this.canvas = canvas;
+    try {
+      this.comp = new Compositor(canvas);
+      this.error = null;
+      this.attempts = 0;
+      this.notice.style.display = "none";
+      this.notice.replaceChildren();
+      canvas.style.visibility = "visible";
+      return true;
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      canvas.style.visibility = "hidden";
+      return false;
+    }
+  }
+
+  private showNotice(title: string, detail: string, retry: boolean) {
+    this.notice.replaceChildren(h("strong", {}, title), h("span", {}, detail));
+    if (retry) {
+      const btn = h("button", { type: "button", class: "pv-retry" }, "Restart preview");
+      btn.addEventListener("click", () => this.rebuild());
+      this.notice.append(btn);
+    }
+    this.notice.style.display = "flex";
+  }
+
+  /** The context is gone: hide the dead canvas (it would paint white) and start rebuilding. */
+  private lost(why: string) {
+    if (!this.comp && this.recoverTimer) return;
+    this.losses++;
+    this.comp = null;
+    this.canvas.style.visibility = "hidden";
+    this.showNotice("Restarting the preview…", `${why}. Your edit is safe.`, false);
+    this.scheduleRecover(400);
+  }
+
+  private scheduleRecover(ms: number) {
+    if (this.recoverTimer) clearTimeout(this.recoverTimer);
+    this.recoverTimer = setTimeout(() => {
+      this.recoverTimer = null;
+      this.recover();
+    }, ms);
+  }
+
+  private recover() {
+    if (this.recoverTimer) {
+      clearTimeout(this.recoverTimer);
+      this.recoverTimer = null;
+    }
+    if (this.mount()) {
+      this.resize();
+      return;
+    }
+    this.attempts++;
+    // The GPU process needs a moment to come back; keep trying, slower over time, and never give up.
+    const wait = Math.min(8000, 500 * 2 ** Math.min(4, this.attempts));
+    if (this.attempts >= 3) this.showNotice("The preview could not start", `${this.error ?? "No GPU context"}. Trying again automatically.`, true);
+    this.scheduleRecover(wait);
+  }
+
+  /** Throw the current GPU context away and build a new one (also the manual "Restart preview"). */
+  rebuild(): void {
+    this.attempts = 0;
+    this.recover();
+  }
+
+  /** Notice a context that died without an event reaching us (e.g. while the window was hidden). */
+  check(): void {
+    if (this.comp?.lost) this.lost("The graphics driver restarted");
+    else if (!this.comp && !this.recoverTimer) this.recover();
+    else this.request();
+  }
+
+  /** Whether the preview currently has a working GPU context, and what drives it. */
+  status(): { ok: boolean; losses: number; error: string | null; renderer: string | null; quality: PreviewQuality; zoom: number; frame: string } {
+    return { ok: !!this.comp && !this.comp.lost, losses: this.losses, error: this.comp ? null : this.error, renderer: this.comp?.renderer ?? null, quality: this.quality, zoom: this.zoom, frame: `${this.frameW}x${this.frameH}` };
+  }
+
+  setQuality(q: PreviewQuality): void {
+    this.quality = q;
+    try {
+      localStorage.setItem(QUALITY_KEY, q);
+    } catch {
+      /* storage unavailable */
+    }
+    this.resize();
+  }
+
+  /** Zoom factor relative to "fit" (1 = whole frame visible). */
+  get zoomLevel(): number {
+    return this.zoom;
+  }
+
+  /** The frame's rectangle inside the preview element, in CSS px (for guides and overlays). */
+  viewRect(): { x: number; y: number; w: number; h: number } {
+    const dpr = this.dpr();
+    return { x: this.view.x / dpr, y: this.view.y / dpr, w: this.view.w / dpr, h: this.view.h / dpr };
+  }
+
+  resetView(): void {
+    this.zoom = 1;
+    this.panX = 0;
+    this.panY = 0;
+    this.resize();
+    this.onView?.();
+  }
+
+  /** Zoom to `z` (1 = fit), keeping the point under (cx, cy) — CSS px inside the preview — where it is. */
+  zoomTo(z: number, cx?: number, cy?: number): void {
+    const r = this.el.getBoundingClientRect();
+    const px = cx ?? r.width / 2;
+    const py = cy ?? r.height / 2;
+    const next = Math.max(1, Math.min(16, z));
+    if (next === 1) return this.resetView();
+    const before = this.viewRect();
+    const fx = (px - before.x) / before.w;
+    const fy = (py - before.y) / before.h;
+    this.zoom = next;
+    this.panX = 0;
+    this.panY = 0;
+    this.layout();
+    const centred = this.viewRect();
+    this.panX = px - fx * centred.w - centred.x;
+    this.panY = py - fy * centred.h - centred.y;
+    this.resize();
+    this.onView?.();
+  }
+
+  private dpr(): number {
+    return Math.min(2, window.devicePixelRatio || 1);
+  }
+
+  /** Where the frame sits on the canvas for the current size, zoom and pan. */
+  private layout() {
+    const p = this.studio.project;
+    const dpr = this.dpr();
+    const k = Math.min(this.canvas.width / p.width, this.canvas.height / p.height) * this.zoom;
+    const w = Math.max(2, Math.round(p.width * k));
+    const hh = Math.max(2, Math.round(p.height * k));
+    // Keep at least part of the frame on screen when panning.
+    const maxX = Math.max(0, (w - this.canvas.width) / 2 / dpr);
+    const maxY = Math.max(0, (hh - this.canvas.height) / 2 / dpr);
+    this.panX = Math.max(-maxX, Math.min(maxX, this.panX));
+    this.panY = Math.max(-maxY, Math.min(maxY, this.panY));
+    this.view = { x: Math.round((this.canvas.width - w) / 2 + this.panX * dpr), y: Math.round((this.canvas.height - hh) / 2 + this.panY * dpr), w, h: hh };
   }
 
   private resize() {
     const r = this.el.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.canvas.width = Math.max(2, Math.round(r.width * dpr));
-    this.canvas.height = Math.max(2, Math.round(r.height * dpr));
+    const dpr = this.dpr();
+    const cw = Math.max(2, Math.round(r.width * dpr));
+    const ch = Math.max(2, Math.round(r.height * dpr));
+    if (this.canvas.width !== cw) this.canvas.width = cw;
+    if (this.canvas.height !== ch) this.canvas.height = ch;
+    this.layout();
     const p = this.studio.project;
-    const k = Math.min(this.canvas.width / p.width, this.canvas.height / p.height);
-    const w = Math.round(p.width * k);
-    const hh = Math.round(p.height * k);
-    this.view = { x: Math.round((this.canvas.width - w) / 2), y: Math.round((this.canvas.height - hh) / 2), w, h: hh };
-    // Internal frame: the view size, capped to keep preview fast on phones (1600 keeps it sharp on modern screens).
-    const cap = Math.min(1, 1600 / Math.max(w, hh));
-    this.frameW = Math.max(2, Math.round(w * cap));
-    this.frameH = Math.max(2, Math.round(hh * cap));
+    const { w, h: hh } = this.view;
+    // Internal frame. Auto: the size it is shown at, capped to stay fast (sharper when zoomed in).
+    // Full / half / quarter: a fixed share of the project's own resolution.
+    let fw: number;
+    let fh: number;
+    if (this.quality === "auto") {
+      const cap = Math.min(1, (this.zoom > 1 ? 2560 : 1600) / Math.max(w, hh));
+      fw = w * cap;
+      fh = hh * cap;
+    } else {
+      const f = this.quality === "full" ? 1 : this.quality === "half" ? 0.5 : 0.25;
+      const cap = Math.min(1, 3840 / Math.max(p.width, p.height));
+      fw = p.width * f * cap;
+      fh = p.height * f * cap;
+    }
+    this.frameW = Math.max(2, Math.round(fw));
+    this.frameH = Math.max(2, Math.round(fh));
     this.request();
   }
 
@@ -66,6 +273,7 @@ export class Preview {
 
   private async draw() {
     if (!this.comp) return;
+    if (this.comp.lost) return this.lost("The graphics driver restarted");
     if (this.drawing) {
       this.again = true;
       return;
@@ -81,10 +289,15 @@ export class Preview {
         outW: this.frameW,
         outH: this.frameH,
       });
-      this.comp.render(layers, this.frameW, this.frameH, s.project.background, this.view);
+      // The context can be replaced while the layers were being prepared.
+      const comp = this.comp;
+      if (!comp) return;
+      if (comp.lost) return this.lost("The graphics driver restarted");
+      comp.render(layers, this.frameW, this.frameH, s.project.background, this.view);
       this.drawSelection();
     } catch (e) {
       console.error(e);
+      if (this.comp?.lost) this.lost("The graphics driver restarted");
     } finally {
       this.drawing = false;
       if (this.again) {
@@ -102,7 +315,7 @@ export class Preview {
     const inside = c && s.time >= c.start && s.time < c.start + c.dur && f.track.kind === "video";
     this.overlay.style.display = inside ? "block" : "none";
     if (!inside || !c) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = this.dpr();
     const k = this.view.w / s.project.width / dpr;
     const local = s.time - c.start;
     const v = (p: TransformProp) => valueAt(c.transform[p], local, TRANSFORM_DEFAULTS[p]);
@@ -148,7 +361,7 @@ export class Preview {
       base = { x: valueAt(c.transform.x, local, 0), y: valueAt(c.transform.y, local, 0), scale: valueAt(c.transform.scale, local, 1), rotation: valueAt(c.transform.rotation, local, 0), ...m };
     };
     this.el.addEventListener("pointerdown", (e) => {
-      if (!sel()) return;
+      if (e.button === 1 || e.altKey || !sel()) return;
       this.el.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       start();
@@ -181,5 +394,50 @@ export class Preview {
     };
     this.el.addEventListener("pointerup", end);
     this.el.addEventListener("pointercancel", end);
+  }
+
+  /** Desktop viewing: wheel zooms at the pointer, middle-drag (or Alt-drag) pans, double middle-click fits. */
+  private viewGestures() {
+    this.el.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        const r = this.el.getBoundingClientRect();
+        if (e.ctrlKey || e.metaKey || !e.shiftKey) {
+          const step = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018));
+          this.zoomTo(this.zoom * step, e.clientX - r.left, e.clientY - r.top);
+        } else if (this.zoom > 1) {
+          this.panX -= e.deltaY + e.deltaX;
+          this.resize();
+          this.onView?.();
+        }
+      },
+      { passive: false },
+    );
+    let drag: { id: number; x: number; y: number; px: number; py: number } | null = null;
+    this.el.addEventListener("pointerdown", (e) => {
+      if (!(e.button === 1 || (e.button === 0 && e.altKey)) || this.zoom <= 1) return;
+      e.preventDefault();
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, px: this.panX, py: this.panY };
+      this.el.setPointerCapture(e.pointerId);
+      this.el.classList.add("panning");
+    });
+    this.el.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      this.panX = drag.px + (e.clientX - drag.x);
+      this.panY = drag.py + (e.clientY - drag.y);
+      this.resize();
+      this.onView?.();
+    });
+    const stop = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag = null;
+      this.el.classList.remove("panning");
+    };
+    this.el.addEventListener("pointerup", stop);
+    this.el.addEventListener("pointercancel", stop);
+    this.el.addEventListener("auxclick", (e) => {
+      if (e.button === 1 && e.detail === 2) this.resetView();
+    });
   }
 }
