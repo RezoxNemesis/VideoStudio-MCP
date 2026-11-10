@@ -12,6 +12,8 @@ import { DesktopLink } from "./link";
 import { registerDesktopCommands } from "./commands";
 import { Shell } from "./ui/shell";
 import { vsd } from "./bridge";
+import { assetPath } from "./importer";
+import { installNativeMedia } from "./native-media";
 
 async function main() {
   const app = document.getElementById("app")!;
@@ -23,6 +25,8 @@ async function main() {
     console.error(e);
     toast("Storage is unavailable; working in memory.", "error", 5000);
   }
+  // VideoStudio 2: pictures and sound come from the native media core, never from the window's own video decoder.
+  installNativeMedia(studio, (a) => assetPath(studio, a));
   registerDesktopCommands(studio);
   // A fresh install starts on a widescreen desktop project (the phone app's default is vertical).
   const p = studio.project;

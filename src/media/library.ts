@@ -204,6 +204,23 @@ export class VideoFramer {
   }
 }
 
+/** What the renderer needs from any frame reader (the in-window decoder or the desktop's native one). */
+export interface FramerLike {
+  readonly isBusy: boolean;
+  readonly latest: { canvas: HTMLCanvasElement | OffscreenCanvas; timestamp: number; duration: number } | null;
+  lastUse: number;
+  frameAt(t: number): Promise<{ canvas: HTMLCanvasElement | OffscreenCanvas; timestamp: number; duration: number } | null>;
+  dispose(): Promise<void>;
+}
+
+/** Desktop hook: decode pictures and sound outside the window (native ffmpeg). Unset on phones. */
+export interface NativeMedia {
+  /** A native frame reader for this asset, or null to use the in-window decoder. */
+  framer(a: Asset, purpose: string, maxDim?: number): Promise<FramerLike | null>;
+  /** The asset's whole sound; undefined = not handled here (use the in-window decoder). */
+  audio(a: Asset, ctx: BaseAudioContext): Promise<AudioBuffer | null | undefined>;
+}
+
 interface Entry {
   input: Input;
   video: InputVideoTrack | null;
@@ -211,8 +228,11 @@ interface Entry {
 }
 
 export class MediaPool {
+  /** Set once by the desktop app at start. */
+  static native: NativeMedia | null = null;
   private entries = new Map<string, Promise<Entry>>();
   private framers = new Map<string, VideoFramer>();
+  private nativePending = new Map<string, Promise<VideoFramer | null>>();
   private images = new Map<string, Promise<ImageBitmap>>();
   private imagesReady = new Map<string, ImageBitmap>();
   private audio = new Map<string, Promise<AudioBuffer | null>>();
@@ -280,6 +300,27 @@ export class MediaPool {
 
   /** A framer per (asset, purpose). Preview framers decode at reduced size for speed. */
   async framer(a: Asset, purpose: string, maxDim?: number): Promise<VideoFramer | null> {
+    if (MediaPool.native && a.kind === "video") {
+      const nkey = `${a.id}|native|${purpose}`;
+      const nhave = this.framers.get(nkey);
+      if (nhave) return nhave;
+      const pending = this.nativePending.get(nkey);
+      if (pending) return pending;
+      const made = (async () => {
+        const nf = await MediaPool.native!.framer(a, purpose, maxDim).catch((e) => {
+          console.warn("native frame reader unavailable, using the in-window decoder", e);
+          return null;
+        });
+        if (!nf) return null;
+        const f = nf as unknown as VideoFramer;
+        this.framers.set(nkey, f);
+        if (purpose !== "preview" && purpose !== "export" && !this.reaper) this.reaper = setInterval(() => this.reapIdle(), 2000);
+        return f;
+      })();
+      this.nativePending.set(nkey, made);
+      const got = await made.finally(() => this.nativePending.delete(nkey));
+      if (got) return got;
+    }
     // Everything but the export reads the light proxy when there is one.
     const usesProxy = purpose !== "export" && !!a.proxy;
     const key = `${a.id}|${purpose}${usesProxy ? "|px" : ""}`;
@@ -335,6 +376,13 @@ export class MediaPool {
     let p = this.audio.get(a.id);
     if (!p) {
       p = (async () => {
+        if (MediaPool.native) {
+          const nat = await MediaPool.native.audio(a, ctx).catch((e) => {
+            console.warn("native sound reader unavailable, using the in-window decoder", e);
+            return undefined;
+          });
+          if (nat !== undefined) return nat;
+        }
         const e = await this.entry(a);
         if (!e.audio) return null;
         const duration = a.duration || (await e.input.computeDuration());

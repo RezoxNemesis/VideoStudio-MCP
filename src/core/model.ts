@@ -242,7 +242,7 @@ export interface Asset {
   duration: number;
   width: number;
   height: number;
-  /** Where the bytes live: "opfs:<id>" or "idb:<id>". */
+  /** Where the bytes live: "opfs:<id>", "idb:<id>", or on the desktop "file:<absolute path>" (the person's own file, not copied). */
   ref: string;
   /** Mouth-open envelope (0..1) at 30 fps, for lip sync. Present on voice assets. */
   mouth?: number[];

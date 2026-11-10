@@ -4,9 +4,11 @@
  * edit copy, so every file imports and plays smoothly. The original stays untouched.
  */
 import type { Studio } from "../../src/app/studio";
-import type { Asset } from "../../src/core/model";
-import { kvGet, kvSet } from "../../src/core/storage";
-import { need, pathBlob, vsd } from "./bridge";
+import { uid, type Asset } from "../../src/core/model";
+import { addClip } from "../../src/core/ops";
+import { fileRefPath, isFileRef, kvGet, kvSet } from "../../src/core/storage";
+import { guessMime, need, pathBlob, vsd } from "./bridge";
+import { describe, forgetPathCache } from "./native-media";
 
 let paths: Record<string, string> | null = null;
 async function pathMap(): Promise<Record<string, string>> {
@@ -15,6 +17,7 @@ async function pathMap(): Promise<Record<string, string>> {
 
 /** Where an asset's media lives on disk (its source file, or a work copy written now). */
 export async function assetPath(s: Studio, a: Asset): Promise<string> {
+  if (isFileRef(a.ref)) return fileRefPath(a.ref);
   const m = await pathMap();
   const known = m[a.id];
   if (known && vsd) {
@@ -36,9 +39,49 @@ async function remember(id: string, p: string) {
   const m = await pathMap();
   m[id] = p;
   await kvSet("assetPaths", m);
+  forgetPathCache();
+}
+
+/**
+ * VideoStudio 2 import: a video or sound file is registered where it is — no copy into app storage, no
+ * conversion — so it is on the timeline at once whatever its size or codec. The native media core reads it
+ * directly (and prepares a light editing copy in the background when the file is heavy).
+ */
+async function importInPlace(s: Studio, p: string, add: boolean): Promise<Asset> {
+  const d = await describe(p);
+  if (!d.video && !d.audio) throw new Error(`${d.name} has no picture or sound that can be read.`);
+  const asset: Asset = {
+    id: uid("ast"),
+    kind: d.video ? "video" : "audio",
+    name: d.name,
+    mime: guessMime(d.name),
+    size: d.size,
+    duration: d.duration,
+    width: d.width,
+    height: d.height,
+    ref: `file:${d.path}`,
+    createdBy: "user",
+  };
+  s.mutate(`import ${d.name}`, (pr) => {
+    pr.assets.push(asset);
+    if (add) addClip(pr, { assetId: asset.id });
+  });
+  await remember(asset.id, d.path);
+  s.setStatus(`Imported ${d.name}`);
+  if (d.proxy) void vsd!.mediaEnsureProxy(d.path).catch(() => {});
+  // Sound and waveform load in the background so the first play starts at once.
+  if (d.audio) {
+    const ctx = new OfflineAudioContext(2, 1, 48000);
+    void s.pool.audioBuffer(asset, ctx).catch(() => {});
+  }
+  return asset;
 }
 
 export async function importPath(s: Studio, p: string, add = false, convert = true): Promise<{ asset: Asset; converted?: string }> {
+  if (vsd?.mediaDescribe) {
+    const st = await vsd.stat(p);
+    if (st.kind === "video" || st.kind === "audio") return { asset: await importInPlace(s, st.path || p, add) };
+  }
   let src = p;
   let converted: string | undefined;
   if (convert && vsd) {
@@ -83,7 +126,9 @@ export async function relinkMissing(s: Studio, only?: string[]): Promise<{ relin
   for (const a of s.project.assets) {
     if (only && !only.includes(a.id)) continue;
     if (!a.ref) continue;
-    const fine = await getBlob(a.ref).then((b) => b.size > 0).catch(() => false);
+    const fine = isFileRef(a.ref)
+      ? !!vsd && (await vsd.stat(fileRefPath(a.ref)).then((st) => st.size > 0).catch(() => false))
+      : await getBlob(a.ref).then((b) => b.size > 0).catch(() => false);
     if (fine) {
       ok++;
       continue;
@@ -107,8 +152,8 @@ export async function relinkMissing(s: Studio, only?: string[]): Promise<{ relin
       continue;
     }
     s.setStatus(`Re-linking ${a.name}…`);
-    const { blob } = await pathBlob(found);
-    const ref = await putBlob(a.id, blob);
+    const inPlace = !!vsd?.mediaDescribe && (a.kind === "video" || a.kind === "audio");
+    const ref = inPlace ? `file:${found}` : await putBlob(a.id, (await pathBlob(found)).blob);
     await s.pool.forget(a.id);
     s.mutate("relink media", (p) => {
       const pa = p.assets.find((x) => x.id === a.id);

@@ -68,6 +68,13 @@ export interface Vsd {
   writeText(p: string, t: string): Promise<string>;
   readText(p: string): Promise<string>;
   probe(p: string): Promise<Probe>;
+  /** Native media core (VideoStudio 2). */
+  mediaDescribe(p: string): Promise<import("./native-media").MediaDescription>;
+  mediaStatus(): Promise<{ gpuDecode: boolean | null; note: string; decodersRunning: number; streamsOpened: number; gpuFallbacks: number; editingCopiesMade: number; editingCopyFailures: number; lastError: string; ffmpeg: string }>;
+  mediaSelfTest(): Promise<unknown>;
+  mediaEnsureProxy(p: string): Promise<{ proxy: boolean; ready?: boolean; failed?: boolean }>;
+  onMediaProxy?(fn: (m: { path: string; done: boolean; ok?: boolean; progress?: number }) => void): void;
+  captureSave(name?: string): Promise<{ path: string; width: number; height: number }>;
   frames(p: string, times: number[], max?: number): Promise<{ t: number; image: string | null }[]>;
   audioInspect(p: string, o?: Record<string, unknown>): Promise<AudioReport>;
   audioInspectBytes(bytes: Uint8Array, name: string, o?: Record<string, unknown>): Promise<AudioReport>;

@@ -129,6 +129,7 @@ app.setName("VideoStudio Desktop");
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, codeCache: true } },
   { scheme: "vsfile", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, bypassCSP: true } },
+  { scheme: "vsmedia", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, bypassCSP: true } },
 ]);
 
 /* ------------------------------------------------------------------ binaries */
@@ -301,6 +302,23 @@ function setupProtocols() {
 }
 const fileUrl = (p) => `vsfile://f${p.split("/").map(encodeURIComponent).join("/")}`;
 
+/* ------------------------------------------------------------------ native media core (VideoStudio 2) */
+let mediaCore = null;
+function media() {
+  if (!mediaCore) {
+    mediaCore = require("./media-core.cjs")({
+      FFMPEG,
+      probe: (f) => probe(f),
+      mustAllow: (f) => mustAllow(f),
+      cacheDir: path.join(app.getPath("userData"), "media-cache"),
+      log: (m) => crashLog(m),
+      onProxy: (m) => win && !win.isDestroyed() && win.webContents.send("media:proxy", m),
+      encoderCaps: () => encoderCaps(),
+    });
+  }
+  return mediaCore;
+}
+
 /* ------------------------------------------------------------------ media reading */
 
 async function probe(file) {
@@ -319,7 +337,7 @@ async function probe(file) {
     duration: Number(j.format.duration || 0),
     format: j.format.format_name,
     bitrate: Number(j.format.bit_rate || 0),
-    video: v ? { codec: v.codec_name, width: v.width, height: v.height, fps: d ? Math.round((n / d) * 1000) / 1000 : 0, pixfmt: v.pix_fmt, rotation: Number(v.tags?.rotate || v.side_data_list?.find((s) => s.rotation !== undefined)?.rotation || 0), hdr: /bt2020|smpte2084|arib/.test(`${v.color_primaries} ${v.color_transfer}`) } : null,
+    video: v ? { codec: v.codec_name, width: v.width, height: v.height, fps: d ? Math.round((n / d) * 1000) / 1000 : 0, pixfmt: v.pix_fmt, colorspace: v.color_space || "", rotation: Number(v.tags?.rotate || v.side_data_list?.find((s) => s.rotation !== undefined)?.rotation || 0), hdr: /bt2020|smpte2084|arib/.test(`${v.color_primaries} ${v.color_transfer}`) } : null,
     audio: a ? { codec: a.codec_name, sampleRate: Number(a.sample_rate), channels: a.channels, layout: a.channel_layout } : null,
     tags: { title: tags.title || tags.TITLE, artist: tags.artist || tags.ARTIST, album: tags.album || tags.ALBUM, date: tags.date || tags.DATE, genre: tags.genre || tags.GENRE },
   };
@@ -1208,6 +1226,10 @@ function setupIpc() {
   });
   handle("fs.readText", async (p) => fsp.readFile(mustAllow(p), "utf8"));
   handle("media.probe", (p) => probe(mustAllow(p)));
+  handle("media.describe", (p) => media().describe(p));
+  handle("media.status", () => media().status());
+  handle("media.selfTest", () => media().selfTest());
+  handle("media.ensureProxy", (p) => media().ensureProxy(p));
   handle("media.frames", (p, times, max) => videoFrames(mustAllow(p), times, max));
   handle("audio.inspect", (p, o) => audioInspect(mustAllow(p), o));
   handle("audio.voice16k", async (p, from = 0, seconds = 0) => {
@@ -1316,6 +1338,16 @@ function setupIpc() {
     const scaled = sz.width > max ? img.resize({ width: max, quality: "good" }) : img;
     return `data:image/jpeg;base64,${scaled.toJPEG(quality).toString("base64")}`;
   });
+  handle("win.captureSave", async (name) => {
+    const img = await win.webContents.capturePage();
+    const dir = path.join(DIRS.videos, "VideoStudio", "Screenshots");
+    await fsp.mkdir(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    const file = path.join(dir, `${String(name || "VideoStudio").replace(/[^\w.-]+/g, "_").slice(0, 60)}_${stamp}.png`);
+    await fsp.writeFile(file, img.toPNG());
+    const sz = img.getSize();
+    return { path: file, width: sz.width, height: sz.height };
+  });
   handle("win.minimize", async () => win.minimize());
   handle("win.maximize", async () => (win.isMaximized() ? win.unmaximize() : win.maximize()));
   handle("win.close", async () => win.close());
@@ -1350,6 +1382,7 @@ const clearGuard = () => {
   }
 };
 app.on("will-quit", clearGuard);
+app.on("will-quit", () => mediaCore?.stopAll());
 // Logging out or shutting down ends the app with a signal; that is a normal end too.
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"])
   process.on(sig, () => {
@@ -1366,7 +1399,9 @@ else {
   });
   app.whenReady().then(() => {
     setupProtocols();
+    protocol.handle("vsmedia", (req) => media().handle(req));
     setupIpc();
+    void media().selfTest().then(() => media().cleanProxies());
     // Allow the engine's own features (clipboard, media, notifications); nothing else.
     session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(["clipboard-read", "clipboard-sanitized-write", "media", "notifications", "fullscreen", "window-management"].includes(perm)));
     createWindow();

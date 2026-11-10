@@ -11,9 +11,15 @@ import { getBlob, putBlob } from "../core/storage";
 export const PROXY_MAX = 1280;
 const making = new Map<string, Promise<Asset["proxy"]>>();
 
+/** The desktop app makes its editing copies natively (ffmpeg) and turns this in-window maker off. */
+let enabled = true;
+export function setProxyMaking(on: boolean): void {
+  enabled = on;
+}
+
 /** True when a video is big enough to deserve a proxy. */
 export function wantsProxy(a: Asset): boolean {
-  return a.kind === "video" && !a.proxy && Math.max(a.width, a.height) > 1920;
+  return enabled && a.kind === "video" && !a.proxy && Math.max(a.width, a.height) > 1920;
 }
 
 export function makeProxy(a: Asset, onProgress?: (p: number) => void): Promise<Asset["proxy"]> {

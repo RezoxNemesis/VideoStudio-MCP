@@ -95,7 +95,19 @@ export async function putBlob(id: string, data: Blob): Promise<string> {
   return `idb:${id}`;
 }
 
+/** Desktop: media can stay where it is on disk ("file:<absolute path>") instead of being copied into app storage. */
+let fileReader: ((path: string) => Promise<Blob>) | null = null;
+export function setFileRefReader(fn: (path: string) => Promise<Blob>): void {
+  fileReader = fn;
+}
+export const isFileRef = (ref: string | undefined): boolean => !!ref && ref.startsWith("file:");
+export const fileRefPath = (ref: string): string => ref.slice(5);
+
 export async function getBlob(ref: string): Promise<Blob> {
+  if (isFileRef(ref)) {
+    if (!fileReader) throw new Error("This media lives in a file on the PC and can only be opened in VideoStudio on that PC.");
+    return fileReader(fileRefPath(ref));
+  }
   const [kind, id] = ref.split(":") as [string, string];
   if (kind === "opfs") {
     const dir = await opfsDir();
@@ -109,6 +121,7 @@ export async function getBlob(ref: string): Promise<Blob> {
 }
 
 export async function deleteBlob(ref: string): Promise<void> {
+  if (isFileRef(ref)) return; // the person's own file: never touched
   const [kind, id] = ref.split(":") as [string, string];
   if (kind === "opfs") {
     const dir = await opfsDir();
