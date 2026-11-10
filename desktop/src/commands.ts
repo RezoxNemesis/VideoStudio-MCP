@@ -15,6 +15,8 @@ import { analyseSong } from "../../src/media/song";
 import { need, pathBlob, type AudioReport } from "./bridge";
 
 export interface ShellHooks {
+  /** The timeline, for commands that move or zoom its view. */
+  timeline?(): { pps: number; reveal(t0: number, t1?: number, animate?: boolean): Promise<void>; viewTo(pps: number, sx: number, animate?: boolean): Promise<void>; fitAnimated(): Promise<void>; setTool(t: "select" | "blade"): void };
   workspace(name: string): void;
   current(): string;
   toast(msg: string): void;
@@ -343,10 +345,60 @@ export function registerDesktopCommands(s: Studio): void {
   registerCommand("app.version", "This app's version and whether a newer VideoStudio Desktop is published.", () => need().updateCheck());
   registerCommand("app.update", "Download and install the newest VideoStudio Desktop (the person types their password in the system dialog), then restart the app.", () => need().updateInstall());
 
-  registerCommand("ui.screenshot", "{max?=1600} See the VideoStudio Desktop window as it is now (JPEG).", async (_s, a) => {
-    // Let the window paint what earlier commands changed (workspace switches, new clips) before capturing.
-    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 250))));
+  registerCommand("ui.screenshot", "{max?=1600, save?=false, name?} See the VideoStudio window as it is now (JPEG). save:true writes a full-size PNG into Videos/VideoStudio/Screenshots and returns its path instead of the picture.", async (_s, a) => {
+    // Let the window paint what earlier commands changed (workspace switches, new clips) before capturing —
+    // but never wait on animation frames alone: a hidden or covered window does not produce any.
+    await Promise.race([new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))), new Promise<void>((r) => setTimeout(r, 400))]);
+    await new Promise<void>((r) => setTimeout(r, 250));
+    if (a.bool("save", false)) return { ...(await need().captureSave(a.optStr("name"))), workspace: hooks?.current() };
     return { image: await need().capture(Math.min(2400, a.num("max", 1600))), workspace: hooks?.current() };
+  });
+
+  registerCommand("timeline.zoom", "{fit?=false, start?, end?, pps? (pixels per second, 4..600)} Zoom or scroll the timeline view: fit the whole edit, show a time span, or set the zoom level. The person sees it move.", async (st, a) => {
+    const tl = hooks?.timeline?.();
+    if (!tl) throw new Error("The window is still loading.");
+    if (a.bool("fit", false)) await tl.fitAnimated();
+    else if (a.any("start") !== undefined) await tl.reveal(a.num("start"), a.num("end", a.num("start")), true);
+    else if (a.any("pps") !== undefined) await tl.viewTo(a.num("pps"), Math.max(0, st.time * a.num("pps") - 200), true);
+    return { pps: Math.round(tl.pps) };
+  });
+  registerCommand("ui.select", "{clipId | null} Select a clip in the window (the inspector shows it), or clear the selection.", (st, a) => {
+    const id = a.optStr("clipId") ?? null;
+    st.select(id);
+    return { selected: id };
+  });
+  registerCommand("ui.tool", "{tool: select|blade} Pick the timeline tool.", (_s, a) => {
+    const t = a.str("tool");
+    if (t !== "select" && t !== "blade") throw new Error("tool is select or blade");
+    hooks?.timeline?.().setTool(t);
+    return { tool: t };
+  });
+
+  registerCommand("media.status", "The native media core: is graphics-card decoding usable right now, decoders running, editing copies made, fallbacks and the last error.", async () => {
+    const { nativeStats } = await import("./native-media");
+    return { ...(await need().mediaStatus()), window: nativeStats };
+  });
+  registerCommand("media.check", "{assetId, t?=a third in} Decode one frame of a video through the native media core and report its average colour and how much it varies — a solid green or black frame would show here as a problem.", async (st, a) => {
+    const as = st.project.assets.find((x) => x.id === a.str("assetId"));
+    if (!as || as.kind !== "video") throw new Error("Give the assetId of a video.");
+    const t = a.num("t", as.duration / 3);
+    const f = await st.pool.framer(as, "check", 320);
+    const wc = await f?.frameAt(t);
+    if (!wc) throw new Error("No frame came back.");
+    const cv = wc.canvas as OffscreenCanvas;
+    const d = (cv.getContext("2d") as OffscreenCanvasRenderingContext2D).getImageData(0, 0, cv.width, cv.height).data;
+    let r = 0, g = 0, b = 0, v = 0;
+    const n = d.length / 4;
+    for (let k = 0; k < d.length; k += 4) {
+      r += d[k]!;
+      g += d[k + 1]!;
+      b += d[k + 2]!;
+    }
+    r /= n; g /= n; b /= n;
+    for (let k = 0; k < d.length; k += 4) v += Math.abs(d[k]! - r) + Math.abs(d[k + 1]! - g) + Math.abs(d[k + 2]! - b);
+    v /= n * 3;
+    const green = g > 90 && r < 40 && b < 40 && v < 6;
+    return { t, size: `${cv.width}x${cv.height}`, average: [Math.round(r), Math.round(g), Math.round(b)], variation: Math.round(v * 10) / 10, verdict: green ? "PROBLEM: solid green frame" : v < 1.5 ? "flat single-colour frame (fine for a black or blank shot, wrong for normal footage)" : "normal picture", native: !!f && "streaming" in (f as object) };
   });
 
   registerCommand("viewer.status", "Is the viewer's picture alive? GPU behind it, how often the graphics context was lost and rebuilt, preview quality, zoom, internal frame size.", () => {

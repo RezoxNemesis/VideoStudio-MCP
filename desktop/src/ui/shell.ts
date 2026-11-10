@@ -18,6 +18,9 @@ import { DesktopTimeline } from "./timeline";
 import { Deliver } from "./deliver";
 import { GraphEditor } from "./graph";
 import { Viewer } from "./viewer";
+import { Scopes } from "./scopes";
+import { AgentStage } from "./stage";
+import { setLiveHooks } from "../../../src/agent/api";
 
 export type WsName = "edit" | "color" | "audio" | "animate" | "voice" | "deliver" | "claude";
 const WS: [WsName, string, string][] = [
@@ -100,7 +103,7 @@ export class Shell {
     this.ws.edit = h("div", { class: "d-ws ws-edit" }, this.library.el, insp.el);
     // Color workspace.
     const cinsp = panel("Color", "insp");
-    cinsp.body.append(new Inspector(s, "color").el);
+    cinsp.body.append(new Scopes(s, this.viewer.preview).el, new Inspector(s, "color").el);
     this.ws.color = h("div", { class: "d-ws ws-color" }, cinsp.el);
     // Audio workspace.
     const aw = new AudioWorkspace(s);
@@ -169,7 +172,7 @@ export class Shell {
     );
     maxBtn.addEventListener("click", () => void vsd?.win.maximize());
     vsd?.win.onState((st) => maxBtn.replaceChildren(ic(st.maximized ? "restore" : "max", 13)));
-    const title = h("header", { class: "d-title" }, h("div", { class: "d-brand" }, h("span", { class: "mark" }), "VideoStudio", h("small", {}, "Desktop")), menus, this.tabsEl, this.projEl, this.linkBtn, vsd ? winctl : null);
+    const title = h("header", { class: "d-title" }, h("div", { class: "d-brand" }, h("span", { class: "mark" }), "VideoStudio", h("small", {}, "2")), menus, this.tabsEl, this.projEl, this.linkBtn, vsd ? winctl : null);
     title.addEventListener("dblclick", (e) => e.target === title && void vsd?.win.maximize());
 
     this.statusMsg = h("span", { class: "msg" });
@@ -201,7 +204,20 @@ export class Shell {
       current: () => this.cur,
       toast: (m) => toast(m, "info", 5000),
       preview: () => this.viewer.preview,
+      timeline: () => this.timeline,
     });
+    // Claude at work: every command is acted out in the window (pointer, pages, timeline, flashes, progress bar).
+    setLiveHooks(
+      new AgentStage(s, {
+        go: (n) => WS.some(([id]) => id === n) && this.go(n as WsName),
+        current: () => this.cur,
+        timeline: this.timeline,
+        tab: (n) => (this.tabsEl.children[WS.findIndex(([id]) => id === n)] as HTMLElement | undefined) ?? null,
+        playButton: () => this.viewer.el.querySelector("button.play"),
+        importButton: () => this.library.el.querySelector("button.pri"),
+        viewerBox: () => this.viewer.el.querySelector(".vstage"),
+      }),
+    );
     // The GPU process restarted (driver hiccup): rebuild the viewer's picture straight away.
     vsd?.onGpuLost?.(() => {
       this.viewer.preview.rebuild();
@@ -559,7 +575,7 @@ export class Shell {
       if (k === "F11") return e.preventDefault(), void vsd?.win.fullscreen();
       // Editing keys apply in the timeline workspaces only (Animate has its own).
       if (!["edit", "color", "audio"].includes(this.cur)) return;
-      const fr = 1 / this.s.project.fps;
+      const tp = this.viewer.transport;
       const tl = this.timeline;
       if (ctrl && k.toLowerCase() === "z") return e.preventDefault(), e.shiftKey ? this.s.redo() : this.s.undo();
       if (ctrl && k.toLowerCase() === "y") return e.preventDefault(), this.s.redo();
@@ -568,33 +584,60 @@ export class Shell {
       switch (k) {
         case " ":
           e.preventDefault();
-          this.s.toggle();
+          tp.toggle();
           break;
         case "k":
         case "K":
-          this.s.pause();
+          tp.key("k");
           break;
         case "j":
         case "J":
-          this.s.seek(Math.max(0, this.s.time - 1));
+          tp.key("j");
           break;
         case "l":
         case "L":
-          this.s.seek(this.s.time + 1);
+          tp.key("l");
           break;
         case "ArrowLeft":
           e.preventDefault();
-          this.s.seek(Math.max(0, this.s.time - (e.shiftKey ? 1 : fr)));
+          if (e.shiftKey) tp.jump(-1);
+          else tp.step(-1);
           break;
         case "ArrowRight":
           e.preventDefault();
-          this.s.seek(this.s.time + (e.shiftKey ? 1 : fr));
+          if (e.shiftKey) tp.jump(1);
+          else tp.step(1);
+          break;
+        case "PageUp":
+          e.preventDefault();
+          tp.jump(-10);
+          break;
+        case "PageDown":
+          e.preventDefault();
+          tp.jump(10);
+          break;
+        case "i":
+        case "I":
+          if (e.shiftKey) tp.goto(tp.inPoint ?? 0);
+          else tp.markIn();
+          break;
+        case "o":
+        case "O":
+          if (e.shiftKey) tp.goto(tp.outPoint ?? this.s.duration);
+          else tp.markOut();
+          break;
+        case "x":
+        case "X":
+          if (e.altKey) tp.clearMarks();
+          break;
+        case "/":
+          tp.playRange();
           break;
         case "Home":
-          this.s.seek(0);
+          tp.goto(0);
           break;
         case "End":
-          this.s.seek(this.s.duration);
+          tp.goto(this.s.duration);
           break;
         case "s":
         case "S":

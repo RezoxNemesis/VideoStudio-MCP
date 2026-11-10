@@ -44,7 +44,8 @@ export class NativeFramer implements FramerLike {
   private readonly buf: Uint8ClampedArray<ArrayBuffer>;
   private pool: { c: OffscreenCanvas; x: OffscreenCanvasRenderingContext2D }[] = [];
   private slot = 0;
-  private busy: Promise<Wrapped | null> | null = null;
+  private tail: Promise<unknown> = Promise.resolve();
+  private pending = 0;
   private wanted: number | null = null;
   private failedAt = 0;
   private disposed = false;
@@ -57,6 +58,7 @@ export class NativeFramer implements FramerLike {
     private readonly fps: number,
     private readonly duration: number,
     private readonly quality: "preview" | "export",
+    private readonly coalesce = false,
   ) {
     this.bytes = width * height * 4;
     this.buf = new Uint8ClampedArray(new ArrayBuffer(this.bytes));
@@ -64,39 +66,43 @@ export class NativeFramer implements FramerLike {
   }
 
   get isBusy(): boolean {
-    return !!this.busy;
+    return this.pending > 0;
   }
   get latest(): Wrapped | null {
     return this.cur;
   }
 
-  async frameAt(t: number): Promise<Wrapped | null> {
+  /**
+   * Frame at t (seconds). Requests run strictly one after another (the stream is read by one caller at a time).
+   * The preview only ever needs the newest request, so older waiting ones are skipped there; every other reader
+   * (thumbnails, export, analysis) gets exactly the frame it asked for.
+   */
+  frameAt(t: number): Promise<Wrapped | null> {
     this.wanted = t;
-    if (this.busy) return this.busy.then(() => (this.wanted === t ? this.decode(t) : this.cur));
-    return this.decode(t);
-  }
-
-  private decode(t: number): Promise<Wrapped | null> {
-    this.lastUse = performance.now();
-    if (this.disposed) return Promise.resolve(this.cur);
-    if (!this.reader && this.failedAt && performance.now() - this.failedAt < 1500) return Promise.resolve(this.cur);
-    const run = (async () => {
-      try {
-        return await this.step(t);
-      } catch (e) {
-        this.failedAt = performance.now();
-        nativeStats.errors++;
-        nativeStats.lastError = e instanceof Error ? e.message : String(e);
-        console.warn("native frame read failed", e);
-        await this.close();
-        return this.cur;
-      }
-    })();
-    this.busy = run;
-    return run.finally(() => {
-      if (this.busy === run) this.busy = null;
-      this.lastUse = performance.now();
-    });
+    this.pending++;
+    const run = this.tail
+      .then(async () => {
+        this.lastUse = performance.now();
+        if (this.disposed) return this.cur;
+        if (this.coalesce && this.wanted !== t && this.cur) return this.cur;
+        if (!this.reader && this.failedAt && performance.now() - this.failedAt < 1500) return this.cur;
+        try {
+          return await this.step(t);
+        } catch (e) {
+          this.failedAt = performance.now();
+          nativeStats.errors++;
+          nativeStats.lastError = e instanceof Error ? e.message : String(e);
+          console.warn("native frame read failed", e);
+          await this.close();
+          return this.cur;
+        }
+      })
+      .finally(() => {
+        this.pending--;
+        this.lastUse = performance.now();
+      });
+    this.tail = run.catch(() => null);
+    return run;
   }
 
   private async step(t: number): Promise<Wrapped | null> {
@@ -286,7 +292,7 @@ export function installNativeMedia(studio: Studio, resolvePath: (a: Asset) => Pr
         w = even(w * k);
         h = even(h * k);
       }
-      return new NativeFramer(path, w, h, d.fps || 30, d.duration || a.duration || 0, exporting ? "export" : "preview");
+      return new NativeFramer(path, w, h, d.fps || 30, d.duration || a.duration || 0, exporting ? "export" : "preview", purpose === "preview");
     },
     async audio(a, ctx) {
       if (a.kind !== "video" && a.kind !== "audio") return undefined;

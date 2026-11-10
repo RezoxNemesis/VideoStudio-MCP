@@ -142,6 +142,81 @@ export class DesktopTimeline {
     this.redraw();
   }
 
+  /* ---------------------------------------------------------------- live Claude view: where things are on screen */
+
+  /** Screen rectangle of a clip, or null when it is not on the timeline. */
+  clipRect(id: string): { x: number; y: number; w: number; h: number } | null {
+    const box = this.wrap.getBoundingClientRect();
+    if (!box.width) return null;
+    for (const r of this.rows()) {
+      const c = r.track.clips.find((x) => x.id === id);
+      if (!c) continue;
+      const x0 = Math.max(0, Math.min(box.width, this.tx(c.start)));
+      const x1 = Math.max(0, Math.min(box.width, this.tx(c.start + c.dur)));
+      return { x: box.left + x0, y: box.top + r.y - this.sy, w: Math.max(6, x1 - x0), h: r.h };
+    }
+    return null;
+  }
+
+  /** Screen rectangle of a moment on the ruler. */
+  timeRect(t: number): { x: number; y: number; w: number; h: number } | null {
+    const box = this.rulerEl.getBoundingClientRect();
+    if (!box.width) return null;
+    const x = Math.max(0, Math.min(box.width, this.tx(t)));
+    return { x: box.left + x - 6, y: box.top, w: 12, h: box.height };
+  }
+
+  /** Scroll — and zoom when needed — so this span is comfortably in view, with a short animation. */
+  reveal(t0: number, t1 = t0, animate = true): Promise<void> {
+    const w = this.wrap.clientWidth;
+    if (w < 60) return Promise.resolve();
+    const span = Math.max(0, t1 - t0);
+    let pps = this.pps;
+    if (span * pps > w * 0.8) pps = (w * 0.7) / span;
+    else if (span > 0 && span * pps < 40) pps = 140 / span;
+    pps = Math.max(4, Math.min(600, pps));
+    let sx = this.sx * (pps / this.pps);
+    const x0 = t0 * pps;
+    const x1 = t1 * pps;
+    if (x0 < sx + 30 || x1 > sx + w - 30) sx = Math.max(0, (x0 + x1) / 2 - w / 2);
+    return this.viewTo(pps, sx, animate);
+  }
+
+  /** Animated zoom / scroll of the timeline view. */
+  viewTo(pps: number, sx: number, animate = true): Promise<void> {
+    pps = Math.max(4, Math.min(600, pps));
+    sx = Math.max(0, sx);
+    const p0 = this.pps;
+    const s0 = this.sx;
+    const apply = (k: number) => {
+      this.pps = p0 + (pps - p0) * k;
+      this.sx = s0 + (sx - s0) * k;
+      this.zoomInput.value = String(Math.round(this.pps));
+      this.syncScroll();
+      this.redraw();
+    };
+    if (!animate || (Math.abs(pps - p0) < 0.5 && Math.abs(sx - s0) < 2)) {
+      apply(1);
+      return Promise.resolve();
+    }
+    return new Promise((done) => {
+      const t0 = performance.now();
+      const step = () => {
+        const k = Math.min(1, (performance.now() - t0) / 220);
+        apply(1 - Math.pow(1 - k, 3));
+        if (k < 1) requestAnimationFrame(step);
+        else done();
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  /** Fit the whole edit, animated (the plain fit() jumps). */
+  fitAnimated(): Promise<void> {
+    const w = this.wrap.clientWidth - 40;
+    return this.viewTo(w / Math.max(5, this.s.duration), 0, true);
+  }
+
   setTool(t: "select" | "blade"): void {
     this.tool = t;
     this.toolBtns.select!.classList.toggle("on", t === "select");
