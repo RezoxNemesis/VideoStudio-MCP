@@ -111,17 +111,25 @@ export class ProRender {
     const bufs = [new Uint8Array(W * H * 4), new Uint8Array(W * H * 4)];
     let pending: Promise<void> = Promise.resolve();
     let last = performance.now();
+    /** Where the time went (ms per frame, averaged): building layers (decode, text, drawings), GPU draw + read-back, encoder hand-over. */
+    const prof = { layers: 0, draw: 0, encode: 0 };
     try {
       for (let i = 0; i < frames; i++) {
         if (this.cancelled) throw new Error("Render cancelled.");
         const t = from + i / fps;
+        const m0 = performance.now();
         const layers = await buildLayers(p, this.pool, t, { purpose: "export", wait: true, outW: W, outH: H });
+        const m1 = performance.now();
         comp.render(layers, W, H, p.background);
         const buf = bufs[i & 1]!;
         gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        const m2 = performance.now();
         await pending; // the previous frame is in ffmpeg's pipe before we hand over this one
         pending = vsd.enc.frame(enc.id, buf);
         const now = performance.now();
+        prof.layers += m1 - m0;
+        prof.draw += m2 - m1;
+        prof.encode += now - m2;
         if (now - last > 250 || i === frames - 1) {
           last = now;
           const rate = (i + 1) / ((now - t0) / 1000);
@@ -133,7 +141,7 @@ export class ProRender {
       const r = await vsd.enc.finish(enc.id);
       const renderSeconds = (performance.now() - t0) / 1000;
       this.onProgress({ frame: frames, frames, fps: frames / renderSeconds, stage: "done", etaSec: 0 });
-      return { path: r.path, name: r.path.split("/").pop(), bytes: r.bytes, seconds: to - from, width: W, height: H, fps, codec: r.codec, audio: o.audio === false ? "none" : r.path.endsWith(".mov") ? "pcm_s24le" : r.path.endsWith(".webm") ? "opus" : "aac 320k", renderSeconds: Math.round(renderSeconds * 10) / 10, speed: `${(frames / renderSeconds).toFixed(1)} fps` };
+      return { path: r.path, name: r.path.split("/").pop(), bytes: r.bytes, seconds: to - from, width: W, height: H, fps, codec: r.codec, audio: o.audio === false ? "none" : r.path.endsWith(".mov") ? "pcm_s24le" : r.path.endsWith(".webm") ? "opus" : "aac 320k", renderSeconds: Math.round(renderSeconds * 10) / 10, speed: `${(frames / renderSeconds).toFixed(1)} fps`, msPerFrame: { layers: Math.round(prof.layers / frames), draw: Math.round(prof.draw / frames), encode: Math.round(prof.encode / frames) } };
     } catch (e) {
       await pending.catch(() => {});
       await vsd.enc.abort(enc.id).catch(() => {});

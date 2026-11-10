@@ -207,6 +207,8 @@ export interface Clip {
   pin?: { tl: [number, number]; tr: [number, number]; br: [number, number]; bl: [number, number] };
   fx?: Partial<Fx>;
   wheels?: Wheels;
+  /** Colour page: the clip's grading nodes, run in order after the basic grade (see color/types.ts). */
+  nodes?: import("../color/types").ColorNode[];
   duotone?: { dark: string; light: string };
   /** Crop as fractions trimmed from each side of the source (0..0.95). */
   crop?: { l: number; t: number; r: number; b: number };
@@ -265,6 +267,8 @@ export interface Project {
   assets: Asset[];
   scenes: AnimScene[];
   markers: { t: number; label: string }[];
+  /** LUTs this project uses (imported .cube files and built-in transforms), referenced by grading nodes. */
+  luts?: import("../color/types").ProjectLut[];
   createdAt: number;
   updatedAt: number;
 }

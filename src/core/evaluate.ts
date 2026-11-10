@@ -1,3 +1,4 @@
+import { resolveNodes } from "../color/engine";
 import { valueAt, ease } from "./keyframes";
 import {
   FX_DEFAULTS,
@@ -63,6 +64,8 @@ export interface LayerDraw {
   color?: string;
   fx: FxValues;
   wheels?: Wheels;
+  /** Colour page nodes that run on this layer right now (switched on, windows resolved for this instant). */
+  nodes?: import("../color/types").ColorNode[];
   duotone?: { dark: string; light: string };
   crop: [number, number, number, number];
   /** Directional (motion) blur in project px: from movement or whip transitions. */
@@ -204,6 +207,7 @@ export function evaluateClip(p: Project, c: Clip, t: number): LayerDraw {
     color: c.color,
     fx: resolveFx(c, local),
     wheels: c.wheels,
+    nodes: resolveNodes(c.nodes, local),
     duotone: c.duotone,
     crop: c.crop ? [c.crop.l, c.crop.t, c.crop.r, c.crop.b] : [0, 0, 0, 0],
     pin: c.pin,

@@ -224,7 +224,7 @@ export function setSpeed(p: Project, id: string, speed: number): Clip {
 const PATCHABLE = new Set<keyof Clip>([
   "name", "start", "dur", "in", "speed", "reverse", "volume", "fadeIn", "fadeOut", "text", "shape", "color", "fit",
   "transform", "grade", "blend", "chroma", "mask", "flipX", "flipY", "transitionIn", "transitionOut", "shake",
-  "fx", "wheels", "duotone", "crop", "speedKeys", "hold",
+  "fx", "wheels", "duotone", "crop", "speedKeys", "hold", "nodes",
 ]);
 
 /** Shallow-merge a patch. Object fields (text, grade, transform...) merge one level deep. */

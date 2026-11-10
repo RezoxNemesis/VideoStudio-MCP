@@ -1,4 +1,5 @@
 /** Live preview: GPU-composited frame, letterboxed, with drag / pinch / rotate gestures on the selected clip. */
+import { colorView, onColorView } from "../color/view";
 import type { Studio } from "../app/studio";
 import { Compositor } from "../render/compositor";
 import { buildLayers } from "../render/layers";
@@ -62,6 +63,7 @@ export class Preview {
     window.addEventListener("focus", () => this.check());
     this.gestures();
     this.viewGestures();
+    onColorView(() => this.request());
   }
 
   /**
@@ -293,6 +295,9 @@ export class Preview {
       const comp = this.comp;
       if (!comp) return;
       if (comp.lost) return this.lost("The graphics driver restarted");
+      comp.bypass = colorView.bypass;
+      comp.split = colorView.split;
+      comp.showKey = colorView.showKey;
       comp.render(layers, this.frameW, this.frameH, s.project.background, this.view);
       this.drawSelection();
     } catch (e) {

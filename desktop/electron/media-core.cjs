@@ -254,8 +254,9 @@ module.exports = function createMediaCore({ FFMPEG, probe, mustAllow, cacheDir, 
 
   /* ---------------------------------------------------------------- streams */
   function reap() {
-    // Never keep more than a handful of decoders alive: the least recently started one goes first.
-    while (live.size > 8) {
+    // Never keep more than a handful of decoders alive: the one that has gone longest without being read goes first
+    // (a split screen can legitimately run several decoders on the same file at once).
+    while (live.size > 16) {
       const [id, e] = [...live.entries()].sort((a, b) => a[1].at - b[1].at)[0];
       try {
         e.child.kill("SIGKILL");
@@ -436,6 +437,8 @@ module.exports = function createMediaCore({ FFMPEG, probe, mustAllow, cacheDir, 
     const st = fstreams.get(id);
     if (!st) return null;
     st.at = Date.now();
+    const lv = live.get(id);
+    if (lv) lv.at = st.at;
     for (;;) {
       if (st.queue.length) {
         const f = st.queue.shift();

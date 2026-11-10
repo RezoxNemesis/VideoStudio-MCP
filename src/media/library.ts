@@ -227,12 +227,24 @@ interface Entry {
   audio: InputAudioTrack | null;
 }
 
+/** Most native decoders one video can have running for one purpose (clips showing it at the same time). */
+const MAX_LANES = 12;
+
 export class MediaPool {
   /** Set once by the desktop app at start. */
   static native: NativeMedia | null = null;
   private entries = new Map<string, Promise<Entry>>();
   private framers = new Map<string, VideoFramer>();
   private nativePending = new Map<string, Promise<VideoFramer | null>>();
+  /** Who is using each native decoder lane, and in which frame it was last asked for. */
+  private laneUser = new Map<string, { user: string; tick: number }>();
+  private laneSeq = 0;
+  private ticks = new Map<string, number>();
+
+  /** Called once before the layers of a frame are gathered, so decoder lanes know which clips are on screen together. */
+  beginFrame(purpose: string): void {
+    this.ticks.set(purpose, (this.ticks.get(purpose) ?? 0) + 1);
+  }
   private images = new Map<string, Promise<ImageBitmap>>();
   private imagesReady = new Map<string, ImageBitmap>();
   private audio = new Map<string, Promise<AudioBuffer | null>>();
@@ -289,6 +301,7 @@ export class MediaPool {
       if (/\|(preview|export)(\|px)?$/.test(k)) continue;
       if (now - f.lastUse > 4000 && !f.isBusy) {
         this.framers.delete(k);
+        this.laneUser.delete(k);
         void f.dispose();
       }
     }
@@ -298,13 +311,45 @@ export class MediaPool {
     }
   }
 
-  /** A framer per (asset, purpose). Preview framers decode at reduced size for speed. */
-  async framer(a: Asset, purpose: string, maxDim?: number): Promise<VideoFramer | null> {
+  /**
+   * A framer per (asset, purpose). Preview framers decode at reduced size for speed.
+   * `user` names who is asking (the clip). With the desktop's native reader every clip that shows the same video at
+   * the same moment — split screens, picture-in-picture, a blurred copy behind — gets its own decoder ("lane"), so
+   * each one plays forward smoothly instead of all of them fighting over one decoder and re-seeking for every frame.
+   */
+  async framer(a: Asset, purpose: string, maxDim?: number, user = ""): Promise<VideoFramer | null> {
     if (MediaPool.native && a.kind === "video") {
-      const nkey = `${a.id}|native|${purpose}`;
-      const nhave = this.framers.get(nkey);
-      if (nhave) return nhave;
-      const pending = this.nativePending.get(nkey);
+      const head = `${a.id}|native:`;
+      const tail = `|${purpose}`;
+      const tick = this.ticks.get(purpose) ?? 0;
+      const lanes = [...this.framers.entries()].filter(([k]) => k.startsWith(head) && k.endsWith(tail));
+      const mine = lanes.find(([k]) => this.laneUser.get(k)?.user === user);
+      if (mine) {
+        this.laneUser.get(mine[0])!.tick = tick;
+        return mine[1];
+      }
+      // A lane nobody used during this frame or the one before is free to take over (a cut to the next clip).
+      const free = lanes.filter(([k]) => (this.laneUser.get(k)?.tick ?? -9) < tick - 1).sort((x, y) => (this.laneUser.get(x[0])?.tick ?? 0) - (this.laneUser.get(y[0])?.tick ?? 0));
+      if (free.length) {
+        // Spare lanes beyond the one being taken are let go so their pictures do not pile up in memory.
+        for (const [k, f] of free.slice(1)) {
+          if (f.isBusy || performance.now() - f.lastUse < 20_000) continue;
+          this.framers.delete(k);
+          this.laneUser.delete(k);
+          void f.dispose();
+        }
+        const [k, f] = free[0]!;
+        this.laneUser.set(k, { user, tick });
+        return f;
+      }
+      if (lanes.length >= MAX_LANES) {
+        // More simultaneous copies of one video than lanes: share the least recently used one (as before lanes existed).
+        const [k, f] = lanes.sort((x, y) => (this.laneUser.get(x[0])?.tick ?? 0) - (this.laneUser.get(y[0])?.tick ?? 0))[0]!;
+        this.laneUser.set(k, { user, tick });
+        return f;
+      }
+      const pkey = `${head}${purpose}#${user}`;
+      const pending = this.nativePending.get(pkey);
       if (pending) return pending;
       const made = (async () => {
         const nf = await MediaPool.native!.framer(a, purpose, maxDim).catch((e) => {
@@ -313,12 +358,14 @@ export class MediaPool {
         });
         if (!nf) return null;
         const f = nf as unknown as VideoFramer;
+        const nkey = `${head}${this.laneSeq++}${tail}`;
         this.framers.set(nkey, f);
+        this.laneUser.set(nkey, { user, tick });
         if (purpose !== "preview" && purpose !== "export" && !this.reaper) this.reaper = setInterval(() => this.reapIdle(), 2000);
         return f;
       })();
-      this.nativePending.set(nkey, made);
-      const got = await made.finally(() => this.nativePending.delete(nkey));
+      this.nativePending.set(pkey, made);
+      const got = await made.finally(() => this.nativePending.delete(pkey));
       if (got) return got;
     }
     // Everything but the export reads the light proxy when there is one.
@@ -354,6 +401,7 @@ export class MediaPool {
       if (!k.endsWith(`|${purpose}`) && !k.endsWith(`|${purpose}|px`)) continue;
       await f.dispose();
       this.framers.delete(k);
+      this.laneUser.delete(k);
     }
   }
 

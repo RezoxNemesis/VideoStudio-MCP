@@ -4,6 +4,7 @@
  */
 import type { Studio } from "../../src/app/studio";
 import { registerCommand } from "../../src/agent/api";
+import { registerColorCommands } from "../../src/agent/color";
 import * as ops from "../../src/core/ops";
 import * as model from "../../src/core/model";
 import { ProRender, type ProCodec } from "./render";
@@ -60,6 +61,7 @@ function trim(r: AudioReport, detail: boolean) {
 }
 
 export function registerDesktopCommands(s: Studio): void {
+  registerColorCommands();
   registerCommand("desktop.info", "This PC: folders, drives, CPU, memory, GPU status, app version, where renders are saved.", () => need().info());
 
   registerCommand("fs.roots", "The person's main folders (Videos, Music, Pictures, Downloads, Desktop, Documents, home), mounted drives and the VideoStudio output folders.", async () => {
@@ -464,6 +466,14 @@ export function registerDesktopCommands(s: Studio): void {
     return { path: await need().writeText(p, await st.exportJson().text()) };
   });
 
+  registerCommand("color.lut.import", "{path, name?} Import a .cube LUT file from this PC into the project (3D or 1D .cube). Returns {id}; apply it with color.lut.apply.", async (st, a) => {
+    const path = a.str("path");
+    const text = await need().readText(path);
+    const name = a.str("name", path.split("/").pop()!.replace(/\.cube$/i, ""));
+    const r = await runCommand(st, { op: "color.lut.add", name, cube: text });
+    if (!r.ok) throw new Error(r.error);
+    return r.result;
+  });
   registerCommand("fs.reveal", "{path} Open the folder that holds this file in the file manager (e.g. a finished render).", async (_s, a) => {
     await need().reveal(a.str("path"));
     return true;

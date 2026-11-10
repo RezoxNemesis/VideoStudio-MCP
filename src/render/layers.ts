@@ -1,3 +1,4 @@
+import { syncProjectLuts } from "../color/luts";
 import { activeRegions, applyRemovals, regionBox, type RemoveRegion } from "./inpaint";
 import { aiFill, maskAtSize } from "../media/ai";
 import { fontStack } from "./fonts";
@@ -314,6 +315,8 @@ export interface BuildOptions {
 
 /** Gather sources for every visible layer at time t. */
 export async function buildLayers(p: Project, pool: MediaPool, t: number, o: BuildOptions): Promise<LayerInput[]> {
+  syncProjectLuts(p);
+  pool.beginFrame(o.purpose);
   const draws = evaluate(p, t);
   const k = o.outH / p.height;
   const scaled = (d: LayerDraw): LayerDraw =>
@@ -409,7 +412,7 @@ async function sourceFor(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpti
         return null;
       }
       if (a.kind === "video") {
-        const f = await pool.framer(a, o.purpose === "export" ? `export` : "preview", o.purpose === "export" ? undefined : (o.previewMax ?? 960));
+        const f = await pool.framer(a, o.purpose === "export" ? `export` : "preview", o.purpose === "export" ? undefined : (o.previewMax ?? 960), d.clipId);
         if (!f) return null;
         let wc = f.latest;
         const near = wc && Math.abs(wc.timestamp - d.srcTime) < Math.max(wc.duration, 0.04) * 1.01 && d.srcTime >= wc.timestamp - 1e-4;
@@ -437,7 +440,7 @@ async function mediaLayer(p: Project, pool: MediaPool, d: LayerDraw, o: BuildOpt
     return { draw: d, source: now, sw: now.width, sh: now.height, version: a.id };
   }
   if (a.kind !== "video") return null;
-  const f = await pool.framer(a, o.purpose === "export" ? `export` : "preview", o.purpose === "export" ? undefined : (o.previewMax ?? 960));
+  const f = await pool.framer(a, o.purpose === "export" ? `export` : "preview", o.purpose === "export" ? undefined : (o.previewMax ?? 960), d.clipId);
   if (!f) return null;
   const wc = await f.frameAt(d.srcTime);
   if (!wc) return null;

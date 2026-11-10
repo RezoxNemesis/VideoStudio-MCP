@@ -5,6 +5,9 @@
  */
 import type { LayerDraw } from "../core/evaluate";
 import type { BlendMode } from "../core/model";
+import { CURVE_RES, CURVE_ROWS, bakeCurves, curveMask } from "../color/engine";
+import { lutFor } from "../color/luts";
+import { MAX_NODES, type ColorNode } from "../color/types";
 
 const VS_LAYER = `#version 300 es
 in vec2 aPos;
@@ -53,6 +56,28 @@ uniform float uZoomBlur;   // 0..1
 uniform vec2 uDirBlur;     // uv units
 uniform float uPosterize, uInvert, uDuo, uScan, uShadows, uHighlights, uLetterbox;
 uniform vec3 uDuoDark, uDuoLight, uWLift, uWGamma, uWGain;
+// Colour page: grading nodes (see color/engine.ts for the same maths on the CPU).
+#define MAXN ${MAX_NODES}
+#define CURVE_RES ${CURVE_RES}
+#define CURVE_ROWS ${CURVE_ROWS}
+uniform int uNodeCount;
+uniform vec4 uNLift[MAXN], uNGamma[MAXN], uNGain[MAXN];
+uniform vec4 uNOffset[MAXN]; // rgb, mix
+uniform vec4 uNPrim[MAXN];   // contrast, pivot, saturation, hue (radians)
+uniform vec4 uNPrim2[MAXN];  // temperature, tint, LUT slot (-1 none), LUT mix
+uniform vec4 uNMode[MAXN];   // kind (0 serial, 1 layer), blend, curve mask, show this node's key
+uniform vec4 uNQH[MAXN];     // qualifier on, hue, half-width, softness
+uniform vec4 uNQS[MAXN];     // sat low, high, softness, invert
+uniform vec4 uNQL[MAXN];     // luma low, high, softness, -
+uniform vec4 uNWin[MAXN];    // window x, y, w, h
+uniform vec4 uNWin2[MAXN];   // shape (0 none, 1 rect, 2 ellipse, 3 gradient), rotation (radians), softness, invert
+uniform highp sampler2D uCurves; // CURVE_RES x rows, one row per curve
+uniform float uCurveRows;
+uniform highp sampler3D uLut0, uLut1, uLut2, uLut3;
+uniform vec4 uLutSize;
+uniform float uNodeAspect;   // picture width / height
+uniform float uBypass;       // 1 = show the picture without any colour work
+uniform float uSplitX;       // frame px: left of this line the picture is shown ungraded (compare wipe); < 0 off
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + uSeed) * 43758.5453); }
 float hash0(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -96,6 +121,121 @@ vec4 fetchFx(sampler2D tex, vec2 uv) {
   return acc / 10.0;
 }
 
+float cv(float row, float x) {
+  return texture(uCurves, vec2((clamp(x, 0.0, 1.0) * float(CURVE_RES - 1) + 0.5) / float(CURVE_RES), (row + 0.5) / uCurveRows)).r;
+}
+// Hue 0..1 and saturation ((max-min)/max) of a colour.
+vec2 hsOf(vec3 c0) {
+  vec3 c = clamp(c0, 0.0, 1.0);
+  float mx = max(max(c.r, c.g), c.b);
+  float mn = min(min(c.r, c.g), c.b);
+  float d = mx - mn;
+  float h = 0.0;
+  if (d > 1e-6) {
+    if (mx == c.r) h = mod((c.g - c.b) / d, 6.0);
+    else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+    else h = (c.r - c.g) / d + 4.0;
+    h /= 6.0;
+    if (h < 0.0) h += 1.0;
+  }
+  return vec2(h, mx > 1e-6 ? d / mx : 0.0);
+}
+vec3 hueRot(vec3 c, float rad) {
+  float y = dot(c, vec3(0.299, 0.587, 0.114));
+  float i = dot(c, vec3(0.596, -0.274, -0.322));
+  float q = dot(c, vec3(0.211, -0.523, 0.312));
+  float cs = cos(rad), sn = sin(rad);
+  float i2 = i * cs - q * sn;
+  float q2 = i * sn + q * cs;
+  return vec3(y + 0.956 * i2 + 0.621 * q2, y - 0.272 * i2 - 0.647 * q2, y - 1.106 * i2 + 1.703 * q2);
+}
+vec3 lutAt(int slot, vec3 c) {
+  float n = slot == 0 ? uLutSize.x : slot == 1 ? uLutSize.y : slot == 2 ? uLutSize.z : uLutSize.w;
+  vec3 q = clamp(c, 0.0, 1.0) * ((n - 1.0) / n) + 0.5 / n;
+  if (slot == 0) return texture(uLut0, q).rgb;
+  if (slot == 1) return texture(uLut1, q).rgb;
+  if (slot == 2) return texture(uLut2, q).rgb;
+  return texture(uLut3, q).rgb;
+}
+float qualKey(int i, vec3 c) {
+  if (uNQH[i].x < 0.5) return 1.0;
+  vec2 hs = hsOf(c);
+  float L = clamp(luma(c), 0.0, 1.0);
+  float dh = abs(fract(hs.x - uNQH[i].y + 0.5) - 0.5);
+  float kh = uNQH[i].z >= 0.5 ? 1.0 : 1.0 - smoothstep(uNQH[i].z, uNQH[i].z + max(uNQH[i].w, 1e-4), dh);
+  float ss = max(uNQS[i].z, 1e-4);
+  float ks = smoothstep(uNQS[i].x - ss, uNQS[i].x, hs.y) * (1.0 - smoothstep(uNQS[i].y, uNQS[i].y + ss, hs.y));
+  float ls = max(uNQL[i].z, 1e-4);
+  float kl = smoothstep(uNQL[i].x - ls, uNQL[i].x, L) * (1.0 - smoothstep(uNQL[i].y, uNQL[i].y + ls, L));
+  float k = kh * ks * kl;
+  return uNQS[i].w > 0.5 ? 1.0 - k : k;
+}
+float winKey(int i, vec2 uv) {
+  float shape = uNWin2[i].x;
+  if (shape < 0.5) return 1.0;
+  vec2 d = uv - uNWin[i].xy;
+  d.x *= uNodeAspect;
+  float r = -uNWin2[i].y;
+  float cs = cos(r), sn = sin(r);
+  d = vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+  float soft = max(uNWin2[i].z, 1e-3);
+  float m;
+  if (shape > 2.5) m = 1.0 - smoothstep(-0.5, 0.5, d.y / max(uNWin[i].z, 1e-4));
+  else {
+    vec2 hf = max(vec2(uNWin[i].z * uNodeAspect, uNWin[i].w) * 0.5, vec2(1e-4));
+    if (shape < 1.5) m = (1.0 - smoothstep(1.0 - soft, 1.0 + soft, abs(d.x) / hf.x)) * (1.0 - smoothstep(1.0 - soft, 1.0 + soft, abs(d.y) / hf.y));
+    else m = 1.0 - smoothstep(1.0 - soft, 1.0 + soft, length(d / hf));
+  }
+  return uNWin2[i].w > 0.5 ? 1.0 - m : m;
+}
+vec3 nodeBlend(float mode, vec3 a, vec3 b) {
+  if (mode < 0.5) return b;
+  if (mode < 1.5) return a + b;
+  if (mode < 2.5) return a * b;
+  if (mode < 3.5) return 1.0 - (1.0 - a) * (1.0 - b);
+  if (mode < 4.5) return mix(2.0 * a * b, 1.0 - 2.0 * (1.0 - a) * (1.0 - b), step(0.5, a));
+  return (1.0 - 2.0 * b) * a * a + 2.0 * b * a;
+}
+vec3 nodes(vec3 c0, vec2 uv) {
+  vec3 c = c0;
+  for (int i = 0; i < MAXN; i++) {
+    if (i >= uNodeCount) break;
+    bool layerNode = uNMode[i].x > 0.5;
+    vec3 inp = layerNode ? c0 : c;
+    float key = qualKey(i, inp) * winKey(i, uv);
+    if (uNMode[i].w > 0.5) return mix(vec3(0.5), inp, key);
+    vec3 g = inp * vec3(1.0 + uNPrim2[i].x * 0.12, 1.0 + uNPrim2[i].y * 0.08, 1.0 - uNPrim2[i].x * 0.12);
+    g += uNOffset[i].rgb;
+    g = g * (1.0 + uNGain[i].rgb + uNGain[i].a) + (uNLift[i].rgb + uNLift[i].a) * (1.0 - g);
+    g = pow(max(g, 0.0), vec3(1.0) / max(vec3(0.05), 1.0 + uNGamma[i].rgb + uNGamma[i].a));
+    g = (g - uNPrim[i].y) * uNPrim[i].x + uNPrim[i].y;
+    g = mix(vec3(luma(g)), g, uNPrim[i].z);
+    if (abs(uNPrim[i].w) > 0.000175) g = hueRot(g, uNPrim[i].w);
+    int mk = int(uNMode[i].z + 0.5);
+    if (mk != 0) {
+      float row = float(i * CURVE_ROWS);
+      if ((mk & 1) != 0) g = vec3(cv(row, g.r), cv(row, g.g), cv(row, g.b));
+      if ((mk & 2) != 0) g.r = cv(row + 1.0, g.r);
+      if ((mk & 4) != 0) g.g = cv(row + 2.0, g.g);
+      if ((mk & 8) != 0) g.b = cv(row + 3.0, g.b);
+      if ((mk & 496) != 0) {
+        vec2 hs = hsOf(g);
+        if ((mk & 16) != 0) g = hueRot(g, (cv(row + 4.0, hs.x) - 0.5) * 3.14159265);
+        float k = 1.0;
+        if ((mk & 32) != 0) k *= cv(row + 5.0, hs.x) * 2.0;
+        if ((mk & 128) != 0) k *= cv(row + 7.0, clamp(luma(g), 0.0, 1.0)) * 2.0;
+        if ((mk & 256) != 0) k *= cv(row + 8.0, hs.y) * 2.0;
+        if (k != 1.0) g = mix(vec3(luma(g)), g, k);
+        if ((mk & 64) != 0) g *= 1.0 + (cv(row + 6.0, hs.x) * 2.0 - 1.0) * hs.y;
+      }
+    }
+    if (uNPrim2[i].z > -0.5 && uNPrim2[i].w > 0.0) g = mix(g, lutAt(int(uNPrim2[i].z + 0.5), g), clamp(uNPrim2[i].w, 0.0, 1.0));
+    vec3 top = layerNode ? nodeBlend(uNMode[i].y, c, g) : g;
+    c = mix(c, top, key * clamp(uNOffset[i].a, 0.0, 1.0));
+  }
+  return c;
+}
+
 vec4 grade(sampler2D tex, vec2 uv) {
   vec4 src = fetchFx(tex, uv);
   vec3 c = unpm(src);
@@ -112,6 +252,7 @@ vec4 grade(sampler2D tex, vec2 uv) {
     float sp = pow(clamp(1.0 - m, 0.0, 1.0), 1.5) * uKeyParams.z;
     c = mix(c, vec3(luma(c)), sp);
   }
+  vec3 ungraded = c;
   c *= exp2(uExposure);
   c *= vec3(1.0 + uTemp * 0.12, 1.0 + uTint * 0.08, 1.0 - uTemp * 0.12);
   c = c * uGain + uLift * (1.0 - c);
@@ -137,6 +278,8 @@ vec4 grade(sampler2D tex, vec2 uv) {
     y = vec3(y.x, y.y * cs - y.z * sn, y.y * sn + y.z * cs);
     c = toRgb * y;
   }
+  if (uBypass > 0.5 || gl_FragCoord.x < uSplitX) c = ungraded;
+  else if (uNodeCount > 0) c = nodes(c, uv);
   if (uVignette > 0.0) {
     float v = smoothstep(0.85, 0.2, length((uv - 0.5) * vec2(1.0, 1.0)) * (0.6 + uVignette));
     c *= mix(1.0, v, uVignette);
@@ -297,6 +440,11 @@ export class Compositor {
   private targets: Target[] = [];
   private texCache = new Map<string, { tex: WebGLTexture; version: string; used: number }>();
   private frame = 0;
+  private dataTex = new Map<string, { tex: WebGLTexture; used: number }>();
+  /** Viewer options for the colour page: bypass all colour work, a compare wipe (0..1 of the frame width, left side ungraded), and "show the key" for one node. */
+  bypass = false;
+  split = -1;
+  showKey: { clipId: string; nodeId: string } | null = null;
   width = 0;
   height = 0;
   /** The GPU (or software renderer) behind this context, for diagnostics. */
@@ -473,6 +621,116 @@ export class Compositor {
     gl.uniform4f(this.loc(pr, "uMask"), m.x, m.y, m.w, m.h);
     gl.uniform3f(this.loc(pr, "uMaskParams"), m.shape === "rect" ? 1 : m.shape === "ellipse" ? 2 : 0, m.feather, m.invert ? 1 : 0);
     gl.uniform1f(this.loc(pr, "uOpacity"), d.opacity);
+    this.setNodes(pr, d, qw / qh);
+  }
+
+  /** A float data texture (curves table or 3D LUT), uploaded once per key and dropped when unused for a while. */
+  private dataTexture(key: string, make: (tex: WebGLTexture) => void, target: number): WebGLTexture {
+    const gl = this.gl;
+    let e = this.dataTex.get(key);
+    if (!e) {
+      const tex = gl.createTexture()!;
+      // Work on a spare unit so the layer's own picture on unit 0 stays bound.
+      gl.activeTexture(gl.TEXTURE9);
+      gl.bindTexture(target, tex);
+      gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      if (target === gl.TEXTURE_3D) gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+      // Raw number tables: no alpha premultiply (3D uploads reject it outright).
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      make(tex);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      e = { tex, used: this.frame };
+      this.dataTex.set(key, e);
+    }
+    e.used = this.frame;
+    return e.tex;
+  }
+
+  /** Colour page nodes for this layer: uniforms, the curves table and up to four LUTs. */
+  private setNodes(pr: Prog, d: LayerDraw, aspect: number) {
+    const gl = this.gl;
+    // Samplers always point at their own units, so a 2D and a 3D sampler never share one.
+    gl.uniform1i(this.loc(pr, "uCurves"), 4);
+    gl.uniform1i(this.loc(pr, "uLut0"), 5);
+    gl.uniform1i(this.loc(pr, "uLut1"), 6);
+    gl.uniform1i(this.loc(pr, "uLut2"), 7);
+    gl.uniform1i(this.loc(pr, "uLut3"), 8);
+    gl.uniform1f(this.loc(pr, "uBypass"), this.bypass ? 1 : 0);
+    gl.uniform1f(this.loc(pr, "uSplitX"), this.split >= 0 ? this.split * this.width : -1);
+    const nodes: ColorNode[] = (d.nodes ?? []).slice(0, MAX_NODES);
+    gl.uniform1i(this.loc(pr, "uNodeCount"), nodes.length);
+    if (!nodes.length) return;
+    const N = MAX_NODES;
+    const u = { lift: new Float32Array(N * 4), gamma: new Float32Array(N * 4), gain: new Float32Array(N * 4), offset: new Float32Array(N * 4), prim: new Float32Array(N * 4), prim2: new Float32Array(N * 4), mode: new Float32Array(N * 4), qh: new Float32Array(N * 4), qs: new Float32Array(N * 4), ql: new Float32Array(N * 4), win: new Float32Array(N * 4), win2: new Float32Array(N * 4) };
+    const BL = { normal: 0, add: 1, multiply: 2, screen: 3, overlay: 4, softLight: 5 } as const;
+    const SH = { none: 0, rect: 1, ellipse: 2, gradient: 3 } as const;
+    const slots: string[] = [];
+    const sizes = [2, 2, 2, 2];
+    nodes.forEach((n, i) => {
+      const o = i * 4;
+      u.lift.set(n.lift, o);
+      u.gamma.set(n.gamma, o);
+      u.gain.set(n.gain, o);
+      u.offset.set([n.offset[0], n.offset[1], n.offset[2], n.mix], o);
+      u.prim.set([n.contrast, n.pivot, n.sat, (n.hue * Math.PI) / 180], o);
+      let slot = -1;
+      let lutMix = 0;
+      if (n.lut && n.lut.mix > 0) {
+        const e = lutFor(n.lut.id);
+        if (e) {
+          const key = `lut:${n.lut.id}:${e.ver}`;
+          slot = slots.indexOf(key);
+          if (slot < 0 && slots.length < 4) {
+            slot = slots.length;
+            slots.push(key);
+            sizes[slot] = e.lut.size;
+            const tex = this.dataTexture(key, () => gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGB16F, e.lut.size, e.lut.size, e.lut.size, 0, gl.RGB, gl.FLOAT, e.lut.data), gl.TEXTURE_3D);
+            gl.activeTexture(gl.TEXTURE5 + slot);
+            gl.bindTexture(gl.TEXTURE_3D, tex);
+          }
+          if (slot >= 0) lutMix = n.lut.mix;
+        }
+      }
+      u.prim2.set([n.temp, n.tint, slot, lutMix], o);
+      const show = this.showKey && this.showKey.clipId === d.clipId && this.showKey.nodeId === n.id ? 1 : 0;
+      u.mode.set([n.kind === "layer" ? 1 : 0, BL[n.blend] ?? 0, curveMask(n.curves), show], o);
+      const q = n.qual;
+      if (q?.on) {
+        u.qh.set([1, q.h, q.hw, q.hs], o);
+        u.qs.set([q.s0, q.s1, q.ss, q.invert ? 1 : 0], o);
+        u.ql.set([q.l0, q.l1, q.ls, 0], o);
+      }
+      const w = n.win;
+      if (w && w.shape !== "none") {
+        u.win.set([w.x, w.y, w.w, w.h], o);
+        u.win2.set([SH[w.shape], (w.rot * Math.PI) / 180, w.soft, w.invert ? 1 : 0], o);
+      }
+    });
+    gl.uniform4fv(this.loc(pr, "uNLift"), u.lift);
+    gl.uniform4fv(this.loc(pr, "uNGamma"), u.gamma);
+    gl.uniform4fv(this.loc(pr, "uNGain"), u.gain);
+    gl.uniform4fv(this.loc(pr, "uNOffset"), u.offset);
+    gl.uniform4fv(this.loc(pr, "uNPrim"), u.prim);
+    gl.uniform4fv(this.loc(pr, "uNPrim2"), u.prim2);
+    gl.uniform4fv(this.loc(pr, "uNMode"), u.mode);
+    gl.uniform4fv(this.loc(pr, "uNQH"), u.qh);
+    gl.uniform4fv(this.loc(pr, "uNQS"), u.qs);
+    gl.uniform4fv(this.loc(pr, "uNQL"), u.ql);
+    gl.uniform4fv(this.loc(pr, "uNWin"), u.win);
+    gl.uniform4fv(this.loc(pr, "uNWin2"), u.win2);
+    gl.uniform4f(this.loc(pr, "uLutSize"), sizes[0]!, sizes[1]!, sizes[2]!, sizes[3]!);
+    gl.uniform1f(this.loc(pr, "uNodeAspect"), aspect);
+    const baked = bakeCurves(nodes);
+    if (baked) {
+      const tex = this.dataTexture(`cv:${baked.key}`, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, CURVE_RES, baked.rows, 0, gl.RED, gl.FLOAT, baked.data), gl.TEXTURE_2D);
+      gl.activeTexture(gl.TEXTURE4);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.uniform1f(this.loc(pr, "uCurveRows"), baked.rows);
+    }
+    gl.activeTexture(gl.TEXTURE0);
   }
 
   private fullQuad() {
@@ -650,6 +908,12 @@ export class Compositor {
         this.texCache.delete(k);
       }
     }
+    for (const [k, e] of this.dataTex) {
+      if (this.frame - e.used > 600) {
+        this.gl.deleteTexture(e.tex);
+        this.dataTex.delete(k);
+      }
+    }
   }
 
   dispose(): void {
@@ -659,6 +923,8 @@ export class Compositor {
       gl.deleteFramebuffer(t.fb);
       gl.deleteTexture(t.tex);
     }
+    for (const e of this.dataTex.values()) gl.deleteTexture(e.tex);
+    this.dataTex.clear();
     this.texCache.clear();
     this.targets = [];
   }
