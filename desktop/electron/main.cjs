@@ -42,36 +42,75 @@ if (process.argv.includes("--vsd-relaunch-wait")) {
   }
 }
 const firstInstance = app.requestSingleInstanceLock();
+// Session marker: written at start, touched while running, removed on a normal quit. If it is still there at the
+// next start and the session lived under three minutes, that start counts as failed (it crashed soon after opening).
+const SESSION = path.join(app.getPath("userData"), "session.marker");
 let vulkan = true;
+let safeMode = false;
 if (firstInstance) {
+  let cfg = {};
   try {
-    const cfg = JSON.parse(fs.readFileSync(GPU_CFG, "utf8"));
+    cfg = JSON.parse(fs.readFileSync(GPU_CFG, "utf8")) || {};
     // A "Vulkan off" decision made before X11 mode existed (1.0.8 and older) gets one fresh try.
     if (cfg.vulkan === false && cfg.x11 === true) vulkan = false;
   } catch {
     /* default on */
   }
   try {
-    if (fs.existsSync(GUARD)) {
-      vulkan = false;
+    let failed = fs.existsSync(GUARD) ? "previous start did not finish" : "";
+    try {
+      const st = fs.statSync(SESSION);
+      const began = Number(fs.readFileSync(SESSION, "utf8")) || st.mtimeMs;
+      if (!failed && st.mtimeMs - began < 180_000) failed = "previous session crashed soon after opening";
+    } catch {
+      /* no earlier session marker */
+    }
+    if (failed) {
       fs.mkdirSync(path.dirname(GPU_CFG), { recursive: true });
-      fs.writeFileSync(GPU_CFG, JSON.stringify({ vulkan: false, x11: true, reason: "previous start with Vulkan did not finish", at: new Date().toISOString() }));
-      crashLog("previous start did not finish: Vulkan switched off");
+      if (vulkan) {
+        // First step down: no Vulkan (and with it, no XWayland).
+        vulkan = false;
+        fs.writeFileSync(GPU_CFG, JSON.stringify({ vulkan: false, x11: true, reason: failed, at: new Date().toISOString() }));
+        crashLog(`${failed}: Vulkan switched off`);
+      } else if (!cfg.safeTried) {
+        // Already on the plain GPU path and it still failed: open once in safe graphics (software rendering) so the
+        // app is usable and its log can be read; the next start tries the GPU again.
+        safeMode = true;
+        fs.writeFileSync(GPU_CFG, JSON.stringify({ ...cfg, safeTried: true, safeReason: failed, safeAt: new Date().toISOString() }));
+        crashLog(`${failed}: this start uses safe graphics (software rendering)`);
+      } else {
+        fs.writeFileSync(GPU_CFG, JSON.stringify({ ...cfg, safeTried: false }));
+        crashLog(`${failed}: trying the GPU again`);
+      }
+    } else if (cfg.safeTried) {
+      fs.writeFileSync(GPU_CFG, JSON.stringify({ ...cfg, safeTried: false }));
     }
     fs.mkdirSync(path.dirname(GUARD), { recursive: true });
     fs.writeFileSync(GUARD, String(Date.now()));
+    fs.writeFileSync(SESSION, String(Date.now()));
+    const beat = setInterval(() => {
+      try {
+        const t = new Date();
+        fs.utimesSync(SESSION, t, t);
+      } catch {
+        /* ignore */
+      }
+    }, 30_000);
+    beat.unref?.();
   } catch {
     /* ignore */
   }
 }
-// NVIDIA's driver on native Wayland can stall Chromium's GPU process (the watchdog then kills it and every
-// picture in the window is lost), so with that driver the window always runs through XWayland. Vulkan needs
-// XWayland too. VSD_OZONE=wayland forces native Wayland.
-const NVIDIA = fs.existsSync("/proc/driver/nvidia/version");
-const useVulkan = vulkan && process.env.VSD_NO_VULKAN !== "1";
-const useX11 = process.platform === "linux" && process.env.VSD_OZONE !== "wayland" && !!process.env.DISPLAY && (useVulkan || NVIDIA);
+if (process.env.VSD_SAFE_GRAPHICS === "1") safeMode = true;
+// Windowing: the desktop's own (native Wayland on KDE) unless Vulkan is on, which needs XWayland.
+// 1.0.14 forced XWayland for every NVIDIA PC and the app closed right after opening there, so that is opt-in only:
+// VSD_OZONE=x11 forces XWayland, VSD_OZONE=wayland forces native Wayland.
+const useVulkan = !safeMode && vulkan && process.env.VSD_NO_VULKAN !== "1";
+const useX11 = process.platform === "linux" && !!process.env.DISPLAY && process.env.VSD_OZONE !== "wayland" && (useVulkan || process.env.VSD_OZONE === "x11");
 if (useX11) app.commandLine.appendSwitch("ozone-platform", "x11");
 if (useVulkan) app.commandLine.appendSwitch("enable-features", "Vulkan,VaapiVideoDecodeLinuxGL");
+if (safeMode) app.disableHardwareAcceleration();
+if (firstInstance) crashLog(`start ${app.getVersion()}: vulkan=${useVulkan} windowing=${useX11 ? "x11" : process.env.XDG_SESSION_TYPE || "auto"} safe=${safeMode}`);
 // A GPU process restart must never leave the editor without a picture: keep WebGL allowed for this window
 // after GPU crashes, and let Chromium fall back to its software renderer if the GPU cannot come back.
 try {
@@ -759,6 +798,7 @@ async function encoderCaps() {
     vulkan: useVulkan,
     windowing: useX11 ? "x11 (XWayland)" : process.env.XDG_SESSION_TYPE || "auto",
     gpuRestarts,
+    safeGraphics: safeMode,
     driver: await run("nvidia-smi", ["--query-gpu=name,driver_version", "--format=csv,noheader"], { timeout: 10_000 }).then((r) => (r.code === 0 ? r.stdout.trim() : null)).catch(() => null),
     filters: ["vidstabdetect", "minterpolate", "nlmeans", "hqdn3d", "lut3d", "loudnorm", "zscale", "deshake", "scale_cuda"].filter((f) => new RegExp(`\\s${f}\\s`).test(flt)),
   };
@@ -1054,11 +1094,7 @@ async function installDeb(u, file) {
   if (r.code !== 0) throw new Error(r.code === 126 || r.code === 127 ? "The password dialog was closed — nothing was installed. The update is saved in Downloads." : `Install failed: ${r.stderr.trim().split("\n").slice(-2).join(" ")}`);
   setTimeout(() => {
     app.relaunch({ args: process.argv.slice(1).concat(["--vsd-relaunch-wait"]) });
-    try {
-      fs.rmSync(GUARD, { force: true });
-    } catch {
-      /* ignore */
-    }
+    clearGuard();
     app.exit(0);
   }, 1500);
   return { installed: true, version: u.latest, file, note: "Installed — VideoStudio Desktop restarts now." };
@@ -1305,13 +1341,21 @@ app.on("child-process-gone", (_e, d) => {
 });
 // A normal quit is not a failed start: clear the GPU guard so the next start keeps its GPU settings.
 const clearGuard = () => {
-  try {
-    fs.rmSync(GUARD, { force: true });
-  } catch {
-    /* ignore */
+  for (const f of [GUARD, SESSION]) {
+    try {
+      fs.rmSync(f, { force: true });
+    } catch {
+      /* ignore */
+    }
   }
 };
 app.on("will-quit", clearGuard);
+// Logging out or shutting down ends the app with a signal; that is a normal end too.
+for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"])
+  process.on(sig, () => {
+    clearGuard();
+    app.quit();
+  });
 if (!firstInstance) app.quit();
 else {
   app.on("second-instance", () => {
