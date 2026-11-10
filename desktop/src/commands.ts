@@ -5,6 +5,7 @@
 import type { Studio } from "../../src/app/studio";
 import { registerCommand } from "../../src/agent/api";
 import { registerColorCommands } from "../../src/agent/color";
+import { registerSmartCommands } from "../../src/agent/smart";
 import * as ops from "../../src/core/ops";
 import * as model from "../../src/core/model";
 import { ProRender, type ProCodec } from "./render";
@@ -62,6 +63,7 @@ function trim(r: AudioReport, detail: boolean) {
 
 export function registerDesktopCommands(s: Studio): void {
   registerColorCommands();
+  registerSmartCommands();
   registerCommand("desktop.info", "This PC: folders, drives, CPU, memory, GPU status, app version, where renders are saved.", () => need().info());
 
   registerCommand("fs.roots", "The person's main folders (Videos, Music, Pictures, Downloads, Desktop, Documents, home), mounted drives and the VideoStudio output folders.", async () => {
@@ -149,7 +151,7 @@ export function registerDesktopCommands(s: Studio): void {
 
   let job: ProRender | null = null;
   const proHelp =
-    "{codec?: auto|h264|hevc|nvenc_h264|nvenc_hevc|nvenc_av1|x264|x265|prores|prores4444|vp9 (auto = NVIDIA GPU H.264 when present, else x264), height? (up to 4320; width follows the frame), fps? (up to 120), quality? 0-100 (=88), from?, to?, name?, audio?=true} Render on this PC: GPU compositing → native ffmpeg (NVENC / x264 / x265 / ProRes), 10-bit HEVC, 48 kHz AAC 320k (PCM in ProRes). Saved to ~/Videos/VideoStudio. Waits until done.";
+    "{codec?: auto|h264|hevc|nvenc_h264|nvenc_hevc|nvenc_av1|x264|x265|prores|prores4444|vp9 (auto = NVIDIA GPU H.264 when present, else x264), height? (up to 4320; width follows the frame), fps? (up to 120), quality? 0-100 (=88), from?, to?, name?, audio?=true, gpuConvert?=true (convert frames to the encoder's colour format on the graphics card; false sends plain RGBA, slower)} Render on this PC: GPU compositing → native ffmpeg (NVENC / x264 / x265 / ProRes), 10-bit HEVC, 48 kHz AAC 320k (PCM in ProRes). Saved to ~/Videos/VideoStudio. Waits until done.";
   const proRun = async (st: Studio, a: import("../../src/agent/api").HostArgs) => {
     if (job) throw new Error("A render is already running.");
     // Media whose stored copy vanished is found again on disk first, instead of failing deep in the render.
@@ -166,6 +168,7 @@ export function registerDesktopCommands(s: Studio): void {
       to: a.optNum("to"),
       name: a.optStr("name"),
       audio: a.bool("audio", true),
+      gpuConvert: a.bool("gpuConvert", true),
     });
     job.onProgress = (pr) => st.setStatus(pr.stage === "video" ? `Rendering ${pr.frame}/${pr.frames} · ${pr.fps.toFixed(1)} fps · ${Math.ceil(pr.etaSec)} s left` : pr.stage === "audio" ? "Mixing sound…" : pr.stage === "finalizing" ? "Finishing the file…" : "Render done");
     try {
@@ -428,7 +431,7 @@ export function registerDesktopCommands(s: Studio): void {
     return pv.status();
   });
 
-  registerCommand("ui.workspace", "{name: edit|animate|audio|color|voice|deliver|claude} Switch the workspace the person sees.", (_s, a) => {
+  registerCommand("ui.workspace", "{name: edit|color|insight|audio|animate|voice|deliver|claude} Switch the workspace the person sees (insight = Audience Lens and Style DNA).", (_s, a) => {
     const n = a.str("name");
     if (!hooks) throw new Error("The window is still loading.");
     hooks.workspace(n);

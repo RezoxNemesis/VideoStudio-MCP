@@ -114,6 +114,35 @@ function dropNamed(p: Project, clipId: string, name: string): void {
   }
 }
 
+/**
+ * Bring clips to a measured look: measure each clip (without an earlier node of the same name), add one node named
+ * `nodeName` that moves its look to `ref`, and report how far apart the looks were before and after.
+ */
+export async function matchClipsToStats(s: Studio, ids: string[], ref: ColourStats, refName: string, mode: "lut" | "curves" | "primaries", strength: number, nodeName: string): Promise<{ differences: string[]; results: { id: string; nodeId: string; before: number; after: number }[] }> {
+  const results: { id: string; nodeId: string; before: number; after: number }[] = [];
+  let differences: string[] = [];
+  for (const id of ids) {
+    const old = getClip(s.project, id).nodes?.filter((n) => n.name === nodeName).map((n) => n.id) ?? [];
+    const src = await clipStats(s.project, s.pool, id, { dropNodes: old });
+    if (!differences.length) differences = describeMatch(src, ref);
+    const before = statsDistance(src, ref);
+    const nodeId = s.mutate("shot match", (p) => {
+      dropNamed(p, id, nodeName);
+      let node: ColorNode;
+      if (mode === "lut") {
+        const l = storeLut(p, matchLut(src, ref, { size: 33, strength }), `Match to ${refName}`);
+        node = cops.addNode(p, id, { name: nodeName, lut: { id: l.id, mix: 1 } });
+      } else if (mode === "curves") node = cops.addNode(p, id, { name: nodeName, curves: matchCurves(src, ref, { strength }) });
+      else node = cops.addNode(p, id, { name: nodeName, ...matchPrimaries(src, ref, { strength }) });
+      cops.pruneLuts(p);
+      return node.id;
+    });
+    const after = statsDistance(await clipStats(s.project, s.pool, id), ref);
+    results.push({ id, nodeId, before: r3(before), after: r3(after) });
+  }
+  return { differences, results };
+}
+
 export function registerColorCommands(): void {
   registerCommand("color.nodes", "{id} The clip's grading nodes in order: primaries, curves, LUT, qualifier and window of each.", (s: Studio, a) => cops.describeNodes(s.project, getClip(s.project, a.str("id"))));
 
@@ -195,7 +224,7 @@ export function registerColorCommands(): void {
 
   registerCommand(
     "color.qualifier",
-    `{id, node?, color?: '#hex' (select around this colour), preset?: ${Object.keys(cops.QUAL_PRESETS).join("|")}, tolerance?=1, h?, hw?, hs?, s0?, s1?, ss?, l0?, l1?, ls?, invert?, off?} Limit a node to the pixels of one colour range (hue centre/half-width/softness, saturation range, brightness range; all 0..1). off:true removes it.`,
+    `{id, node?, color?: '#hex' (select around this colour), preset?: ${Object.keys(cops.QUAL_PRESETS).join("|")}, tolerance?=1, h?, hw?, hs?, s0?, s1?, ss?, l0?, l1?, ls?, invert?, on? (false keeps the settings but switches the selection off), off?} Limit a node to the pixels of one colour range (hue centre/half-width/softness, saturation range, brightness range; all 0..1). off:true removes it.`,
     (s, a) =>
       s.mutate("qualifier", (p) => {
         const node = cops.nodeOrNew(p, a.str("id"), a.any("node") as string | undefined);
@@ -214,6 +243,7 @@ export function registerColorCommands(): void {
           if (v !== undefined) patch[k] = v;
         }
         if (a.any("invert") !== undefined) patch.invert = a.bool("invert");
+        if (a.any("on") !== undefined) patch.on = a.bool("on", true);
         const n = cops.setQualifier(p, a.str("id"), node.id, patch);
         return { nodeId: n.id, qualifier: n.qual };
       }),
@@ -239,7 +269,7 @@ export function registerColorCommands(): void {
         if (a.any("invert") !== undefined) patch.invert = a.bool("invert");
         const keys = a.any("keys");
         if (Array.isArray(keys)) patch.keys = keys as PowerWindow["keys"];
-        else if (keys === null) patch.keys = undefined;
+        else if (keys === null) patch.keys = [];
         const n = cops.setWindow(p, a.str("id"), node.id, patch);
         return { nodeId: n.id, window: n.win };
       }),
@@ -256,9 +286,18 @@ export function registerColorCommands(): void {
 
   registerCommand(
     "color.lut.apply",
-    "{id | ids, lut (a built-in id or name, or a project LUT id or name), mix?=1, node? (put it on this node; otherwise a new node named after the LUT)} Apply a LUT through a grading node.",
+    "{id | ids, lut (a built-in id or name, or a project LUT id or name; \"none\" takes the LUT off the node), mix?=1, node? (put it on this node; otherwise a new node named after the LUT)} Apply a LUT through a grading node.",
     (s, a) =>
       s.mutate("apply LUT", (p) => {
+        if (/^(none|off)$/i.test(a.str("lut").trim())) {
+          const cleared: { id: string; nodeId: string }[] = [];
+          for (const id of idsOf(a)) {
+            const n = cops.clearLut(p, id, (a.any("node") as string | number | undefined) ?? getClip(p, id).nodes?.length ?? 1);
+            cleared.push({ id, nodeId: n.id });
+          }
+          cops.pruneLuts(p);
+          return { lut: null, applied: cleared };
+        }
         const l = findLut(p, a.str("lut"));
         const mix = Math.max(0, Math.min(1, a.num("mix", 1)));
         const out: { id: string; nodeId: string }[] = [];
@@ -350,25 +389,7 @@ export function registerColorCommands(): void {
       const ref = refClip ? await clipStats(p0, s.pool, refClip, { t: a.optNum("refT") }) : await assetStats(p0, s.pool, refAsset!, { t: a.optNum("refT") });
       const refName = refClip ? getClip(p0, refClip).name : findAsset(p0, refAsset)?.name ?? "reference";
       const ids = idsOf(a).filter((id) => id !== refClip);
-      const results: Record<string, unknown>[] = [];
-      for (const id of ids) {
-        const old = getClip(s.project, id).nodes?.filter((n) => n.name === MATCH_NODE).map((n) => n.id) ?? [];
-        const src = await clipStats(s.project, s.pool, id, { dropNodes: old });
-        const before = statsDistance(src, ref);
-        const nodeId = s.mutate("shot match", (p) => {
-          dropNamed(p, id, MATCH_NODE);
-          if (mode === "lut") {
-            const l = storeLut(p, matchLut(src, ref, { size: 33, strength }), `Match to ${refName}`);
-            return cops.addNode(p, id, { name: MATCH_NODE, lut: { id: l.id, mix: 1 } }).id;
-          }
-          if (mode === "curves") return cops.addNode(p, id, { name: MATCH_NODE, curves: matchCurves(src, ref, { strength }) }).id;
-          return cops.addNode(p, id, { name: MATCH_NODE, ...matchPrimaries(src, ref, { strength }) }).id;
-        });
-        s.mutate("shot match", (p) => cops.pruneLuts(p));
-        const after = statsDistance(await clipStats(s.project, s.pool, id), ref);
-        results.push({ id, nodeId, before: r3(before), after: r3(after) });
-      }
-      return { reference: refName, mode, differences: ids.length ? describeMatch(await clipStats(s.project, s.pool, ids[0]!, { dropNodes: getClip(s.project, ids[0]!).nodes?.filter((n) => n.name === MATCH_NODE).map((n) => n.id) }), ref) : [], results };
+      return { reference: refName, mode, ...(await matchClipsToStats(s, ids, ref, refName, mode as "lut" | "curves" | "primaries", strength, MATCH_NODE)) };
     },
   );
 

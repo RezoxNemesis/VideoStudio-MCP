@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { applyDna, describeDna, dnaDistance, dnaFromCuts, dnaFromProject, mergeDna, planCuts, planRetime, validateDna, type Dna } from "../src/smart/dna";
+import { applyDna, describeDna, dnaDistance, dnaFromCuts, dnaFromProject, isShotClip, mergeDna, pictureArea, planCuts, planRetime, validateDna, type Dna } from "../src/smart/dna";
 import { defaultText, newClip, newProject, newScene, newTrack, type Asset, type Clip, type Project } from "../src/core/model";
 import type { ColourStats } from "../src/color/types";
 
@@ -282,7 +282,7 @@ describe("dnaDistance", () => {
 
 /* ------------------------------ project tests ----------------------------- */
 
-/** A small project: shots on V1 and V2 (one full-frame shot hides a V1 cut, one through edit), a picture-in-picture,
+/** A small project: shots on V1 and V2 (one full-frame shot hides a V1 cut, one through edit), a small picture-in-picture,
  *  a transparent overlay scene, titles on their own track and music on A1. */
 function sampleProject(): Project {
   const p = newProject("Sample", 1080, 1920, 30);
@@ -306,7 +306,7 @@ function sampleProject(): Project {
     newClip("media", 9, 1, { id: "e2", name: "e2", assetId: "vid", in: 21 }),
   ];
   V2.clips = [
-    newClip("media", 1, 2, { id: "pip", name: "pip", assetId: "vid", in: 30, transform: { scale: 0.4, x: 200 } }),
+    newClip("media", 1, 2, { id: "pip", name: "pip", assetId: "vid", in: 30, transform: { scale: 0.3, x: 200 } }), // 9 % of the frame: too small to be a shot
     newClip("media", 4.5, 1, { id: "f", name: "f", assetId: "vid", in: 40 }),
   ];
   const title = (id: string, start: number, dur: number, text: string, font: string, size: number, color: string, y: number, animate: Clip["text"] extends infer X ? (X extends { animate: infer A } ? A : never) : never) =>
@@ -622,5 +622,128 @@ describe("invariants under many random inputs", () => {
       expect(JSON.stringify(merged)).not.toMatch(/null|NaN|Infinity/);
       validateDna(JSON.parse(JSON.stringify(merged)));
     }
+  });
+});
+
+/* ------------------------------ split screens ----------------------------- */
+
+/**
+ * A split-screen reel at 120 bpm (one bar = 2 s): a full-frame shot 0–4 s, then 4–20 s a blurred full-frame backdrop
+ * on the lowest track with three stacked horizontal panels above it (landscape video, fit contain, scale ≈ 0.926,
+ * 4.6 % top/bottom crop, keyframed x and scale) that all change picture on every bar (the middle panel half a frame
+ * late), then a full-frame shot 20–24 s. A 10 %-area sticker sits over the first shot, titles on a text track.
+ */
+function splitProject(o: { backdropStart?: number; noBackdrop?: boolean } = {}): Project {
+  const p = newProject("Split", 1080, 1920, 30);
+  const T = newTrack("video", "Titles");
+  const P1 = newTrack("video", "P1");
+  const P2 = newTrack("video", "P2");
+  const P3 = newTrack("video", "P3");
+  const V1 = newTrack("video", "V1");
+  p.tracks = [T, P1, P2, P3, V1, newTrack("audio", "A1")];
+  p.assets = [{ ...asset("land", "video", 600), width: 1920, height: 1080 }, asset("tall", "video", 600), asset("sticker", "image", 0)];
+  V1.clips.push(newClip("media", 0, 4, { id: "F1", assetId: "tall", in: 100 }));
+  if (!o.noBackdrop) {
+    const bs = o.backdropStart ?? 4;
+    V1.clips.push(newClip("media", bs, 20 - bs, { id: "B", assetId: "land", in: 0, fit: "cover", grade: { blur: 40 } }));
+  }
+  V1.clips.push(newClip("media", 20, 4, { id: "F2", assetId: "tall", in: 200 }));
+  const panels = [P1, P2, P3];
+  panels.forEach((tr, k) => {
+    const late = k === 1 ? 1 / 60 : 0; // within one frame of the others
+    for (let bar = 0; bar < 8; bar++) {
+      const start = 4 + bar * 2 + (bar === 0 ? 0 : late);
+      const end = 4 + (bar + 1) * 2 + (bar === 7 ? 0 : late);
+      tr.clips.push(
+        newClip("media", start, end - start, {
+          id: `P${k}_${bar}`,
+          assetId: "land",
+          in: 10 + bar * 37 + k * 5,
+          fit: "contain",
+          crop: { l: 0, t: 0.046, r: 0, b: 0.046 },
+          transform: { y: (k - 1) * 640, x: [{ t: 0, v: -20, ease: "linear" }, { t: 2, v: 20, ease: "linear" }], scale: [{ t: 0, v: 0.92, ease: "linear" }, { t: end - start, v: 0.932, ease: "linear" }] },
+        }),
+      );
+    }
+  });
+  // About 10 % of the frame.
+  T.clips.push(newClip("media", 1, 2, { id: "S", assetId: "sticker", fit: "contain", transform: { scale: Math.sqrt(0.1) * 0.99 } }));
+  T.clips.push(newClip("text", 4, 4, { id: "title", text: { ...defaultText("THE BIG ONE"), size: 110 } }));
+  return p;
+}
+
+describe("split screens", () => {
+  it("counts every panel change as a cut, on the bar", () => {
+    const p = splitProject();
+    const g = grid(120, 30);
+    const d = dnaFromProject(p, { ...g, bpm: 120 });
+    // Cuts at 4, 6, 8, …, 18, 20: shots 4 s, eight of 2 s, 4 s.
+    expect(d.rhythm.duration).toBe(24);
+    expect(d.rhythm.shotCount).toBe(10);
+    expect(d.rhythm.firstCut).toBe(4);
+    expect(d.rhythm.shotMedian).toBe(2);
+    expect(d.rhythm.onBeat).toBe(1);
+    expect(d.rhythm.onDownbeat).toBe(1);
+    // 2 s = 4 beats (8 of 10), 4 s = 8 beats (2 of 10).
+    expect(d.rhythm.beatBuckets!.map((x) => +x.toFixed(12))).toEqual([0, 0, 0, 0.8, 0.2, 0]);
+    expect(d.motion!.movingShare).toBeCloseTo(24 / 26, 12); // 24 moving panels of 24 panels + F1 + F2
+    expect(describeDna(d)[0]).toMatch(/every 4 beats.*almost always on the beat/);
+  });
+
+  it("isShotClip takes panels, not the backdrop or the sticker", () => {
+    const p = splitProject();
+    const clip = (id: string) => p.tracks.flatMap((t) => t.clips).find((c) => c.id === id)!;
+    expect(isShotClip(p, clip("P0_3"))).toBe(true);
+    expect(isShotClip(p, clip("F1"))).toBe(true);
+    expect(isShotClip(p, clip("B"))).toBe(false);
+    expect(isShotClip(p, clip("S"))).toBe(false);
+    expect(isShotClip(p, clip("title"))).toBe(false);
+    // A 16 %-area picture-in-picture does take part.
+    const pip = newClip("media", 1, 2, { assetId: "tall", transform: { scale: 0.4 } });
+    p.tracks[0]!.clips.push(pip);
+    expect(isShotClip(p, pip)).toBe(true);
+  });
+
+  it("measures the picture area per fit like the compositor", () => {
+    const p = splitProject();
+    const clip = (id: string) => p.tracks.flatMap((t) => t.clips).find((c) => c.id === id)!;
+    // Panel: 1920×(1080×0.908) contained in 1080×1920 → 1080 × 551.6, × 0.926.
+    const qh = 1080 * 0.908 * (1080 / 1920);
+    expect(pictureArea(p, clip("P1_2"))).toBeCloseTo((1080 * 0.926 * qh * 0.926) / (1080 * 1920), 9);
+    expect(pictureArea(p, clip("B"))).toBeCloseTo(1, 12); // cover
+    expect(pictureArea(p, clip("S"))).toBeCloseTo(0.1 * 0.99 * 0.99, 9);
+    const c = (extra: Partial<Clip>) => newClip("media", 0, 2, { assetId: "land", ...extra });
+    expect(pictureArea(p, c({ fit: "fill" }))).toBeCloseTo(1, 12);
+    expect(pictureArea(p, c({ fit: "none" }))).toBeCloseTo((1080 * 1080) / (1080 * 1920), 12); // 1920 wide, clipped to 1080
+    expect(pictureArea(p, c({ fit: "contain", transform: { x: 540 } }))).toBeCloseTo(((540 * 607.5) / (1080 * 1920)), 9); // half off screen
+    expect(pictureArea(p, c({ fit: "cover", mask: { shape: "rect", x: 0.5, y: 0.5, w: 0.5, h: 0.5, feather: 0, invert: false } }))).toBeCloseTo(0.25, 12);
+    expect(pictureArea(p, c({ fit: "cover", win: [{ t: 0, x0: 0, y0: 0, x1: 1, y1: 1 / 3 }] }))).toBeCloseTo(1 / 3, 9);
+    expect(pictureArea(p, newClip("media", 0, 2, { assetId: "nothing-here" }))).toBeCloseTo(1, 12); // unknown size fills
+  });
+
+  it("a backdrop never adds cuts, and a small sticker adds none either", () => {
+    const g = grid(120, 30);
+    const base = dnaFromProject(splitProject(), g).rhythm;
+    const noBackdrop = dnaFromProject(splitProject({ noBackdrop: true }), g).rhythm;
+    expect(noBackdrop.shotCount).toBe(base.shotCount);
+    // A backdrop starting off the grid (under the panels) still adds nothing.
+    const late = dnaFromProject(splitProject({ backdropStart: 4.3 }), g).rhythm;
+    expect(late).toEqual(base);
+    // Without the sticker: the same rhythm.
+    const p = splitProject();
+    p.tracks[0]!.clips = p.tracks[0]!.clips.filter((c) => c.id !== "S");
+    expect(dnaFromProject(p, g).rhythm).toEqual(base);
+    // An unblurred "backdrop" is a picture of its own: its start at 4.3 is then a cut.
+    const sharp = splitProject({ backdropStart: 4.3 });
+    sharp.tracks[4]!.clips.find((c) => c.id === "B")!.grade = {};
+    expect(dnaFromProject(sharp, g).rhythm.shotCount).toBe(base.shotCount + 1);
+  });
+
+  it("applyDna does not re-time a split screen, and says so", () => {
+    const p = splitProject();
+    const { dna } = fastOnBeat();
+    const r = applyDna(p, dna, { ...grid(120, 30), parts: ["rhythm"] });
+    expect(r.commands).toEqual([]);
+    expect(r.notes).toEqual(["This edit shows several pictures at once, so its cuts were not re-timed."]);
   });
 });

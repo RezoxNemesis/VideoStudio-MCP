@@ -48,6 +48,13 @@ export function setNode(p: Project, clipId: string, ref: string | number, patch:
   return merged;
 }
 
+/** Take the LUT off one node (the node and everything else on it stay). */
+export function clearLut(p: Project, clipId: string, ref: string | number): ColorNode {
+  const { node } = findNode(getClip(p, clipId), ref);
+  node.lut = undefined;
+  return node;
+}
+
 export function removeNode(p: Project, clipId: string, ref: string | number): number {
   const c = getClip(p, clipId);
   const { index } = findNode(c, ref);

@@ -1,4 +1,5 @@
 import { registerColorCommands } from "./agent/color";
+import { registerSmartCommands } from "./agent/smart";
 import "@fontsource-variable/geist";
 import "@fontsource/instrument-serif/latin-400.css";
 import { loadFonts } from "./render/fonts";
@@ -23,6 +24,7 @@ type ViewName = "edit" | "animate" | "voice" | "export" | "agent";
 async function main() {
   const studio = new Studio();
   registerColorCommands();
+  registerSmartCommands();
   const app = document.getElementById("app")!;
   app.replaceChildren(h("div", { class: "boot" }, h("div", { class: "logo" }, "VideoStudio"), h("p", {}, "Loading…")));
   try {

@@ -27,6 +27,8 @@ export interface ProRenderOptions {
   to?: number;
   name?: string;
   audio?: boolean;
+  /** Convert frames to the encoder's colour format (BT.709 NV12) on the GPU. Default true; false sends RGBA. */
+  gpuConvert?: boolean;
 }
 
 export interface ProProgress {
@@ -102,13 +104,17 @@ export class ProRender {
     }
     const name = (o.name ?? p.name).replace(/[^\w\- ]+/g, "").trim() || "VideoStudio";
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "_").slice(0, 15);
-    const enc = await vsd.enc.open({ width: W, height: H, fps, codec: o.codec ?? "auto", quality: o.quality ?? 88, name: `${name}_${stamp}`, audio });
+    // 4:2:0 outputs get their frames converted to NV12 on the GPU (less than half the bytes to read back and send).
+    const wantNV12 = o.gpuConvert !== false && W % 4 === 0 && H % 2 === 0;
+    const enc = await vsd.enc.open({ width: W, height: H, fps, codec: o.codec ?? "auto", quality: o.quality ?? 88, name: `${name}_${stamp}`, audio, input: wantNV12 ? "nv12" : "rgba" });
     audio = null;
+    const nv12 = enc.input === "nv12";
 
     const canvas = new OffscreenCanvas(W, H);
     const comp = new Compositor(canvas);
     const gl = comp.gl;
-    const bufs = [new Uint8Array(W * H * 4), new Uint8Array(W * H * 4)];
+    const frameBytes = nv12 ? W * H * 1.5 : W * H * 4;
+    const bufs = [new Uint8Array(frameBytes), new Uint8Array(frameBytes)];
     let pending: Promise<void> = Promise.resolve();
     let last = performance.now();
     /** Where the time went (ms per frame, averaged): building layers (decode, text, drawings), GPU draw + read-back, encoder hand-over. */
@@ -122,7 +128,8 @@ export class ProRender {
         const m1 = performance.now();
         comp.render(layers, W, H, p.background);
         const buf = bufs[i & 1]!;
-        gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        if (nv12) comp.readNV12(buf);
+        else gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
         const m2 = performance.now();
         await pending; // the previous frame is in ffmpeg's pipe before we hand over this one
         pending = vsd.enc.frame(enc.id, buf);
@@ -141,7 +148,7 @@ export class ProRender {
       const r = await vsd.enc.finish(enc.id);
       const renderSeconds = (performance.now() - t0) / 1000;
       this.onProgress({ frame: frames, frames, fps: frames / renderSeconds, stage: "done", etaSec: 0 });
-      return { path: r.path, name: r.path.split("/").pop(), bytes: r.bytes, seconds: to - from, width: W, height: H, fps, codec: r.codec, audio: o.audio === false ? "none" : r.path.endsWith(".mov") ? "pcm_s24le" : r.path.endsWith(".webm") ? "opus" : "aac 320k", renderSeconds: Math.round(renderSeconds * 10) / 10, speed: `${(frames / renderSeconds).toFixed(1)} fps`, msPerFrame: { layers: Math.round(prof.layers / frames), draw: Math.round(prof.draw / frames), encode: Math.round(prof.encode / frames) } };
+      return { path: r.path, name: r.path.split("/").pop(), bytes: r.bytes, seconds: to - from, width: W, height: H, fps, codec: r.codec, audio: o.audio === false ? "none" : r.path.endsWith(".mov") ? "pcm_s24le" : r.path.endsWith(".webm") ? "opus" : "aac 320k", frameFormat: nv12 ? "nv12 (converted on the GPU)" : "rgba", renderSeconds: Math.round(renderSeconds * 10) / 10, speed: `${(frames / renderSeconds).toFixed(1)} fps`, msPerFrame: { layers: Math.round(prof.layers / frames), draw: Math.round(prof.draw / frames), encode: Math.round(prof.encode / frames) } };
     } catch (e) {
       await pending.catch(() => {});
       await vsd.enc.abort(enc.id).catch(() => {});

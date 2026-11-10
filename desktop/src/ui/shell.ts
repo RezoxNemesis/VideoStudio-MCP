@@ -18,14 +18,17 @@ import { DesktopTimeline } from "./timeline";
 import { Deliver } from "./deliver";
 import { GraphEditor } from "./graph";
 import { Viewer } from "./viewer";
+import { ColorPage } from "./colorpage";
+import { DnaPanel, LensPanel } from "./insight";
 import { Scopes } from "./scopes";
 import { AgentStage } from "./stage";
 import { setLiveHooks } from "../../../src/agent/api";
 
-export type WsName = "edit" | "color" | "audio" | "animate" | "voice" | "deliver" | "claude";
+export type WsName = "edit" | "color" | "insight" | "audio" | "animate" | "voice" | "deliver" | "claude";
 const WS: [WsName, string, string][] = [
   ["edit", "Edit", "film"],
   ["color", "Color", "color"],
+  ["insight", "Insight", "eye"],
   ["audio", "Audio", "wave"],
   ["animate", "Animate", "brush"],
   ["voice", "Voice", "mic"],
@@ -67,6 +70,7 @@ export class Shell {
   private projEl: HTMLElement;
   readonly viewer: Viewer;
   readonly timeline: DesktopTimeline;
+  private colorPage!: ColorPage;
   private tlPanel: HTMLElement;
   private tlBody!: HTMLElement;
   private graph: GraphEditor;
@@ -103,8 +107,15 @@ export class Shell {
     this.ws.edit = h("div", { class: "d-ws ws-edit" }, this.library.el, insp.el);
     // Color workspace.
     const cinsp = panel("Color", "insp");
-    cinsp.body.append(new Scopes(s, this.viewer.preview).el, new Inspector(s, "color").el);
+    this.colorPage = new ColorPage(s, this.viewer.preview);
+    cinsp.body.append(new Scopes(s, this.viewer.preview).el, this.colorPage.el, h("div", { class: "cp-basic-head" }, "Basic grade"), new Inspector(s, "color").el);
     this.ws.color = h("div", { class: "d-ws ws-color" }, cinsp.el);
+    // Insight workspace: Audience Lens and Style DNA beside the viewer.
+    const lens = new LensPanel(s, { reveal: (t) => void this.timeline.reveal(t, t, true) });
+    const dna = new DnaPanel(s);
+    lens.el.classList.add("lensp");
+    dna.el.classList.add("dnap");
+    this.ws.insight = h("div", { class: "d-ws ws-insight" }, lens.el, dna.el);
     // Audio workspace.
     const aw = new AudioWorkspace(s);
     this.ws.audio = h("div", { class: "d-ws ws-audio" }, aw.lib, aw.wave, aw.mix);
@@ -268,7 +279,7 @@ export class Shell {
     if (n === "edit") {
       host.insertBefore(this.viewer.el, host.children[1] ?? null);
       host.append(this.tlPanel);
-    } else if (n === "color") {
+    } else if (n === "color" || n === "insight") {
       host.insertBefore(this.viewer.el, host.firstChild);
       host.append(this.tlPanel);
     } else if (n === "audio") host.append(this.tlPanel);
@@ -277,7 +288,8 @@ export class Shell {
       this.deliver.draw();
       void this.drawRenders();
     }
-    if (n !== "edit" && n !== "color") this.s.pause();
+    this.colorPage.shown(n === "color");
+    if (n !== "edit" && n !== "color" && n !== "insight") this.s.pause();
     this.tabsEl.replaceChildren(
       ...WS.map(([id, label, i]) => {
         const bt = h("button", { class: id === n ? "on" : "", type: "button", title: `${label} workspace` }, ic(i, 14), label);
@@ -594,7 +606,7 @@ export class Shell {
       if (ctrl && k.toLowerCase() === "q") return void vsd?.win.close();
       if (k === "F11") return e.preventDefault(), void vsd?.win.fullscreen();
       // Editing keys apply in the timeline workspaces only (Animate has its own).
-      if (!["edit", "color", "audio"].includes(this.cur)) return;
+      if (!["edit", "color", "insight", "audio"].includes(this.cur)) return;
       const tp = this.viewer.transport;
       const tl = this.timeline;
       if (ctrl && k.toLowerCase() === "z") return e.preventDefault(), e.shiftKey ? this.s.redo() : this.s.undo();

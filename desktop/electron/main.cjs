@@ -864,7 +864,10 @@ async function encOpen(o) {
   const v = videoArgs(codec, o.quality ?? 85, c);
   const dir = OUT.Movies;
   const out = await uniquePath(dir, `${String(o.name || "VideoStudio").replace(/\.(mp4|mov|webm)$/i, "")}.${v.ext}`);
-  const args = ["-hide_banner", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${o.width}x${o.height}`, "-framerate", String(o.fps), "-i", "pipe:0"];
+  // Frames arrive either as RGBA (bottom row first, as the GPU reads them) or — for 4:2:0 outputs — already converted on
+  // the GPU to broadcast BT.709 NV12, top row first: under half the bytes to read back, send and encode.
+  const nv12 = o.input === "nv12" && codec !== "prores" && codec !== "prores4444";
+  const args = ["-hide_banner", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", nv12 ? "nv12" : "rgba", "-s", `${o.width}x${o.height}`, "-framerate", String(o.fps), ...(nv12 ? ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"] : []), "-i", "pipe:0"];
   let wav = null;
   if (o.audio && o.audio.byteLength) {
     wav = path.join(os.tmpdir(), `vsd-mix-${crypto.randomUUID()}.wav`);
@@ -874,7 +877,7 @@ async function encOpen(o) {
   // RGBA from the compositor → broadcast BT.709 YUV with correct matrix and range.
   // WebGL readPixels rows are bottom-up: flip, then RGBA → broadcast BT.709 YUV with the right matrix and range.
   const vf = codec === "prores4444" ? "vflip,format=rgba" : "vflip,scale=in_range=full:out_range=tv:out_color_matrix=bt709:flags=accurate_rnd+full_chroma_int";
-  args.push("-map", "0:v", ...(wav ? ["-map", "1:a"] : []), "-vf", vf, ...v.args, "-r", String(o.fps));
+  args.push("-map", "0:v", ...(wav ? ["-map", "1:a"] : []), ...(nv12 ? [] : ["-vf", vf]), ...v.args, "-r", String(o.fps));
   if (wav) args.push(...(v.audio || ["-c:a", "aac", "-b:a", "320k", "-ar", "48000"]), "-shortest");
   if (v.ext === "mp4") args.push("-movflags", "+faststart");
   args.push(`${out}.part.${v.ext}`);
@@ -885,8 +888,8 @@ async function encOpen(o) {
   const done = new Promise((res) => p.on("close", (code) => res(code)));
   p.stdin.on("error", () => {});
   const id = crypto.randomUUID();
-  encoders.set(id, { p, out, tmp: `${out}.part.${v.ext}`, wav, done, err: () => err, codec, frames: 0, bytesPerFrame: o.width * o.height * 4 });
-  return { id, path: out, codec };
+  encoders.set(id, { p, out, tmp: `${out}.part.${v.ext}`, wav, done, err: () => err, codec, frames: 0, bytesPerFrame: nv12 ? o.width * o.height * 1.5 : o.width * o.height * 4 });
+  return { id, path: out, codec, input: nv12 ? "nv12" : "rgba" };
 }
 async function encFrame(id, data) {
   const e = encoders.get(id);

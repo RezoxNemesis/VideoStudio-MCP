@@ -87,7 +87,7 @@ export interface Vsd {
   openExternal(url: string): Promise<void>;
   enc: {
     caps(): Promise<EncCaps>;
-    open(o: { width: number; height: number; fps: number; codec: string; quality?: number; name: string; audio?: Uint8Array | null }): Promise<{ id: string; path: string; codec: string }>;
+    open(o: { width: number; height: number; fps: number; codec: string; quality?: number; name: string; audio?: Uint8Array | null; input?: "rgba" | "nv12" }): Promise<{ id: string; path: string; codec: string; input?: "rgba" | "nv12" }>;
     frame(id: string, data: Uint8Array): Promise<void>;
     finish(id: string): Promise<{ path: string; bytes: number; codec: string; frames: number }>;
     abort(id: string): Promise<void>;

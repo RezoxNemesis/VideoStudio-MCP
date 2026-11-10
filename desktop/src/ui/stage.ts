@@ -25,7 +25,8 @@ export interface StageUi {
 
 const QUIET = /^(state|help|undo|redo|.*\.(list|get|probe|peek|status|info|caps|roots|find|version|crashLog|screenshot|thumb|sheet|backup|save)|fs\..*|desktop\..*|system\..*|smartfill\.status|ui\.notify)$/;
 const PAGE: [RegExp, string][] = [
-  [/^clip\.(grade|wheels|look|duotone)$/, "color"],
+  [/^(clip\.(grade|wheels|look|duotone)$|color\.)/, "color"],
+  [/^(lens\.|dna\.)/, "insight"],
   [/^(audio\.|sfx\.|music\.)/, "audio"],
   [/^voice\./, "voice"],
   [/^render\.(start|pro)$/, "deliver"],
@@ -126,7 +127,7 @@ export class AgentStage implements LiveHooks {
     }
     // 2) The thing being worked on.
     const clipId = this.clipOf(args);
-    if (clipId && ["edit", "color", "audio"].includes(this.ui.current())) {
+    if (clipId && ["edit", "color", "insight", "audio"].includes(this.ui.current())) {
       const c = this.find(clipId);
       if (c) {
         await this.ui.timeline.reveal(c.start, c.start + c.dur, animate);
@@ -161,7 +162,7 @@ export class AgentStage implements LiveHooks {
     if (this.pace === "off" || QUIET.test(op)) return;
     const res = r.result as { id?: string; clipId?: string } | undefined;
     const id = this.clipOf(args) ?? (typeof res?.id === "string" && this.find(res.id) ? res.id : typeof res?.clipId === "string" ? res.clipId : null);
-    if (id && ["edit", "color", "audio"].includes(this.ui.current())) {
+    if (id && ["edit", "color", "insight", "audio"].includes(this.ui.current())) {
       const c = this.find(id);
       if (c) {
         if (!this.clipOf(args)) await this.ui.timeline.reveal(c.start, c.start + c.dur, this.stepMs >= 60);
@@ -218,6 +219,56 @@ export class AgentStage implements LiveHooks {
       case "clip.look":
       case "clip.duotone":
         return `Colour: ${op.split(".")[1]} on ${clip()}`;
+      case "color.node.add":
+        return `Add a ${a.kind === "layer" ? "layer" : "grading"} node${a.name ? ` “${short(a.name, 20)}”` : ""} to ${clip()}`;
+      case "color.node.set":
+        return `Adjust node ${short(a.node, 16)} on ${clip()}`;
+      case "color.node.remove":
+        return `Remove node ${short(a.node, 16)} from ${clip()}`;
+      case "color.node.move":
+        return `Reorder the nodes of ${clip()}`;
+      case "color.node.reset":
+        return `Reset node ${short(a.node, 16)} on ${clip()}`;
+      case "color.curve":
+        return `${a.reset ? "Reset" : "Draw"} the ${({ m: "master", r: "red", g: "green", b: "blue", hh: "hue-vs-hue", hs: "hue-vs-saturation", hl: "hue-vs-brightness", ls: "brightness-vs-saturation", ss: "saturation-vs-saturation" } as Record<string, string>)[String(a.curve ?? "m")] ?? "custom"} curve on ${clip()}`;
+      case "color.qualifier":
+        return a.off ? `Remove the colour selection on ${clip()}` : `Select ${a.preset ? short(a.preset, 14) : a.color ? `the colour ${a.color}` : "a colour range"} on ${clip()}`;
+      case "color.window":
+        return a.off ? `Remove the window on ${clip()}` : `Place a ${a.shape ?? ""} window on ${clip()}`.replace("  ", " ");
+      case "color.lut.apply":
+        return `Apply the LUT “${short(a.lut, 24)}”`;
+      case "color.lut.import":
+        return `Import the LUT ${base(a.path)}`;
+      case "color.lut.add":
+        return `Add the LUT “${short(a.name, 24)}”`;
+      case "color.lut.export":
+        return `Save the grade of ${clip()} as a LUT`;
+      case "color.match":
+        return `Match the colour of ${clip()} to the reference`;
+      case "color.auto":
+        return `Auto balance ${clip()}`;
+      case "color.copy":
+        return "Copy the grade to other clips";
+      case "color.reset":
+        return `Reset the colour of ${clip()}`;
+      case "color.view":
+        return a.bypass !== undefined ? (a.bypass ? "Show the picture without the grade" : "Show the grade again") : a.split !== undefined ? "Compare graded and ungraded" : "Show the node's selection";
+      case "color.stats":
+        return `Measure the colour of ${clip()}`;
+      case "lens.run":
+        return "Audience Lens: look at the edit like a viewer";
+      case "lens.fix":
+        return "Audience Lens: apply a fix";
+      case "lens.evolve":
+        return "Evolve the edit: apply every safe fix and look again";
+      case "dna.extract":
+        return "Style DNA: measure the feel of a video";
+      case "dna.fromProject":
+        return a.signature ? "Style DNA: learn from this project" : "Style DNA: measure this edit";
+      case "dna.apply":
+        return `Style DNA: transplant “${short(a.name, 22)}” onto this edit`;
+      case "dna.compare":
+        return `Style DNA: compare this edit with “${short(a.name, 22)}”`;
       case "clip.crop":
         return `Crop ${clip()}`;
       case "fx.window":

@@ -7,20 +7,25 @@
  *
  * Rules used throughout (a reviewer should read these first):
  *
- *  Shots of a project. A clip is a "shot" when it is on a visible video track and is picture that fills the frame:
- *   - kind "media" whose asset is a video or an image (or whose asset is missing from the project: still picture),
- *     or kind "anim" whose scene has an opaque background (scene.background !== ""; procedural captions, motion
- *     graphics and overlays are made on transparent scenes, so they are not shots);
- *   - and, measured at the middle of the clip: blend "normal", opacity ≥ 0.99, scale × scaleX and scale × scaleY
- *     ≥ 0.95, |x| and |y| ≤ 5 % of the frame, no chroma key, no mask, no frame window, no corner pin, and no crop side
- *     above 5 %. Anything else (picture-in-picture, keyed or blended layers, text, shapes, colour cards, adjustment
- *     clips, audio) is not a shot.
- *  Cuts of a project. Every start and end of a shot is a candidate; candidates within one frame (1 / fps) are one
- *  candidate, at the earliest time. A candidate is a cut when the topmost shot just before it differs from the
- *  topmost shot just after it (a cut hidden under a full-frame shot on a higher track is not a visible cut), unless
- *  the two are a "through edit" (the same asset continuing at the same speed from the source frame where the first
- *  one stopped). Running from or into empty picture (black) is a cut, so a gap counts as a (black) shot. The running
- *  time is 0 .. the end of the last shot; cuts at 0 and at the end are not cuts.
+ *  Picture clips that take part (measuring). A clip takes part when it is on a visible video track, is kind "media"
+ *  whose asset is a video or an image (or whose asset is missing), or kind "anim" whose scene has an opaque
+ *  background (scene.background !== ""; procedural captions and overlays are transparent scenes), has blend
+ *  "normal", opacity ≥ 0.9 at its middle, no chroma key, and covers at least 12 % of the frame at its middle
+ *  (pictureArea: source size → crop → fit → scale × scaleX / scaleY → centred at frame centre + (x, y) → clipped to
+ *  the frame → ∩ frame window → × mask w × h; rotation and corner pin ignored). Split-screen panels take part; small
+ *  stickers, text, shapes, colour cards, adjustment clips and audio do not.
+ *  Backdrops. A taking-part clip whose blur (grade.blur, constant or first key) is ≥ 20 px at a 1920-high frame and
+ *  that has other taking-part clips on higher tracks over ≥ 80 % of its length (their union) is a backdrop: it never
+ *  creates a cut and is not a shot. A "shot" (isShotClip) is a taking-part clip that is not a backdrop.
+ *  Cuts of a project. Every start and end of a shot is a candidate, and candidates within one frame (1 / fps) are one
+ *  moment, at the earliest time. A moment is a cut when at least one of its boundaries is real. A boundary is not real
+ *  when it belongs to a through edit (the same asset on the same track continuing at the same speed from the source
+ *  frame where the first clip stopped), or when, at that moment, a full-frame taking-part clip on a higher track
+ *  covers both sides of it (full frame = covers ≥ 95 % of the frame, opacity ≥ 0.99, no mask, window or pin). Running
+ *  from or into empty picture (black) is a cut, so a gap counts as a (black) shot. The running time is 0 .. the end of
+ *  the last taking-part clip; moments at 0 and at the end are not cuts. Shot lengths are the gaps between cuts.
+ *  Re-timing (applyDna "rhythm") is stricter: it only works on one clean sequence of full-frame shots (see
+ *  isFullFrameShot) and refuses split screens.
  *  Beats. Beat period = 60 / bpm when bpm is given, otherwise the median gap between the given beats (at least two
  *  needed). Downbeats alone never give a period. For "on the beat", the beat grid is beats ∪ downbeats, and a cut is
  *  on the beat when it is within 80 ms of a grid time (on a downbeat: within 80 ms of a downbeat).
@@ -33,6 +38,7 @@
  *  Minimum shot. Planned cuts are never closer than 0.25 s to each other, to 0 or to the end (tested with a 1e-9 s
  *  tolerance for floating point).
  */
+import { evaluateClip } from "../core/evaluate";
 import { isAnimated, valueAt } from "../core/keyframes";
 import { findAsset, findScene, projectDuration, type Animatable, type Clip, type Project, type Track } from "../core/model";
 import type { ColourStats } from "../color/types";
@@ -311,16 +317,157 @@ function tv(c: Clip, prop: "x" | "y" | "scale" | "scaleX" | "scaleY" | "opacity"
   return valueAt(c.transform[prop], local, d);
 }
 
-/** Is this clip a frame-filling picture clip (a "shot")? See the rules at the top of the file. */
-export function isShotClip(p: Project, c: Clip): boolean {
+/** Picture kinds that can be a shot: media with a video/image asset (or a missing asset), or an opaque scene. */
+function isPictureKind(p: Project, c: Clip): boolean {
   if (!(c.dur > 0)) return false;
   if (c.kind === "media") {
     const a = findAsset(p, c.assetId);
-    if (a && a.kind !== "video" && a.kind !== "image") return false;
-  } else if (c.kind === "anim") {
+    return !a || a.kind === "video" || a.kind === "image";
+  }
+  if (c.kind === "anim") {
     const s = findScene(p, c.sceneId);
-    if (!s || s.background === "") return false;
-  } else return false;
+    return !!s && s.background !== "";
+  }
+  return false;
+}
+
+/**
+ * Share of the frame (0..1) a picture clip covers at clip-local time `local`, following the compositor: the source
+ * (asset or scene size; the frame size when unknown) is cropped, fitted (none: source pixels; fill: the frame;
+ * contain / cover: the cropped source times min / max of frameW / srcW and frameH / srcH), scaled by
+ * scale × scaleX / scale × scaleY, centred at the frame centre plus (x, y), clipped to the frame, intersected with
+ * the frame window `win` when present, and multiplied by the mask's w × h (× π/4 for an ellipse; 1 − that when
+ * inverted) when a mask is on. Rotation and corner pin are ignored.
+ */
+export function pictureArea(p: Project, c: Clip, local = c.dur / 2): number {
+  const W = p.width > 0 ? p.width : 1080;
+  const H = p.height > 0 ? p.height : 1920;
+  let aw = W;
+  let ah = H;
+  if (c.kind === "media") {
+    const a = findAsset(p, c.assetId);
+    if (a && a.width > 0 && a.height > 0) {
+      aw = a.width;
+      ah = a.height;
+    }
+  } else if (c.kind === "anim") {
+    const sc = findScene(p, c.sceneId);
+    if (sc && sc.width > 0 && sc.height > 0) {
+      aw = sc.width;
+      ah = sc.height;
+    }
+  }
+  const cr = c.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+  const sw = aw * Math.max(0.02, 1 - clamp(cr.l, 0, 1) - clamp(cr.r, 0, 1));
+  const sh = ah * Math.max(0.02, 1 - clamp(cr.t, 0, 1) - clamp(cr.b, 0, 1));
+  let qw = sw;
+  let qh = sh;
+  if (c.fit === "fill") {
+    qw = W;
+    qh = H;
+  } else if (c.fit === "contain" || c.fit === "cover") {
+    const k = c.fit === "cover" ? Math.max(W / sw, H / sh) : Math.min(W / sw, H / sh);
+    qw = sw * k;
+    qh = sh * k;
+  }
+  const sc = tv(c, "scale", local);
+  const w = qw * Math.abs(sc * tv(c, "scaleX", local));
+  const h = qh * Math.abs(sc * tv(c, "scaleY", local));
+  const cx = W / 2 + tv(c, "x", local);
+  const cy = H / 2 + tv(c, "y", local);
+  let x0 = Math.max(0, cx - w / 2);
+  let y0 = Math.max(0, cy - h / 2);
+  let x1 = Math.min(W, cx + w / 2);
+  let y1 = Math.min(H, cy + h / 2);
+  if (c.win && c.win.length) {
+    const wv = evaluateClip(p, c, c.start + local).win;
+    if (wv) {
+      x0 = Math.max(x0, Math.min(wv[0], wv[2]) * W);
+      x1 = Math.min(x1, Math.max(wv[0], wv[2]) * W);
+      y0 = Math.max(y0, Math.min(wv[1], wv[3]) * H);
+      y1 = Math.min(y1, Math.max(wv[1], wv[3]) * H);
+    }
+  }
+  let area = (Math.max(0, x1 - x0) * Math.max(0, y1 - y0)) / (W * H);
+  if (c.mask && c.mask.shape !== "none") {
+    const m = clamp(c.mask.w, 0, 1) * clamp(c.mask.h, 0, 1) * (c.mask.shape === "ellipse" ? Math.PI / 4 : 1);
+    area *= c.mask.invert ? 1 - m : m;
+  }
+  return fin(area) ? clamp(area, 0, 1) : 0;
+}
+
+/** Takes part in the picture (before the backdrop test): see the rules at the top of the file. */
+function takesPart(p: Project, c: Clip): boolean {
+  if (!isPictureKind(p, c)) return false;
+  if (c.blend !== "normal" || c.chroma?.enabled) return false;
+  const mid = c.dur / 2;
+  if (tv(c, "opacity", mid) < 0.9) return false;
+  return pictureArea(p, c, mid) >= 0.12;
+}
+
+/** Opaque and covering (almost) the whole frame at timeline time t — what can hide a cut beneath it. */
+function fullFrameAt(p: Project, c: Clip, t: number): boolean {
+  if (c.mask && c.mask.shape !== "none") return false;
+  if (c.win && c.win.length) return false;
+  if (c.pin) return false;
+  const local = clamp(t - c.start, 0, c.dur);
+  return tv(c, "opacity", local) >= 0.99 && pictureArea(p, c, local) >= 0.95;
+}
+
+/** Blur at the clip start in px of a 1920-high frame (constant, or the first key). */
+function blurPx(p: Project, c: Clip): number {
+  const b = c.grade.blur;
+  const v = typeof b === "number" ? b : Array.isArray(b) && b.length ? b[0]!.v : 0;
+  return (v * 1920) / Math.max(1, p.height);
+}
+
+/** Every taking-part clip of the visible video tracks, with the backdrops marked. */
+function picturesOf(p: Project): { all: Shot[]; backdrops: Set<Clip> } {
+  const all: Shot[] = [];
+  p.tracks.forEach((track, layer) => {
+    if (track.kind !== "video" || track.hidden) return;
+    for (const clip of track.clips) if (takesPart(p, clip)) all.push({ clip, track, layer, start: clip.start, end: clip.start + clip.dur });
+  });
+  const backdrops = new Set<Clip>();
+  for (const s of all) {
+    if (blurPx(p, s.clip) < 20) continue;
+    // How much of its length is under other taking-part clips on higher tracks (their union).
+    const iv = all
+      .filter((o) => o.layer < s.layer && o.start < s.end && o.end > s.start)
+      .map((o) => [Math.max(s.start, o.start), Math.min(s.end, o.end)] as const)
+      .sort((x, y) => x[0] - y[0]);
+    let covered = 0;
+    let curA = -Infinity;
+    let curB = -Infinity;
+    for (const [a, b] of iv) {
+      if (a > curB) {
+        if (curB > curA) covered += curB - curA;
+        curA = a;
+        curB = b;
+      } else curB = Math.max(curB, b);
+    }
+    if (curB > curA) covered += curB - curA;
+    if (covered >= 0.8 * (s.end - s.start) - 1e-9) backdrops.add(s.clip);
+  }
+  return { all, backdrops };
+}
+
+/**
+ * Is this clip a shot for measuring (also used by the app to pick clips for colour)? True for every taking-part
+ * picture clip that is not a backdrop — split-screen panels included. See the rules at the top of the file.
+ */
+export function isShotClip(p: Project, c: Clip): boolean {
+  const { all, backdrops } = picturesOf(p);
+  return all.some((s) => s.clip === c) && !backdrops.has(c);
+}
+
+/**
+ * The stricter test the rhythm re-timing uses: one picture filling the frame on its own. Measured at the middle of
+ * the clip: blend normal, opacity ≥ 0.99, scale × scaleX and scale × scaleY ≥ 0.95, |x| and |y| ≤ 5 % of the frame,
+ * no chroma key, mask, frame window or corner pin, no crop side above 5 %.
+ */
+function isFullFrameShot(p: Project, c: Clip): boolean {
+  if (!isPictureKind(p, c)) return false;
   const mid = c.dur / 2;
   if (c.blend !== "normal") return false;
   if (tv(c, "opacity", mid) < 0.99) return false;
@@ -335,51 +482,54 @@ export function isShotClip(p: Project, c: Clip): boolean {
   return true;
 }
 
-function shotsOf(p: Project): Shot[] {
-  const out: Shot[] = [];
-  p.tracks.forEach((track, layer) => {
-    if (track.kind !== "video" || track.hidden) return;
-    for (const clip of track.clips) if (isShotClip(p, clip)) out.push({ clip, track, layer, start: clip.start, end: clip.start + clip.dur });
-  });
-  return out;
-}
-
-function topAt(shots: readonly Shot[], t: number): Shot | undefined {
-  let best: Shot | undefined;
-  for (const s of shots) if (s.start <= t && t < s.end && (!best || s.layer < best.layer)) best = s;
-  return best;
-}
-
-function throughEdit(a: Clip, b: Clip, frame: number): boolean {
-  if (!a.assetId || a.assetId !== b.assetId || a.kind !== "media" || b.kind !== "media") return false;
-  if (a.reverse || b.reverse || a.hold || b.hold || a.speedKeys?.length || b.speedKeys?.length) return false;
-  if (Math.abs(a.speed - b.speed) > 1e-6) return false;
-  if (Math.abs(a.start + a.dur - b.start) > frame) return false;
-  return Math.abs(a.in + a.dur * a.speed - b.in) <= frame * Math.max(1, a.speed);
+function throughEdit(a: Shot, b: Shot, frame: number): boolean {
+  if (a.track !== b.track) return false;
+  const x = a.clip;
+  const y = b.clip;
+  if (!x.assetId || x.assetId !== y.assetId || x.kind !== "media" || y.kind !== "media") return false;
+  if (x.reverse || y.reverse || x.hold || y.hold || x.speedKeys?.length || y.speedKeys?.length) return false;
+  if (Math.abs(x.speed - y.speed) > 1e-6) return false;
+  if (Math.abs(x.start + x.dur - y.start) > frame) return false;
+  return Math.abs(x.in + x.dur * x.speed - y.in) <= frame * Math.max(1, x.speed);
 }
 
 interface CutInfo {
   t: number;
-  before?: Shot;
-  after?: Shot;
+  /** Clips whose end / start make this cut. */
+  ends: Clip[];
+  starts: Clip[];
 }
 
-function cutsOf(p: Project, shots: readonly Shot[], duration: number): CutInfo[] {
+/**
+ * Cuts: moments where the set of visible picture clips changes (see the rules at the top of the file). `shots` are
+ * the non-backdrop taking-part clips; `all` also holds the backdrops (they can hide nothing and cut nothing, but a
+ * full-frame clip of any kind hides boundaries beneath it).
+ */
+function cutsOf(p: Project, shots: readonly Shot[], all: readonly Shot[], duration: number): CutInfo[] {
   const frame = 1 / Math.max(1, fin(p.fps) ? p.fps : 30);
-  const cand = cleanTimes(shots.flatMap((s) => [s.start, s.end])).filter((t) => t > frame / 2 && t < duration - frame / 2);
-  const groups: { lo: number; hi: number }[] = [];
-  for (const t of cand) {
+  type B = { t: number; s: Shot; edge: "start" | "end" };
+  const bounds: B[] = [];
+  for (const s of shots) {
+    bounds.push({ t: s.start, s, edge: "start" }, { t: s.end, s, edge: "end" });
+  }
+  const live = bounds.filter((b) => b.t > frame / 2 && b.t < duration - frame / 2).sort((a, b) => a.t - b.t);
+  const hidden = (b: B): boolean =>
+    all.some((o) => o.layer < b.s.layer && o.start < b.t - 1e-6 && o.end > b.t + 1e-6 && fullFrameAt(p, o.clip, b.t));
+  const through = (b: B): boolean =>
+    b.edge === "end"
+      ? shots.some((o) => o !== b.s && Math.abs(o.start - b.t) <= frame && throughEdit(b.s, o, frame))
+      : shots.some((o) => o !== b.s && Math.abs(o.end - b.t) <= frame && throughEdit(o, b.s, frame));
+  const groups: B[][] = [];
+  for (const b of live) {
     const g = groups[groups.length - 1];
-    if (g && t - g.lo < frame - 1e-9) g.hi = t;
-    else groups.push({ lo: t, hi: t });
+    if (g && b.t - g[0]!.t < frame - 1e-9) g.push(b);
+    else groups.push([b]);
   }
   const out: CutInfo[] = [];
   for (const g of groups) {
-    const before = topAt(shots, g.lo - 1e-6);
-    const after = topAt(shots, g.hi + 1e-6);
-    if (before === after) continue;
-    if (before && after && throughEdit(before.clip, after.clip, frame)) continue;
-    out.push({ t: g.lo, before, after });
+    const real = g.filter((b) => !through(b) && !hidden(b));
+    if (!real.length) continue;
+    out.push({ t: g[0]!.t, ends: real.filter((b) => b.edge === "end").map((b) => b.s.clip), starts: real.filter((b) => b.edge === "start").map((b) => b.s.clip) });
   }
   return out;
 }
@@ -434,10 +584,8 @@ function measureType(p: Project): Dna["type"] | undefined {
 }
 
 function transitionAt(cut: CutInfo): string {
-  const out = cut.before?.clip.transitionOut;
-  if (out && out.kind !== "none" && out.dur > 0) return out.kind;
-  const inn = cut.after?.clip.transitionIn;
-  if (inn && inn.kind !== "none" && inn.dur > 0) return inn.kind;
+  for (const c of cut.ends) if (c.transitionOut.kind !== "none" && c.transitionOut.dur > 0) return c.transitionOut.kind;
+  for (const c of cut.starts) if (c.transitionIn.kind !== "none" && c.transitionIn.dur > 0) return c.transitionIn.kind;
   return "cut";
 }
 
@@ -457,9 +605,10 @@ function measureMotion(shots: readonly Shot[], cuts: readonly CutInfo[]): Dna["m
  * and `motion` when there is no shot.
  */
 export function dnaFromProject(p: Project, o: { name?: string; beats?: number[]; downbeats?: number[]; bpm?: number; colour?: ColourStats } = {}): Dna {
-  const shots = shotsOf(p);
-  const duration = shots.reduce((m, s) => Math.max(m, s.end), 0);
-  const cuts = cutsOf(p, shots, duration);
+  const { all, backdrops } = picturesOf(p);
+  const shots = all.filter((s) => !backdrops.has(s.clip));
+  const duration = all.reduce((m, s) => Math.max(m, s.end), 0);
+  const cuts = cutsOf(p, shots, all, duration);
   const dna = dnaFromCuts({ name: o.name ?? p.name, cuts: cuts.map((c) => c.t), duration, beats: o.beats, downbeats: o.downbeats, bpm: o.bpm, colour: o.colour });
   dna.source = "project";
   const type = measureType(p);
@@ -884,7 +1033,16 @@ function fitCount(cuts: number[], want: number, S: number, E: number, grid: read
  * given to shots with room, in proportion to their room (`limited` counts the shots that hit their limit).
  */
 export function planRetime(p: Project, dna: Dna, o: BeatInfo & { seed?: number } = {}): RetimePlan {
-  const shots = shotsOf(p).sort((a, b) => a.start - b.start || a.layer - b.layer);
+  // Split screen: a picture that is not a full-frame shot shares the screen with another picture.
+  const pics = picturesOf(p);
+  const partial = pics.all.filter((s) => !pics.backdrops.has(s.clip) && !isFullFrameShot(p, s.clip));
+  if (partial.some((s) => pics.all.some((o) => o !== s && o.start < s.end - 1e-4 && o.end > s.start + 1e-4))) return { ok: false, reason: "This edit shows several pictures at once, so its cuts were not re-timed." };
+  const shots: Shot[] = [];
+  p.tracks.forEach((track, layer) => {
+    if (track.kind !== "video" || track.hidden) return;
+    for (const clip of track.clips) if (isFullFrameShot(p, clip)) shots.push({ clip, track, layer, start: clip.start, end: clip.start + clip.dur });
+  });
+  shots.sort((a, b) => a.start - b.start || a.layer - b.layer);
   if (shots.length < 2) return { ok: false, reason: shots.length ? "There is only one shot, so there is nothing to re-time." : "There are no shots (full-frame video, image or scene clips) to re-time." };
   const frame = 1 / Math.max(1, fin(p.fps) ? p.fps : 30);
   for (let i = 1; i < shots.length; i++) {
@@ -1052,8 +1210,9 @@ function typeCommands(p: Project, t: NonNullable<Dna["type"]>, notes: string[]):
 }
 
 function motionNotes(p: Project, m: NonNullable<Dna["motion"]>, notes: string[]): void {
-  const shots = shotsOf(p);
-  const own = measureMotion(shots, cutsOf(p, shots, shots.reduce((x, s) => Math.max(x, s.end), 0)));
+  const { all, backdrops } = picturesOf(p);
+  const shots = all.filter((s) => !backdrops.has(s.clip));
+  const own = measureMotion(shots, cutsOf(p, shots, all, all.reduce((x, s) => Math.max(x, s.end), 0)));
   const ownMoving = own?.movingShare ?? 0;
   const pct = (x: number) => `${Math.round(x * 100)}%`;
   if (m.movingShare - ownMoving > 0.15) notes.push(`The style moves ${pct(m.movingShare)} of its shots (pushes, pans); yours move ${pct(ownMoving)}. Try clip.kenBurns on some still shots.`);

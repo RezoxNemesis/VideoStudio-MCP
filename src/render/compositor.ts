@@ -406,6 +406,39 @@ void main() {
   o = vec4(c.rgb + uBg.rgb * (1.0 - c.a), 1.0);
 }`;
 
+/**
+ * Pack the finished frame as broadcast BT.709 NV12 (limited range) into an RGBA target a quarter as wide and one and
+ * a half times as tall: each output texel holds four consecutive bytes of the NV12 stream, top row first — the luma
+ * plane, then the interleaved chroma plane (each chroma sample the average of its 2×2 pixels). Reading that target
+ * back gives the encoder its input directly, at 1.5 bytes a pixel instead of 4.
+ */
+const FS_NV12 = `#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec2 uSize;
+out vec4 o;
+const vec3 K = vec3(0.2126, 0.7152, 0.0722);
+float Y(ivec2 p) { return (16.0 + 219.0 * dot(texelFetch(uTex, p, 0).rgb, K)) / 255.0; }
+vec2 UV(vec2 uv) {
+  vec3 c = texture(uTex, uv).rgb;
+  float y = dot(c, K);
+  return vec2(128.0 + 224.0 * (c.b - y) / 1.8556, 128.0 + 224.0 * (c.r - y) / 1.5748) / 255.0;
+}
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  int W = int(uSize.x);
+  int H = int(uSize.y);
+  if (p.y < H) {
+    int row = H - 1 - p.y;
+    o = vec4(Y(ivec2(p.x * 4, row)), Y(ivec2(p.x * 4 + 1, row)), Y(ivec2(p.x * 4 + 2, row)), Y(ivec2(p.x * 4 + 3, row)));
+  } else {
+    float v = (uSize.y - float(2 * (p.y - H) + 1)) / uSize.y;
+    vec2 a = UV(vec2(float(4 * p.x + 1) / uSize.x, v));
+    vec2 b = UV(vec2(float(4 * p.x + 3) / uSize.x, v));
+    o = vec4(a.x, a.y, b.x, b.y);
+  }
+}`;
+
 const BLEND_ID: Record<BlendMode, number> = { normal: 0, add: 1, multiply: 2, screen: 3, overlay: 4, darken: 5, lighten: 6 };
 
 interface Target {
@@ -436,7 +469,9 @@ export class Compositor {
   readonly gl: WebGL2RenderingContext;
   private quad: WebGLBuffer;
   private vao: WebGLVertexArrayObject;
-  private progs: Record<"layer" | "blur" | "blend" | "adjust" | "out" | "glow" | "addglow", Prog>;
+  private progs: Record<"layer" | "blur" | "blend" | "adjust" | "out" | "glow" | "addglow" | "nv12", Prog>;
+  private last: { acc: Target; bg: [number, number, number] } | null = null;
+  private pack: Target | null = null;
   private targets: Target[] = [];
   private texCache = new Map<string, { tex: WebGLTexture; version: string; used: number }>();
   private frame = 0;
@@ -481,6 +516,7 @@ export class Compositor {
       out: this.program(VS_FULL, FS_OUT),
       glow: this.program(VS_FULL, FS_GLOW),
       addglow: this.program(VS_FULL, FS_ADDGLOW),
+      nv12: this.program(VS_FULL, FS_NV12),
     };
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
   }
@@ -846,7 +882,63 @@ export class Compositor {
     const bg = hexRgb(background);
     gl.uniform4f(this.loc(po, "uBg"), bg[0], bg[1], bg[2], 1);
     this.fullQuad();
+    this.last = { acc, bg };
     this.evict();
+  }
+
+  /** Bytes of one NV12 frame at the current size. */
+  get nv12Bytes(): number {
+    return this.width * this.height * 1.5;
+  }
+  /** True when the frame size allows the packed NV12 read-back (width a multiple of 4, height even). */
+  get canNV12(): boolean {
+    return this.width % 4 === 0 && this.height % 2 === 0;
+  }
+
+  /**
+   * Read the frame just rendered as BT.709 limited-range NV12, top row first, into `out` (width × height × 1.5 bytes).
+   * The conversion and the 4:2:0 chroma averaging happen on the GPU.
+   */
+  readNV12(out: Uint8Array): void {
+    const gl = this.gl;
+    if (!this.last) throw new Error("Nothing has been rendered yet.");
+    if (!this.canNV12) throw new Error("NV12 read-back needs a width that is a multiple of 4 and an even height.");
+    if (out.byteLength < this.nv12Bytes) throw new Error("The NV12 buffer is too small.");
+    gl.disable(gl.BLEND);
+    // The finished frame (layers over the background) as a texture.
+    const fin = this.target(4);
+    const po = this.use("out");
+    this.bindTarget(fin);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.last.acc.tex);
+    gl.uniform1i(this.loc(po, "uTex"), 0);
+    gl.uniform4f(this.loc(po, "uBg"), this.last.bg[0], this.last.bg[1], this.last.bg[2], 1);
+    this.fullQuad();
+    const pw = this.width / 4;
+    const ph = this.height * 1.5;
+    if (!this.pack || this.pack.w !== pw || this.pack.h !== ph) {
+      if (this.pack) {
+        gl.deleteFramebuffer(this.pack.fb);
+        gl.deleteTexture(this.pack.tex);
+      }
+      const tex = this.newTexture();
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, pw, ph, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      const fb = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      this.pack = { fb, tex, w: pw, h: ph };
+    }
+    const pn = this.use("nv12");
+    this.bindTarget(this.pack);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fin.tex);
+    gl.uniform1i(this.loc(pn, "uTex"), 0);
+    gl.uniform2f(this.loc(pn, "uSize"), this.width, this.height);
+    this.fullQuad();
+    gl.readPixels(0, 0, pw, ph, gl.RGBA, gl.UNSIGNED_BYTE, out);
+    this.bindTarget(null);
   }
 
   /** Bloom: bright pass → blur → add back. Writes into `out` and returns it. */
@@ -925,6 +1017,12 @@ export class Compositor {
     }
     for (const e of this.dataTex.values()) gl.deleteTexture(e.tex);
     this.dataTex.clear();
+    if (this.pack) {
+      gl.deleteFramebuffer(this.pack.fb);
+      gl.deleteTexture(this.pack.tex);
+      this.pack = null;
+    }
+    this.last = null;
     this.texCache.clear();
     this.targets = [];
   }
