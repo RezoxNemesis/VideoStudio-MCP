@@ -26,6 +26,20 @@ public final class CombatRigSolver {
     private static final double[] WHITE_REAR={.840,.840,.707,.650,.711,.774,.751,.769};
     private static final double[] BLACK_HEAD_TILT={.04,.11,.28,.12,.15,.10,-.04,.01};
     private static final double[] WHITE_HEAD_TILT={-.02,-.08,-.13,-.12,.34,.11,-.03,.0};
+
+    // Separate authored action arc for the three-panel Revenge of Ashes test.
+    // Original benchmark curves are unchanged unless explicitly requested.
+    // First poses and contact position match the baseline; only the follow-
+    // through sends the white fighter backward into a low stagger/knockdown.
+    private static final double[] STORY_BLACK_Y={.692,.688,.663,.683,.751,.726,.695,.694};
+    private static final double[] STORY_WHITE_X={.767,.758,.619,.570,.705,.807,.830,.834};
+    private static final double[] STORY_WHITE_Y={.689,.691,.664,.685,.747,.791,.783,.773};
+    private static final double[] STORY_WHITE_HAND_X={.725,.714,.661,.601,.689,.804,.813,.816};
+    private static final double[] STORY_WHITE_HAND_Y={.647,.645,.592,.645,.757,.784,.747,.744};
+    private static final double[] STORY_WHITE_ANGLE={2.58,3.37,3.90,3.91,2.98,3.16,3.52,3.49};
+    private static final double[] STORY_WHITE_FORWARD={.690,.690,.581,.547,.686,.796,.835,.844};
+    private static final double[] STORY_WHITE_REAR={.840,.840,.707,.650,.751,.860,.894,.903};
+    private static final double[] STORY_WHITE_HEAD_TILT={-.02,-.08,-.13,-.12,-.40,-.60,-.43,-.25};
     private static final double BLADE_LENGTH=.145;
 
     public static final class Vec {
@@ -57,9 +71,12 @@ public final class CombatRigSolver {
         public final Warrior black,white;
         public final double sceneTime,impactIntensity,dustIntensity,counterIntensity;
         public final boolean cameraLocked=true;
+        public final boolean storyboardMotion;
         public final double swordTipSeparation;
-        Frame(double s,Warrior a,Warrior b,double impact,double dust,double counter){
+        Frame(double s,Warrior a,Warrior b,double impact,double dust,double counter,
+              boolean storyboardMotion){
             sceneTime=s;black=a;white=b;impactIntensity=impact;
+            this.storyboardMotion=storyboardMotion;
             dustIntensity=dust;counterIntensity=counter;
             swordTipSeparation=a.swordTip.distance(b.swordTip);
         }
@@ -69,18 +86,22 @@ public final class CombatRigSolver {
 
     /** Fully deterministic with no stateful stepping or external assets. */
     public static Frame at(double seconds,double durationSeconds){
+        return at(seconds,durationSeconds,false);
+    }
+
+    public static Frame at(double seconds,double durationSeconds,boolean storyboardMotion){
         if(!Double.isFinite(seconds)||!Double.isFinite(durationSeconds)
                 ||durationSeconds<=0) throw new IllegalArgumentException("Invalid combat time");
         double real=bound(seconds/durationSeconds,0,1);
         // Retiming stretches actual movement near the weapon collision while
         // preserving continuous motion — no repeated/frozen image frames.
         double story=remap(real);
-        Warrior black=pose(true,story);
-        Warrior white=pose(false,story);
+        Warrior black=pose(true,story,storyboardMotion);
+        Warrior white=pose(false,story,storyboardMotion);
         double impact=Math.exp(-Math.pow((story-.482)/.031,2));
         double dust=bound(.10+impact*.82+Math.exp(-Math.pow((story-.565)/.045,2))*.65,0,1);
         double counter=Math.exp(-Math.pow((story-.79)/.052,2));
-        return new Frame(story,black,white,impact,dust,counter);
+        return new Frame(story,black,white,impact,dust,counter,storyboardMotion);
     }
 
     /**
@@ -93,17 +114,26 @@ public final class CombatRigSolver {
         return sample(story,play,bound(real,0,1));
     }
 
-    private static Warrior pose(boolean black,double story){
+    private static Warrior pose(boolean black,double story,boolean storyboardMotion){
         double face=black?1:-1;
-        double x=sample(black?BLACK_X:WHITE_X,T,story);
-        double y=sample(black?BLACK_Y:WHITE_Y,T,story);
-        double handX=sample(black?BLACK_HAND_X:WHITE_HAND_X,T,story);
-        double handY=sample(black?BLACK_HAND_Y:WHITE_HAND_Y,T,story);
-        double angle=sample(black?BLACK_ANGLE:WHITE_ANGLE,T,story);
-        double headTilt=sample(black?BLACK_HEAD_TILT:WHITE_HEAD_TILT,T,story);
+        double x=sample(black?BLACK_X:(storyboardMotion?STORY_WHITE_X:WHITE_X),T,story);
+        double y=sample(black?(storyboardMotion?STORY_BLACK_Y:BLACK_Y)
+                :(storyboardMotion?STORY_WHITE_Y:WHITE_Y),T,story);
+        double handX=sample(black?BLACK_HAND_X
+                :(storyboardMotion?STORY_WHITE_HAND_X:WHITE_HAND_X),T,story);
+        double handY=sample(black?BLACK_HAND_Y
+                :(storyboardMotion?STORY_WHITE_HAND_Y:WHITE_HAND_Y),T,story);
+        double angle=sample(black?BLACK_ANGLE
+                :(storyboardMotion?STORY_WHITE_ANGLE:WHITE_ANGLE),T,story);
+        double headTilt=sample(black?BLACK_HEAD_TILT
+                :(storyboardMotion?STORY_WHITE_HEAD_TILT:WHITE_HEAD_TILT),T,story);
 
         Vec pelvis=new Vec(x,y);
-        Vec chest=new Vec(x+headTilt*.14,y-.063);
+        // The knockback is a coordinated torso lean and loss of height,
+        // not a whole-body slide or a disconnected head translation.
+        double fall=storyboardMotion&&!black
+                ?Math.exp(-Math.pow((story-.72)/.13,2)):0;
+        Vec chest=new Vec(x+headTilt*.14+fall*.07,y-.063+fall*.025);
         Vec neck=new Vec(chest.x+headTilt*.055,chest.y-.027);
         Vec head=neck.plus(headTilt*.038,-.039);
         Vec swordShoulder=chest.plus(face*.025,-.004);
@@ -115,8 +145,10 @@ public final class CombatRigSolver {
 
         Vec leadingHip=pelvis.plus(face*.019,.009);
         Vec trailingHip=pelvis.plus(-face*.019,.009);
-        Vec leadingFoot=new Vec(sample(black?BLACK_FORWARD:WHITE_FORWARD,T,story),.838);
-        Vec trailingFoot=new Vec(sample(black?BLACK_REAR:WHITE_REAR,T,story),.841);
+        Vec leadingFoot=new Vec(sample(black?BLACK_FORWARD
+                :(storyboardMotion?STORY_WHITE_FORWARD:WHITE_FORWARD),T,story),.838);
+        Vec trailingFoot=new Vec(sample(black?BLACK_REAR
+                :(storyboardMotion?STORY_WHITE_REAR:WHITE_REAR),T,story),.841);
         Vec leadingKnee=elbow(leadingHip,leadingFoot,.091,.100,-face*.95);
         Vec trailingKnee=elbow(trailingHip,trailingFoot,.091,.100,face*.95);
         Vec tip=swordHand.plus(BLADE_LENGTH*Math.cos(angle),BLADE_LENGTH*Math.sin(angle));
