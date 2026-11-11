@@ -61,6 +61,36 @@ public class JobRecoveryTest {
         }
     }
 
+    @Test public void interruptedTransferRemainsTransferInRecoveryJournal() throws Exception {
+        Context context=RuntimeEnvironment.getApplication();
+        SharedPreferences prefs=context.getSharedPreferences("videostudio_native_v1",Context.MODE_PRIVATE);
+        long now=System.currentTimeMillis();
+        JSONObject row=new JSONObject()
+                .put("id","transfer-recovery")
+                .put("name","Project backup")
+                .put("kind","transfer")
+                .put("state",JobManager.STATE_WAITING_THERMAL)
+                .put("progress",42)
+                .put("detail","Critical heat")
+                .put("stage","cloud_export")
+                .put("recoverable",true)
+                .put("lastCheckpointAt",now)
+                .put("createdAt",now-1000)
+                .put("updatedAt",now);
+        prefs.edit().putString("job_recovery_snapshot",new JSONArray().put(row).toString()).commit();
+        JobManager manager=new JobManager(context);
+        try{
+            JSONObject restored=manager.get("transfer-recovery").getJSONObject("job");
+            assertEquals("transfer",restored.getString("kind"));
+            assertEquals(JobManager.STATE_CHECKPOINTED,restored.getString("state"));
+            assertEquals(42,restored.getInt("progress"));
+            assertEquals("cloud_export",restored.getString("stage"));
+        }finally{
+            manager.shutdown();
+            prefs.edit().remove("job_recovery_snapshot").commit();
+        }
+    }
+
     @Test public void waitStatesAreNonTerminalAndCancellationIsTerminal() {
         assertFalse(JobManager.isTerminal(JobManager.STATE_WAITING_MEMORY));
         assertFalse(JobManager.isTerminal(JobManager.STATE_WAITING_STORAGE));

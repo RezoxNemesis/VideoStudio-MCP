@@ -61,7 +61,9 @@ public final class DeviceComputeProfile {
             out.put("cpuCores", Runtime.getRuntime().availableProcessors());
             out.put("abis", abis);
             out.put("thermalStatus", thermal);
-            out.put("thermalSafeForHeavyWork", thermal < PowerManager.THERMAL_STATUS_SEVERE);
+            out.put("thermalSafeForHeavyWork", ThermalQueuePolicy.canRunRender(thermal));
+            out.put("thermalSafeForBackgroundTransfers", ThermalQueuePolicy.canRunTransfer(thermal));
+            out.put("thermalQueueMode", ThermalQueuePolicy.schedulingMode(thermal));
             out.put("storageFreeMb", storageFreeMb);
             out.put("activeWorkingSetBudgetMb", workingBudgetMb);
             out.put("residentModelBudgetMb", residentModelBudgetMb);
@@ -114,6 +116,7 @@ public final class DeviceComputeProfile {
             out.put("writeIntermediatesToDisk", true);
             out.put("checkpointEachTileGroup", true);
             out.put("thermalPauseRequired", !base.optBoolean("thermalSafeForHeavyWork", true));
+            out.put("backgroundTransfersAllowed", base.optBoolean("thermalSafeForBackgroundTransfers", false));
             out.put("quality", quality == null || quality.isEmpty() ? "balanced" : quality);
         } catch (Exception ignored) {}
         return out;
