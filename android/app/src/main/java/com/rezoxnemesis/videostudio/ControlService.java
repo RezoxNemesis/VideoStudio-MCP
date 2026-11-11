@@ -89,6 +89,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     private final ExecutorService commandCompletionWatchers = Executors.newFixedThreadPool(2);
     private final ExecutorService directorSetupExecutor = Executors.newSingleThreadExecutor();
     private final Set<String> watchedCommands = ConcurrentHashMap.newKeySet();
+    // IPC commands have an independent native Render executor and must never
+    // be replayed across Binder disconnects or VideoStudio process restarts.
+    private final Set<String> renderIpcInflight = ConcurrentHashMap.newKeySet();
     private volatile boolean serviceAlive;
 
     @Override
@@ -368,6 +371,17 @@ public final class ControlService extends Service implements AppProtocol.Callbac
 
         JSONObject inflight = commandJournal.inflight(commandId);
         if (inflight != null) {
+            if (action.startsWith("render.")) {
+                if (renderIpcInflight.contains(commandId)) return;
+                JSONObject recovery = new JSONObject();
+                try { recovery.put("ok",false).put("error","RENDER_IPC_OUTCOME_UNCERTAIN_AFTER_RESTART")
+                              .put("recovery_required",true); }catch(Exception ignored){}
+                // The remote Android editor may have completed a mutation before
+                // the last acknowledgment. Never send it again automatically.
+                commandJournal.finish(command,recovery,"failed");
+                protocol.complete(command,recovery,"failed");
+                return;
+            }
             watchDeferredCommand(command, inflight.optJSONObject("queuedResult"));
             String inflightJobId = inflight.optString("jobId", "");
             JSONObject inflightState = inflightJobId.isEmpty() ? null : jobs.get(inflightJobId);
@@ -401,6 +415,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             return;
         }
 
+        if (action.startsWith("render.")) {
+            if (!RenderNativeIpcClient.supports(action)) {
+                JSONObject invalid = new JSONObject();
+                try { invalid.put("ok",false).put("error","RENDER_NATIVE_ACTION_UNAVAILABLE"); }
+                catch(Exception ignored) {}
+                complete(command,invalid);
+                return;
+            }
+            if (!renderIpcInflight.add(commandId)) return;
+            // Existing VideoStudio MCP command is forwarded locally over Binder
+            // to Render's real Android native agent. Neither Cloudflare nor
+            // VideoStudio performs Blender modeling/rendering.
+            final JSONObject forwarded = command;
+            RenderNativeIpcClient.dispatch(this,commandId,action,p,result -> {
+                renderIpcInflight.remove(commandId);
+                complete(forwarded,result);
+            });
+            return;
+        }
         try {
             switch (action) {
                 case "ping":
@@ -3786,6 +3819,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private String friendlyAction(String action) {
+        if(RenderNativeIpcClient.supports(action))
+            return RenderNativeIpcClient.displayLabel(action);
         if (action == null) return "ChatGPT action";
         switch (action) {
             case "create_project": return "Creating project";
@@ -3847,6 +3882,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     }
 
     private String commandDetail(String action, JSONObject p) {
+        if(RenderNativeIpcClient.supports(action))
+            return "Target: Render Studio Android (native Binder, not VideoStudio project)";
         if (p == null) return "Received from ChatGPT";
         if ("apply_tool".equals(action)) return p.optString("tool", "edit") + " • clip " + (p.optInt("clipIndex", 0) + 1);
         if ("create_project".equals(action)) return p.optString("name", "New project");
