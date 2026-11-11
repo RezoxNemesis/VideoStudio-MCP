@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class ControlService extends Service implements AppProtocol.Callback {
     public static final String ACTION_CANCEL_ALL = "com.rezoxnemesis.videostudio.CANCEL_ALL";
+    public static final String ACTION_CANCEL_JOB = "com.rezoxnemesis.videostudio.CANCEL_ONE_NATIVE_JOB";
     public static final String ACTION_PAUSE = "com.rezoxnemesis.videostudio.PAUSE_CONTROL";
     public static final String ACTION_RESUME = "com.rezoxnemesis.videostudio.RESUME_CONTROL";
     public static final String ACTION_RECONNECT = "com.rezoxnemesis.videostudio.RECONNECT";
@@ -45,6 +46,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     public static final String ACTION_LOCAL_ANIMATE = "com.rezoxnemesis.videostudio.LOCAL_ANIMATE_IMAGES";
     public static final String ACTION_LOCAL_ANIMATION_STUDIO = "com.rezoxnemesis.videostudio.LOCAL_ANIMATION_STUDIO";
     public static final String ACTION_LOCAL_COMBAT_BENCHMARK = "com.rezoxnemesis.videostudio.LOCAL_COMBAT_BENCHMARK";
+    public static final String ACTION_LOCAL_RIGGED_2D = "com.rezoxnemesis.videostudio.LOCAL_RIGGED_COMBAT_2D";
+    public static final String ACTION_LOCAL_STORYBOARD_ARTWORK = "com.rezoxnemesis.videostudio.LOCAL_STORYBOARD_ARTWORK";
+    public static final String ACTION_LOCAL_GLTF_COMBAT = "com.rezoxnemesis.videostudio.LOCAL_GLTF_COMBAT_EXPORT";
     public static final String ACTION_LOCAL_PROMPT_VIDEO = "com.rezoxnemesis.videostudio.LOCAL_PROMPT_VIDEO";
     public static final String ACTION_LOCAL_EXPORT = "com.rezoxnemesis.videostudio.LOCAL_EXPORT_PROJECT";
     private static final String CHANNEL = "videostudio_private_control";
@@ -137,7 +141,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? "" : intent.getAction();
-        if (ACTION_CANCEL_ALL.equals(action)) {
+        if (ACTION_CANCEL_JOB.equals(action)) {
+            String jobId=intent==null?"":intent.getStringExtra("jobId");
+            boolean cancelled=jobId!=null&&!jobId.isEmpty()&&jobs.cancel(jobId);
+            if(cancelled){
+                recoveryPlans.cancelByJob(jobId);
+                ActivityLog.add(this,"user","Cancelled selected render",
+                        "Native job "+jobId.substring(0,Math.min(8,jobId.length()))+
+                                " cancelled; other jobs were preserved",
+                        "success",null,null,null);
+            }else{
+                ActivityLog.add(this,"user","Selected native job not cancelled",
+                        "Job already finished or no longer exists","info",null,null,null);
+            }
+            syncProtocolState();
+        } else if (ACTION_CANCEL_ALL.equals(action)) {
             int cancelled = cancelAllNativeWork();
             ActivityLog.add(this, "user", "Cancel all jobs", cancelled + " active job(s) cancelled", "success", null, null, null);
         } else if (ACTION_PAUSE.equals(action)) {
@@ -159,7 +177,94 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else if (ACTION_SYNC.equals(action)) {
             syncProtocolState();
             protocol.registerNow();
-          } else if (ACTION_LOCAL_COMBAT_BENCHMARK.equals(action)) {
+          } else if (ACTION_LOCAL_GLTF_COMBAT.equals(action)) {
+            final Intent req=intent;
+            directorSetupExecutor.submit(()->{
+                try{
+                    JSONObject args=new JSONObject();
+                    args.put("sourceProjectId",req.getStringExtra("projectId"));
+                    args.put("blackAssetId",req.getStringExtra("blackAssetId"));
+                    args.put("whiteAssetId",req.getStringExtra("whiteAssetId"));
+                    args.put("durationSeconds",req.getDoubleExtra("durationSeconds",3.2));
+                    args.put("fps",req.getIntExtra("fps",24));
+                    args.put("width",req.getIntExtra("width",320));
+                    args.put("height",req.getIntExtra("height",576));
+                    args.put("storyboardMotion",true);
+                    args.put("quality","720p");
+                    args.put("render",true);
+                    args.put("fileName","VideoStudio_RealGLB_3D_"+
+                            System.currentTimeMillis()+".mp4");
+                    JSONObject work=queueNativeGltf3D(args);
+                    ActivityLog.add(this,"user","Genuine 3D combat export queued",
+                            "GPU animated GLB models • "+work.optInt("expectedFrames",0)+" frames",
+                            "queued",0,null,work.optString("projectId",""));
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","3D combat export failed",
+                            error.getMessage()==null?"Cannot export GLB":error.getMessage(),
+                            "failed",null,null,req.getStringExtra("projectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_STORYBOARD_ARTWORK.equals(action)) {
+            final Intent request=intent;
+            directorSetupExecutor.submit(()->{
+                try {
+                    JSONObject params=new JSONObject()
+                            .put("sourceProjectId",request.getStringExtra("projectId"))
+                            .put("blackFromRigId",request.getStringExtra("blackFromRigId"))
+                            .put("whiteFromRigId",request.getStringExtra("whiteFromRigId"))
+                            .put("blackToRigId",request.getStringExtra("blackToRigId"))
+                            .put("whiteToRigId",request.getStringExtra("whiteToRigId"))
+                            .put("beat",request.getStringExtra("beat"))
+                            .put("durationSeconds",request.getDoubleExtra("durationSeconds",3.0))
+                            .put("width",432).put("height",768)
+                            .put("fps",24).put("render",true)
+                            .put("quality","720p")
+                            .put("fileName","VideoStudio_Actual_Artwork_Action_"+
+                                    System.currentTimeMillis()+".mp4");
+                    JSONObject queued=queueStoryboardArtwork(params);
+                    ActivityLog.add(this,"user","Source storyboard animation queued",
+                            "Actual masked fighter textures; " +
+                              queued.optInt("expectedFrames",0)+" independent motion samples",
+                            "queued",0,null,queued.optString("outputProjectId",""));
+                    syncProtocolState();
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","Source storyboard animation not started",
+                            error.getMessage()==null?"Missing source masks or unsupported scene":
+                                    error.getMessage(),
+                            "failed",null,null,request.getStringExtra("projectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_RIGGED_2D.equals(action)) {
+            final Intent request=intent;
+            directorSetupExecutor.submit(()->{
+                try{
+                    JSONObject params=new JSONObject();
+                    params.put("sourceProjectId",request.getStringExtra("projectId"));
+                    params.put("blackRigId",request.getStringExtra("blackRigId"));
+                    params.put("whiteRigId",request.getStringExtra("whiteRigId"));
+                    params.put("backgroundMode",request.getStringExtra("backgroundMode")==null
+                            ?"procedural":request.getStringExtra("backgroundMode"));
+                    params.put("durationSeconds",request.getDoubleExtra("durationSeconds",4.6));
+                    params.put("fps",request.getIntExtra("fps",24));
+                    params.put("width",request.getIntExtra("width",432));
+                    params.put("height",request.getIntExtra("height",768));
+                    params.put("render",true);
+                    params.put("storyboardMotion",true);
+                    params.put("quality","720p");
+                    params.put("fileName","VideoStudio_Source_Rigged_2D_"+
+                            System.currentTimeMillis()+".mp4");
+                    JSONObject queued=queueRigged2D(params);
+                    ActivityLog.add(this,"user","Source-textured 2D animation queued",
+                            "Articulated source rigs • "+queued.optInt("expectedFrames",0)+" frames",
+                            "queued",0,null,queued.optString("projectId",""));
+                    syncProtocolState();
+                }catch(Exception error){
+                    ActivityLog.add(this,"user","Source-textured rig failed",
+                            error.getMessage()==null?"Rig animation unavailable":error.getMessage(),
+                            "failed",null,null,request.getStringExtra("projectId"));
+                }
+            });
+        } else if (ACTION_LOCAL_COMBAT_BENCHMARK.equals(action)) {
             final Intent request=intent;
             directorSetupExecutor.submit(() -> {
                 try {
@@ -503,6 +608,10 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     complete(command, applyEditPlan(p));
                     syncProtocolState();
                     return;
+                case "set_studio_layers":
+                    complete(command, setStudioLayers(p));
+                    syncProtocolState();
+                    return;
                 case "apply_tool":
                     complete(command, applyTool(p));
                     syncProtocolState();
@@ -517,6 +626,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "analyse_media":
                     queueAnalysis(command, p);
+                    return;
+                case "analyse_storyboard_motion":
+                    queueStoryboardMotionAnalysis(command, p);
                     return;
                 case "prompt_video":
                     complete(command, queuePromptVideo(p));
@@ -626,6 +738,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 case "restore_project_from_drive":
                     complete(command, queueDriveProjectRestore(p));
                     return;
+                case "migrate_legacy_cloud_projects":
+                    complete(command, queueLegacyProjectImport(p));
+                    return;
                 case "archive_model_pack_to_drive":
                     complete(command, queueDriveModelPackArchive(p));
                     return;
@@ -634,6 +749,25 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     return;
                 case "animate_combat_rig":
                     complete(command,queueCombatRig(p));
+                    return;
+                case "render_rigged_2d":
+                    complete(command,queueRigged2D(p));
+                    return;
+                case "animate_storyboard_artwork":
+                    complete(command,queueStoryboardArtwork(p));
+                    return;
+                case "storyboard_artwork_preflight":
+                    complete(command,storyboardArtworkPreflight(p));
+                    return;
+                case "save_source_rig_profile":
+                    complete(command, saveSourceRigProfile(p));
+                    syncProtocolState();
+                    return;
+                case "list_source_rig_profiles":
+                    complete(command, listSourceRigProfiles(p));
+                    return;
+                case "render_gltf_combat":
+                    complete(command,queueNativeGltf3D(p));
                     return;
                 case "animate_timeline":
                     complete(command, queueAnimateTimeline(p));
@@ -735,6 +869,39 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             commandJournal.finish(command, result, "failed");
             protocol.complete(command, result, "failed");
         }
+    }
+
+    /**
+     * Edit precisely the SAME independent Music/Caption layers available in
+     * VideoStudio's human Editor. An expected revision prevents overwriting
+     * an in-progress manual edit with a stale ChatGPT action.
+     */
+    private JSONObject setStudioLayers(JSONObject parameters) throws Exception {
+        String projectId=parameters.optString("projectId","");
+        if(projectId.isEmpty())throw new IllegalArgumentException("Project ID required");
+        ProjectStore.Project project=store.get(projectId);
+        if(project==null)throw new IllegalArgumentException("Project not found");
+        if(!parameters.has("expectedUpdatedAt"))
+            throw new IllegalArgumentException("expectedUpdatedAt required for safe collaboration");
+        long expected=parameters.getLong("expectedUpdatedAt");
+        if(expected!=project.updatedAt)
+            throw new IllegalArgumentException("Project changed since last read; request fresh state");
+        JSONArray raw=parameters.optJSONArray("studioLayers");
+        if(raw==null)throw new IllegalArgumentException("studioLayers array required");
+        java.util.List<StudioLayer> validated=StudioLayerContract.fromJson(project,raw);
+        project.studioLayers.clear();
+        project.studioLayers.addAll(validated);
+        store.save(project);
+        JSONObject result=ok();
+        result.put("projectId",project.id);
+        result.put("updatedAt",project.updatedAt);
+        result.put("audioTracks",StudioTrackLayout.audioLayers(project).size());
+        int captions=0;
+        for(StudioLayer layer:project.studioLayers)
+            if(StudioLayer.TITLE.equals(layer.type))captions++;
+        result.put("titleTracks",captions);
+        result.put("studioLayers",StudioLayerContract.toJson(project.studioLayers));
+        return result;
     }
 
     private JSONObject applyEditPlan(JSONObject p) throws Exception {
@@ -910,6 +1077,63 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             }
         }
         return result;
+    }
+
+    /**
+     * Read only explicitly imported project images. Heavy frame synthesis is
+     * never performed here; we report where pixel interpolation is unsafe.
+     */
+    private void queueStoryboardMotionAnalysis(JSONObject command,JSONObject p) {
+        try {
+            ProjectStore.Project project=resolveProject(p.optString("projectId",""));
+            JSONArray provided=p.optJSONArray("anchorAssetIds");
+            JSONArray ordered=new JSONArray();
+            if(provided!=null) {
+                for(int i=0;i<provided.length();i++)ordered.put(provided.getString(i));
+            }else{
+                for(ProjectStore.Clip clip:project.clips){
+                    ProjectStore.Asset asset=project.asset(clip.assetId);
+                    if(asset!=null&&asset.mime!=null&&asset.mime.startsWith("image/"))
+                        ordered.put(asset.id);
+                }
+            }
+            if(ordered.length()<2||ordered.length()>40)
+                throw new IllegalArgumentException("Storyboard needs 2-40 ordered imported images");
+            final JSONArray sourceIds=ordered;
+            jobs.submit("Storyboard motion preflight • "+project.name,
+                    JobManager.Kind.LIGHT,state -> {
+                try {
+                    checkpoint(state,"Storyboard analysis",
+                            "Checking scene changes and motion correspondence",10,project.id);
+                    JSONObject result=StoryboardMotionPreflight.inspect(
+                            this,project,sourceIds);
+                    checkpoint(state,"Storyboard analysis",
+                            "Rig and reconstruction risks classified",100,project.id);
+                    ActivityLog.add(this,"chatgpt","Storyboard motion preflight",
+                            result.optInt("needsArticulatedRig",0)+" pair(s) need character rigging; "
+                            +result.optInt("needsSceneReconstruction",0)+" need scene reconstruction",
+                            "success",100,command.optString("id",""),project.id);
+                    commandJournal.finish(command,result,"completed");
+                    protocol.complete(command,result,"completed");
+                }catch(Exception error){
+                    JSONObject failed=new JSONObject();
+                    failed.put("ok",false);
+                    failed.put("error",error.getMessage()==null
+                            ?"Motion assessment failed":error.getMessage());
+                    commandJournal.finish(command,failed,"failed");
+                    protocol.complete(command,failed,"failed");
+                    throw error;
+                }
+            });
+        }catch(Exception error){
+            JSONObject failed=new JSONObject();
+            try {
+                failed.put("ok",false);
+                failed.put("error",error.getMessage());
+            }catch(Exception ignored){}
+            commandJournal.finish(command,failed,"failed");
+            protocol.complete(command,failed,"failed");
+        }
     }
 
     private void queueAnalysis(JSONObject command, JSONObject p) {
@@ -1498,6 +1722,26 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                                                   String projectId,
                                                   String jobName,
                                                   JobManager.Work work) {
+        return submitRecoverableGuarded(action, parameters, projectId,
+                jobName, JobManager.Kind.HEAVY, work);
+    }
+
+    /** Disk/Drive project transfers are serialized but need no GPU. */
+    private JobManager.Job submitRecoverableTransfer(String action,
+                                                     JSONObject parameters,
+                                                     String projectId,
+                                                     String jobName,
+                                                     JobManager.Work work) {
+        return submitRecoverableGuarded(action, parameters, projectId,
+                jobName, JobManager.Kind.TRANSFER, work);
+    }
+
+    private JobManager.Job submitRecoverableGuarded(String action,
+                                                   JSONObject parameters,
+                                                   String projectId,
+                                                   String jobName,
+                                                   JobManager.Kind kind,
+                                                   JobManager.Work work) {
         String requestedPlan = parameters == null ? "" : parameters.optString("_recoveryPlanId", "");
         String planId = requestedPlan;
         if (planId.isEmpty() || recoveryPlans.get(planId) == null) {
@@ -1505,23 +1749,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         } else {
             recoveryPlans.markResuming(planId);
         }
-
         final String durablePlanId = planId;
-        JobManager.Job job = jobs.submit(jobName, JobManager.Kind.HEAVY, state -> {
+        JobManager.Job job = jobs.submit(jobName, kind, state -> {
             recoveryPlans.attachJob(durablePlanId, state.id);
             try {
                 work.run(state);
                 recoveryPlans.completeByJob(state.id);
             } catch (InterruptedException interrupted) {
                 if ("cancelled".equals(state.state)) recoveryPlans.cancelByJob(state.id);
-                else recoveryPlans.failByJob(state.id, "Interrupted after checkpoint; safe to resume", true);
+                else recoveryPlans.failByJob(state.id,
+                        "Interrupted after checkpoint; safe to resume", true);
                 throw interrupted;
             } catch (Exception error) {
-                recoveryPlans.failByJob(
-                        state.id,
-                        error.getMessage() == null ? "Recoverable heavy job failure" : error.getMessage(),
-                        true
-                );
+                recoveryPlans.failByJob(state.id,
+                        error.getMessage() == null ? "Recoverable background job failure" : error.getMessage(),
+                        true);
                 throw error;
             }
         });
@@ -1581,6 +1823,15 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     case "animate_combat_rig":
                         queued = queueCombatRig(parameters);
                         break;
+                    case "render_rigged_2d":
+                        queued = queueRigged2D(parameters);
+                        break;
+                    case "animate_storyboard_artwork":
+                        queued = queueStoryboardArtwork(parameters);
+                        break;
+                    case "render_gltf_combat":
+                        queued = queueNativeGltf3D(parameters);
+                        break;
                     case "animate_timeline":
                         queued = queueAnimateTimeline(parameters);
                         break;
@@ -1613,6 +1864,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         break;
                     case "restore_project_from_drive":
                         queued = queueDriveProjectRestore(parameters);
+                        break;
+                    case "migrate_legacy_cloud_projects":
+                        queued = queueLegacyProjectImport(parameters);
                         break;
                     case "archive_model_pack_to_drive":
                         queued = queueDriveModelPackArchive(parameters);
@@ -1672,7 +1926,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "offload_project_to_drive",
                 durableParameters,
                 project.id,
@@ -1683,13 +1937,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject archived = driveWorkspace.syncProject(
                             project,
                             workspace,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud offload",
-                                    detail,
-                                    Math.max(2, Math.min(86, (int) (2 + progress * .84))),
-                                    project.id
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud offload", detail, Math.max(2, Math.min(86, (int) (2 + progress * .84))), project.id);
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     if (!archived.optBoolean("ok", false)) {
                         throw new IllegalStateException("Cloud archive verification did not complete");
@@ -1728,7 +1981,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "restore_project_from_drive",
                 durableParameters,
                 project.id,
@@ -1739,13 +1992,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject restored = driveWorkspace.restoreProjectWorkspace(
                             project.id,
                             workspace,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud restore",
-                                    detail,
-                                    Math.max(2, Math.min(100, progress)),
-                                    project.id
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud restore", detail, Math.max(2, Math.min(100, progress)), project.id);
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     checkpoint(state, "Cloud restore",
                             "Creative workspace restored • " + restored.optLong("bytesRestored", 0) + " bytes",
@@ -1767,6 +2019,41 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         return result;
     }
 
+    /**
+     * Recover exact, fully backed up legacy projects from the one folder
+     * selected in Android's document-tree picker. The previous VideoStudio
+     * installation and its local user data are never accessed or modified.
+     */
+    private JSONObject queueLegacyProjectImport(JSONObject p) throws Exception {
+        if (!driveWorkspace.isLinked())
+            throw new IllegalStateException("Link your old VideoStudio cloud folder first.");
+        JSONObject durable=new JSONObject(p.toString());
+        JobManager.Job job=submitRecoverableTransfer(
+                "migrate_legacy_cloud_projects",durable,"",
+                "Recover older VideoStudio projects",state->{
+                    checkpoint(state,"Cloud migration","Discovering user-approved archives",2,"");
+                    JSONObject report=new LegacyCloudRecovery(this,store).restoreAll(
+                            (percent,detail)->{
+                                checkpoint(state,"Cloud migration",detail,
+                                        Math.max(2,Math.min(100,percent)),"");
+                                jobs.awaitSafeCheckpoint(state,"migration_file_checkpoint");
+                            });
+                    state.setResult(report);
+                    ActivityLog.add(this,"system","Legacy archive migration checked",
+                            report.optInt("imported",0)+" project(s) restored, "+
+                            report.optInt("skipped",0)+" still missing sources",
+                            report.optInt("skipped",0)>0?"info":"success",100,null,null);
+                    syncProtocolState();
+                });
+        JSONObject result=ok();
+        result.put("queued",true);
+        result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("archiveScoped",true);
+        result.put("oldAppUnchanged",true);
+        return result;
+    }
+
     private JSONObject queueDriveModelPackArchive(JSONObject p) throws Exception {
         if (!driveWorkspace.isLinked()) {
             throw new IllegalStateException("No folder-scoped cloud workspace is linked. Link one from VideoStudio > Control.");
@@ -1778,7 +2065,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("id", packId);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "archive_model_pack_to_drive",
                 durableParameters,
                 "",
@@ -1788,13 +2075,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject archived = driveWorkspace.syncModelPack(
                             packId,
                             pack,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud model archive",
-                                    detail,
-                                    Math.max(2, Math.min(100, progress)),
-                                    ""
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud model archive", detail, Math.max(2, Math.min(100, progress)), "");
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     checkpoint(state, "Cloud model archive",
                             "Model pack archived • " + archived.optLong("bytesWritten", 0) + " bytes",
@@ -1883,7 +2169,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         JSONObject durableParameters = new JSONObject(p.toString());
         durableParameters.put("projectId", project.id);
 
-        JobManager.Job job = submitRecoverableHeavy(
+        JobManager.Job job = submitRecoverableTransfer(
                 "sync_project_to_drive",
                 durableParameters,
                 project.id,
@@ -1894,13 +2180,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     JSONObject archived = driveWorkspace.syncProject(
                             project,
                             workspace,
-                            (progress, detail) -> checkpoint(
-                                    state,
-                                    "Cloud archive",
-                                    detail,
-                                    Math.max(2, Math.min(100, progress)),
-                                    project.id
-                            )
+                            (progress, detail) -> {
+                                checkpoint(state, "Cloud archive", detail, Math.max(2, Math.min(100, progress)), project.id);
+                                // File boundary: check memory and critical thermal
+                                // before copying the next archived media item.
+                                jobs.awaitSafeCheckpoint(state, state.stage);
+                            }
                     );
                     checkpoint(state, "Cloud archive",
                             "Project workspace archived • " + archived.optLong("bytesWritten", 0) + " bytes",
@@ -2072,6 +2357,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         String fileName=sanitizeFileName(p.optString("fileName",
                 "VideoStudio_True_Combat_"+System.currentTimeMillis()+".mp4"));
         boolean render=p.optBoolean("render",true);
+        boolean storyboardMotion=p.optBoolean("storyboardMotion",false);
         String outputId=p.optString("outputProjectId","");
         ProjectStore.Project output;
         if(outputId.isEmpty()){
@@ -2088,6 +2374,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         final ProjectStore.Project target=output;
         final ProjectStore.Project reference=source;
         final String selectedBackground=backgroundMode;
+        final boolean useStoryboardMotion=storyboardMotion;
         final int outWidth=width,outHeight=height,frames=fps;
         final double seconds=duration;
         JSONObject durable=new JSONObject(p.toString());
@@ -2096,6 +2383,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         durable.put("sourceProjectId",sourceId);
         durable.put("fps",fps);
         durable.put("backgroundMode",backgroundMode);
+        durable.put("storyboardMotion",storyboardMotion);
         durable.put("width",width);
         durable.put("height",height);
         durable.put("durationSeconds",duration);
@@ -2118,7 +2406,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                         }
                         final android.graphics.Bitmap fixedBackdrop=plate;
                         NativeCombatRigComposer.compose(this,store,target,outWidth,outHeight,
-                                frames,seconds,fixedBackdrop,(current,total,time,impact)->{
+                                frames,seconds,fixedBackdrop,useStoryboardMotion,
+                                (current,total,time,impact)->{
                                     if(current%6==0||current==total||current==1){
                                         int progress=5+(int)(57.0*current/Math.max(1,total));
                                         checkpoint(state,"Combat rig",
@@ -2137,6 +2426,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     details.put("footPlanting",true);
                     details.put("swordContact",true);
                     details.put("impactRetiming",true);
+                    details.put("storyboardMotion",useStoryboardMotion);
                     details.put("neuralVideoGenerator",false);
                     details.put("generatedFrames",target.clips.size());
                     details.put("backgroundMode",selectedBackground);
@@ -2162,11 +2452,537 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         result.put("expectedFrames",(int)Math.round(duration*fps));
         result.put("render",render);
         result.put("engine","articulated-two-bone-IK-v1");
+        result.put("storyboardMotion",storyboardMotion);
         result.put("background","source_median".equals(backgroundMode)
                 ?"fixed-estimated-source-scene":"fixed-procedural-city");
         result.put("backgroundMode",backgroundMode);
         result.put("sourceImageRestyling",false);
         result.put("neuralVideoGenerator",false);
+        return result;
+    }
+
+
+    /**
+     * New VIDEO STUDIO NATIVE vertical slice: from two user-authored source-art
+     * cutout rigs to an independently articulated 2D mesh video.
+     *
+     * This cannot guess masks, joints, backsides or 3D body meshes from raw
+     * screenshots. The Android rig editor is the one-time authoring step.
+     */
+
+    /** Fully native GPU / glTFio headless 3D render, not a still-image morph. */
+    /**
+     * Shared, editable choreography timing. An authored beat map changes
+     * action timing without uploading a single new image.
+     */
+    private static CombatActionPlan combatDirector(JSONObject p) throws Exception {
+        JSONArray raw=p.optJSONArray("actionBeatTimes");
+        if(raw==null)return new CombatActionPlan();
+        if(raw.length()!=CombatActionPlan.BEAT_COUNT+1)
+            throw new IllegalArgumentException("Need nine directed combat beat timestamps");
+        double[] points=new double[raw.length()];
+        for(int i=0;i<points.length;i++)points[i]=raw.getDouble(i);
+        return new CombatActionPlan(points);
+    }
+
+    private JSONObject queueNativeGltf3D(JSONObject p) throws Exception {
+        ProjectStore.Project source=resolveProject(p.optString(
+                "sourceProjectId",p.optString("projectId","")));
+        String blackId=p.optString("blackAssetId","");
+        String whiteId=p.optString("whiteAssetId","");
+        ProjectStore.Asset black=source.asset(blackId);
+        ProjectStore.Asset white=source.asset(whiteId);
+        if(black==null||white==null)
+            throw new IllegalArgumentException("Select both VideoStudio GLB actors");
+        if(blackId.equals(whiteId))
+            throw new IllegalArgumentException("Choose two distinct 3D model assets");
+        if(!"model/gltf-binary".equals(black.mime)||
+                !"model/gltf-binary".equals(white.mime))
+            throw new IllegalArgumentException("Both fighters must be pre-rigged GLB files");
+        // Validate without touching unrelated device media.
+        NativeGlbCombatComposer.glbFile(this,source,black);
+        NativeGlbCombatComposer.glbFile(this,source,white);
+        int fps=p.optInt("fps",24);
+        int width=p.optInt("width",320),height=p.optInt("height",576);
+        double seconds=p.optDouble("durationSeconds",3.2);
+        if(fps!=24&&fps!=30||!Double.isFinite(seconds)||seconds<2||seconds>4
+                ||width<256||width>540||height<448||height>960||
+                (width&1)!=0||(height&1)!=0)
+            throw new IllegalArgumentException("Use a bounded 2-4-second 24/30 FPS portrait export");
+        boolean storyboard=p.optBoolean("storyboardMotion",true);
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equals(p.optString("quality","720p"))
+                ?"1080p":"720p";
+        String filename=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_GLB_3D_"+System.currentTimeMillis()+".mp4"));
+        String outputId=p.optString("outputProjectId","");
+        ProjectStore.Project output;
+        if(outputId.isEmpty()){
+            output=store.create("Real GLB 3D • "+source.name);
+            output.sourcePrompt="gltf3d: independent skinned mesh animation";
+            store.save(output);
+        }else{
+            output=store.get(outputId);
+            if(output==null||!output.sourcePrompt.startsWith("gltf3d:"))
+                throw new IllegalArgumentException("Invalid GPU export recovery project");
+        }
+        final ProjectStore.Project original=source,target=output;
+        final ProjectStore.Asset b=black,w=white;
+        final CombatActionPlan director=combatDirector(p);
+        JSONObject durable=new JSONObject(p.toString());
+        durable.put("projectId",output.id);
+        durable.put("outputProjectId",output.id);
+        durable.put("sourceProjectId",source.id);
+        durable.put("blackAssetId",blackId);
+        durable.put("whiteAssetId",whiteId);
+        durable.put("fps",fps);
+        durable.put("width",width);durable.put("height",height);
+        durable.put("durationSeconds",seconds);
+        durable.put("render",render);
+        durable.put("storyboardMotion",storyboard);
+        durable.put("aspect","9:16");
+        durable.put("quality",quality);durable.put("fileName",filename);
+        JobManager.Job job=submitRecoverableHeavy("render_gltf_combat",durable,
+                output.id,"3D skinned fight • "+source.name,state->{
+            checkpoint(state,"3D GLB combat","Preparing private GLB skeleton assets",
+                    2,target.id);
+            jobs.awaitSafeCheckpoint(state,"gpu_glb_prepare");
+            NativeGlbCombatComposer.compose(this,store,original,target,b,w,
+                    width,height,fps,seconds,storyboard,director,
+                    (done,total,time,impact)->{
+                        if(done==1||done%3==0||done==total){
+                            int pct=4+(int)(60d*done/Math.max(1,total));
+                            checkpoint(state,"3D GLB combat",
+                                    done+"/"+total+" headless GPU skinned frames",
+                                    pct,target.id);
+                            jobs.awaitSafeCheckpoint(state,"gpu_glb_frame_"+done);
+                        }
+                    });
+            JSONObject details=new JSONObject();
+            details.put("engine","Filament gltfio headless + Media3 native");
+            details.put("real3DGeometry",true);
+            details.put("modelCharactersImported",2);
+            details.put("preauthoredGltfAnimationsRequired",true);
+            details.put("rootMotionDirectedByCombatSolver",true);
+            details.put("actionDirector","shared-eight-beat-timeline-v1");
+            details.put("semanticClipFallbackPossible",true);
+            details.put("actualSoundtrackAttached",false);
+            details.put("exactBladeMeshCollisionSolved",false);
+            details.put("automaticImageTo3D",false);
+            details.put("frames",target.clips.size());
+            state.setResult(details);
+            syncProtocolState();
+            if(render){
+                jobs.awaitSafeCheckpoint(state,"gpu_glb_media3");
+                runExportBlocking(target,"9:16",quality,filename,state);
+                checkpoint(state,"3D GLB combat","Verified genuine 3D MP4 exported",
+                        100,target.id);
+            }else{
+                checkpoint(state,"3D GLB combat","Editable GPU frames ready",100,target.id);
+            }
+        });
+        JSONObject result=ok();
+        result.put("queued",true);result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("projectId",output.id);
+        result.put("sourceProjectId",source.id);
+        result.put("outputProjectId",output.id);
+        result.put("expectedFrames",(int)Math.round(seconds*fps));
+        result.put("engine","Filament gltfio GPU skinned 3D");
+        result.put("render",render);
+        result.put("requiresRigged3DAssets",true);
+        return result;
+    }
+
+    /**
+     * ChatGPT can now author genuine source-textured 2D actor rigs through the
+     * private native command channel. The API accepts only bounded joint and
+     * outline coordinates for an already-imported project image; no Gallery
+     * lookup, filesystem path, external URI, or remote model is accepted.
+     *
+     * The project's revision is mandatory: two collaborators cannot silently
+     * attach a rig to a stale or replaced source clip.
+     */
+    private JSONObject saveSourceRigProfile(JSONObject p) throws Exception {
+        String projectId = p.optString("projectId", "");
+        if (projectId.isEmpty()) throw new IllegalArgumentException("Project ID is required");
+        ProjectStore.Project project = store.get(projectId);
+        if (project == null) throw new IllegalArgumentException("Source project was not found");
+        if (!p.has("sourceProjectUpdatedAt")
+                || p.getLong("sourceProjectUpdatedAt") != project.updatedAt) {
+            throw new IllegalArgumentException("Source project revision changed; refresh get_state before rig authoring");
+        }
+        String sourceAssetId = p.optString("sourceAssetId", "");
+        ProjectStore.Asset sourceAsset = project.asset(sourceAssetId);
+        if (sourceAsset == null || sourceAsset.mime == null
+                || !sourceAsset.mime.startsWith("image/")
+                || sourceAsset.uri == null || sourceAsset.uri.isEmpty()) {
+            throw new IllegalArgumentException("Choose an existing imported VideoStudio image asset");
+        }
+        Rig2DProfile rig = NativeRigAuthoring.parse(project.id, sourceAsset.id, p);
+        File file = new Rig2DProjectStore(this, store).save(rig);
+        JSONObject result = ok();
+        result.put("projectId", project.id);
+        result.put("sourceAssetId", sourceAsset.id);
+        result.put("sourceProjectUpdatedAt", project.updatedAt);
+        result.put("rigId", rig.id);
+        result.put("black", rig.black);
+        result.put("jointCount", rig.joints.length);
+        result.put("outlineCount", rig.outline.length);
+        result.put("storedInPrivateProjectWorkspace", file.isFile());
+        result.put("galleryAccess", false);
+        return result;
+    }
+
+    /** Read back only masks belonging to one explicitly selected native project. */
+    private JSONObject listSourceRigProfiles(JSONObject p) throws Exception {
+        String projectId = p.optString("projectId", "");
+        if (projectId.isEmpty() || store.get(projectId) == null) {
+            throw new IllegalArgumentException("Known project ID is required");
+        }
+        JSONArray profiles = new JSONArray();
+        for (Rig2DProfile rig : new Rig2DProjectStore(this, store).list(projectId)) {
+            profiles.put(rig.toJson());
+        }
+        JSONObject result = ok();
+        result.put("projectId", projectId);
+        result.put("rigs", profiles);
+        result.put("count", profiles.length());
+        result.put("galleryAccess", false);
+        return result;
+    }
+
+    /**
+     * Cheap, owner-scoped inventory for the next animation shot.
+     * Reports exact four-rig pairs; NEVER silently reroutes to optical-flow
+     * or a generic 3D skeleton when the user's actual artwork is not marked.
+     */
+    private JSONObject storyboardArtworkPreflight(JSONObject p) throws Exception {
+        String projectId=p.optString("projectId","");
+        if(projectId.isEmpty())throw new IllegalArgumentException("Source project required");
+        ProjectStore.Project original=store.get(projectId);
+        if(original==null)throw new IllegalArgumentException("Source project is not installed");
+        java.util.Map<String,Rig2DProfile[]> annotated=new java.util.HashMap<>();
+        for(Rig2DProfile rig:new Rig2DProjectStore(this,store).list(projectId)){
+            if(rig.swordTip==null||rig.outline.length<3)continue;
+            Rig2DProfile[] pair=annotated.get(rig.sourceAssetId);
+            if(pair==null){pair=new Rig2DProfile[2];annotated.put(rig.sourceAssetId,pair);}
+            pair[rig.black?0:1]=rig;
+        }
+        JSONArray ready=new JSONArray(),missing=new JSONArray();
+        for(int i=0;i<original.clips.size();i++){
+            ProjectStore.Asset asset=original.asset(original.clips.get(i).assetId);
+            if(asset==null||asset.mime==null||!asset.mime.startsWith("image/"))continue;
+            Rig2DProfile[] pair=annotated.get(asset.id);
+            if(pair==null||pair[0]==null||pair[1]==null){
+                missing.put(new JSONObject()
+                        .put("clipIndex",i)
+                        .put("assetId",asset.id)
+                        .put("name",asset.name)
+                        .put("required","black and white source-traced 2D masks and sword endpoints"));
+            }
+            if(i+1>=original.clips.size()||pair==null||pair[0]==null||pair[1]==null)
+                continue;
+            ProjectStore.Asset next=original.asset(original.clips.get(i+1).assetId);
+            if(next==null||next.mime==null||!next.mime.startsWith("image/")||
+                    next.id.equals(asset.id))continue;
+            Rig2DProfile[] second=annotated.get(next.id);
+            if(second==null||second[0]==null||second[1]==null)continue;
+            JSONObject sample=new JSONObject()
+                    .put("fromClipIndex",i).put("toClipIndex",i+1)
+                    .put("fromAssetId",asset.id).put("toAssetId",next.id)
+                    .put("blackFromRigId",pair[0].id)
+                    .put("whiteFromRigId",pair[1].id)
+                    .put("blackToRigId",second[0].id)
+                    .put("whiteToRigId",second[1].id);
+            ready.put(sample);
+        }
+        return ok()
+                .put("projectId",projectId)
+                .put("sourceClipCount",original.clips.size())
+                .put("readyShotPairs",ready)
+                .put("missingTracedFrames",missing)
+                .put("currentNativeEngine","source-artwork-2d-mesh-v1")
+                .put("realNeuralPoseGeneratorInstalled",false)
+                .put("galleryAccess",false);
+    }
+
+    private static float[] requiredStoryboardTip(JSONObject p,String name,
+                                                  Rig2DProfile source) throws Exception {
+        JSONArray values=p.optJSONArray(name);
+        if(values==null && source!=null && source.swordTip!=null)
+            return source.swordTip.clone();
+        if(values==null||values.length()!=2)
+            throw new IllegalArgumentException(
+                    "Trace the exact source sword tip with a normalized [x,y] pair: "+name);
+        float x=(float)values.getDouble(0),y=(float)values.getDouble(1);
+        if(!Float.isFinite(x)||!Float.isFinite(y)||x<0||x>1||y<0||y>1)
+            throw new IllegalArgumentException("Sword tip is outside its illustrated frame");
+        return new float[]{x,y};
+    }
+
+    /**
+     * Storyboard-keyframe-conditioned actual 2D illustration animator.
+     * A deliberate alternative to generic 3D/2D skeleton fighters and full
+     * image optical-flow morphs. The source pixels and project are immutable.
+     *
+     * Four traced Rig2DProfiles must describe black/white character texture
+     * on the starting and ending images, including each source's sword tip.
+     * The original art is raster-skinned; a clean source-world is reconstructed
+     * from unobscured pixels and never replaced with a procedural city.
+     */
+    private JSONObject queueStoryboardArtwork(JSONObject p) throws Exception {
+        String sourceId=p.optString("sourceProjectId",p.optString("projectId",""));
+        ProjectStore.Project source=resolveProject(sourceId);
+        Rig2DProjectStore profiles=new Rig2DProjectStore(this,store);
+        String b0=p.optString("blackFromRigId","");
+        String w0=p.optString("whiteFromRigId","");
+        String b1=p.optString("blackToRigId","");
+        String w1=p.optString("whiteToRigId","");
+        Rig2DProfile blackFrom=profiles.load(source.id,b0);
+        Rig2DProfile whiteFrom=profiles.load(source.id,w0);
+        Rig2DProfile blackTo=profiles.load(source.id,b1);
+        Rig2DProfile whiteTo=profiles.load(source.id,w1);
+        float[] blackTipFrom=requiredStoryboardTip(p,"blackTipFrom",blackFrom);
+        float[] whiteTipFrom=requiredStoryboardTip(p,"whiteTipFrom",whiteFrom);
+        float[] blackTipTo=requiredStoryboardTip(p,"blackTipTo",blackTo);
+        float[] whiteTipTo=requiredStoryboardTip(p,"whiteTipTo",whiteTo);
+        int w=p.optInt("width",432),h=p.optInt("height",768);
+        int fps=p.optInt("fps",24);
+        double seconds=p.optDouble("durationSeconds",3.0);
+        String beat=p.optString("beat","ADVANCE");
+        String backgroundId=p.optString("backgroundAssetId","");
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equals(p.optString("quality","720p"))?
+                "1080p":"720p";
+        String fileName=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_Storyboard_Artwork_"+System.currentTimeMillis()+".mp4"));
+        String outputId=p.optString("outputProjectId","");
+        ProjectStore.Project output;
+        if(outputId.isEmpty()) {
+            output=store.create("Storyboard Artwork • "+source.name);
+            output.sourcePrompt="storyboard-artwork-v1: source-conditioned 2D mesh shot";
+            store.save(output);
+        }else{
+            output=store.get(outputId);
+            if(output==null||output.id.equals(source.id)||
+                    output.sourcePrompt==null||
+                    !output.sourcePrompt.startsWith("storyboard-artwork-v1"))
+                throw new IllegalArgumentException("Recovery destination must be the saved storyboard artwork project");
+        }
+        final ProjectStore.Project original=source,target=output;
+        final Rig2DProfile firstBlack=blackFrom,firstWhite=whiteFrom,
+                lastBlack=blackTo,lastWhite=whiteTo;
+        final float[] fromBlackSword=blackTipFrom,fromWhiteSword=whiteTipFrom,
+                toBlackSword=blackTipTo,toWhiteSword=whiteTipTo;
+        final int width=w,height=h,frameRate=fps;
+        final double duration=seconds;
+        final String action=beat,cleanAssetId=backgroundId;
+        final int expectedFrames=(int)Math.ceil(fps*seconds);
+        JSONObject recovery=new JSONObject(p.toString());
+        recovery.put("projectId",target.id);
+        recovery.put("sourceProjectId",original.id);
+        recovery.put("outputProjectId",target.id);
+        recovery.put("fileName",fileName);
+        recovery.put("aspect","9:16");
+        recovery.put("quality",quality);
+        recovery.put("render",render);
+
+        JobManager.Job job=submitRecoverableHeavy("animate_storyboard_artwork",
+                recovery,target.id,
+                "Storyboard-to-Animation • "+original.name,state->{
+            checkpoint(state,"Source artwork","Validating two real character keyframes",3,target.id);
+            jobs.awaitSafeCheckpoint(state,"storyboard_source_preflight");
+            NativeStoryboardArtworkComposer.Result created=
+                    NativeStoryboardArtworkComposer.compose(
+                    this,store,original,target,
+                    firstBlack,firstWhite,lastBlack,lastWhite,
+                    fromBlackSword,fromWhiteSword,toBlackSword,toWhiteSword,
+                    action,width,height,frameRate,duration,cleanAssetId,
+                    (current,total,worldDifference)->{
+                        if(current==1||current%4==0||current==total){
+                            int pct=6+(int)(60d*current/Math.max(1,total));
+                            checkpoint(state,"Source artwork",
+                                    current+"/"+total+" original-textured pose samples",pct,target.id);
+                            jobs.awaitSafeCheckpoint(state,"storyboard_frame_"+current);
+                        }
+                    });
+            JSONObject details=new JSONObject()
+                    .put("engine","videostudio.storyboard-artwork-mesh-v1")
+                    .put("sourceProjectId",original.id)
+                    .put("outputProjectId",target.id)
+                    .put("sourceTexturesPreserved",true)
+                    .put("separateActorMasks",true)
+                    .put("worldSceneStatic",true)
+                    .put("generatedFrames",created.generatedFrames)
+                    .put("backgroundDifference",created.backgroundDifference)
+                    .put("backgroundInpaintFraction",created.filledFraction)
+                    .put("verifiedActorMotionPixels",created.actorMotionPixels)
+                    .put("staticSlideshowOrCameraOnly",false)
+                    .put("full3DModel",false)
+                    .put("neuralMotionGenerationInstalled",false)
+                    .put("unseenPoseSynthesis",false)
+                    .put("originalProjectUnmodified",true)
+                    .put("galleryAccess",false);
+            state.setResult(details);
+            syncProtocolState();
+            if(render) {
+                jobs.awaitSafeCheckpoint(state,"storyboard_media3");
+                runExportBlocking(target,"9:16",quality,fileName,state);
+                checkpoint(state,"Storyboard artwork",
+                        "Original-character Media3 MP4 rendered",100,target.id);
+            }else{
+                checkpoint(state,"Storyboard artwork",
+                        "Inspectable source-conditioned pose samples saved",100,target.id);
+            }
+        });
+        JSONObject result=ok();
+        result.put("queued",true);
+        result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("sourceProjectId",source.id);
+        result.put("outputProjectId",output.id);
+        result.put("expectedFrames",expectedFrames);
+        result.put("engine","videostudio.storyboard-artwork-mesh-v1");
+        result.put("usesOriginalActors",true);
+        result.put("render",render);
+        result.put("requiresTracedMasksAndPoseKeyframes",true);
+        result.put("neuralVideoGeneration",false);
+        return result;
+    }
+
+    private JSONObject queueRigged2D(JSONObject p) throws Exception {
+        String sourceId=p.optString("sourceProjectId",p.optString("projectId",""));
+        ProjectStore.Project source=resolveProject(sourceId);
+        Rig2DProjectStore rigs=new Rig2DProjectStore(this,store);
+        String blackId=p.optString("blackRigId","");
+        String whiteId=p.optString("whiteRigId","");
+        Rig2DProfile blackProfile=rigs.load(source.id,blackId);
+        Rig2DProfile whiteProfile=rigs.load(source.id,whiteId);
+        if(!blackProfile.black||whiteProfile.black)
+            throw new IllegalArgumentException("Pick distinct black and white source actor rigs");
+
+        String backgroundMode=p.optString("backgroundMode","procedural");
+        if(!"procedural".equals(backgroundMode)&&
+                !"source_median".equals(backgroundMode)&&
+                !"clean_asset".equals(backgroundMode))
+            throw new IllegalArgumentException("Choose procedural, source_median or clean_asset");
+        String backdropId=p.optString("backgroundAssetId","");
+        if("clean_asset".equals(backgroundMode)){
+            ProjectStore.Asset background=source.asset(backdropId);
+            if(background==null||background.mime==null||
+                    !background.mime.startsWith("image/")||
+                    backdropId.equals(blackProfile.sourceAssetId)||
+                    backdropId.equals(whiteProfile.sourceAssetId))
+                throw new IllegalArgumentException("Use a separate user-selected clean background image");
+        }
+        boolean storyboard=p.optBoolean("storyboardMotion",true);
+        int fps=p.optInt("fps",24),width=p.optInt("width",432),
+                height=p.optInt("height",768);
+        double duration=p.optDouble("durationSeconds",4.6);
+        if(fps!=24&&fps!=30)
+            throw new IllegalArgumentException("Source-rig animation supports 24 or 30 FPS");
+        if(!Double.isFinite(duration)||duration<2||duration>6)
+            throw new IllegalArgumentException("Source-rig animation must be 2-6 seconds");
+        if(width<320||height<540||width>720||height>1280||
+                (width&1)!=0||(height&1)!=0)
+            throw new IllegalArgumentException("Source-rig preview must be even and bounded");
+
+        boolean render=p.optBoolean("render",true);
+        String quality="1080p".equals(p.optString("quality","720p"))
+                ?"1080p":"720p";
+        String fileName=sanitizeFileName(p.optString("fileName",
+                "VideoStudio_Rigged2D_"+System.currentTimeMillis()+".mp4"));
+        String outputId=p.optString("outputProjectId","");
+        ProjectStore.Project target;
+        if(outputId.isEmpty()){
+            target=store.create("Rigged 2D • "+source.name);
+            target.sourcePrompt="rigged2d: source-character mesh animation";
+            store.save(target);
+        }else{
+            target=store.get(outputId);
+            if(target==null||!target.sourcePrompt.startsWith("rigged2d:"))
+                throw new IllegalArgumentException("Invalid native rig recovery destination");
+        }
+        final ProjectStore.Project output=target, original=source;
+        final Rig2DProfile b=blackProfile,w=whiteProfile;
+        final CombatActionPlan director=combatDirector(p);
+        final String sceneMode=backgroundMode, sceneAssetId=backdropId;
+        final int videoWidth=width,videoHeight=height,videoFps=fps;
+        final double seconds=duration;
+        JSONObject durable=new JSONObject(p.toString());
+        durable.put("projectId",output.id);
+        durable.put("sourceProjectId",source.id);
+        durable.put("outputProjectId",output.id);
+        durable.put("blackRigId",blackId);durable.put("whiteRigId",whiteId);
+        durable.put("backgroundMode",sceneMode);durable.put("storyboardMotion",storyboard);
+        durable.put("fps",fps);durable.put("width",width);durable.put("height",height);
+        durable.put("durationSeconds",seconds);durable.put("render",render);
+        durable.put("quality",quality);durable.put("aspect","9:16");
+        durable.put("fileName",fileName);
+        JobManager.Job job=submitRecoverableHeavy("render_rigged_2d",durable,
+                output.id,"Source-rigged 2D • "+source.name,state -> {
+            checkpoint(state,"2D source rig","Preparing character masks and joint weights",
+                    3,output.id);
+            jobs.awaitSafeCheckpoint(state,"rig2d_prepare");
+            android.graphics.Bitmap clean=null;
+            try{
+                if("source_median".equals(sceneMode)){
+                    checkpoint(state,"2D scene","Estimating a fixed clean scene from approved shots",
+                            5,output.id);
+                    clean=NativeScenePlateBuilder.fromProject(
+                            this,original,videoWidth,videoHeight);
+                }else if("clean_asset".equals(sceneMode)){
+                    clean=NativeRiggedCombatComposer.cleanPlate(this,
+                            original.asset(sceneAssetId),videoWidth,videoHeight);
+                }
+                NativeRiggedCombatComposer.compose(this,store,original,output,
+                        b,w,videoWidth,videoHeight,videoFps,seconds,storyboard,
+                        clean,director,(current,total,time,impact)->{
+                            if(current==1||current%4==0||current==total){
+                                int pct=6+(int)(58d*current/Math.max(1,total));
+                                checkpoint(state,"2D source rig",
+                                        current+"/"+total+" mesh-skinned character frames",
+                                        pct,output.id);
+                                jobs.awaitSafeCheckpoint(state,"rig2d_frame_"+current);
+                            }
+                        });
+            }finally{if(clean!=null&&!clean.isRecycled())clean.recycle();}
+            JSONObject details=new JSONObject();
+            details.put("engine","builtin.mesh-skinned-2d-v1");
+            details.put("sourceProjectId",original.id);
+            details.put("sourceTexturesPreserved",true);
+            details.put("riggedCharacterPixels",true);
+            details.put("manuallyAuthoredCharacterMasks",true);
+            details.put("genuine3DMesh",false);
+            details.put("newUnseenAnatomySynthesis",false);
+            details.put("storyboardMotion",storyboard);
+            details.put("actionDirector","shared-eight-beat-timeline-v1");
+            details.put("actualSoundtrackAttached",false);
+            details.put("frames",output.clips.size());
+            details.put("backgroundMode",sceneMode);
+            state.setResult(details);
+            syncProtocolState();
+            if(render){
+                jobs.awaitSafeCheckpoint(state,"rig2d_export");
+                runExportBlocking(output,"9:16",quality,fileName,state);
+                checkpoint(state,"2D source rig",
+                        "Verified rigged-character MP4 exported",100,output.id);
+            }else{
+                checkpoint(state,"2D source rig",
+                        "Editable skinned-pose samples ready",100,output.id);
+            }
+        });
+        JSONObject result=ok();
+        result.put("queued",true);result.put("durableRecovery",true);
+        result.put("jobId",job.id);
+        result.put("projectId",output.id);
+        result.put("sourceProjectId",source.id);
+        result.put("outputProjectId",output.id);
+        result.put("expectedFrames",(int)Math.round(fps*seconds));
+        result.put("render",render);result.put("backgroundMode",backgroundMode);
+        result.put("engine","builtin.mesh-skinned-2d-v1");
+        result.put("full3D",false);
         return result;
     }
 
@@ -3312,6 +4128,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("appGeneration", protocol.appGeneration());
             out.put("connectionCore", protocol.connectionStatus());
             out.put("nativeAgent", "videostudio-v3");
+            out.put("legacyInstallation",NativeApkUpdater.legacyInstallationStatus(this));
             out.put("privateStorageWritable", dirReady && probe.exists() && probe.length() > 0);
             out.put("projectStoreReady", store.summaries() != null);
             out.put("projectStorage", store.storageBackend());
@@ -3340,6 +4157,21 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("inlineAttachmentIngest", true);
             out.put("chunkedFrameIngest", true);
             out.put("poseSequenceEngineReady", true);
+            out.put("storyboardMotionPreflightReady", true);
+            out.put("rigKinematicsMathReady", true);
+            out.put("manualCharacterRigEditorReady", true);
+            out.put("sourceTextured2DMeshSkinningReady", true);
+            out.put("glbSkeletalPreviewReady", true);
+            out.put("nativeHeadlessGltfExportReady", true);
+            out.put("sharedCinematicActionDirectorReady", true);
+            out.put("namedGltfActionClipRetimingReady", true);
+            out.put("exact3DBladeMeshCollisionReady", false);
+            out.put("encodedSoundtrackGeneratedAutomatically", false);
+            out.put("sourceImageTo3DReconstructionInstalled", false);
+            // Critical distinction: usable constraints are not the same as
+            // character reconstruction or a textured 3D rigged renderer.
+            out.put("sourceFaithfulRiggedRendererInstalled", false);
+            out.put("full3DSkeletalRendererInstalled", true);
             out.put("animationDirectorReady", true);
             out.put("combatRigBenchmarkReady", true);
             out.put("combatRigBackend", "articulated-two-bone-IK-v1");
@@ -3376,10 +4208,14 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             out.put("appGeneration", protocol.appGeneration());
             out.put("connectionCore", protocol.connectionStatus());
             out.put("nativeAgent", "videostudio-v3");
+            out.put("legacyInstallation",NativeApkUpdater.legacyInstallationStatus(this));
             out.put("directAttachmentIngest", true);
             out.put("inlineAttachmentIngest", true);
             out.put("chunkedFrameIngest", true);
             out.put("poseSequenceEngine", "native-bidirectional-optical-flow-v1");
+            out.put("storyboardArtworkEngine", "two-authored-poses-masked-texture-mesh-v1");
+            out.put("storyboardArtworkRequiresFourTracedActorRigs", true);
+            out.put("neuralStoryboardModelAvailable", false);
             out.put("localEngineOwnsProjects", true);
             out.put("portraitAnimationEngine", "v3.2-articulated-parallax");
             out.put("onDevicePortraitAi", true);
@@ -3415,6 +4251,9 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                     assets.put(ai);
                 }
                 out.put("activeAssets", assets);
+                out.put("activeProjectUpdatedAt", active.updatedAt);
+                out.put("studioLayers",StudioLayerContract.toJson(active.studioLayers));
+                out.put("studioLayerEditingSupported",true);
             }
             out.put("workload", jobs.state());
             out.put("recoveryPlans", recoveryPlans.recent(12));
@@ -3508,6 +4347,8 @@ public final class ControlService extends Service implements AppProtocol.Callbac
         switch (action) {
             case "prompt_video":
             case "animate_images":
+            case "render_rigged_2d":
+            case "render_gltf_combat":
             case "export_project":
             case "autonomous_edit":
             case "generate_image":
@@ -3517,6 +4358,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sync_project_to_drive":
             case "offload_project_to_drive":
             case "restore_project_from_drive":
+            case "migrate_legacy_cloud_projects":
             case "archive_model_pack_to_drive":
             case "restore_model_pack_from_drive":
                 return true;
@@ -3708,6 +4550,11 @@ public final class ControlService extends Service implements AppProtocol.Callbac
                 && !queuedResult.optBoolean("render", true)) {
             requirePlayableOutput = false;
         }
+        if (("render_rigged_2d".equals(action) || "render_gltf_combat".equals(action))
+                && queuedResult != null
+                && !queuedResult.optBoolean("render", true)) {
+            requirePlayableOutput = false;
+        }
         if ("autonomous_edit".equals(action)
                 && queuedResult != null
                 && !queuedResult.optBoolean("render", false)) {
@@ -3792,6 +4639,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "select_project": return "Opening project";
             case "delete_project": return "Deleting project";
             case "apply_edit_plan": return "Building timeline";
+            case "set_studio_layers": return "Editing project music and captions";
             case "apply_tool": return "Applying edit tool";
             case "creator_preset": return "Applying creator style";
             case "autonomous_edit": return "Autonomous edit";
@@ -3818,6 +4666,7 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "sync_project_to_drive": return "Archiving project to cloud workspace";
             case "offload_project_to_drive": return "Offloading project workspace to cloud";
             case "restore_project_from_drive": return "Restoring project creative workspace";
+            case "migrate_legacy_cloud_projects": return "Recovering old project archives into VideoStudio Next";
             case "archive_model_pack_to_drive": return "Archiving model pack to cloud workspace";
             case "restore_model_pack_from_drive": return "Restoring model pack from cloud workspace";
             case "animate_pose_sequence": return "Synthesizing native pose in-betweens";
@@ -3825,6 +4674,12 @@ public final class ControlService extends Service implements AppProtocol.Callbac
             case "finish_frame_transfer": return "Verifying complete private frame";
             case "frame_transfer_status": return "Checking private frame transfer";
             case "animate_combat_rig": return "Generating articulated stickman sword combat";
+            case "save_source_rig_profile": return "Saving original source-character rig";
+            case "list_source_rig_profiles": return "Reading original source-character rigs";
+            case "render_rigged_2d": return "Animating original masked fighters through native 2D mesh skinning";
+            case "animate_storyboard_artwork": return "Animating original storyboard keyframes with source-textured character motion";
+            case "storyboard_artwork_preflight": return "Checking whether real imported storyboard actors are ready to animate";
+            case "render_gltf_combat": return "Rendering two real glTF skinned 3D characters into Media3 video";
             case "animate_timeline": return "Directing cinematic image sequence";
             case "animate_images": return "Animating still images";
             case "job_status": return "Reading native job status";
