@@ -133,6 +133,10 @@ public final class LiveEditPlayer {
         return player.getMediaItemCount() > 0;
     }
 
+    public void setVolume(float gain){
+        player.setVolume(Math.max(0f,Math.min(1f,gain)));
+    }
+
     public void pause() {
         player.pause();
     }
