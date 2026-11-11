@@ -48,15 +48,8 @@ jobs:
       - name: Ensure stable development signing key exists
         run: |
           if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair \
-              -keystore "$HOME/.android/debug.keystore" \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -dname "CN=VideoStudio Development,O=VideoStudio,C=IN" \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000
+            echo "::error::Persistent Android signing keystore cache missing; refusing an incompatible replacement key"
+            exit 1
           fi
           keytool -list -v \
             -keystore "$HOME/.android/debug.keystore" \
@@ -65,7 +58,25 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+        run: |
+          set -euo pipefail
+          export VIDEOSTUDIO_SIGNING_KEYSTORE="$HOME/.android/debug.keystore"
+          test -r "$VIDEOSTUDIO_SIGNING_KEYSTORE"
+          gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Verify APK signing continuity
+        run: |
+          set -euo pipefail
+          expected="$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk -F': ' '/SHA256:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          actual="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2;exit}' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          # Pin the pre-existing cached owner development key; never silently rotate it.
+          pinned="7e0187470356616be2a45bc7f41445894085185db110edf dc0cdfd232942a6dd"
+          pinned="${pinned// /}"
+          if [ -z "$expected" ] || [ -z "$actual" ] || [ "$expected" != "$actual" ] || [ "$expected" != "$pinned" ]; then
+            echo "::error::APK signer differs from the cached, pinned VideoStudio signing identity"
+            exit 1
+          fi
+          echo "APK signing identity verified against owner development key."
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4

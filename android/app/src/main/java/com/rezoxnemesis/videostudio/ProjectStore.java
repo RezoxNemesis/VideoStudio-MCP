@@ -155,6 +155,7 @@ public final class ProjectStore {
         public long latestExportAt = 0;
         public final ArrayList<Asset> assets = new ArrayList<>();
         public final ArrayList<Clip> clips = new ArrayList<>();
+        public final ArrayList<StudioLayer> studioLayers = new ArrayList<>();
 
         public long outputDurationMs() {
             long total = 0;
@@ -166,6 +167,8 @@ public final class ProjectStore {
             JSONObject o = new JSONObject();
             JSONArray aa = new JSONArray();
             JSONArray cc = new JSONArray();
+            JSONArray ll = new JSONArray();
+            for (StudioLayer lane:studioLayers) ll.put(lane.toJson());
             for (Asset a : assets) aa.put(a.toJson());
             for (Clip c : clips) cc.put(c.toJson());
             try {
@@ -178,6 +181,7 @@ public final class ProjectStore {
                 o.put("latestExportAt", latestExportAt);
                 o.put("assets", aa);
                 o.put("clips", cc);
+                o.put("studioLayers", ll);
             } catch (Exception ignored) {}
             return o;
         }
@@ -200,6 +204,12 @@ public final class ProjectStore {
             if (cc != null) for (int i = 0; i < cc.length(); i++) {
                 JSONObject item = cc.optJSONObject(i);
                 if (item != null) p.clips.add(Clip.fromJson(item));
+            }
+            JSONArray ll = o.optJSONArray("studioLayers");
+            if(ll!=null)for(int i=0;i<Math.min(64,ll.length());i++){
+                JSONObject item=ll.optJSONObject(i);
+                if(item!=null)try{p.studioLayers.add(StudioLayer.fromJson(item));}
+                    catch(IllegalArgumentException ignored){} // malformed edits cannot crash startup
             }
             return p;
         }
