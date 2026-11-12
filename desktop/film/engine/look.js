@@ -18,14 +18,15 @@
 // for a flashback in pencil or a dream in paper.
 import { createCanvas } from '@napi-rs/canvas';
 
-const ALIAS = { '2d': 'anime', '2.5d': 'multiplane', '3d': 'soft3d', '3.5d': 'cel3d', '4d': 'immersive', papercut: 'paper', 'paper-cut': 'paper', cutout: 'puppet', motion: 'flat', mograph: 'flat', pencil: 'sketch', '8bit': 'pixel' };
+const ALIAS = { 'anime-classic': 'classic', cel: 'classic', '2d': 'anime', '2.5d': 'multiplane', '3d': 'soft3d', '3.5d': 'cel3d', '4d': 'immersive', papercut: 'paper', 'paper-cut': 'paper', cutout: 'puppet', motion: 'flat', mograph: 'flat', pencil: 'sketch', '8bit': 'pixel' };
 /**
  * paint: how the cel painter shades (mode cel | smooth | flat | tri; lines false = none; inner 0…1 = inner line width)
  * hold: drawings held for so many frames when the shot does not say; layers: soft shadow under every painted layer
  * post: passes over the finished frame; grain / vignette: multipliers of the usual amounts
  */
 export const LOOKS = {
-  anime: { about: '2D anime: cel tones, ink lines' },
+  anime: { about: '2D anime, painted: crisp cel shadows with soft light across the lit side, deeper tones where forms tuck in, warm skin at the turn of the light, polished metal, hair sheen, rim light, ink outlines and inner lines tinted by their colours, a soft glow on lights', paint: { mode: 'paint', rim: true }, post: ['bloom', 'grade'], bloom: 0.35 },
+  classic: { about: '2D anime, classic: two flat cel tones and black ink (the look before 2.5)' },
   paper: { about: 'Paper cut: flat paper colours with pale cut edges, layered shadows, paper grain, on threes', paint: { mode: 'flat', ink: [244, 236, 220], outer: 0.6, inner: 0.4 }, hold: 3, layers: { blur: 8, dx: 4, dy: 6, a: 0.38 }, post: ['paper'], grain: 0.4 },
   puppet: { about: 'Cut-out puppet theatre: paper pieces that jolt from drawing to drawing, on threes', paint: { mode: 'flat', ink: [236, 226, 206], outer: 0.7, inner: 0.5 }, hold: 3, jitter: 2.2, layers: { blur: 6, dx: 5, dy: 7, a: 0.4 }, post: ['paper'], grain: 0.4 },
   flat: { about: 'Flat motion-graphics design: clean flat colour, thin lines, no grain', paint: { mode: 'flat', inner: 0.4, outer: 0.6 }, post: ['punch'], grain: 0, vignette: 0 },
@@ -247,7 +248,17 @@ export function postLook(L, g, W, H, ctx) {
     else if (p === 'motes') motes(g, W, H, ctx.t ?? 0, ctx.cam, L.motes ?? 1);
     else if (p === 'fringe') fringe(g, W, H, L.fringe ?? 1, src);
     else if (p === 'punch') punch(g, W, H, src);
+    else if (p === 'grade') grade(g, W, H, L.grade ?? 1, src);
   }
+}
+/** A painted grade: warm light, cool shadows, a gentle S of contrast (what a background painter does by eye). */
+function grade(g, W, H, amt, src) {
+  g.save();
+  // the picture over itself in overlay: shadows go deeper, lights brighter — the value range a painter gives a scene
+  if (src) { const c = canvasOf('gradeA', W, H), gc = c.getContext('2d'); gc.globalCompositeOperation = 'copy'; gc.drawImage(src, 0, 0); g.globalAlpha = 0.32 * amt; g.globalCompositeOperation = 'overlay'; g.drawImage(c, 0, 0); g.globalAlpha = 1; }
+  g.globalCompositeOperation = 'soft-light'; g.fillStyle = `rgba(255,206,160,${0.22 * amt})`; g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'multiply'; g.fillStyle = `rgba(214,222,255,${0.12 * amt})`; g.fillRect(0, 0, W, H);
+  g.restore();
 }
 
 /** The small jolt of a puppet piece from one drawing to the next (pixels at 1080p), stable while a drawing is held. */

@@ -33,7 +33,7 @@ export async function reviewShots(P, ids, o = {}, emit = () => {}) {
       if (want(o, 'camera')) issues.push(...cam.issues);
       const sum = cam.summary;
       if (want(o, 'picture') || want(o, 'style')) {
-        const file = shotFile(P, id, lang);
+        const file = o.fresh ? null : shotFile(P, id, lang); // fresh: judge the pictures as the code draws them now
         let frames = [];
         if (file) frames = await decode(file, o.rate ?? 3);
         else if (o.draw !== false) frames = drawn(P, sh, [0.2, 0.55, 0.85].map((u) => +(u * sh.dur).toFixed(2)), lang);

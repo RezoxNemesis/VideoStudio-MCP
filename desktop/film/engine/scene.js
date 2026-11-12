@@ -3,6 +3,9 @@
 import { V, clamp, lerp, hex, rgb, rgba, mixc, shade as shadeHex, hash, hash2, noise1, fbm, makeGrade, smooth } from './core.js';
 import { smoothClosed, smoothOpen, poly } from './draw.js';
 import { createCanvas } from '@napi-rs/canvas';
+import { look } from './look.js';
+/** the painted anime look: soft clouds, hazy mountain feet, light falling across walls, the ground darkening near */
+const painted = () => look()?.paint?.mode === 'paint';
 
 export class Scene {
   /** o: { grade: {amb, tint, tintAmt, sat, gain}, fog: {color, dist, max, pow, start}, sun: [x,y,z] towards the sun, wind } */
@@ -156,6 +159,19 @@ function drawCloud(g, cam, c, t, y0) {
   g.save(); g.globalAlpha = c.alpha ?? 0.95;
   const gr = g.createLinearGradient(0, p[1] - h * 1.05, 0, p[1] + h * 0.1);
   gr.addColorStop(0, c.color ?? '#ffffff'); gr.addColorStop(0.45, c.color ?? '#ffffff'); gr.addColorStop(1, c.shade ?? '#c9d3e4');
+  if (painted()) {
+    // painted: a soft edge, the lit crown, a cool belly, lobes of light catching the top
+    const kk = cam.H / 1080;
+    g.shadowColor = rgba(hex(c.color ?? '#ffffff'), 0.55); g.shadowBlur = 7 * kk;
+    path(); g.fillStyle = gr; g.fill(); g.shadowBlur = 0; g.shadowColor = 'rgba(0,0,0,0)';
+    g.clip();
+    const hl = g.createLinearGradient(0, p[1] - h * 1.1, 0, p[1] - h * 0.25); hl.addColorStop(0, rgba(hex(c.rim ?? '#ffffff'), 0.55)); hl.addColorStop(1, rgba(hex(c.rim ?? '#ffffff'), 0));
+    g.fillStyle = hl; g.fillRect(p[0] - w * 1.3, p[1] - h * 1.4, w * 2.6, h * 1.4);
+    g.globalAlpha = (c.alpha ?? 0.95) * 0.32; g.fillStyle = c.shade ?? '#c9d3e4';
+    for (const [x, y, r, st] of c.lobes) { if (y > 0.3) continue; const cx = p[0] + x * w, cy = p[1] - y * h + r * h * 0.55, rr = r * h * 0.7; g.beginPath(); g.ellipse(cx, cy, rr * st, rr * 0.55, 0, 0, Math.PI * 2); g.fill(); }
+    g.restore();
+    return;
+  }
   path();
   if (c.rim) { g.fillStyle = c.rim; g.fill(); g.clip(); g.translate(0, Math.max(1.5, h * 0.07)); path(); }
   g.fillStyle = gr; g.fill();
@@ -219,6 +235,19 @@ export function range(o) {
           g.fill(); g.restore();
         }
       }
+      if (painted()) {
+        // rock strata: a few slanting strokes of shade on every peak, and the feet of the range sinking into the haze
+        g.globalAlpha = 0.22; g.strokeStyle = sc.col(o.shade ?? shadeHex(o.color, -0.2), d); g.lineCap = 'round';
+        for (let k = 2; k < top.length - 2; k += 3) {
+          const i = idx[k]; const hh = pts[i][3]; if (hh < 0.25) continue;
+          const lw = Math.max(0.6, cam.f / d * 0.6); g.lineWidth = lw;
+          for (let q = 0; q < 2; q++) { const s0 = hash(i * 3.7 + q * 1.9 + seed), x = top[k][0] + (s0 - 0.5) * 6, yy = top[k][1] + (bot[k][1] - top[k][1]) * (0.1 + 0.35 * hash(i * 1.3 + q + seed)); const len = (bot[k][1] - top[k][1]) * (0.12 + 0.18 * s0); g.beginPath(); g.moveTo(x, yy); g.lineTo(x + len * (s0 > 0.5 ? 0.55 : -0.55), yy + len); g.stroke(); }
+        }
+        g.globalAlpha = 1;
+        const ys = Math.min(...top.map((q) => q[1])), yb = Math.max(...bot.map((q) => q[1])), hz = g.createLinearGradient(0, ys + (yb - ys) * 0.25, 0, yb);
+        const haze = hex(sc.o.fog?.color ?? '#d8dde8'); hz.addColorStop(0, rgba(haze, 0)); hz.addColorStop(1, rgba(haze, 0.55));
+        g.fillStyle = hz; g.fillRect(0, ys, cam.W, yb - ys + 1);
+      }
       g.restore();
       if (o.mist) {
         const yb = Math.max(...bot.map((p) => p[1])), yt = Math.min(...top.map((p) => p[1])) + (yb - Math.min(...top.map((p) => p[1]))) * (1 - (o.mist.h ?? 0.5)), mg = g.createLinearGradient(0, yt, 0, yb);
@@ -251,6 +280,10 @@ export function ground(o) {
         gr.addColorStop(u, sc.col(rgb(mixc(cN, cF, smooth(d / farAt))), d));
       }
       g.fillStyle = gr; g.fillRect(0, top, W, H - top);
+      if (painted() && !o.water) {
+        const near = g.createLinearGradient(0, Math.max(top, hy), 0, H); near.addColorStop(0, 'rgba(255,250,235,0.05)'); near.addColorStop(0.55, 'rgba(0,0,0,0)'); near.addColorStop(1, 'rgba(12,10,22,0.16)');
+        g.fillStyle = near; g.fillRect(0, top, W, H - top);
+      }
       const hd = Math.hypot(cam.F[0], cam.F[2]) || 1e-6, fx = cam.F[0] / hd, fz = cam.F[2] / hd;
       // what part of the ground the lens sees, out to a distance
       const each = (cell, max, fn) => {
@@ -364,6 +397,16 @@ export class Mesh {
       g.beginPath(); g.moveTo(s[0][0], s[0][1]); for (let i = 1; i < s.length; i++) g.lineTo(s[i][0], s[i][1]); g.closePath();
       const fill = sc.col(tone, d);
       g.fillStyle = fill; g.fill();
+      if (painted() && !f.flat && s.length >= 3) {
+        // painted: light falls off down a wall and the foot of it is in the shade of the ground; roofs catch more light at the ridge
+        let ty = 1e9, by = -1e9; for (const q of s) { if (q[1] < ty) ty = q[1]; if (q[1] > by) by = q[1]; }
+        if (by - ty > 6) {
+          const vert = Math.abs(f.n[1]) < 0.5, gg = g.createLinearGradient(0, ty, 0, by);
+          if (vert) { gg.addColorStop(0, 'rgba(255,250,240,0.07)'); gg.addColorStop(0.55, 'rgba(0,0,0,0)'); gg.addColorStop(0.86, 'rgba(10,8,20,0.10)'); gg.addColorStop(1, 'rgba(10,8,20,0.22)'); }
+          else { gg.addColorStop(0, 'rgba(255,250,240,0.10)'); gg.addColorStop(1, 'rgba(10,8,20,0.08)'); }
+          g.fillStyle = gg; g.fill();
+        }
+      }
       const lw = clamp(cam.f / d * 0.018, 0, 2.2);
       if (f.ink !== false && lw > 0.35) { g.lineJoin = 'round'; g.lineWidth = lw; g.strokeStyle = sc.col(f.ink ?? shadeHex(tone, -0.45), d); g.stroke(); } else { g.lineWidth = 0.8; g.strokeStyle = fill; g.stroke(); }
       if (f.detail && cam.f / d > (f.lod ?? 6)) {
@@ -531,6 +574,20 @@ export function tree(o) {
       g.beginPath(); for (const q of ls) blob(g, q[1], q[2], q[3], q[4] + seed); g.fillStyle = sh; g.fill();
       for (const q of ls) { g.beginPath(); blob(g, q[1] + L[0] * q[3] * 0.16, q[2] + L[1] * q[3] * 0.16, q[3] * 0.86, q[4] + seed + 3); g.fillStyle = leaf; g.fill(); }
       if (ppm * h > 60) for (const q of ls) { g.beginPath(); blob(g, q[1] + L[0] * q[3] * 0.42, q[2] + L[1] * q[3] * 0.42, q[3] * 0.48, q[4] + seed + 7, 7); g.fillStyle = lit; g.fill(); }
+      if (painted() && ppm * h > 45) {
+        // painted foliage: leaf dabs over each clump — lit on top, darker underneath — so a crown is not one flat shape
+        for (const q of ls) {
+          const n = Math.min(30, Math.round(q[3] / 2.6));
+          for (let k = 0; k < n; k++) {
+            const a = hash(q[4] * 7.3 + k * 1.7 + seed) * 6.28, rr = Math.sqrt(hash(k * 3.1 + q[4] + seed * 2)) * q[3] * 0.88;
+            const x = q[1] + Math.cos(a) * rr, y = q[2] + Math.sin(a) * rr * 0.85, top = y < q[2] - q[3] * 0.15;
+            g.fillStyle = top ? lit : hash(k * 5.7 + seed) > 0.45 ? sh : leaf; g.globalAlpha = top ? 0.65 : 0.5;
+            const sz = q[3] * 0.1 * (0.6 + 0.8 * hash(k * 9.1 + seed));
+            g.beginPath(); g.ellipse(x, y, sz * 1.35, sz * 0.7, a, 0, 7); g.fill();
+          }
+        }
+        g.globalAlpha = 1;
+      }
       void z;
     },
   };

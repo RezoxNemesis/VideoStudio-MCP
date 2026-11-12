@@ -347,9 +347,9 @@ export class CelPainter {
     if (ub) for (let q = 0; q < N; q++) { const p = this.paints[ib[q]]; if (!p || !p.bands) continue; const u = ub[q]; for (let k = 0; k < p.bands.length; k++) if (u >= p.bands[k][0] && u < p.bands[k][1]) { ib[q] = p.bandIds[k]; break; } }
     if (xb) for (let q = 0; q < N; q++) { const p = this.paints[ib[q]]; if (!p || !p.map) continue; const k = p.map(xb[q], yb[q]); if (k >= 0) ib[q] = p.mapIds[k]; }
     // ---- lines: the outline (figure against nothing), part against part, a break in depth
-    const outR = (o.lw ?? 2.6) * SS * 0.5, inR = (o.lwIn ?? 1.5) * SS * 0.5, ink = new Float32Array(N);
-    const stamp = (x, y, r) => {
-      const R2 = Math.ceil(r + 0.5); for (let j = -R2; j <= R2; j++) { const yy = y + j; if (yy < 0 || yy >= h) continue; for (let i = -R2; i <= R2; i++) { const xx = x + i; if (xx < 0 || xx >= w) continue; const a = r + 0.5 - Math.sqrt(i * i + j * j); if (a <= 0) continue; const q = yy * w + xx; if (ink[q] < a) ink[q] = a > 1 ? 1 : a; } }
+    const outR = (o.lw ?? 2.6) * SS * 0.5, inR = (o.lwIn ?? 1.5) * SS * 0.5, ink = new Float32Array(N), inkI = this.mode === 'paint' ? new Float32Array(N) : ink; // painted: inner lines are coloured by what they divide
+    const stamp = (x, y, r, buf = ink) => {
+      const R2 = Math.ceil(r + 0.5); for (let j = -R2; j <= R2; j++) { const yy = y + j; if (yy < 0 || yy >= h) continue; for (let i = -R2; i <= R2; i++) { const xx = x + i; if (xx < 0 || xx >= w) continue; const a = r + 0.5 - Math.sqrt(i * i + j * j); if (a <= 0) continue; const q = yy * w + xx; if (buf[q] < a) buf[q] = a > 1 ? 1 : a; } }
     };
     const P = this.paints, zk = o.depthEdge ?? 0.022; // metres of sudden depth that make a line
     if (o.lines === false) { /* a look without ink: the lines are left out (stamp stays unused) */ }
@@ -364,7 +364,7 @@ export class CelPainter {
         if (P[a].group && P[a].group === P[b].group) continue;
         // faces of one material that only differ by a shade (a model's colour atlas) are one surface: no line between them
         if (P[a].soft && P[b].soft) { const fa = P[a].fill, fb = P[b].fill; if (Math.abs(fa[0] - fb[0]) + Math.abs(fa[1] - fb[1]) + Math.abs(fa[2] - fb[2]) < 70) continue; }
-        stamp(x, y, inR);
+        stamp(x, y, inR, inkI);
       }
     }
     // ---- cast shadows: what stands between a surface and the light (the fringe on the brow, the chin on the neck, an arm
@@ -401,6 +401,18 @@ export class CelPainter {
       const s = (md[q2] > d ? (1 - fu) * (1 - fv) : 0) + (md[q2 + 1] > d ? fu * (1 - fv) : 0) + (md[q2 + sm.mw] > d ? (1 - fu) * fv : 0) + (md[q2 + sm.mw + 1] > d ? fu * fv : 0);
       return s > 0.5;
     };
+    // ---- painted mode: where the surface is tucked behind nearer surface (armpits, between fingers, under the chin, the
+    // inside of a collar) it gets less light — a deeper shadow tone there gives drawn form
+    let ao = null;
+    if (this.mode === 'paint') {
+      ao = new Float32Array(N);
+      const R = Math.max(3, Math.round((o.aoR ?? 6) * SS)), r7 = Math.round(R * 0.7), offs = [[R, 0], [-R, 0], [0, R], [0, -R], [r7, r7], [-r7, r7], [r7, -r7], [-r7, -r7]];
+      for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+        const q = y * w + x; if (!ib[q]) continue; const z = 1 / zb[q]; let occ = 0;
+        for (let k = 0; k < 8; k++) { const xx = x + offs[k][0], yy = y + offs[k][1]; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const q2 = yy * w + xx; if (!ib[q2]) continue; const d = z - 1 / zb[q2]; if (d > 0.01 && d < 0.3) occ += Math.min(1, (d - 0.01) / 0.05); }
+        ao[q] = occ / 8;
+      }
+    }
     // ---- tones → picture (box-filtered down to the picture's size)
     const ow = x1 - x0, oh = y1 - y0, img = new Uint8ClampedArray(ow * oh * 4), ik = o.ink ?? [22, 18, 26], inv = 1 / (SS * SS);
     if (o.lines === false) ink.fill(0);
@@ -422,9 +434,26 @@ export class CelPainter {
             c = tone;
           } else if (mode === 'flat') c = lit ? p.fill : (p._half ??= p.fill.map((f, m) => f + (p.shade[m] - f) * 0.45));
           else if (mode === 'tri' && lit && l > th + 0.45) c = (p._lt ??= p.fill.map((f) => f + (255 - f) * 0.14));
+          else if (mode === 'paint') {
+            // painted anime: a crisp but anti-aliased terminator, light that grows toward the lamp across the lit side, a
+            // deeper tone where the form is tucked away, warm skin at the turn of the light, polished metal, hair with a sheen
+            const shadowed = !lit && l > th; let k = shadowed ? 0 : sstep(th - 0.05, th + 0.07, l);
+            const up = sstep(th + 0.18, 1.05, l) * (p.metal ? 0.05 : 0.17), occ = ao ? ao[q] : 0;
+            const lt = p._lit ??= [Math.min(255, p.fill[0] + 26), Math.min(255, p.fill[1] + 22), Math.min(255, p.fill[2] + 16)];
+            const dp = p._deep ??= [p.shade[0] * 0.66, p.shade[1] * 0.66, p.shade[2] * 0.72 + 6];
+            for (let m = 0; m < 3; m++) { const L1 = p.fill[m] + (lt[m] - p.fill[m]) * up, S1 = p.shade[m] + (dp[m] - p.shade[m]) * Math.min(1, occ * 1.15); tone[m] = S1 + (L1 - S1) * k; }
+            if (occ > 0.05 && k > 0) for (let m = 0; m < 3; m++) tone[m] += (dp[m] - tone[m]) * occ * 0.45 * k; // occlusion reaches into the light a little
+            if (p.skin && k > 0 && k < 1) { const band = 4 * k * (1 - k) * 0.85; tone[0] += 26 * band; tone[1] -= 4 * band; tone[2] -= 12 * band; }
+            if (p.metal) { const sp = sstep(0.8, 0.95, l * 0.5 + v * 0.5) * 0.7; const dk = sstep(0.16, 0.3, l) * (1 - sstep(0.3, 0.46, l)); const hi = p.hi ?? [250, 250, 252]; for (let m = 0; m < 3; m++) { tone[m] += (hi[m] - tone[m]) * sp; tone[m] *= 1 - dk * 0.3; } }
+            if (p.hairy && k > 0.5) { const ring = sstep(0.5, 0.58, l) * (1 - sstep(0.62, 0.72, l)) * sstep(0.35, 0.6, v); if (ring > 0) { const hi = p._sheen ??= p.fill.map((f, m) => f + ((p.hi ?? lt)[m] - f) * 0.45); for (let m = 0; m < 3; m++) tone[m] += (hi[m] - tone[m]) * ring * 0.8; } }
+            c = tone;
+          }
         }
         if (p.hi && !p.flat && c === p.fill) { const hh = (l + v) * 0.5; if (hh > (p.hiAt ?? 0.86) && l > 0.2) c = p.hi; }
-        if (rimC && v < 0.34 && l < (p.thr ?? 0.08) + 0.5 && !p.flat) c = l > (p.thr ?? 0.08) ? c : rimC === true ? p.fill : c;
+        if (mode === 'paint') {
+          if (rimC && v < 0.3 && v > -0.05 && !p.flat) { const rr = (1 - Math.max(0, v) / 0.3) ** 2 * (o.rimAmt ?? 0.5), rc = Array.isArray(rimC) ? rimC : (p._rim ??= [Math.min(255, p.fill[0] + 70), Math.min(255, p.fill[1] + 62), Math.min(255, p.fill[2] + 50)]); if (c !== tone) { tone[0] = c[0]; tone[1] = c[1]; tone[2] = c[2]; c = tone; } for (let m = 0; m < 3; m++) tone[m] += (rc[m] - tone[m]) * rr; }
+          const ii = inkI[q]; if (ii > 0 && ia < ii) { const dk = 0.38; r += c[0] + (c[0] * dk - c[0]) * ii * 0.9; g += c[1] + (c[1] * dk - c[1]) * ii * 0.9; b += c[2] + (c[2] * dk + 6 - c[2]) * ii * 0.9; al += 1; continue; }
+        } else if (rimC && v < 0.34 && l < (p.thr ?? 0.08) + 0.5 && !p.flat) c = l > (p.thr ?? 0.08) ? c : rimC === true ? p.fill : c;
         if (ia > 0) { r += c[0] + (ik[0] - c[0]) * ia; g += c[1] + (ik[1] - c[1]) * ia; b += c[2] + (ik[2] - c[2]) * ia; } else { r += c[0]; g += c[1]; b += c[2]; }
         al += 1;
       }

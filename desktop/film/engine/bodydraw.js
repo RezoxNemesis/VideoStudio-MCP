@@ -6,6 +6,7 @@ import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
 import { poseBody, normalsOf, CelPainter, onBone, dirOnBone } from './body.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes } from './hair.js';
+import { look } from './look.js';
 
 const SKIP = new Set(['eyes', 'teeth', 'tongue', 'lashes', 'haircap', 'hair', 'beard']);
 const LAYER = { skin: 0, trousers: 1, boots: 2, shoes: 2, tunic: 3, wraps: 4, skirt: 4, coat: 5, cuirass: 6, vambrace: 6, greave: 6 };
@@ -26,7 +27,7 @@ const along = (p, ax, d) => [p[0] + ax[0] * d, p[1] + ax[1] * d, p[2] + ax[2] * 
 /** What the body carries, as meshes with their paints. */
 function carried(ch, pose, lit, k) {
   const d = ch.d, out = [], pr = pose.props ?? {}, rgbOf = (c) => hex(lit(c));
-  const steel = (c) => ({ fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.38)), hi: rgbOf(shadeHex(c, 0.55)), hiAt: 0.78, thr: 0.0, group: 'blade', recv: false });
+  const steel = (c) => ({ fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.38)), hi: rgbOf(shadeHex(c, 0.55)), hiAt: 0.78, thr: 0.0, group: 'blade', recv: false, metal: true });
   const flatP = (c, sh = -0.3) => ({ fill: rgbOf(c), shade: rgbOf(shadeHex(c, sh)) });
   const sw = pr.sword;
   if (sw && sw.visible && !d.hideSword) {
@@ -36,7 +37,7 @@ function carried(ch, pose, lit, k) {
     for (let i = 0; i <= N; i++) { const u = i / N, c = along(along(g0, ax, L * u), wd, -curve * L * u * u), w = hw * (u < 0.82 ? 1 - 0.12 * u : (1 - u) / 0.18 * 0.9 + 0.02), t = 0.0045 * k * (1 - 0.5 * u); rings.push(ring(c, ax, wd, th, w, t, 4)); }
     out.push({ ...tube(rings, true, true), paint: steel(d.sword.blade) });
     // guard: an oval plate; grip: wrapped handle; pommel cap
-    out.push({ ...tube([ring(along(p0, ax, 0.108 * k), ax, wd, th, 0.044 * k, 0.03 * k, 12), ring(along(p0, ax, 0.122 * k), ax, wd, th, 0.044 * k, 0.03 * k, 12)]), paint: { ...flatP(d.sword.guard), hi: rgbOf(shadeHex(d.sword.guard, 0.4)), hiAt: 0.82 } });
+    out.push({ ...tube([ring(along(p0, ax, 0.108 * k), ax, wd, th, 0.044 * k, 0.03 * k, 12), ring(along(p0, ax, 0.122 * k), ax, wd, th, 0.044 * k, 0.03 * k, 12)]), paint: { ...flatP(d.sword.guard), hi: rgbOf(shadeHex(d.sword.guard, 0.4)), hiAt: 0.82, metal: true } });
     out.push({ ...tube([ring(along(p0, ax, -0.07 * k), ax, wd, th, 0.0155 * k, 0.012 * k, 8), ring(along(p0, ax, 0.108 * k), ax, wd, th, 0.0165 * k, 0.0125 * k, 8)], false, false), paint: flatP(d.sword.grip, -0.35) });
     out.push({ ...tube([ring(along(p0, ax, -0.088 * k), ax, wd, th, 0.012 * k, 0.01 * k, 8), ring(along(p0, ax, -0.07 * k), ax, wd, th, 0.019 * k, 0.015 * k, 8), ring(along(p0, ax, -0.066 * k), ax, wd, th, 0.0165 * k, 0.013 * k, 8)]), paint: flatP(d.sword.guard) });
     void tip;
@@ -163,10 +164,10 @@ function paintOf(ch, B, part, lit) {
   const bd = d.body ?? {}; // the design's words for the real body: { tunic, coat, trousers, boots, wraps, cuirass, vambrace, greave, skirt, bands: { part: [[y0, y1, colour]] } }
   const bands = (bd.bands?.[part.name] ?? []).map(([a, b, c]) => [a * B.height, b * B.height, { fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.3)) }]);
   const withBands = (p) => (bands.length ? { ...p, bands } : p);
-  if (m === 'skin') return withBands(mk(d.skin, d.skinShade ?? shadeHex(d.skin, -0.2), { thr: 0.02, group: 'skin' }));
+  if (m === 'skin') return withBands(mk(d.skin, d.skinShade ?? shadeHex(d.skin, -0.2), { thr: 0.02, group: 'skin', skin: true }));
   const pick = { tunic: bd.tunic ?? d.top?.color, coat: bd.coat ?? d.top?.coat ?? d.top?.color, trousers: bd.trousers ?? d.bottom?.color, skirt: bd.skirt ?? d.bottom?.color, boots: bd.boots ?? d.shoes?.color, shoes: bd.boots ?? d.shoes?.color,
     wraps: bd.wraps ?? d.armor?.bracer ?? d.top?.wrap, cuirass: bd.cuirass ?? d.armor?.plate, vambrace: bd.vambrace ?? d.armor?.bracer ?? d.armor?.plate, greave: bd.greave ?? d.armor?.greave ?? d.armor?.plate }[part.name] ?? (own ? lin(own) : '#777a84');
-  if (m === 'metal') return withBands(mk(pick, shadeHex(pick, -0.36), { hi: rgbOf(shadeHex(pick, 0.5)), hiAt: 0.8, thr: 0.05 }));
+  if (m === 'metal') return withBands(mk(pick, shadeHex(pick, -0.36), { hi: rgbOf(shadeHex(pick, 0.5)), hiAt: 0.8, thr: 0.05, metal: true }));
   return withBands(mk(pick, part.name === 'tunic' || part.name === 'coat' ? d.top?.shade : part.name === 'trousers' || part.name === 'skirt' ? d.bottom?.shade : undefined, part.name === 'coat' ? { group: bd.coatLine ? undefined : 'top' } : part.name === 'tunic' ? { group: 'top' } : {}));
 }
 
@@ -187,7 +188,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   // the light a cel is drawn under leans towards the lens, so a face-on figure is never all shadow
   const L = V.norm(V.add(V.mul(sun, 0.78), V.add(V.mul(cam.F, -0.34), V.mul(cam.U, 0.22))));
   const ss = hpx > 900 ? 2 : hpx > 240 ? 2 : 3;
-  const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * 1.75, lwIn: lwB * 0.95 });
+  const pm = look()?.paint?.mode === 'paint';
+  const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * (pm ? 2.1 : 1.75), lwIn: lwB * (pm ? 1.05 : 0.95) });
   const limbIds = new Set(), eyeIds = new Set();
   const rgbOf = (c) => hex(lit(c)), fd = d.face ?? {}, lmk = B.landmarks, eyeY = lmk.eyeL?.[1] ?? 0, eyeZ = lmk.eyeL?.[2] ?? 0;
   for (const p of B.parts) {
@@ -227,7 +229,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   if (real && d.hair && d.hair3 !== null) {
     if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
-      const hc = d.hair.color, hp = { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi: rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), hiAt: 0.9, thr: 0.1, group: 'hair', bias: 0.002, edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 };
+      const hc = d.hair.color, hp = { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi: rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), hiAt: 0.9, thr: 0.1, group: 'hair', hairy: true, bias: 0.002, edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 };
       for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, hp));
       ch.hairT = ch.t;
     }
@@ -235,7 +237,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   // a crown of leaves on the hair (design headgear 'wreath'): a twig round the skull, leaves along it, up and down by turns
   if (real && d.headgear?.type === 'wreath' && lmk.crown && lmk.nape) for (const m of wreathMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.32)), thr: 0.05, two: true, group: 'hair', bias: 0.003, edge: 1.4 }));
   // a soldier's steel cap: a dome over the hair, down to the brow in front and the nape behind, a band round its rim, a crest for officers
-  if (real && d.headgear?.type === 'helmet' && lmk.crown && lmk.nape) for (const m of helmetMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.42)), hi: rgbOf(shadeHex(m.c, 0.55)), hiAt: 0.8, thr: 0.0, group: 'hair', bias: 0.004, edge: 1.6 } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.35)), thr: 0.05, two: true, group: 'hair', bias: 0.004, edge: 1.4 }));
+  if (real && d.headgear?.type === 'helmet' && lmk.crown && lmk.nape) for (const m of helmetMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.42)), hi: rgbOf(shadeHex(m.c, 0.55)), hiAt: 0.8, thr: 0.0, group: 'hair', bias: 0.004, edge: 1.6 } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.35)), thr: 0.05, two: true, group: 'hair', bias: 0.004, edge: 1.4 }));
   for (const m of carried(ch, pose, lit, pose.height / 1.8)) { const id = cp.add(m.pos, m.idx, m.paint); limbIds.add(id); }
   if (ch.cape && d.cape) { const m = sheet(ch.cape), c = d.cape.color, li = d.cape.lining ?? shadeHex(c, -0.25); cp.add(m.pos, m.idx, { fill: hex(lit(c)), shade: hex(lit(shadeHex(c, -0.3))), two: true, back: { fill: hex(lit(li)), shade: hex(lit(shadeHex(li, -0.3))) }, thr: 0.0 }); }
   const spr = cp.finish();
