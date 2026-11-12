@@ -159,11 +159,11 @@ export function fire(o) {
   return {
     p: o.p, r: o.h * 2, bias: o.bias ?? 0,
     draw(g, cam, sc, t) {
-      const b = cam.project(o.p); if (b[2] < 0.3) return;
+      const P = this?.p ?? o.p, b = cam.project(P); if (b[2] < 0.3) return; // a moving fire (a torch) is moved by setting .p
       const amt = o.amt ? o.amt(t) : 1; if (amt <= 0.01) return;
       const k = cam.f / b[2], w = o.w * k * (0.55 + 0.45 * amt), h = o.h * k * amt;
       if (h < 1) return;
-      const wind = o.wind ?? (sc.wind ? sc.wind(o.p, t)[0] * 0.12 : 0.05), flick = 0.85 + 0.15 * noise1(t * 9, seed);
+      const wind = o.wind ?? (sc.wind ? sc.wind(P, t)[0] * 0.12 : 0.05), flick = 0.85 + 0.15 * noise1(t * 9, seed);
       g.save();
       // the light it throws into the air
       glow(g, b[0], b[1] - h * 0.42, h * 2.6, '#ff6a1a', (o.glowAmt ?? 0.55) * flick * Math.min(1, amt * 1.4));
