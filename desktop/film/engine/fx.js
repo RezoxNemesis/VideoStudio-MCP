@@ -119,32 +119,73 @@ export const rain = (box, o = {}) => new Particles({ rate: o.rate ?? 900, max: 5
   spawn: (r) => ({ p: [lerp(box[0][0], box[1][0], r()), box[1][1], lerp(box[0][2], box[1][2], r())], v: [1.5, -14 - r() * 3, 0.5], life: 2, size: 0.004 }) });
 
 /**
- * A fire: flames that lick, a glow, and its light on the ground. o: { p, w, h, seed, tongues }
- * Add its item to the scene's world (or pass it with the actors) so bodies in front cover it.
+ * A fire, drawn the way anime draws it: tongues of flame that rise in waves, sway with the wind and tear off at the top
+ * into licks that climb and vanish, four colours from a dark red edge to a white core, a breathing glow, and its light
+ * on the ground. o: { p, w, h, seed, tongues, amt(t) 0…1 (how far it has caught), wind (lean, default from the scene),
+ * glowAmt, core } — add it to the scene's world (or the actors) so bodies in front cover it.
  */
 export function fire(o) {
-  const seed = o.seed ?? 1, n = o.tongues ?? 5;
+  const seed = o.seed ?? 1, n = Math.max(3, o.tongues ?? 6);
+  const nz = (x, k) => noise1(x, seed * 31 + k);
+  // the shape of one tongue: a base on the ground, a body that narrows, a tip that leans and waves
+  const tongue = (g, bx, by, w, h, t, i, lean, scale) => {
+    const k = i * 7.13, ph = t * 2.6 + k, hw = w * 0.5 * scale, hh = h * scale;
+    const N = 9, L = [], R = [];
+    for (let s = 0; s <= N; s++) {
+      const u = s / N, wid = hw * Math.pow(1 - u, 0.85) * (1 + 0.25 * Math.sin(u * 6 - ph * 1.7));
+      // a travelling wave climbs the tongue; the higher, the more it swings and leans
+      const sway = (nz(t * 1.9 - u * 1.6 + k, 1) * 0.55 + Math.sin(u * 5.2 - ph * 2.1) * 0.22) * w * 0.5 * u * u + lean * hh * u * u;
+      const y = by - hh * u, x = bx + sway;
+      L.push([x - wid, y]); R.push([x + wid, y]);
+    }
+    g.moveTo(L[0][0], L[0][1]);
+    for (let s = 1; s <= N; s++) { const a = L[s - 1], b2 = L[s]; g.quadraticCurveTo(a[0], a[1], (a[0] + b2[0]) / 2, (a[1] + b2[1]) / 2); }
+    const top = L[N];
+    g.quadraticCurveTo(top[0], top[1] - hh * 0.05, R[N][0], R[N][1]);
+    for (let s = N - 1; s >= 0; s--) { const a = R[s + 1], b2 = R[s]; g.quadraticCurveTo(a[0], a[1], (a[0] + b2[0]) / 2, (a[1] + b2[1]) / 2); }
+    g.closePath();
+  };
+  // licks: small flames that tore off a tongue's tip and climb, shrink and fade
+  const licks = (g, bx, by, w, h, t, lean, color, scale) => {
+    for (let q = 0; q < n + 2; q++) {
+      const per = 0.55 + 0.35 * ((q * 0.618) % 1), age = ((t + q * 0.37) / per) % 1, life = 1 - age;
+      const x0 = bx + ((q * 0.6180339) % 1 - 0.5) * w * 0.8 + nz(t * 1.3 + q, 7) * w * 0.15;
+      const x = x0 + lean * h * (0.9 + age * 0.5) + nz(t * 2 + q * 3, 9) * w * 0.1 * age, y = by - h * (0.68 + age * 0.42);
+      const r = w * 0.085 * Math.pow(life, 1.6) * scale * (0.7 + 0.6 * ((q * 0.3819) % 1)); if (r < 0.6) continue;
+      g.moveTo(x, y - r * 2.6); g.quadraticCurveTo(x + r * 1.1, y - r * 0.4, x, y + r); g.quadraticCurveTo(x - r * 1.1, y - r * 0.4, x, y - r * 2.6);
+    }
+    g.fillStyle = color; g.fill();
+  };
   return {
     p: o.p, r: o.h * 2, bias: o.bias ?? 0,
     draw(g, cam, sc, t) {
       const b = cam.project(o.p); if (b[2] < 0.3) return;
-      const k = cam.f / b[2], w = o.w * k, h = o.h * k * (o.amt ? o.amt(t) : 1);
+      const amt = o.amt ? o.amt(t) : 1; if (amt <= 0.01) return;
+      const k = cam.f / b[2], w = o.w * k * (0.55 + 0.45 * amt), h = o.h * k * amt;
       if (h < 1) return;
-      glow(g, b[0], b[1] - h * 0.45, h * 2.4, '#ff7a22', 0.55 * (0.85 + 0.15 * noise1(t * 9, seed)));
-      const layer = (scale, color, lift) => {
+      const wind = o.wind ?? (sc.wind ? sc.wind(o.p, t)[0] * 0.12 : 0.05), flick = 0.85 + 0.15 * noise1(t * 9, seed);
+      g.save();
+      // the light it throws into the air
+      glow(g, b[0], b[1] - h * 0.42, h * 2.6, '#ff6a1a', (o.glowAmt ?? 0.55) * flick * Math.min(1, amt * 1.4));
+      glow(g, b[0], b[1] - h * 0.3, h * 1.1, '#ffb347', 0.35 * flick * amt);
+      const layers = [['#a3200f', 1.0, 0], ['#e2441a', 0.86, 0.02], ['#ff8a1e', 0.66, 0.04], ['#ffd35a', 0.42, 0.05], ['#fff6cf', 0.2, 0.05]];
+      for (const [color, sc2, lift] of layers) {
         g.beginPath();
         for (let i = 0; i < n; i++) {
-          const u = n === 1 ? 0.5 : i / (n - 1), bx = b[0] + (u - 0.5) * w * scale, edge = 1 - Math.abs(u - 0.5) * 1.1;
-          const hh = h * scale * edge * (0.55 + 0.45 * (0.5 + 0.5 * noise1(t * 3.1 + i * 9.7, seed))), tw = w * scale * 0.24;
-          const tx = bx + noise1(t * 2.3 + i * 5.3, seed + 1) * w * 0.22 + (sc.wind ? sc.wind(o.p, t)[0] * h * 0.05 : 0), ty = b[1] - hh - lift * h;
-          g.moveTo(bx - tw, b[1]);
-          g.bezierCurveTo(bx - tw * 1.25, b[1] - hh * 0.45, tx - tw * 0.3, ty + hh * 0.35, tx, ty);
-          g.bezierCurveTo(tx + tw * 0.4, ty + hh * 0.4, bx + tw * 1.25, b[1] - hh * 0.4, bx + tw, b[1]);
-          g.closePath();
+          const u = n === 1 ? 0.5 : i / (n - 1), edge = 1 - Math.abs(u - 0.5) * 1.05;
+          const bx = b[0] + (u - 0.5) * w * 0.82, tw = w / n * 2.1, th = h * edge * (0.62 + 0.38 * (0.5 + 0.5 * nz(t * 2.2 + i * 9.7, 3)));
+          tongue(g, bx, b[1] - lift * h, tw, th, t, i, wind, sc2);
         }
         g.fillStyle = color; g.fill();
-      };
-      layer(1, '#e2441a', 0); layer(0.74, '#ff8a1e', 0); layer(0.46, '#ffd35a', 0); layer(0.22, '#fff6cf', 0);
+        if (sc2 >= 0.66) licks(g, b[0], b[1], w, h * (sc2 === 1 ? 1 : 0.9), t, wind, color, sc2);
+      }
+      // a few sparks snapping out of it
+      g.globalCompositeOperation = 'screen';
+      for (let q = 0; q < 6; q++) {
+        const age = ((t * 0.9 + q * 0.29) % 1), x = b[0] + nz(q * 5.1 + Math.floor(t * 0.9 + q * 0.29) * 3.3, 11) * w * 0.6 + wind * h * age * 1.5, y = b[1] - h * (0.4 + age * 1.3);
+        g.globalAlpha = (1 - age) * 0.9; g.fillStyle = q % 2 ? '#ffd98a' : '#ffb347'; g.beginPath(); g.arc(x, y, Math.max(0.6, h * 0.008), 0, 6.283); g.fill();
+      }
+      g.restore();
     },
   };
 }
