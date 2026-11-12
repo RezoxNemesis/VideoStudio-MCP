@@ -9,6 +9,7 @@ import "./styles/colorpage.css";
 import "./styles/insight.css";
 import "./styles/code.css";
 import { Studio } from "../../src/app/studio";
+import { getBlob } from "../../src/core/storage";
 import { commandList, runBatch, type Command } from "../../src/agent/api";
 import { toast } from "../../src/ui/dom";
 import { DesktopLink } from "./link";
@@ -51,7 +52,22 @@ async function main() {
   app.replaceChildren(shell.el);
   await link.load();
   // Console helpers for debugging (Ctrl+Shift+I): vsdRun([{op:"state"}]).
-  Object.assign(window, { vsdStudio: studio, vsdLink: link, vsdRun: (cmds: Command[]) => runBatch(studio, cmds, true) });
+  Object.assign(window, {
+    vsdStudio: studio,
+    vsdLink: link,
+    vsdRun: (cmds: Command[]) => runBatch(studio, cmds, true),
+    /** An asset of the open project as a data: URL (to listen to or measure a voice or a song outside the app). */
+    vsdAsset: async (id: string) => {
+      const a = studio.project.assets.find((x) => x.id === id);
+      if (!a) return null;
+      const blob = await getBlob(a.ref);
+      return await new Promise<string>((done) => {
+        const r = new FileReader();
+        r.onload = () => done(String(r.result));
+        r.readAsDataURL(blob);
+      });
+    },
+  });
 }
 
 void main();

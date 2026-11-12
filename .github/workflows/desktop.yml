@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      VERSION: "2.3.${{ github.run_number }}"
+      VERSION: "2.4.${{ github.run_number }}"
     steps:
       - uses: actions/checkout@v4
 
@@ -93,7 +93,7 @@ jobs:
       - name: Stage, Music and Voice assets — check
         run: |
           set -e
-          for f in human.pack motion/index.json music/GeneralUser-GS.sf2 voice/dur.onnx voice/pros.onnx voice/voc.onnx voice/voices/hf_alpha.bin models/index.json; do
+          for f in human.pack motion/index.json music/GeneralUser-GS.sf2 voice/dur.onnx voice/pros.onnx voice/voc.onnx voice/voices/hf_alpha.bin voice/voices/ef_dora.bin voice/voices/pm_santa.bin voice/voices/af_nova.bin models/index.json; do
             test -s "desktop/stage-assets/$f" || { echo "missing $f"; exit 1; }
           done
           du -sh desktop/stage-assets
@@ -137,6 +137,8 @@ jobs:
         run: |
           tag="desktop-v${VERSION}"
           notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ). Installs over VideoStudio 2.0 (and replaces VideoStudio Desktop 1.0.x); projects and the Claude link are kept.
+
+          New in 2.4, the mega update. Real bodies: characters drawn from a full anatomical body (163 bones) with five-finger hands that grip, real heads with acting faces and anime eyes, hair that swings, cloth layers and cast shadows; action with speed ramps, hit-stops, blade arcs, clashes and blood. Code Studio films in 11 looks: 2D anime, 2.5D multiplane, 3D render, 3.5D cel-shaded, 4D immersive, paper cut, puppet, flat motion graphics, pixel art, pencil sketch, manga; 854 library 3D models. Voices: 15 more voices, 18 new character voices, speech in German, Russian, Spanish, French, Italian, Portuguese, Dutch, Polish and more, read sentence by sentence like a person. Music: 33 new instruments made by the app (808, supersaws, FM keys, choirs, braams, risers, sitar, tanpura, bansuri, harmonium, santoor, shehnai, sarangi), trap, dance, lo-fi, film and tabla kits, 11 new styles, clearer singing and Vocals / Music / Clarity faders with stems.
 
           • VideoStudio-${VERSION}-amd64.deb — double-click to install (Discover / package installer). It removes the old VideoStudio Desktop package by itself and keeps your projects and the Claude link.
           • VideoStudio-${VERSION}-x86_64.AppImage — portable: allow executing, then open.

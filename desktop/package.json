@@ -1,7 +1,7 @@
 {
   "name": "videostudio",
   "productName": "VideoStudio",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "VideoStudio 2: pro editing with a native media core, colour and scopes, Code Studio (films written as code, drawn shot by shot), 2D anime action and a 3D Stage with motion capture and a model library, a Blender forge, music with 261 instruments, VolTune voices that speak and sing, and a live Claude link.",
   "author": {
     "name": "RezoxNemesis",
@@ -119,6 +119,13 @@
           "!devtests/**",
           "!**/.vs/**",
           "!**/vs.js"
+        ]
+      },
+      {
+        "from": "licenses",
+        "to": "licenses",
+        "filter": [
+          "**/*"
         ]
       },
       {
