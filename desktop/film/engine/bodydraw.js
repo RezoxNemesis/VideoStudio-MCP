@@ -122,8 +122,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const real = d.realHead !== false && B.bi.head !== undefined && !!B.landmarks.eyeL; // the body's own head (face, eyes, teeth) instead of the painted one
   // the eyes and brows of a real head are drawn (large, clear, the way drawn faces have them) unless the sheet asks for the sculpted ones
   const drawn = real && (d.face?.eyes3 ?? 'drawn') === 'drawn';
-  poseBody(B, pb.t, pb.xf, pb.hands ?? autoHands(pose), real ? (drawn ? { ...(face ?? {}), eyeOpen: 1, blink: 0, eyeSmile: 0, browTilt: 0, browL: 0, browR: 0 } : (face ?? {})) : null);
-  if (pb.after) pb.after(B); // a stunt that moves the whole body after the performance (see combat.turnPose)
+  poseBody(B, pb.t, pb.xf, pb.hands ?? autoHands(pose), real ? (drawn ? { ...(face ?? {}), eyeOpen: 1, blink: 0, eyeSmile: 0, browTilt: 0, browL: 0, browR: 0 } : (face ?? {})) : null, Array.isArray(pb.after) ? pb.after : null);
+  if (typeof pb.after === 'function') pb.after(B); // a film's own change to the posed body (moves and turns of kit/combat.js are applied by poseBody)
   const sun = V.norm(o.sun ?? [-0.45, 0.7, 0.5]);
   // the light a cel is drawn under leans towards the lens, so a face-on figure is never all shadow
   const L = V.norm(V.add(V.mul(sun, 0.78), V.add(V.mul(cam.F, -0.34), V.mul(cam.U, 0.22))));

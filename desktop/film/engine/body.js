@@ -143,7 +143,7 @@ function thumbOver(B, F, s) {
  * Pose the body at a moment of the baked performance (seconds) and place it in the film's world (xf: { pos, yaw, scale }).
  * hands: { L, R } each a name of HANDS, a [name, name, mix] blend, or a hand object. Fills every part's `out` (positions).
  */
-export function poseBody(B, t, xf = null, hands = null, face = null) {
+export function poseBody(B, t, xf = null, hands = null, face = null, after = null) {
   const { nb, rig, head, R, T, P, Q } = B, d = rig.data;
   const f = clamp(t * rig.fps, 0, rig.frames - 1), i0 = Math.min(rig.frames - 1, Math.floor(f)), i1 = Math.min(rig.frames - 1, i0 + 1), u = f - i0;
   for (let b = 0; b < nb; b++) {
@@ -209,6 +209,31 @@ export function poseBody(B, t, xf = null, hands = null, face = null) {
     R[o + 3] = r3 * k; R[o + 4] = r4 * k; R[o + 5] = r5 * k;
     R[o + 6] = (-r0 * sy + r6 * cy) * k; R[o + 7] = (-r1 * sy + r7 * cy) * k; R[o + 8] = (-r2 * sy + r8 * cy) * k;
     T[b * 3] = (tx * cy + tz * sy) * k + px; T[b * 3 + 1] = ty * k + py; T[b * 3 + 2] = (-tx * sy + tz * cy) * k + pz;
+  }
+  // stunts beyond the performance (a leap higher than the body made it, a flip, a body thrown through the air): moves and
+  // turns of the whole body in the world, in order — the same ones kit/combat.js shiftPose / turnPose make to the joints
+  if (after && after.length) {
+    let M = [1, 0, 0, 0, 1, 0, 0, 0, 1], tw = [0, 0, 0];
+    for (const st of after) {
+      let Rm = [1, 0, 0, 0, 1, 0, 0, 0, 1], tv = [0, 0, 0];
+      if (st.shift) tv = st.shift;
+      else if (st.turn) {
+        const a = norm(st.turn.axis), h = st.turn.ang / 2, sn = Math.sin(h), x = a[0] * sn, y = a[1] * sn, z = a[2] * sn, w = Math.cos(h), p = st.turn.pivot;
+        Rm = [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w), 2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w), 2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)];
+        tv = [p[0] - (Rm[0] * p[0] + Rm[1] * p[1] + Rm[2] * p[2]), p[1] - (Rm[3] * p[0] + Rm[4] * p[1] + Rm[5] * p[2]), p[2] - (Rm[6] * p[0] + Rm[7] * p[1] + Rm[8] * p[2])];
+      }
+      const nm = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) nm[i * 3 + j] = Rm[i * 3] * M[j] + Rm[i * 3 + 1] * M[3 + j] + Rm[i * 3 + 2] * M[6 + j];
+      tw = [Rm[0] * tw[0] + Rm[1] * tw[1] + Rm[2] * tw[2] + tv[0], Rm[3] * tw[0] + Rm[4] * tw[1] + Rm[5] * tw[2] + tv[1], Rm[6] * tw[0] + Rm[7] * tw[1] + Rm[8] * tw[2] + tv[2]];
+      M = nm;
+    }
+    for (let b = 0; b < nb; b++) {
+      const o = b * 9, r = R.slice(o, o + 9), t3 = [T[b * 3], T[b * 3 + 1], T[b * 3 + 2]];
+      for (let i = 0; i < 3; i++) {
+        for (let j = 0; j < 3; j++) R[o + i * 3 + j] = M[i * 3] * r[j] + M[i * 3 + 1] * r[3 + j] + M[i * 3 + 2] * r[6 + j];
+        T[b * 3 + i] = M[i * 3] * t3[0] + M[i * 3 + 1] * t3[1] + M[i * 3 + 2] * t3[2] + tw[i];
+      }
+    }
   }
   for (const p of B.parts) {
     const { n, pos, si, sw, out } = p;

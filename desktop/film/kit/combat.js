@@ -39,6 +39,7 @@ const axisQ = (ax, ang) => { const s = Math.sin(ang / 2); return [ax[0] * s, ax[
 export function shiftPose(pose, d) {
   for (const n in pose.j) { const p = pose.j[n]; pose.j[n] = [p[0] + d[0], p[1] + d[1], p[2] + d[2]]; }
   for (const n in pose.props) { const p = pose.props[n].pos; pose.props[n].pos = [p[0] + d[0], p[1] + d[1], p[2] + d[2]]; }
+  if (pose.body) (pose.body.after ??= []).push({ shift: [d[0], d[1], d[2]] }); // the real body goes with its joints
   return pose;
 }
 /** Turn a whole body about a point (a wall-run, a dive, a body thrown through the air). axis: unit vector, ang: radians. */
@@ -47,6 +48,7 @@ export function turnPose(pose, pivot, axis, ang) {
   for (const n in pose.j) pose.j[n] = r(pose.j[n]);
   for (const n in pose.q) pose.q[n] = qmul(q, pose.q[n]);
   for (const n in pose.props) { const pr = pose.props[n]; pr.pos = r(pr.pos); pr.q = qmul(q, pr.q); }
+  if (pose.body) (pose.body.after ??= []).push({ turn: { pivot: [pivot[0], pivot[1], pivot[2]], axis: V.norm(axis), ang } });
   return pose;
 }
 /** A leap bigger than the body made it: lift = extra height at the top; between t0 and t1 (seconds), at time t. */
