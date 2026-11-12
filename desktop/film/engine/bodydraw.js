@@ -2,7 +2,7 @@
 // the cloth that hangs from the shoulders in the same depth picture, and the painted head on top — hidden wherever an
 // arm, a hand or a blade passes in front of the face.
 import { createCanvas } from '@napi-rs/canvas';
-import { V, clamp, hex, qrot, shade as shadeHex } from './core.js';
+import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
 import { poseBody, normalsOf, CelPainter, onBone, dirOnBone } from './body.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes } from './hair.js';
@@ -29,7 +29,7 @@ function carried(ch, pose, lit, k) {
   const steel = (c) => ({ fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.38)), hi: rgbOf(shadeHex(c, 0.55)), hiAt: 0.78, thr: 0.0, group: 'blade', recv: false });
   const flatP = (c, sh = -0.3) => ({ fill: rgbOf(c), shade: rgbOf(shadeHex(c, sh)) });
   const sw = pr.sword;
-  if (sw && sw.visible) {
+  if (sw && sw.visible && !d.hideSword) {
     const ax = qrot(sw.q, [0, 1, 0]), wd = qrot(sw.q, [0, 0, 1]), th = qrot(sw.q, [1, 0, 0]), L = (d.sword.len ?? 0.82) * (d.sword.scale ?? 1) * k, hw = (d.sword.width ?? 0.024) * k, p0 = sw.pos;
     const g0 = along(p0, ax, 0.12 * k), tip = along(p0, ax, 0.12 * k + L), curve = d.sword.curve ?? 0.035; // a slight curve towards the back edge
     const N = 7, rings = [];
@@ -42,7 +42,7 @@ function carried(ch, pose, lit, k) {
     void tip;
   }
   const sc = pr.scabbard;
-  if (sc && sc.visible) {
+  if (sc && sc.visible && !d.hideSword) {
     const ax = qrot(sc.q, [0, 1, 0]), wd = qrot(sc.q, [0, 0, 1]), th = qrot(sc.q, [1, 0, 0]), L = ((d.sword.len ?? 0.82) + 0.03) * k, curve = d.sword.curve ?? 0.035, rings = [];
     for (let i = 0; i <= 6; i++) { const u = i / 6; rings.push(ring(along(along(sc.pos, ax, L * u), wd, -curve * L * u * u), ax, wd, th, 0.03 * k * (1 - 0.25 * u), 0.012 * k, 8)); }
     out.push({ ...tube(rings), paint: flatP(d.sword.scabbard ?? '#201a22', -0.4) });
@@ -62,7 +62,66 @@ function carried(ch, pose, lit, k) {
     const ax = qrot(q.q, [0, 1, 0]), wd = qrot(q.q, [0, 0, 1]), th = qrot(q.q, [1, 0, 0]), L = (name === 'spear' ? (d.spear?.len ?? 2.4) : (d.staff?.len ?? 1.7)), A = along(q.pos, ax, -L / 2), B = along(q.pos, ax, L / 2), r = 0.016 * k;
     out.push({ ...tube([ring(A, ax, wd, th, r, r, 8), ring(B, ax, wd, th, r * 0.92, r * 0.92, 8)]), paint: flatP(name === 'spear' ? (d.spear?.shaft ?? '#6b5340') : (d.staff?.color ?? '#7a6248')) });
     if (name === 'spear') out.push({ ...tube([ring(B, ax, wd, th, 0.012 * k, 0.008 * k, 4), ring(along(B, ax, 0.09), ax, wd, th, 0.036 * k, 0.008 * k, 4), ring(along(B, ax, 0.34), ax, wd, th, 0.002, 0.002, 4)]), paint: steel(d.spear?.head ?? '#cfd6de') });
+
   }
+  // a bucket hangs from the hand by its bail: wooden staves, iron hoops, water inside
+  const bk = pr.bucket;
+  if (bk && bk.visible) {
+    const dn = [0, -1, 0], e1 = [1, 0, 0], e2 = [0, 0, 1], top = along(bk.pos, dn, 0.17 * k), bot = along(top, dn, 0.27 * k), R0 = 0.15 * k, R1 = 0.12 * k;
+    const wall = tube([ring(top, dn, e1, e2, R0, R0, 14), ring(along(top, dn, 0.135 * k), dn, e1, e2, (R0 + R1) / 2, (R0 + R1) / 2, 14), ring(bot, dn, e1, e2, R1, R1, 14)], false, true);
+    out.push({ ...wall, paint: { ...flatP(d.bucket?.color ?? '#8a6a4a', -0.32), group: 'bucket' } });
+    for (const u of [0.18, 0.8]) { const c = along(top, dn, 0.27 * k * u), r = lerp(R0, R1, u) * 1.03; out.push({ ...tube([ring(along(c, dn, -0.01 * k), dn, e1, e2, r, r, 14), ring(along(c, dn, 0.01 * k), dn, e1, e2, r, r, 14)]), paint: flatP('#3e3a3a', -0.3) }); }
+    out.push({ ...tube([ring(along(top, dn, 0.035 * k), dn, e1, e2, R0 * 0.96, R0 * 0.96, 14), ring(along(top, dn, 0.036 * k), dn, e1, e2, R0 * 0.96, R0 * 0.96, 14)], true, true), paint: flatP(d.bucket?.water ?? '#3d6a7c', -0.2) });
+    // the bail: from one side of the rim up to the fist and down to the other
+    const side = (sg) => along(top, e1, sg * R0), bail = [side(-1), V.lerp(side(-1), bk.pos, 0.55), bk.pos, V.lerp(side(1), bk.pos, 0.55), side(1)];
+    const wire = bail.map((p, i) => { const t = V.norm(V.sub(bail[Math.min(4, i + 1)], bail[Math.max(0, i - 1)])), a = V.norm(V.cross(t, [0, 0, 1])), b = V.cross(t, a); return ring(p, t, a, b, 0.006 * k, 0.006 * k, 5); });
+    out.push({ ...tube(wire), paint: flatP('#3a3434', -0.3) });
+  }
+  return out;
+}
+
+/** A steel cap on the head bone, in the frame of the landmarks (as the hair is): dome, rim band, crest. */
+function helmetMeshes(B, L, hg) {
+  const cy = (L.crown[1] + L.nape[1]) / 2 - 0.005, cz = 0.03, rx = 0.083 * 1.2, ry = 0.12 * 1.13, rz = 0.117 * 1.15, eyeY = L.eyeL[1];
+  const W = (p) => onBone(B, 'head', p), N = 28, R = 9, out = [];
+  // where the rim comes down to, round the head: the brow in front, the ear at the sides, the nape behind
+  const rimY = (az) => { const f = Math.cos(az); return f > 0 ? lerp(eyeY - 0.045, eyeY + 0.032, f) : lerp(eyeY - 0.045, L.nape[1] + 0.012, -f); };
+  const pt = (az, y, k = 1) => { const q = Math.sqrt(Math.max(0.02, 1 - ((y - cy) / ry) ** 2)); return [Math.sin(az) * rx * q * k, y, cz + Math.cos(az) * rz * q * k]; };
+  const pos = [], idx = [];
+  for (let i = 0; i <= R; i++) for (let j = 0; j < N; j++) { const az = (j / N) * Math.PI * 2, y0 = rimY(az), top = cy + ry * 0.995, y = lerp(top, y0, Math.pow(i / R, 1.15)); const p = W(pt(az, y)); pos.push(p[0], p[1], p[2]); }
+  for (let i = 0; i < R; i++) for (let j = 0; j < N; j++) { const a = i * N + j, b = i * N + ((j + 1) % N), c = (i + 1) * N + j, e = (i + 1) * N + ((j + 1) % N); idx.push(a, c, b, b, c, e); }
+  out.push({ pos: Float32Array.from(pos), idx: Uint32Array.from(idx), c: hg.color ?? '#8a94a3', metal: true });
+  // the band round the rim
+  const band = []; for (let j = 0; j <= N; j++) { const az = (j / N) * Math.PI * 2, y = rimY(az); band.push(...[W(pt(az, y + 0.016, 1.03)), W(pt(az, y - 0.004, 1.035))]); }
+  const bp = [], bi = []; band.forEach((p) => bp.push(p[0], p[1], p[2])); for (let j = 0; j < N; j++) { const a = j * 2; bi.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  out.push({ pos: Float32Array.from(bp), idx: Uint32Array.from(bi), c: hg.band ?? '#5a6270', metal: true });
+  if (hg.crest) { // a plume of horsehair along the top, front to back
+    const cp2 = [], ci = []; for (let i = 0; i <= 10; i++) { const u = i / 10, a = lerp(-0.35, 2.4, u), y = cy + Math.cos(a) * ry * 1.02, z = cz + Math.sin(a) * rz * 1.02; const lo = W([0, y, z]), hi2 = W([0, y + Math.cos(a) * 0.07, z + Math.sin(a) * 0.07 + 0.012 * u]); cp2.push(lo[0], lo[1], lo[2], hi2[0], hi2[1], hi2[2]); }
+    for (let i = 0; i < 10; i++) { const a = i * 2; ci.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    out.push({ pos: Float32Array.from(cp2), idx: Uint32Array.from(ci), c: hg.crest });
+  }
+  return out;
+}
+/** The leaves and twig of a wreath, on the head bone: in the frame of the landmarks (as the hair is). */
+function wreathMeshes(B, L, hg) {
+  const skY = (L.crown[1] + L.nape[1]) / 2 - 0.005, skZ = 0.03, rx = 0.083, ry = 0.12, rz = 0.117, y0 = L.eyeL[1] + (hg.lift ?? 0.62) * (L.crown[1] - L.eyeL[1]);
+  const at = (a, dy = 0, out = 0) => { const y = y0 + dy - 0.022 * Math.cos(a), q = Math.sqrt(Math.max(0.05, 1 - ((y - skY) / ry) ** 2)); return [Math.sin(a) * (rx * q + 0.024 + out), y, skZ + Math.cos(a) * (rz * q + 0.024 + out)]; };
+  const W = (p) => onBone(B, 'head', p), out = [], col = hg.color ?? '#5f9a3c', n = hg.n ?? 20;
+  // the twig
+  const tw = []; for (let i = 0; i <= 36; i++) { const a = (i / 36) * Math.PI * 2, p = W(at(a)), q = W(at(a + 0.01)), t = V.norm(V.sub(q, p)), up = V.norm(V.sub(W(at(a, 0.01)), p)), sd = V.cross(t, up); tw.push(ring(p, t, up, sd, 0.0055, 0.0055, 5)); }
+  out.push({ ...tube(tw), c: hg.twig ?? '#6a4a2a' });
+  // the leaves: flat, pointed, lying on the twig and turned up or down
+  const pos = [], idx = [], pos2 = [], idx2 = [];
+  for (let i = 0; i < n; i++) {
+    const a = ((i + 0.5) / n) * Math.PI * 2, sg = i % 2 ? 1 : -1, P0 = W(at(a, sg * 0.006, 0.004)), P1 = W(at(a + 0.24, sg * 0.072 + 0.012, 0.016)), mid = V.lerp(P0, P1, 0.5);
+    const len = V.dist(P0, P1), ax = V.norm(V.sub(P1, P0)), outw = V.norm(V.sub(W(at(a + 0.16, sg * 0.015, 0.05)), mid)), side = V.norm(V.cross(ax, outw)), w = len * 0.36;
+    const T = i % 3 ? pos : pos2, I = i % 3 ? idx : idx2, b = T.length / 3;
+    // a leaf: narrow at the stem, widest a third of the way, a pointed tip; bowed out a little from the twig
+    const at2 = (u, s2, bow) => V.add(V.add(V.lerp(P0, P1, u), V.mul(side, s2 * w)), V.mul(outw, bow));
+    for (const p of [P0, at2(0.3, 1, 0.003), at2(0.66, 0.78, 0.005), P1, at2(0.66, -0.78, 0.005), at2(0.3, -1, 0.003)]) T.push(p[0], p[1], p[2]);
+    I.push(b, b + 1, b + 5, b + 1, b + 2, b + 5, b + 2, b + 4, b + 5, b + 2, b + 3, b + 4);
+  }
+  out.push({ pos: Float32Array.from(pos), idx: Uint32Array.from(idx), c: col }, { pos: Float32Array.from(pos2), idx: Uint32Array.from(idx2), c: shadeHex(col, 0.16) });
   return out;
 }
 
@@ -166,13 +225,17 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   }
   // hair: clumps on the scalp (design: hair3 = a cut's name or its fields; default by the old sheet's look)
   if (real && d.hair && d.hair3 !== null) {
-    if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
+    if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
       const hc = d.hair.color, hp = { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi: rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), hiAt: 0.9, thr: 0.1, group: 'hair', bias: 0.002, edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 };
       for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, hp));
       ch.hairT = ch.t;
     }
   }
+  // a crown of leaves on the hair (design headgear 'wreath'): a twig round the skull, leaves along it, up and down by turns
+  if (real && d.headgear?.type === 'wreath' && lmk.crown && lmk.nape) for (const m of wreathMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.32)), thr: 0.05, two: true, group: 'hair', bias: 0.003, edge: 1.4 }));
+  // a soldier's steel cap: a dome over the hair, down to the brow in front and the nape behind, a band round its rim, a crest for officers
+  if (real && d.headgear?.type === 'helmet' && lmk.crown && lmk.nape) for (const m of helmetMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.42)), hi: rgbOf(shadeHex(m.c, 0.55)), hiAt: 0.8, thr: 0.0, group: 'hair', bias: 0.004, edge: 1.6 } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.35)), thr: 0.05, two: true, group: 'hair', bias: 0.004, edge: 1.4 }));
   for (const m of carried(ch, pose, lit, pose.height / 1.8)) { const id = cp.add(m.pos, m.idx, m.paint); limbIds.add(id); }
   if (ch.cape && d.cape) { const m = sheet(ch.cape), c = d.cape.color, li = d.cape.lining ?? shadeHex(c, -0.25); cp.add(m.pos, m.idx, { fill: hex(lit(c)), shade: hex(lit(shadeHex(c, -0.3))), two: true, back: { fill: hex(lit(li)), shade: hex(lit(shadeHex(li, -0.3))) }, thr: 0.0 }); }
   const spr = cp.finish();

@@ -387,6 +387,21 @@ function drawHeadgear(g, cam, k) {
       g.lineJoin = 'miter'; g.lineWidth = lw * 2; g.strokeStyle = ink; g.stroke(); g.fillStyle = lit(col); g.fill();
       if (px > 30) { g.fillStyle = lit(hg.gem ?? '#c0283a'); const m = front[Math.floor(front.length / 2)]; g.beginPath(); g.arc(m.lo[0], (m.lo[1] + m.hi[1]) / 2 + px * 0.04, px * 0.07, 0, 7); g.fill(); }
     }
+  } else if (hg.type === 'wreath') {
+    // a crown of leaves on a twig: the twig round the head, leaves along it two by two, tilted up and down
+    const col = hg.color ?? '#5f9a3c', y0 = hg.y ?? 0.56, n = hg.n ?? 20, front = (a) => Math.sin(a) * vl[0] + Math.cos(a) * vl[2];
+    const twig = []; for (let i = 0; i <= 26; i++) { const a = -Math.PI + (i / 26) * Math.PI * 2; if (front(a) < -0.12) continue; twig.push(P(ring(a, y0, 1.08))); }
+    if (twig.length > 2) { g.beginPath(); smoothOpen(g, twig, 1); g.lineCap = 'round'; g.lineWidth = lw * 2.2; g.strokeStyle = ink; g.stroke(); g.lineWidth = lw * 1.1; g.strokeStyle = lit(hg.twig ?? '#7a5a34'); g.stroke(); }
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI + ((i + 0.5) / n) * Math.PI * 2; if (front(a) < -0.05) continue;
+      const up = i % 2 ? 1 : -1, p0 = P(ring(a, y0 + up * 0.02, 1.09)), p1 = P(ring(a + 0.2, y0 + up * 0.14, 1.12)), dx = p1[0] - p0[0], dy = p1[1] - p0[1], L = Math.hypot(dx, dy);
+      if (L < 1.5) continue;
+      g.save(); g.translate(p0[0], p0[1]); g.rotate(Math.atan2(dy, dx));
+      g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(L * 0.45, -L * 0.4, L, 0); g.quadraticCurveTo(L * 0.45, L * 0.4, 0, 0); g.closePath();
+      g.lineJoin = 'round'; g.lineWidth = lw * 1.2; g.strokeStyle = ink; g.stroke(); g.fillStyle = lit(i % 3 ? col : shadeHex(col, 0.14)); g.fill();
+      g.beginPath(); g.moveTo(L * 0.08, 0); g.lineTo(L * 0.82, 0); g.lineWidth = lw * 0.5; g.strokeStyle = lit(shadeHex(col, -0.35)); g.stroke();
+      g.restore();
+    }
   } else if (hg.type === 'band') {
     const col = hg.color ?? '#b3262b', pts = [], y0 = hg.y ?? 0.5, w = hg.w ?? 0.15;
     for (let i = 0; i <= 18; i++) { const a = -2.2 + (4.4 * i) / 18; if (Math.sin(a) * vl[0] + Math.cos(a) * vl[2] < -0.1) continue; pts.push([P(ring(a, y0 + w / 2, 1.1)), P(ring(a, y0 - w / 2, 1.1))]); }
