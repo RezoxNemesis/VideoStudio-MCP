@@ -143,16 +143,21 @@ function sketch(g, W, H, frame) {
 
 /** Manga: black ink, white paper and screen tone (dots on a 45° grid) for everything between. */
 function manga(g, W, H) {
-  const { im, d, Lm } = lumaOf(g, W, H), s = H / 1080, cell = 6 * s;
+  const { im, d, Lm } = lumaOf(g, W, H), s = H / 1080, cell = 5 * s;
+  // the page is white: the picture's own range is stretched first (a dim dusk street prints as clearly as noon), so
+  // faces and lit cloth come out as paper, the half tones as dots, only real darks and the ink as black
+  const hist = new Uint32Array(64); for (let p = 0; p < Lm.length; p += 7) hist[Math.min(63, Math.floor(Lm[p] * 64))]++;
+  let n = 0; for (const c of hist) n += c; const pct = (q) => { let a = 0; for (let k = 0; k < 64; k++) { a += hist[k]; if (a >= q * n) return (k + 0.5) / 64; } return 1; };
+  const lo = pct(0.04), hi = Math.max(lo + 0.2, pct(0.9)), k = 1 / (hi - lo);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const p = y * W + x, i = p * 4, l = Lm[p];
+    const p = y * W + x, i = p * 4, l = clamp((Lm[p] - lo) * k * 0.96 + 0.02);
     let v;
-    if (l < 0.16) v = 18;
-    else if (l > 0.78) v = 250;
+    if (l < 0.12) v = 18;
+    else if (l > 0.64) v = 250;
     else {
       // rotated grid; the dot grows as the tone darkens
       const u = (x + y) / (cell * 1.414), w = (x - y) / (cell * 1.414), fu = u - Math.floor(u) - 0.5, fw = w - Math.floor(w) - 0.5, r = Math.sqrt(fu * fu + fw * fw);
-      const want = Math.sqrt(clamp((0.78 - l) / 0.62) / Math.PI) * 0.9;
+      const want = Math.sqrt(clamp((0.64 - l) / 0.56) / Math.PI) * 0.9;
       v = r < want ? 22 : 248;
     }
     d[i] = v; d[i + 1] = v; d[i + 2] = v * 0.98;

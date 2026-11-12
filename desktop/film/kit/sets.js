@@ -424,7 +424,7 @@ export const stairGround = (pose) => { const z = pose.j.root[2]; return z < 0 ? 
 
 /* ------------------------------------------------------------------------------------------------ the border town
  * A walled town on the road to the great bridge: one street along X (z −4…4) between two rows of houses, market stalls,
- * the east gate at x = 31 with Valdhar's banners. o.time: 'day' (grey afternoon) | 'dusk'. One house smoulders.
+ * the east gate at x = 31 with Valdhar's banners. o.time: 'day' (grey afternoon) | 'dusk'. One house smoulders (o.ruin: false — not burnt).
  */
 export const TOWN = { north: [-30, -21.5, -13, -4.5, 4, 12.5, 21], south: [-26, -17, -8.5, 0.5, 9, 17.5, 25.5], gate: 31, stalls: [[-7, -3.9], [2.6, 3.9], [-13, 3.9], [9.5, -3.9]] };
 export function town(o = {}) {
@@ -444,10 +444,10 @@ export function town(o = {}) {
   sc.add('ground', slab({ pts: [[-44, -4.3], [44, -4.3], [44, 4.3], [-44, 4.3]], y: 0.008, color: cob, far: shadeHex(cob, 0.05), detail: (g, cam, s2) => { g.beginPath(); for (let z = -4; z <= 4; z += 1) { const q = clipSeg(cam, [-44, 0.012, z + 0.3 * hash(z)], [44, 0.012, z + 0.3 * hash(z)]); if (q) { g.moveTo(q[0][0], q[0][1]); g.lineTo(q[1][0], q[1][1]); } } for (let x = -44; x <= 44; x += 1.6) { const z0 = -4.3 + 8.6 * hash(x * 1.3), q = clipSeg(cam, [x, 0.012, z0], [x + 0.2, 0.012, z0 + 1.0]); if (q && V.dist(cam.pos, [x, 0, z0]) < 30) { g.moveTo(q[0][0], q[0][1]); g.lineTo(q[1][0], q[1][1]); } } g.lineWidth = 1.1 * (cam.H / 1080); g.strokeStyle = s2.col(shadeHex(cob, -0.2), 14); g.globalAlpha = 0.45; g.stroke(); g.globalAlpha = 1; } }));
   // ---- houses: plaster and timber, tiled roofs; some of two floors
   const walls = ['#ddd2bc', '#d2c6ae', '#e4dac6', '#cbbfa8'], roofs = ['#8a5040', '#7a4a3e', '#96584a', '#6f4a44'];
-  TOWN.north.forEach((x, i) => { const burnt = i === 2; sc.add('world', house(x, -9.2, 0, 7.4 + (i % 3) * 0.5, 6, { h: i % 2 ? 4.4 : 2.9, wall: burnt ? '#6a5a50' : walls[i % 4], roof: burnt ? '#3a2c2a' : roofs[i % 4], rise: 2.0, win: dusk && !burnt ? '#ffc878' : null })); });
+  TOWN.north.forEach((x, i) => { const burnt = i === 2 && o.ruin !== false; sc.add('world', house(x, -9.2, 0, 7.4 + (i % 3) * 0.5, 6, { h: i % 2 ? 4.4 : 2.9, wall: burnt ? '#6a5a50' : walls[i % 4], roof: burnt ? '#3a2c2a' : roofs[i % 4], rise: 2.0, win: dusk && !burnt ? '#ffc878' : null })); });
   TOWN.south.forEach((x, i) => sc.add('world', house(x, 9.6, 180, 7.2 + ((i + 1) % 3) * 0.5, 6, { h: i % 2 ? 2.9 : 4.2, wall: walls[(i + 2) % 4], roof: roofs[(i + 1) % 4], rise: 2.0, win: dusk ? '#ffc878' : null })));
   // the burnt house still smoulders
-  for (const [dx, hh] of [[-2, 1.5], [1.2, 2.0]]) sc.add('world', fxFire({ p: [TOWN.north[2] + dx, 3.3, -8.4], w: 1.9, h: hh, seed: 31 + dx, tongues: 4 }));
+  if (o.ruin !== false) for (const [dx, hh] of [[-2, 1.5], [1.2, 2.0]]) sc.add('world', fxFire({ p: [TOWN.north[2] + dx, 3.3, -8.4], w: 1.9, h: hh, seed: 31 + dx, tongues: 4 }));
   // ---- the east gate: two towers, a beam, banners
   const gx = TOWN.gate, st = '#a09a90';
   sc.add('world', new Mesh([...box([gx, 0, -6.6], 3.4, 7.4, 3.4, 0, { side: st, top: '#8a857c' }, { side: DET.stone(0.5, 1.1) }), ...gable([gx, 7.4, -6.6], 3.4, 3.4, 0, { rise: 1.6, over: 0.5, color: '#6f4a44', hip: true, detail: DET.tiles(0.5, 0.5) })], { p: [gx, 0, -6.6] }));

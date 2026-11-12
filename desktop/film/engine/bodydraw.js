@@ -103,6 +103,24 @@ function helmetMeshes(B, L, hg) {
   }
   return out;
 }
+/** A crown on the hair (design headgear { type: 'crown', color, gem, points, h }): a gold band round the skull, points rising from
+ * it, a gem on the brow — on the head bone, in the frame of the landmarks (as the hair is). */
+function crownMeshes(B, L, hg) {
+  const skY = (L.crown[1] + L.nape[1]) / 2 - 0.005, skZ = 0.03, rx = 0.083, ry = 0.12, rz = 0.117, y0 = L.eyeL[1] + (hg.lift ?? 0.7) * (L.crown[1] - L.eyeL[1]);
+  const at = (a, dy = 0, out = 0) => { const y = y0 + dy - 0.012 * Math.cos(a), q = Math.sqrt(Math.max(0.05, 1 - ((y - skY) / ry) ** 2)); return [Math.sin(a) * (rx * q + 0.026 + out), y, skZ + Math.cos(a) * (rz * q + 0.026 + out)]; };
+  const W = (p) => onBone(B, 'head', p), N = 40, bh = hg.band ?? 0.026, ph = hg.h ?? 0.042, np = hg.points ?? 8, pos = [], idx = [];
+  // the band: a ring a little outside the hair, leaning out at the top
+  for (let j = 0; j <= N; j++) { const a = (j / N) * Math.PI * 2, lo = W(at(a, 0, 0)), hi = W(at(a, bh, 0.004)); pos.push(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]); }
+  for (let j = 0; j < N; j++) { const q = j * 2; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); }
+  // the points: a triangle on the band's top edge every 1/np of the way round, one over the brow
+  for (let k = 0; k < np; k++) { const a = (k / np) * Math.PI * 2, w = (Math.PI / np) * 0.62, b0 = pos.length / 3, l = W(at(a - w, bh, 0.004)), r = W(at(a + w, bh, 0.004)), t = W(at(a, bh + ph, 0.012)); pos.push(l[0], l[1], l[2], r[0], r[1], r[2], t[0], t[1], t[2]); idx.push(b0, b0 + 1, b0 + 2); }
+  const out = [{ pos: Float32Array.from(pos), idx: Uint32Array.from(idx), c: hg.color ?? '#e0b84a', metal: true }];
+  // the gem on the brow: a small diamond standing on the band
+  const g0 = W(at(0, bh * 0.5, 0.006)), up = V.norm(V.sub(W(at(0, bh, 0.006)), g0)), sd = V.norm(V.sub(W(at(0.2, bh * 0.5, 0.006)), g0)), gs = 0.011;
+  const gp = [V.add(g0, V.mul(up, gs)), V.add(g0, V.mul(sd, gs * 0.8)), V.sub(g0, V.mul(up, gs)), V.sub(g0, V.mul(sd, gs * 0.8))];
+  out.push({ pos: Float32Array.from(gp.flat()), idx: Uint32Array.from([0, 1, 2, 0, 2, 3]), c: hg.gem ?? '#2f8a5a' });
+  return out;
+}
 /** The leaves and twig of a wreath, on the head bone: in the frame of the landmarks (as the hair is). */
 function wreathMeshes(B, L, hg) {
   const skY = (L.crown[1] + L.nape[1]) / 2 - 0.005, skZ = 0.03, rx = 0.083, ry = 0.12, rz = 0.117, y0 = L.eyeL[1] + (hg.lift ?? 0.62) * (L.crown[1] - L.eyeL[1]);
@@ -223,8 +241,10 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       else cp.add(p.out, p.idx, { fill: hex(ink), shade: hex(ink), flat: true, two: true, bias: 0.002, line: false, group: 'eye' }, nr);
       continue;
     }
-    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
+    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
+    // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it
+    if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;
     const paint = paintOf(ch, B, p, lit), nr = normalsOf(p.out, p.idx, p.nrm);
     if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
     if (p.idxLimb.length) { const pl = { ...paint, group: paint.group ?? p.name }; const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); }
@@ -244,13 +264,14 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
       const hc = d.hair.color, hp = { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi: rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), hiAt: 0.9, thr: 0.1, group: 'hair', hairy: true, bias: 0.002, edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 };
-      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, { ...hp, noAO: true }, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82)));
+      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, { ...hp, noAO: true, recv: false }, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82)));
       ch.hairT = ch.t;
     }
   }
   // a crown of leaves on the hair (design headgear 'wreath'): a twig round the skull, leaves along it, up and down by turns
   if (real && d.headgear?.type === 'wreath' && lmk.crown && lmk.nape) for (const m of wreathMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.32)), thr: 0.05, two: true, group: 'hair', bias: 0.003, edge: 1.4 }));
   // a soldier's steel cap: a dome over the hair, down to the brow in front and the nape behind, a band round its rim, a crest for officers
+  if (real && d.headgear?.type === 'crown' && lmk.crown && lmk.nape) for (const m of crownMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.38)), hi: rgbOf(shadeHex(m.c, 0.5)), hiAt: 0.8, thr: 0.0, two: true, group: 'hair', bias: 0.005, edge: 1.4, noAO: true, recv: false } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.3)), flat: true, two: true, group: 'hair', bias: 0.006, line: false }));
   if (real && d.headgear?.type === 'helmet' && lmk.crown && lmk.nape) for (const m of helmetMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.42)), hi: rgbOf(shadeHex(m.c, 0.55)), hiAt: 0.8, thr: 0.0, group: 'hair', bias: 0.004, edge: 1.6 } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.35)), thr: 0.05, two: true, group: 'hair', bias: 0.004, edge: 1.4 }));
   for (const m of carried(ch, pose, lit, pose.height / 1.8)) { const id = cp.add(m.pos, m.idx, m.paint); limbIds.add(id); }
   if (ch.cape && d.cape) { const m = sheet(ch.cape), c = d.cape.color, li = d.cape.lining ?? shadeHex(c, -0.25); cp.add(m.pos, m.idx, { fill: hex(lit(c)), shade: hex(lit(shadeHex(c, -0.3))), two: true, back: { fill: hex(lit(li)), shade: hex(lit(shadeHex(li, -0.3))) }, thr: 0.0 }); }

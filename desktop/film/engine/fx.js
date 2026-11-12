@@ -93,7 +93,8 @@ export class Particles {
 /* ready-made clouds ------------------------------------------------------------------------------------------------ */
 const boxIn = (r, b) => [lerp(b[0][0], b[1][0], r()), lerp(b[0][1], b[1][1], r()), lerp(b[0][2], b[1][2], r())];
 /** Falling snow in a box of air around the action: box [[x0,y0,z0],[x1,y1,z1]] */
-export const snow = (box, o = {}) => new Particles({ rate: o.rate ?? 160, max: 2600, kind: 'disc', color: o.color ?? '#f4f7fd', alpha: o.alpha ?? 0.9, gravity: 0.012, drag: 1.2, wind: 1.4, swirl: 0.5, ground: box[0][1], fade: [0.05, 0.1], seed: o.seed ?? 3,
+// snow falls at about 1 m/s: the weight (gravity 0.2) against the drag and the wind's hold
+export const snow = (box, o = {}) => new Particles({ rate: o.rate ?? 160, max: o.max ?? 3200, kind: 'disc', color: o.color ?? '#f4f7fd', alpha: o.alpha ?? 0.9, gravity: o.fall ?? 0.2, drag: 1.2, wind: 1.4, swirl: 0.5, ground: box[0][1], fade: [0.05, 0.1], seed: o.seed ?? 3,
   spawn: (r) => ({ p: [lerp(box[0][0], box[1][0], r()), box[1][1], lerp(box[0][2], box[1][2], r())], v: [0, -0.7 - r() * 0.5, 0], life: 14, size: 0.012 + r() * 0.016 }) });
 /** Blossom petals drifting from a tree or across a yard. */
 export const petals = (box, o = {}) => new Particles({ rate: o.rate ?? 22, max: 900, kind: 'petal', colors: null, alpha: 0.95, gravity: 0.02, drag: 1.0, wind: 1.6, swirl: 0.9, ground: box[0][1], settle: false, fade: [0.05, 0.15], seed: o.seed ?? 5,

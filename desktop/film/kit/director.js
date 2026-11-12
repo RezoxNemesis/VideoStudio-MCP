@@ -98,12 +98,13 @@ const letters = (i) => (i < 26 ? String.fromCharCode(97 + i) : `z${String.fromCh
  * A whole sequence from a description. def: {
  *   id, set: () => Scene, look?, hold?, side? (1 | -1: which side of the line the camera stays on), end? (seconds after the last beat),
  *   cast: [{ id, person: 'townsman_07' | design, who? (its name in script.json), at: [x, z], face? (degrees; default: towards the next one),
- *            preset?, props?, mood? (its first emotion), alive? ('clip': a captured standing instead of the Stage's idle) }],
- *   beats: [ { say: lineId, by?, to?, emote?, gesture?, gap?, vo?, hands? (talking hands, default true) }
- *          | { wait: s } | { walk: id, to: [x, z], gait?, speed?, face? } | { do: id, gesture } | { emote: { id: emotion | [emotion, blend] } }
+ *            preset?, props?, mood? (its first emotion), alive? ('clip': a captured standing instead of the Stage's idle),
+ *            changes? (to the person's design sheet), stage? (more for the body: { outfit: 'hoodie' | 'school_girl' | …, height, age }) }],
+ *   beats: [ { say: lineId, by?, to?, emote?, gesture?, travel?, gap?, vo?, hands? (talking hands, default true) }
+ *          | { wait: s } | { walk: id, to: [x, z], gait?, speed?, face? } | { do: id, gesture, travel? (let the clip carry the body; default on the spot) } | { emote: { id: emotion | [emotion, blend] } }
  *          | { look: id, at: id | 'cam' | [x, y, z] } | { mark: name } ],
  *   coverage?: 'dialogue' | 'single' | (T, D) => shots,  extra?: (T, D) => [shots placed by their times],
- *   amb?: name | [names], music?: cue name, title?: { word, sub } (over the first shot), caption?: text | { text, sub },
+ *   amb?: name | [names], music?: cue name, title?: { word, sub } (over the first shot), caption?: text | { text, sub }, warm? (s of fx before each shot),
  *   post?, fx?, dyn?, over?, top?, tail? }
  * → a sequence (makeSeq). D (for custom coverage): { ids, tOf(beat), side, ots(ctx, from, to), cu(ctx, id), wide(ctx), two(ctx) }.
  */
@@ -145,7 +146,8 @@ export function scene(def) {
           const t = +tOf(T, b).toFixed(3);
           if (b.walk === c.id) { const from = busy.filter((x) => x.to).pop()?.to ?? c.at, dur = Math.hypot(b.to[0] - from[0], b.to[1] - from[1]) / (b.speed ?? 1.3); busy.push({ t0: t, t1: t + dur + 0.4, to: b.to, act: { t, go: b.to, gait: b.gait ?? 'walk', speed: b.speed ?? 1.3, ...(b.face != null ? { face: b.face } : {}), blend: 0.4 } }); }
           const g = b.do === c.id ? b.gesture : b.say && byOf(b) === c.id ? b.gesture : null;
-          if (g) { const [clip, inn, out] = gestureClip(g), gt = b.say ? Math.max(0, t - 0.15) : t; busy.push({ t0: gt, t1: gt + (out - inn), act: { t: +gt.toFixed(3), clip, in: inn, out, blend: 0.4 } }); }
+          // a gesture is done on the spot (a captured clip's own steps would carry the body off its mark), unless the beat says travel: true
+          if (g) { const [clip, inn, out] = gestureClip(g), gt = b.say ? Math.max(0, t - 0.15) : t; busy.push({ t0: gt, t1: gt + (out - inn), act: { t: +gt.toFixed(3), clip, in: inn, out, blend: 0.4, ...(b.travel ? {} : { inPlace: true }) } }); }
         }
         busy.sort((x, y) => x.t0 - y.t0);
         // standing between beats: the Stage's own idle (it breathes and its weight drifts); alive: 'clip' plays a captured standing
@@ -160,17 +162,28 @@ export function scene(def) {
         // heads: towards whoever speaks (or whom this one speaks to); talking hands on its own lines
         const ov = []; let k = 0;
         const lines = beats.filter((b) => b.say && !b.vo);
-        let last = 0, cur = c.look0 ?? ids.find((x) => x !== c.id) ?? null;
+        // where the head turns, in time order: to whoever speaks (or whom this one speaks to), and to what a look beat
+        // names — a look beat holds until the next one, or until this one speaks to somebody by name (to)
+        const turns = [];
         for (const b of lines) {
-          const by = byOf(b), t0 = T.t(b.say) - 0.2, tgt = by === c.id ? (b.to ?? ids.find((x) => x !== c.id) ?? null) : by;
-          if (tgt && tgt !== cur) { if (cur) ov.push({ t0: last, t1: t0, fade: 0.35, look: cur, head: 0.8 }); last = t0; cur = tgt; }
-          if (by === c.id && b.hands !== false && !b.gesture) ov.push(talk(T, b.say, k++, { weight: c.talkWeight ?? 0.75 }));
+          const by = byOf(b), mine = by === c.id, tgt = mine ? (b.to ?? ids.find((x) => x !== c.id) ?? null) : by;
+          turns.push({ t: T.t(b.say) - 0.2, tgt, named: mine && !!b.to });
+          if (mine && b.hands !== false && !b.gesture) ov.push(talk(T, b.say, k++, { weight: c.talkWeight ?? 0.75 }));
         }
-        for (const b of beats.filter((x) => x.look === c.id)) { const t = tOf(T, b); if (cur) ov.push({ t0: last, t1: t, fade: 0.35, look: cur, head: 0.8 }); last = t; cur = b.at; }
-        if (cur) ov.push({ t0: last, t1: T.dur + 1, fade: 0.35, look: cur, head: 0.8 });
+        for (const b of beats.filter((x) => x.look === c.id)) turns.push({ t: tOf(T, b), tgt: b.at, beat: true });
+        turns.sort((x, y) => x.t - y.t);
+        let last = 0, cur = c.look0 ?? ids.find((x) => x !== c.id) ?? null, held = false;
+        for (const e of turns) {
+          if (held && !e.beat && !e.named) continue;
+          held = !!e.beat;
+          if (!e.tgt || e.tgt === cur) continue;
+          if (cur && e.t > last + 0.05) ov.push({ t0: +last.toFixed(3), t1: +e.t.toFixed(3), fade: 0.35, look: cur, head: 0.8 });
+          last = Math.max(last, e.t); cur = e.tgt;
+        }
+        if (cur) ov.push({ t0: +last.toFixed(3), t1: +(T.dur + 1).toFixed(3), fade: 0.35, look: cur, head: 0.8 });
         if (ov.length) steps.push({ op: 'stage.overlay', actor: c.id, add: ov });
       }
-      return { bodies: def.bodies ?? true, actors: cast.map((c, i) => ({ id: c.id, preset: c.preset ?? (typeof c.person === 'string' ? presetOf(c.person) : 'villager'), kit: c.kit ?? 'none', ...(c.props ? { props: c.props } : {}), at: c.at, yaw: c.face ?? (cast.length > 1 ? yawTo(c.at, cast[(i + 1) % cast.length].at) : 0) })), steps: [...steps, ...(def.steps ? def.steps(T) : [])] };
+      return { bodies: def.bodies ?? true, actors: cast.map((c, i) => ({ id: c.id, preset: c.preset ?? (typeof c.person === 'string' ? presetOf(c.person) : 'villager'), kit: c.kit ?? 'none', ...(c.props ? { props: c.props } : {}), ...(c.stage ?? {}), at: c.at, yaw: c.face ?? (cast.length > 1 ? yawTo(c.at, cast[(i + 1) % cast.length].at) : 0) })), steps: [...steps, ...(def.steps ? def.steps(T) : [])] };
     },
     actors: (T) => cast.map((c) => {
       const emote = [[0, c.mood ?? 'calm']];
@@ -184,6 +197,8 @@ export function scene(def) {
     shots: (T) => {
       let shots = typeof def.coverage === 'function' ? def.coverage(T, D) : coverage(T, def, cast, beats, D, byOf);
       if (def.extra) shots = [...shots, ...def.extra(T, D)].sort((x, y) => x.t0 - y.t0);
+      // snow, rain, fireflies already in the air when a shot starts (seconds of particles run before its first frame)
+      if (def.warm) shots = shots.map((sh) => ({ warm: def.warm, ...sh }));
       // the title or the place's caption on the first shot
       if (def.title && shots[0]) { const tt = def.title, t0 = shots[0].t0; shots[0] = { ...shots[0], top: (g, cam, sc, t, ctx) => mainTitle(g, cam.W, cam.H, t - t0, { word: tt.word, sub: tt.sub ?? 'A FILM BY VIKAS', small: tt.small, out: tt.out ?? Math.max(2.2, shots[0].t1 - t0 - 0.6) }) }; }
       else if (def.caption && shots[0]) { const cp = typeof def.caption === 'string' ? { text: def.caption } : def.caption, t0 = shots[0].t0; shots[0] = { ...shots[0], top: (g, cam, sc, t, ctx) => caption(g, cam.W, cam.H, t - t0, cp.text, { sub: cp.sub }) }; }

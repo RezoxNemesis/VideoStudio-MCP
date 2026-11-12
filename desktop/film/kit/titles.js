@@ -8,8 +8,10 @@ function track(g, text, spacing, draw) {
 }
 /** The main title. u = seconds since the card began. o: { x, y (0..1 of the frame), scale, sub, small, out (second the letters leave) } */
 export function mainTitle(g, W, H, u, o = {}) {
-  const k = H / 1080 * (o.scale ?? 1), cx = W * (o.x ?? 0.5), cy = H * (o.y ?? 0.44), out = o.out ?? 1e9, gone = smooth(clamp((u - out) / 0.7));
+  let k = H / 1080 * (o.scale ?? 1); const cx = W * (o.x ?? 0.5), cy = H * (o.y ?? 0.44), out = o.out ?? 1e9, gone = smooth(clamp((u - out) / 0.7));
   g.save(); g.translate(cx, cy); g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.globalAlpha = 1 - gone;
+  // a long name is set smaller, so it always fits the frame with a margin either side
+  g.font = `700 ${Math.round(250 * k)}px "Lora"`; const wide = track(g, o.word ?? 'OREZ', 34 * k, null); if (wide > W * 0.84) { k *= (W * 0.84) / wide; }
   // OREZ: each letter arrives a little after the last, settling from large to its place
   g.font = `700 ${Math.round(250 * k)}px "Lora"`;
   track(g, o.word ?? 'OREZ', 34 * k, (ch, x, i) => {

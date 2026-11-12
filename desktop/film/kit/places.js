@@ -167,12 +167,12 @@ export function room(o = {}) {
   }
   return sc;
 }
-/** The flat roof of a tall building, the town spread out below and around. o: { time } */
+/** The flat roof of a tall building, the town spread out below and around. o: { time, town (how many buildings round it, 90; 0 when a painted backdrop() gives the city) } */
 export function rooftop(o = {}) {
   const { sc, L, night, low } = open(o, { fog: 0.7 }), lit = night || low ? L.win : null;
   sc.add('ground', ground({ y: -40, near: '#5a5e66', far: '#8a8e96', farAt: 400 }));
   const town = [];
-  for (let i = 0; i < 90; i++) { const a = hash(i * 1.37) * 6.28, r = 34 + hash(i * 2.9) * 260, x = Math.cos(a) * r, z = Math.sin(a) * r, hh = 26 + hash(i * 5.7) * (i % 5 === 0 ? 62 : 30); town.push([r, new Mesh(box([x, -40, z], 12 + hash(i) * 14, hh, 12 + hash(i * 3) * 10, hash(i * 4) * 30, { side: ['#8f9aa8', '#a8a49a', '#7f8a94', '#b9b2a6', '#6f7a88'][i % 5], top: '#5a5e66' }, lit && i % 2 === 0 ? { side: DET.marks(Array.from({ length: 14 }, (_, k) => ['glow', 0.1 + (k % 4) * 0.22, 0.2 + Math.floor(k / 4) * 0.2, 0.22 + (k % 4) * 0.22, 0.3 + Math.floor(k / 4) * 0.2, lit])) } : { side: DET.lattice(5, 8, '#5d7388') }), { p: [x, -40, z] })]); }
+  for (let i = 0; i < (o.town ?? 90); i++) { const a = hash(i * 1.37) * 6.28, r = 34 + hash(i * 2.9) * 260, x = Math.cos(a) * r, z = Math.sin(a) * r, hh = 26 + hash(i * 5.7) * (i % 5 === 0 ? 62 : 30); town.push([r, new Mesh(box([x, -40, z], 12 + hash(i) * 14, hh, 12 + hash(i * 3) * 10, hash(i * 4) * 30, { side: ['#8f9aa8', '#a8a49a', '#7f8a94', '#b9b2a6', '#6f7a88'][i % 5], top: '#5a5e66' }, lit && i % 2 === 0 ? { side: DET.marks(Array.from({ length: 14 }, (_, k) => ['glow', 0.1 + (k % 4) * 0.22, 0.2 + Math.floor(k / 4) * 0.2, 0.22 + (k % 4) * 0.22, 0.3 + Math.floor(k / 4) * 0.2, lit])) } : { side: DET.lattice(5, 8, '#5d7388') }), { p: [x, -40, z] })]); }
   for (const [, m] of town.sort((a, b) => b[0] - a[0])) sc.add('far', m);
   sc.add('ground', slab({ pts: [[-13.4, -10.4], [13.4, -10.4], [13.4, 10.4], [-13.4, 10.4]], y: 0, color: '#7a7e86', far: '#8a8e96', detail: (g, cam) => { g.strokeStyle = '#6a6e76'; g.lineWidth = 1; g.beginPath(); for (let x = -12; x <= 12; x += 2) { const q = clipSeg(cam, [x, 0.002, -10.2], [x, 0.002, 10.2]); if (q) { g.moveTo(q[0][0], q[0][1]); g.lineTo(q[1][0], q[1][1]); } } for (let z = -10; z <= 10; z += 2) { const q = clipSeg(cam, [-13.2, 0.002, z], [13.2, 0.002, z]); if (q) { g.moveTo(q[0][0], q[0][1]); g.lineTo(q[1][0], q[1][1]); } } g.stroke(); } }));
   for (const [x, z, w2, d2] of [[0, 10.2, 26.4, 0.4], [0, -10.2, 26.4, 0.4], [13.2, 0, 0.4, 20.4], [-13.2, 0, 0.4, 20.4]]) sc.add('world', new Mesh(box([x, 0, z], w2, 1.0, d2, 0, { side: '#9aa0a8', top: '#b4b8be' }), { p: [x, 0, z] }));
