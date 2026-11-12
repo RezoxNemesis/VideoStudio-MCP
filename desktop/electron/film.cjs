@@ -98,7 +98,12 @@ function setupFilm(o) {
     if (patch && typeof patch === "object") { Object.assign(c, patch); await fsp.writeFile(f, JSON.stringify(c, null, 1)); }
     return c;
   });
-  h("film.frame", (dir, id, t, lang, scale, quality) => farm().ask("frame", { dir: film(dir), id, t, lang, scale, quality }));
+  h("film.frame", (dir, id, t, lang, scale, quality, paint) => farm().ask("frame", { dir: film(dir), id, t, lang, scale, quality, paint: paint !== false }));
+  // fixes painted over shots (Animate → Fix a film shot)
+  h("film.paintGet", (dir, id) => farm().ask("paintGet", { dir: film(dir), id: String(id) }));
+  h("film.paintSave", (dir, id, data) => farm().ask("paintSave", { dir: film(dir), id: String(id), data }));
+  h("film.paintTrack", (dir, id, lang) => farm().work("paintTrack", { dir: film(dir), id: String(id), lang }));
+  h("film.paintBase", (dir, id, lang) => farm().work("paintBase", { dir: film(dir), id: String(id), lang }, (e) => o.send("film:progress", { dir: film(dir), ...e, phase: "paint-base" })));
   h("film.sheet", async (dir, id, p = {}) => {
     const r = await farm().ask("sheet", { dir: film(dir), id, ...p });
     return { ...r, jpeg: (await fsp.readFile(r.file)).toString("base64") };

@@ -2,6 +2,8 @@
  * Code Studio's session: the film that is open, what its code says, what is drawn and what is not — one place that
  * both the Code workspace and Claude's commands use, so whatever Claude does shows in the window as it happens.
  */
+import { fixTransform, nearestPart, partAt, strokeToLocal } from "./paint";
+import type { PaintAnchor, PaintData, PaintFix, PaintStroke } from "./types";
 import type { Studio } from "../../../src/app/studio";
 import { registerCommand } from "../../../src/agent/api";
 import { toast } from "../../../src/ui/dom";
@@ -404,6 +406,73 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
     return { groups: r.groups, count: people.length, people: (a.optStr("group") || q.length ? people : people.filter((_p, i) => i % 8 === 0)).slice(0, 120).map((p) => ({ id: p.id, group: p.group, body: p.preset, about: p.about })), named: r.cast, note: a.optStr("group") || q.length ? undefined : "A sample of every group; give group or q for all of one kind." };
   });
   registerCommand("code.person", "{id, size?=360} A picture of a library person.", async (_s, a) => ({ id: a.str("id"), jpeg: dataUrl((await film().personThumb(a.str("id"), a.num("size", 360))).jpeg) }));
+  // ---- fixes painted over shots: Animate → Fix a film shot ----
+  type Args = Parameters<Parameters<typeof registerCommand>[2]>[1];
+  const paintApi = () => { const f = film(); if (!f.paintGet || !f.paintSave || !f.paintTrack) throw new Error("Painting over shots needs the desktop app."); return f as Required<Pick<typeof f, "paintGet" | "paintSave" | "paintTrack">> & typeof f; };
+  const shotId = (a: Args) => { const id = a.str("shot"); if (!code.info?.shots.some((x) => x.id === id)) throw new Error(`No shot ${id} in the open film.`); return id; };
+  const summary = (d: PaintData) => ({ on: d.on, fixes: d.fixes.map((x) => ({ id: x.id, name: x.name, on: x.on, holds: x.anchor.kind === "part" ? `${x.anchor.actor}:${x.anchor.part}` : x.anchor.kind, follow: x.follow, span: x.span ?? "whole shot", fade: x.fade, strokes: x.strokes.length, erased: x.erase.length, eraseMode: x.eraseMode, note: x.note })) });
+  registerCommand("paint.get", "{shot} The fixes painted over a shot (Animate → Fix a film shot): what each holds on to, when it shows, on or off.", async (_s, a) => summary((await paintApi().paintGet(code.must(), shotId(a))).data));
+  registerCommand("paint.parts", "{shot, t (seconds in the shot)} Where every part of every person is at that moment, in a 1920 × 1080 picture: [x, y] and its turn — to draw a fix that lands right (head face eyes jaw neck chest belly hips, and per side .L/.R: shoulder upperarm elbow forearm hand fingers thigh knee shin foot).", async (_s, a) => {
+    const tr = await paintApi().paintTrack(code.must(), shotId(a)), f = Math.round(a.num("t", 0) * tr.fps), out: Record<string, Record<string, [number, number, number]>> = {};
+    for (const [actor, A] of Object.entries(tr.actors)) { const m: Record<string, [number, number, number]> = {}; for (const part of Object.keys(A.parts)) { const p = partAt(tr, actor, part, f); if (p) m[part] = [Math.round(p.x), Math.round(p.y), +((p.ang * 180) / Math.PI).toFixed(1)]; } if (Object.keys(m).length) out[actor] = m; }
+    return { shot: tr.id, t: +(f / tr.fps).toFixed(3), frame: f, size: [tr.width, tr.height], parts: out };
+  });
+  registerCommand("paint.add", "{shot, t (s: the moment the strokes are drawn at), part?: 'actor:hand.L' | 'screen' (default: the part nearest the drawing), strokes?: [{tool?: ink|pen|brush|pencil|marker|airbrush|eraser, color?, size? (px of 1080p), opacity?, pts: [x, y, pressure, …] (px of a 1920 × 1080 picture), fill? (a closed shape's colour)}], erase?: [{pts, size?}] (what to take out of the picture), eraseMode?: behind (what is behind the person) | fill (from around), span?: [t0, t1] (default: the whole shot), fade?, follow?: full | move+scale | move, name?, note?} Paint a fix over a shot. It holds on to its part and follows it on every frame of its span; the shot is drawn with it at the next build (code.build).", async (_s, a) => {
+    const api = paintApi(), dir = code.must(), id = shotId(a), tr = await api.paintTrack(dir, id), f = Math.round(a.num("t", 0) * tr.fps), H = tr.height;
+    const conv = (raw: unknown, isErase: boolean): PaintStroke[] => (Array.isArray(raw) ? raw : []).map((x: Record<string, unknown>) => ({ id: Math.random().toString(36).slice(2, 10), tool: (isErase ? "brush" : String(x.tool ?? "ink")) as PaintStroke["tool"], color: String(x.color ?? "#2a2433"), size: Number(x.size ?? (isErase ? 24 : 5)), opacity: Number(x.opacity ?? 1), pts: (Array.isArray(x.pts) ? x.pts : []).map(Number), ...(x.fill ? { fill: String(x.fill), closed: true } : {}) }));
+    const strokes = conv(a.any("strokes"), false), erase = conv(a.any("erase"), true), all = [...strokes, ...erase];
+    if (!all.length || all.some((x) => x.pts.length < 3 || x.pts.length % 3)) throw new Error("Give strokes and/or erase, each with pts: [x, y, pressure, …].");
+    const ptsAll = all.flatMap((x) => x.pts), cx = ptsAll.filter((_v, i) => i % 3 === 0).reduce((q, v) => q + v, 0) / (ptsAll.length / 3), cy = ptsAll.filter((_v, i) => i % 3 === 1).reduce((q, v) => q + v, 0) / (ptsAll.length / 3);
+    const want = a.optStr("part"), anchor: PaintAnchor = want === "screen" ? { kind: "screen" } : want ? (() => { const [actor, part] = want.split(":"); if (!actor || !part || !tr.actors[actor]) throw new Error(`No part ${want}. Actors: ${Object.keys(tr.actors).join(", ")}.`); return { kind: "part" as const, actor, part }; })() : nearestPart(tr, f, cx, cy, H) ?? { kind: "screen" };
+    const p = anchor.kind === "part" ? partAt(tr, anchor.actor, anchor.part, f) : null;
+    if (anchor.kind === "part" && !p) throw new Error(`${anchor.actor}'s ${anchor.part} is not in the picture at ${a.num("t", 0)} s.`);
+    const fix: PaintFix = { id: Math.random().toString(36).slice(2, 10), name: a.optStr("name") ?? (anchor.kind === "part" ? `${anchor.actor} · ${anchor.part}` : "On the picture"), on: true, anchor, follow: (a.optStr("follow") as PaintFix["follow"]) ?? "full", span: Array.isArray(a.any("span")) ? ((a.any("span") as unknown[]).map(Number).slice(0, 2) as [number, number]) : null, fade: a.num("fade", 0), ref: p ? { t: f / tr.fps, ang: p.ang, ppmH: p.ppm / H } : { t: f / tr.fps, ang: 0, ppmH: 0.1 }, strokes: [], erase: [], eraseMode: a.optStr("eraseMode") === "fill" ? "fill" : "behind", note: a.optStr("note") };
+    const t0 = fixTransform(fix, tr, f, H);
+    if (!t0) throw new Error("The part is not in the picture at that moment.");
+    fix.strokes = strokes.map((x) => strokeToLocal(x, t0));
+    fix.erase = erase.map((x) => strokeToLocal(x, t0));
+    const cur = (await api.paintGet(dir, id)).data;
+    cur.fixes.push(fix);
+    const r = await api.paintSave(dir, id, cur);
+    await code.refresh();
+    return { id: fix.id, holds: anchor.kind === "part" ? `${anchor.actor}:${anchor.part}` : "the picture", ...summary(r.data), next: "code.frame (or paint.frame) to look, code.build to draw the shot with it" };
+  });
+  registerCommand("paint.set", "{shot, id, on?, name?, span? ([t0, t1] or null: the whole shot), fade?, follow?, eraseMode?} Change a fix — switch it off and on any time (nothing is deleted).", async (_s, a) => {
+    const api = paintApi(), dir = code.must(), id = shotId(a), d = (await api.paintGet(dir, id)).data, fx = d.fixes.find((x) => x.id === a.str("id"));
+    if (!fx) throw new Error(`No fix ${a.str("id")} in ${id}: ${d.fixes.map((x) => x.id).join(", ") || "it has none"}.`);
+    if (a.any("on") !== undefined) fx.on = !!a.any("on");
+    if (a.optStr("name")) fx.name = a.str("name");
+    if (a.any("span") === null) fx.span = null;
+    else if (Array.isArray(a.any("span"))) fx.span = (a.any("span") as unknown[]).map(Number).slice(0, 2) as [number, number];
+    if (a.optNum("fade") !== undefined) fx.fade = a.num("fade");
+    if (a.optStr("follow")) fx.follow = a.str("follow") as PaintFix["follow"];
+    if (a.optStr("eraseMode")) fx.eraseMode = a.str("eraseMode") === "fill" ? "fill" : "behind";
+    const r = await api.paintSave(dir, id, d);
+    await code.refresh();
+    return summary(r.data);
+  });
+  registerCommand("paint.remove", "{shot, id} Delete a fix.", async (_s, a) => {
+    const api = paintApi(), dir = code.must(), id = shotId(a), d = (await api.paintGet(dir, id)).data;
+    d.fixes = d.fixes.filter((x) => x.id !== a.str("id"));
+    const r = await api.paintSave(dir, id, d);
+    await code.refresh();
+    return summary(r.data);
+  });
+  registerCommand("paint.on", "{shot, on} Every fix of a shot on or off at once.", async (_s, a) => {
+    const api = paintApi(), dir = code.must(), id = shotId(a), d = (await api.paintGet(dir, id)).data;
+    d.on = a.bool("on", true);
+    const r = await api.paintSave(dir, id, d);
+    await code.refresh();
+    return summary(r.data);
+  });
+  registerCommand("paint.frame", "{shot, t?, paint?=true, scale?=0.5} A frame of the shot as the film draws it, with its fixes (paint:false: without them, to compare).", async (_s, a) => {
+    const id = shotId(a), r = await film().frame(code.must(), id, a.num("t", 0), undefined, a.num("scale", 0.5), 85, a.bool("paint", true));
+    return { jpeg: dataUrl(r.jpeg), shot: id, t: r.t };
+  });
+  registerCommand("paint.open", "{shot?} Show a shot in Animate → Fix a film shot (paint over it; fixes follow the body).", async (_s, a) => {
+    document.dispatchEvent(new CustomEvent("vsd:openScene", { detail: `fix:${a.optStr("shot") ?? ""}` }));
+    return true;
+  });
   registerCommand("library.list", "{cat? (backgrounds | characters | fx | props | hands | faces | ui | textures | pixel | stick), q? (words), limit?=80} The 2D library: 587 pictures drawn by the app — layered backgrounds for the multiplane camera, cut-out characters with rigs, effects, props, faces, hands, balloons and titles, textures, pixel sprites, stick figures. Each comes with the code that puts it in a film.", async (_s, a) => {
     const lib = film().library2d; if (!lib) throw new Error("The 2D library needs the desktop app.");
     const r = await lib(), cat = a.optStr("cat"), q = (a.optStr("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);

@@ -1,6 +1,7 @@
 /** The desktop shell: title bar with workspaces, the workspaces themselves, status bar, menus and shortcuts. */
 import type { Studio } from "../../../src/app/studio";
 import { AnimateView } from "../../../src/ui/animate";
+import { PaintOver } from "./paintover";
 import { VoiceView } from "../../../src/ui/voice";
 import { runCommand } from "../../../src/agent/api";
 import { deleteProject } from "../../../src/core/storage";
@@ -12,7 +13,7 @@ import { importPath } from "../importer";
 import { AudioWorkspace } from "./audio";
 import { ClaudeWorkspace } from "./claude";
 import { ASPECTS, Inspector } from "./inspector";
-import { b, h, ic, menu, modal, panel, selectEl, type MenuItem } from "./kit";
+import { b, h, ic, menu, modal, panel, selectEl, tabs, type MenuItem } from "./kit";
 import { Library } from "./library";
 import { DesktopTimeline } from "./timeline";
 import { Deliver } from "./deliver";
@@ -88,6 +89,10 @@ export class Shell {
   private graphOn = false;
   private library: Library;
   private animate: AnimateView;
+  private paintOver: PaintOver;
+  private anFix = false;
+  private anBody: HTMLElement | null = null;
+  private anModeTabs: { el: HTMLElement; set: (v: "draw" | "fix") => void } | null = null;
   private music!: MusicPage;
   private codePage!: CodePage;
   private senseiPage!: SenseiPage;
@@ -135,9 +140,14 @@ export class Shell {
     this.ws.audio = h("div", { class: "d-ws ws-audio" }, aw.lib, aw.wave, aw.mix);
     // Animate, Voice: the engine's own workstations, hosted full-size.
     this.animate = new AnimateView(s);
-    const an = panel("Animate · drawing, rigs, 2D & 3D");
+    this.paintOver = new PaintOver();
+    // two rooms: the drawing desk, and fixing a film shot by painting over it (the fix follows the body on every frame)
+    const anMode = tabs<"draw" | "fix">([["draw", "Drawing"], ["fix", "Fix a film shot"]], "draw", (v) => this.animateMode(v));
+    this.anModeTabs = anMode;
+    const an = panel("Animate · drawing, rigs, 2D & 3D", "", anMode.el);
     an.body.className = "hosted";
-    an.body.append(this.animate.el);
+    an.body.append(this.animate.el, this.paintOver.el);
+    this.anBody = an.body;
     this.ws.animate = h("div", { class: "d-ws ws-full" }, an.el);
     this.stage3d = new StagePage(s);
     const sg = panel("3D Stage · characters, motion capture, fights, cameras");
@@ -353,6 +363,18 @@ export class Shell {
     else this.timeline.redraw();
   }
 
+  /** Animate's two rooms: the drawing desk, or fixing a film shot. */
+  private animateMode(v: "draw" | "fix"): void {
+    this.anFix = v === "fix";
+    this.anModeTabs?.set(v);
+    this.anBody?.classList.toggle("fixing", this.anFix);
+    this.paintOver.shown(this.anFix && this.cur === "animate");
+    if (this.anFix) {
+      this.animate.hide();
+      void this.paintOver.open(null);
+    } else if (this.cur === "animate") this.animate.open();
+  }
+
   go(n: WsName, arg?: string): void {
     if (this.cur === "animate" && n !== "animate") this.animate.hide();
     this.cur = n;
@@ -366,7 +388,16 @@ export class Shell {
       host.insertBefore(this.viewer.el, host.firstChild);
       host.append(this.tlPanel);
     } else if (n === "audio") host.append(this.tlPanel);
-    if (n === "animate") this.animate.open(arg);
+    if (n === "animate") {
+      if (arg?.startsWith("fix:") || arg === "fix") {
+        this.animateMode("fix");
+        const [shot, issue] = arg.slice(4).split("#");
+        void this.paintOver.open(shot || null, issue || undefined);
+      } else {
+        if (this.anFix) this.animateMode("draw");
+        this.animate.open(arg);
+      }
+    } else this.paintOver.shown(false);
     this.music.shown(n === "music");
     this.codePage.shown(n === "code");
     this.senseiPage.shown(n === "sensei");
@@ -379,7 +410,7 @@ export class Shell {
     if (n !== "edit" && n !== "color" && n !== "insight") this.s.pause();
     this.tabsEl.replaceChildren(
       ...WS.map(([id, label, i]) => {
-        const bt = h("button", { class: id === n ? "on" : "", type: "button", title: `${label} workspace` }, ic(i, 14), label);
+        const bt = h("button", { class: id === n ? "on" : "", type: "button", title: `${label} workspace` }, ic(i, 14), h("span", { class: "wsl" }, label));
         bt.addEventListener("click", () => this.go(id));
         return bt;
       }),

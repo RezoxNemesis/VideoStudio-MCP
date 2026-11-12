@@ -87,6 +87,8 @@ body.vsd ::-webkit-scrollbar-track {
   z-index: 1;
   display: grid;
   grid-template-rows: 42px 1fr 26px;
+  /* the window's width, whatever the title bar holds (a narrow window must not push the panels off its right edge) */
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   gap: 0;
 }
@@ -157,6 +159,8 @@ body.vsd ::-webkit-scrollbar-track {
 .d-tabs {
   display: flex;
   gap: 2px;
+  min-width: 0;
+  overflow: hidden;
   margin: 0 auto;
   padding: 3px;
   border-radius: 10px;
@@ -1487,3 +1491,17 @@ kbd {
 .view .p-body { overflow: hidden; }
 .vbar .sel.vq { min-width: 62px; }
 .vbar .sel { min-width: 120px; }
+
+/* narrower windows: the workspace tabs tighten, then show their icons only (the name is in the tooltip) */
+@media (max-width: 1760px) {
+  .d-tabs button { padding: 5px 8px; gap: 5px; }
+  .d-menus > button { padding: 6px 7px; }
+}
+@media (max-width: 1560px) {
+  .d-tabs button .wsl { display: none; }
+  .d-tabs button.on .wsl { display: inline; }
+}
+@media (max-width: 1180px) {
+  .d-tabs button.on .wsl { display: none; }
+  .d-brand small, .d-proj { display: none; }
+}

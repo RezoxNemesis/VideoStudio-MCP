@@ -14,7 +14,7 @@ import { loadBake, poseAt, dropBakes } from '../engine/bake.js';
 import { Character } from '../engine/character.js';
 import { makeCam } from '../engine/camera.js';
 import { Scene, sky, ground } from '../engine/scene.js';
-import { openProject, needs, timeline, fingerprints, readIndex, writeIndex, shotKey, shotFrom, sources, readConfig, dirs } from '../kit/project.js';
+import { openProject, needs, timeline, fingerprints, readIndex, writeIndex, shotKey, shotFrom, sources, readConfig, dirs, variantFile } from '../kit/project.js';
 import { fitAndLip } from '../kit/lip.js';
 import { mix, srt, kitSounds } from '../kit/sound.js';
 import { PROPS } from '../kit/props.js';
@@ -24,6 +24,7 @@ import { PEOPLE, PEOPLE_LIST, PEOPLE_GROUPS } from '../kit/people.js';
 import { CAST as KIT_CAST } from '../kit/design.js';
 import * as SETS from '../kit/sets.js';
 import { ENGINE_VERSION } from '../kit/finger.js';
+import { readPaint, writePaint, anchorFrame, ANCHOR_NAMES } from '../kit/paint.js';
 import { reviewShots, finish as senseiFinish, annotateIssue, styleOfFiles, BUILTIN_STYLES } from '../sensei/index.js';
 
 register('./hooks.mjs', import.meta.url);
@@ -66,10 +67,10 @@ const methods = {
     const Pr = await project(dir), idx = readIndex(Pr), sfx = scale !== 1 ? '@' + scale : '', by = new Map();
     const n = needs(Pr), unsolved = new Set(n.bakes.filter((b) => !b.have).map((b) => b.seq));
     for (const f of fingerprints(Pr)) {
-      const e = idx[f.key + sfx], on = !!e && fs.existsSync(path.join(Pr.D.shots, e.file));
+      const e = idx[f.key + sfx], on = !!e && fs.existsSync(path.join(Pr.D.shots, e.file)), match = f.fp ? variantFile(Pr, e, f.fp) : null;
       // a shot whose performance is not solved yet cannot be looked at: it is simply new, not wrong
       const wait = !!f.error && unsolved.has(f.seq);
-      const v = { lang: f.lang, fp: f.fp ?? null, state: wait ? (on ? 'changed' : 'new') : f.error ? 'error' : on && e.fp === f.fp ? 'ready' : on ? 'changed' : 'new', file: on ? e.file : null, ms: on ? e.ms : null, error: wait ? undefined : f.error };
+      const v = { lang: f.lang, fp: f.fp ?? null, state: wait ? (on ? 'changed' : 'new') : f.error ? 'error' : match ? 'ready' : on ? 'changed' : 'new', file: match ?? (on ? e.file : null), ms: on ? e.ms : null, painted: !!f.painted, error: wait ? undefined : f.error };
       if (!by.has(f.id)) by.set(f.id, []);
       by.get(f.id).push(v);
     }
@@ -90,23 +91,66 @@ const methods = {
     const r = await renderVideo(sh, Pr.CAST, out, { lang: l, W, H, fps: Pr.config.fps, crf: Pr.config.crf, preset: Pr.config.preset, progress: (f, n) => emit({ event: 'progress', shot: id, frame: f, frames: n }) });
     return { key: shotKey(sh, l) + (scale !== 1 ? '@' + scale : ''), fp: fp.fp, file, frames: r.frames, ms: r.ms, seconds: +sh.dur.toFixed(3) };
   },
-  /** Record rendered shots in the index and delete the files they replace. */
+  /**
+   * Record rendered shots in the index. The two versions drawn before are kept beside the new one (a fix switched off
+   * and on again, a change undone: the shot is back at once); older ones are deleted.
+   */
   async commit({ dir, entries }) {
     const Pr = await project(dir), idx = readIndex(Pr);
     for (const e of entries) {
-      const old = idx[e.key]?.file;
-      idx[e.key] = { fp: e.fp, file: e.file, frames: e.frames, ms: e.ms, seconds: e.seconds, at: Date.now() };
-      if (old && old !== e.file) fs.rmSync(path.join(Pr.D.shots, old), { force: true });
+      const prev = idx[e.key], keep = [...(prev && prev.file !== e.file ? [{ fp: prev.fp, file: prev.file }] : []), ...(prev?.keep ?? [])].filter((k) => k.fp !== e.fp && k.file !== e.file);
+      for (const k of keep.slice(2)) fs.rmSync(path.join(Pr.D.shots, k.file), { force: true });
+      idx[e.key] = { fp: e.fp, file: e.file, frames: e.frames, ms: e.ms, seconds: e.seconds, at: Date.now(), keep: keep.slice(0, 2) };
     }
     writeIndex(Pr, idx);
     return { shots: Object.keys(idx).length };
   },
 
+  /* ---- fixes painted over shots (Animate → Fix a film shot) ---------------------------------------------------- */
+  /** A shot's fixes and the parts a fix can hold on to. */
+  async paintGet({ dir, id }) { const Pr = await project(dir); shotOf(Pr, id); return { data: readPaint(dir, id) ?? { v: 1, on: true, fixes: [] }, anchors: ANCHOR_NAMES }; },
+  /** Keep a shot's fixes (the shot is drawn again with them; an empty list removes the file). */
+  async paintSave({ dir, id, data }) { const Pr = await project(dir); shotOf(Pr, id); const out = writePaint(dir, id, data); P = null; return { data: out ?? { v: 1, on: true, fixes: [] } }; },
+  /**
+   * Where every part of every person is in every frame of a shot (picture of 1920 × 1080): for each actor and part
+   * [x, y, turn, pixels per metre, how much it lies across the picture], or 0 when it is not in the picture.
+   */
+  async paintTrack({ dir, id, lang }) {
+    const Pr = await project(dir), sh = shotOf(Pr, id), fps = Pr.config.fps, W = 1920, H = 1080, n = Math.max(1, Math.round(sh.dur * fps));
+    const run = new ShotRun(sh, Pr.CAST, { lang: lang ?? Pr.config.langs[0], W: 2, H: 2, fps, noGrain: true, noMesh: true });
+    run.W = W; run.H = H; // the camera of a full frame; nothing is drawn
+    const actors = Object.fromEntries(run.actors.map((a) => [a.id, { shown: [], parts: Object.fromEntries(ANCHOR_NAMES.map((k) => [k, []])) }]));
+    const r1 = (v) => Math.round(v * 10) / 10, r3 = (v) => Math.round(v * 1000) / 1000;
+    for (let f = 0; f < n; f++) {
+      const t = f / fps; run.ctx.t = t; run.poseAll(t);
+      const cam = makeCam(run.camParams(t), W, H); run.ctx.cam = cam;
+      for (const a of run.actors) {
+        const A = actors[a.id], shown = !a.show || !!a.show(t, run.ctx); A.shown.push(shown ? 1 : 0);
+        for (const k of ANCHOR_NAMES) { const fr = shown ? anchorFrame(a.pose, cam, k) : null; A.parts[k].push(fr ? [r1(fr.x), r1(fr.y), r3(fr.ang), r1(fr.ppm), r3(fr.vis)] : 0); }
+      }
+    }
+    return { id, fps, frames: n, width: W, height: H, actors };
+  },
+  /** A video of the shot without its fixes (to paint over): a kept clean version, or drawn now. → { file } */
+  async paintBase({ dir, id, lang }, emit) {
+    const Pr = await project(dir), sh = shotOf(Pr, id), l = lang ?? Pr.config.langs[0], idx = readIndex(Pr);
+    const f = fingerprints(Pr, [id]).find((x) => (x.lang ?? l) === l || x.lang === null);
+    if (!f || f.error) throw new Error(f?.error ?? `No fingerprint for ${id}.`);
+    const kept = variantFile(Pr, idx[f.key], f.fpClean);
+    if (kept) return { file: path.join(Pr.D.shots, kept), kept: true };
+    const out = path.join(Pr.D.vs, 'paint', `${id}${sh.lip ? '.' + l : ''}-${f.fpClean}.mp4`);
+    if (fs.existsSync(out)) return { file: out, kept: true };
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    for (const old of fs.readdirSync(path.dirname(out))) if (old.startsWith(`${id}${sh.lip ? '.' + l : ''}-`)) fs.rmSync(path.join(path.dirname(out), old), { force: true });
+    await renderVideo(sh, Pr.CAST, out, { lang: l, W: Pr.config.width, H: Pr.config.height, fps: Pr.config.fps, crf: 18, preset: 'veryfast', noPaint: true, progress: (fr, nn) => emit({ event: 'progress', shot: id, frame: fr, frames: nn }) });
+    return { file: out, kept: false };
+  },
+
   /** One frame of a shot, now (no need to draw what comes before it). → { jpeg (base64), width, height } */
-  async frame({ dir, id, t = 0, lang, scale = 0.5, quality = 82 }) {
+  async frame({ dir, id, t = 0, lang, scale = 0.5, quality = 82, paint = true }) {
     const Pr = await project(dir), base = shotOf(Pr, id), sh = shotFrom(Pr, id, t);
     const W = Math.round((Pr.config.width * scale) / 2) * 2, H = Math.round((Pr.config.height * scale) / 2) * 2;
-    const run = new ShotRun(sh, Pr.CAST, { lang: lang ?? Pr.config.langs[0], W, H, fps: Pr.config.fps, noGrain: true });
+    const run = new ShotRun(sh, Pr.CAST, { lang: lang ?? Pr.config.langs[0], W, H, fps: Pr.config.fps, noGrain: true, noPaint: !paint });
     const cv = run.draw(0);
     return { jpeg: jpeg(cv, quality), width: W, height: H, t: +Math.min(t, base.dur).toFixed(3), shot: id };
   },
@@ -139,12 +183,12 @@ const methods = {
    */
   async assemble({ dir, lang, out, subs = 'soft', sound = true, scale = 1 }) {
     const Pr = await project(dir), l = lang ?? Pr.config.langs[0], TL = timeline(Pr), idx = readIndex(Pr), t0 = Date.now(), sfx = scale !== 1 ? '@' + scale : '';
-    const missing = [], list = [];
+    const missing = [], list = [], fpNow = new Map(fingerprints(Pr).map((f) => [f.key, f.fp]));
     for (const s of Pr.shots) {
       if (s.off) continue;
-      const e = idx[shotKey(s, l) + sfx];
-      if (!e || !fs.existsSync(path.join(Pr.D.shots, e.file))) { missing.push(s.id); continue; }
-      list.push(`file '${path.join(Pr.D.shots, e.file).replace(/'/g, "'\\''")}'`);
+      const e = idx[shotKey(s, l) + sfx], cur = fpNow.get(shotKey(s, l)), file = (cur && variantFile(Pr, e, cur)) || e?.file;
+      if (!e || !fs.existsSync(path.join(Pr.D.shots, file))) { missing.push(s.id); continue; }
+      list.push(`file '${path.join(Pr.D.shots, file).replace(/'/g, "'\\''")}'`);
     }
     if (missing.length) throw new Error(`Not rendered yet: ${missing.slice(0, 12).join(', ')}${missing.length > 12 ? ` and ${missing.length - 12} more` : ''}. Render the changed shots first.`);
     const name = (Pr.config.name || 'film').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'film';

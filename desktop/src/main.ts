@@ -9,6 +9,7 @@ import "./styles/colorpage.css";
 import "./styles/insight.css";
 import "./styles/code.css";
 import "./styles/sensei.css";
+import "./styles/paintover.css";
 import { Studio } from "../../src/app/studio";
 import { getBlob } from "../../src/core/storage";
 import { commandList, runBatch, type Command } from "../../src/agent/api";

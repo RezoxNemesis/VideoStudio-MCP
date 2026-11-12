@@ -150,6 +150,7 @@ export class SenseiPage {
       h("div", { class: "sx-facts" }, ...facts.map((f) => h("span", {}, f))),
       h("div", { class: "row", style: "gap:6px;margin-top:8px;flex-wrap:wrap" },
         i.shot ? b("Open shot", "code", () => this.openShot(i.shot!, i.at ?? i.t0 ?? undefined), "sm", "Open this shot at this moment on the Code page") : h("span"),
+        i.shot ? b("Fix by painting", "brush", () => document.dispatchEvent(new CustomEvent("vsd:openScene", { detail: `fix:${i.shot}#${i.id}` })), "sm", "Animate → Fix a film shot, at this moment, holding on to the part it names: draw the better version once and it follows that part on every frame") : h("span"),
         i.fix ? b("Copy fix", "copy", () => void navigator.clipboard.writeText(`${i.shot ?? "film"} ${i.t0 ?? ""}s — ${i.msg}\nFix: ${i.fix}`).then(() => toast("Copied.")), "sm ghost") : h("span"),
         b("Ask Sensei", "spark", () => { this.side = "chat"; this.drawSideTabs(); void this.send(`About finding ${i.id} (${i.shot} ${i.kind}): is it really visible, and what exactly should change?`); }, "sm ghost"),
       )));

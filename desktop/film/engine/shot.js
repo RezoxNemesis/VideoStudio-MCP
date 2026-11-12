@@ -12,6 +12,7 @@ import { V, clamp, hash, noise1 } from './core.js';
 import * as post from './post.js';
 import { dust, puff } from './fx.js';
 import { jolt, postLook, resolveLook, setLook } from './look.js';
+import { applyPaint } from '../kit/paint.js';
 
 export const FPS = 60, FW = 1920, FH = 1080;
 
@@ -108,58 +109,9 @@ export class ShotRun {
     for (const a of this.actors) { shown[a.id] = a.show ? !!a.show(t, ctx) : true; faces[a.id] = a.face ? a.face(t, ctx) : null; }
     return { cam: { pos: c.pos, target: c.target, fov: c.fov ?? 35, roll: c.roll ?? 0, shake: c.shake ?? null }, dof: shot.dof ? shot.dof(t, ctx) : null, faces, shown, poses: ctx.poses };
   }
-  /** Draw the frame for time t (seconds from the start of the shot). Frames must be asked for in order. */
-  draw(t) {
-    const { g, W, H, shot, scene, ctx } = this, dt = 1 / this.fps, L = this.look;
-    ctx.t = t; setLook(L);
-    this.poseAll(t);
-    if (!this.settled) { // shot.settle: extra steps that let hair and cloth come to rest in the opening pose (for a shot that opens just after a jump in the motion)
-      this.settled = true;
-      const n = shot.settle ?? 0;
-      for (const a of this.actors) if (!a.simple) for (let k = n; k > 0; k--) a.ch.step(a.pose, dt, t - k * dt, { wind: scene.wind, ground: a.gnd ?? 0 });
-    }
-    for (const a of this.actors) {
-      if (!a.simple) a.ch.step(a.pose, dt, t, { wind: scene.wind, ground: a.gnd ?? 0 });
-      // dust where a foot comes down fast
-      if (this.dust) {
-        const c = a.pose.contact, rise = c & ~a.was; a.was = c;
-        if (rise && a.prevRoot) { const sp = V.dist(a.pose.j.root, a.prevRoot) / dt; if (sp > 1.6) { for (const [bit, jn] of [[1, 'foot.L'], [2, 'foot.R']]) if (rise & bit) puff(this.dust, [a.pose.j[jn][0], a.gnd ?? 0, a.pose.j[jn][2]], clamp((sp - 1) / 3, 0.25, 1.4)); } }
-        a.prevRoot = a.pose.j.root;
-      }
-    }
-    for (const f of this.fx) f.step(dt, t, scene);
-    // camera
-    const cp = { ...shot.cam(t, ctx) };
-    if (cp.shake) { const s = cp.shake, k = H / 1080; cp.dx = (cp.dx ?? 0) + noise1(t * (s.freq ?? 9), 11) * s.amp * k; cp.dy = (cp.dy ?? 0) + noise1(t * (s.freq ?? 9), 23) * s.amp * k; cp.roll = (cp.roll ?? 0) + noise1(t * (s.freq ?? 9) * 0.7, 37) * s.amp * 0.012; }
-    // 4D: the camera is held by someone; it breathes
-    if (L.breathe) { const k = H / 1080 * L.breathe; cp.dx = (cp.dx ?? 0) + noise1(t * 0.31, 5) * 5 * k; cp.dy = (cp.dy ?? 0) + noise1(t * 0.27, 9) * 3.5 * k; }
-    const cam = makeCam(cp, W, H); ctx.cam = cam;
-    const light = scene.light2(cam);
-    const dyn = [];
-    for (const a of this.actors) {
-      if (a.show && !a.show(t, ctx)) continue;
-      const pose = a.pose, face = { ...(a.face ? a.face(t, ctx) : {}) };
-      face.blink = Math.max(face.blink ?? 0, a.noBlink ? 0 : autoBlink(t + (shot.start ?? 0), a.seed ?? (a.id.length * 7 + a.id.charCodeAt(0))));
-      const jo = jolt(L, a.id, ctx.tw ?? t, this.fps, H);
-      dyn.push({ p: pose.j.root, bias: a.bias ?? 0, zone: a.zone, draw: (gg, cm, sc) => {
-        if (jo[0] || jo[1]) { gg.save(); gg.translate(jo[0], jo[1]); try { return drawIt(gg, cm, sc); } finally { gg.restore(); } }
-        return drawIt(gg, cm, sc);
-      } });
-      const drawIt = (gg, cm, sc) => {
-        if (!inView(cm, pose.j)) { if (globalThis.__cullLog) globalThis.__cullLog('actor', a.id, cm, pose, t); if (!this.o.noCull) return; } // beside or behind the lens: nothing of it belongs in the picture
-        const d = V.dist(cm.pos, pose.j.root);
-        a.ch.draw(gg, cm, pose, face, a.lit ?? sc.litAt(d), { sun: scene.sun, light: a.light ?? light, rim: a.rim ?? sc.o.rim ?? null, pole: typeof a.pole === 'function' ? a.pole(t, ctx) : a.pole, ground: a.gnd ?? 0, shadow: a.shadow ?? sc.o.shadow !== false, shadowAlpha: sc.o.shadowAlpha ?? 0.28, shadowColor: sc.o.shadowColor });
-        if (a.after) a.after(gg, cm, sc, t, pose, ctx);
-      };
-    }
-    for (const f of this.fx) if (f.items) dyn.push(...f.items());
-    if (shot.dyn) dyn.push(...shot.dyn(t, ctx));
-    let dof = shot.dof ? shot.dof(t, ctx) : null;
-    if (!dof && L.autoDof) {
-      // 2.5D / 4D: the far world softens behind whoever is nearest
-      let near = 1e9; for (const a of this.actors) if (!a.show || a.show(t, ctx)) near = Math.min(near, V.dist(cam.pos, a.pose.j.root));
-      dof = { near: 0, far: (near < 1e8 ? near : 12) * L.autoDof, blur: L.dofBlur ?? 2.6 };
-    }
+  /** The world into g: the set, the people and everything in it, with the shot's focus (soft far and near zones). */
+  drawWorld(g, cam, cp, t, dyn, dof) {
+    const { W, H, shot, scene, ctx } = this, L = this.look;
     g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
     // paper and puppets: every painted layer lies a little above the one behind and casts a soft shadow on it
     if (L.layers) { const k = H / 1080; g.shadowColor = `rgba(36,26,14,${L.layers.a})`; g.shadowBlur = L.layers.blur * k; g.shadowOffsetX = L.layers.dx * k; g.shadowOffsetY = L.layers.dy * k; }
@@ -182,7 +134,65 @@ export class ShotRun {
       else scene.draw(g, cam, t, dyn);
     }
     if (L.layers) { g.shadowColor = 'rgba(0,0,0,0)'; g.shadowBlur = 0; g.shadowOffsetX = 0; g.shadowOffsetY = 0; }
+  }
+  /** The camera of the frame at t: the shot's own, with its shake and (4D) the breathing of a held camera. */
+  camParams(t) {
+    const H = this.H, L = this.look, cp = { ...this.shot.cam(t, this.ctx) };
+    if (cp.shake) { const s = cp.shake, k = H / 1080; cp.dx = (cp.dx ?? 0) + noise1(t * (s.freq ?? 9), 11) * s.amp * k; cp.dy = (cp.dy ?? 0) + noise1(t * (s.freq ?? 9), 23) * s.amp * k; cp.roll = (cp.roll ?? 0) + noise1(t * (s.freq ?? 9) * 0.7, 37) * s.amp * 0.012; }
+    if (L.breathe) { const k = H / 1080 * L.breathe; cp.dx = (cp.dx ?? 0) + noise1(t * 0.31, 5) * 5 * k; cp.dy = (cp.dy ?? 0) + noise1(t * 0.27, 9) * 3.5 * k; }
+    return cp;
+  }
+  /** Draw the frame for time t (seconds from the start of the shot). Frames must be asked for in order. */
+  draw(t) {
+    const { g, W, H, shot, scene, ctx } = this, dt = 1 / this.fps, L = this.look;
+    ctx.t = t; setLook(L);
+    this.poseAll(t);
+    if (!this.settled) { // shot.settle: extra steps that let hair and cloth come to rest in the opening pose (for a shot that opens just after a jump in the motion)
+      this.settled = true;
+      const n = shot.settle ?? 0;
+      for (const a of this.actors) if (!a.simple) for (let k = n; k > 0; k--) a.ch.step(a.pose, dt, t - k * dt, { wind: scene.wind, ground: a.gnd ?? 0 });
+    }
+    for (const a of this.actors) {
+      if (!a.simple) a.ch.step(a.pose, dt, t, { wind: scene.wind, ground: a.gnd ?? 0 });
+      // dust where a foot comes down fast
+      if (this.dust) {
+        const c = a.pose.contact, rise = c & ~a.was; a.was = c;
+        if (rise && a.prevRoot) { const sp = V.dist(a.pose.j.root, a.prevRoot) / dt; if (sp > 1.6) { for (const [bit, jn] of [[1, 'foot.L'], [2, 'foot.R']]) if (rise & bit) puff(this.dust, [a.pose.j[jn][0], a.gnd ?? 0, a.pose.j[jn][2]], clamp((sp - 1) / 3, 0.25, 1.4)); } }
+        a.prevRoot = a.pose.j.root;
+      }
+    }
+    for (const f of this.fx) f.step(dt, t, scene);
+    const cp = this.camParams(t), cam = makeCam(cp, W, H); ctx.cam = cam;
+    const light = scene.light2(cam);
+    const dyn = [];
+    for (const a of this.actors) {
+      if (a.show && !a.show(t, ctx)) continue;
+      const pose = a.pose, face = { ...(a.face ? a.face(t, ctx) : {}) };
+      face.blink = Math.max(face.blink ?? 0, a.noBlink ? 0 : autoBlink(t + (shot.start ?? 0), a.seed ?? (a.id.length * 7 + a.id.charCodeAt(0))));
+      const jo = jolt(L, a.id, ctx.tw ?? t, this.fps, H);
+      dyn.push({ p: pose.j.root, bias: a.bias ?? 0, zone: a.zone, actor: a.id, draw: (gg, cm, sc) => {
+        if (jo[0] || jo[1]) { gg.save(); gg.translate(jo[0], jo[1]); try { return drawIt(gg, cm, sc); } finally { gg.restore(); } }
+        return drawIt(gg, cm, sc);
+      } });
+      const drawIt = (gg, cm, sc) => {
+        if (!inView(cm, pose.j)) { if (globalThis.__cullLog) globalThis.__cullLog('actor', a.id, cm, pose, t); if (!this.o.noCull) return; } // beside or behind the lens: nothing of it belongs in the picture
+        const d = V.dist(cm.pos, pose.j.root);
+        a.ch.draw(gg, cm, pose, face, a.lit ?? sc.litAt(d), { sun: scene.sun, light: a.light ?? light, rim: a.rim ?? sc.o.rim ?? null, pole: typeof a.pole === 'function' ? a.pole(t, ctx) : a.pole, ground: a.gnd ?? 0, shadow: a.shadow ?? sc.o.shadow !== false, shadowAlpha: sc.o.shadowAlpha ?? 0.28, shadowColor: sc.o.shadowColor });
+        if (a.after) a.after(gg, cm, sc, t, pose, ctx);
+      };
+    }
+    for (const f of this.fx) if (f.items) dyn.push(...f.items());
+    if (shot.dyn) dyn.push(...shot.dyn(t, ctx));
+    let dof = shot.dof ? shot.dof(t, ctx) : null;
+    if (!dof && L.autoDof) {
+      // 2.5D / 4D: the far world softens behind whoever is nearest
+      let near = 1e9; for (const a of this.actors) if (!a.show || a.show(t, ctx)) near = Math.min(near, V.dist(cam.pos, a.pose.j.root));
+      dof = { near: 0, far: (near < 1e8 ? near : 12) * L.autoDof, blur: L.dofBlur ?? 2.6 };
+    }
+    this.drawWorld(g, cam, cp, t, dyn, dof);
     if (shot.over) shot.over(g, cam, scene, t, ctx);
+    // fixes painted over this shot in Animate (paint/<shot>.json): they follow the parts they were drawn on
+    if (shot.paint && !this.o.noPaint) applyPaint(this, g, { cam, cp, t, dyn, dof });
     if (L.post) postLook(L, g, W, H, { canvas: this.canvas, cam, scene, t, frame: this.frame });
     const ps = { vignette: 0.32, grain: 0.055, ...(scene.o.post ?? {}), ...(shot.post ?? {}) };
     if (L.vignette !== undefined) ps.vignette *= L.vignette;

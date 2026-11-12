@@ -153,7 +153,12 @@ export interface FilmApi {
   write(dir: string, file: string, text: string): Promise<{ file: string; bytes: number }>;
   remove(dir: string, file: string): Promise<{ file: string; keptAt: string }>;
   config(dir: string, patch?: Partial<FilmConfig>): Promise<FilmConfig>;
-  frame(dir: string, id: string, t?: number, lang?: string, scale?: number, quality?: number): Promise<{ jpeg: string; width: number; height: number; t: number; shot: string }>;
+  frame(dir: string, id: string, t?: number, lang?: string, scale?: number, quality?: number, paint?: boolean): Promise<{ jpeg: string; width: number; height: number; t: number; shot: string }>;
+  /** fixes painted over shots (Animate → Fix a film shot) */
+  paintGet?(dir: string, id: string): Promise<{ data: PaintData; anchors: string[] }>;
+  paintSave?(dir: string, id: string, data: PaintData): Promise<{ data: PaintData }>;
+  paintTrack?(dir: string, id: string, lang?: string): Promise<PaintTrack>;
+  paintBase?(dir: string, id: string, lang?: string): Promise<{ file: string; kept: boolean }>;
   sheet(dir: string, id: string, p?: { times?: number[]; count?: number; cols?: number; cell?: number; lang?: string }): Promise<{ jpeg: string; file: string; times: number[] }>;
   build(p: BuildOptions): Promise<BuildResult>;
   cancel(dir: string): Promise<boolean>;
@@ -183,4 +188,50 @@ export interface FilmApi {
   senseiStyles(): Promise<Record<string, { name: string; from: string; fp: Record<string, number> }>>;
   senseiImage(file: string): Promise<string>;
   onSensei(fn: (m: { dir: string; phase: string; done?: number; of?: number; shot?: string; ms?: number }) => void): () => void;
+}
+
+/* ---- fixes painted over a shot ---------------------------------------------------------------------------------- */
+export interface PaintStroke {
+  id: string;
+  tool: "pen" | "pencil" | "ink" | "marker" | "airbrush" | "eraser" | "brush";
+  color: string;
+  /** width in the anchor's units (metres on a body part, shares of the picture height on the screen) */
+  size: number;
+  opacity: number;
+  /** [u, v, pressure, …] in the anchor's units */
+  pts: number[];
+  fill?: string;
+  closed?: boolean;
+}
+export type PaintAnchor = { kind: "part"; actor: string; part: string } | { kind: "screen" } | { kind: "world"; p: [number, number, number] };
+export interface PaintFix {
+  id: string;
+  name: string;
+  on: boolean;
+  anchor: PaintAnchor;
+  /** how it follows its part: move, turn and size with it; move and size; only move */
+  follow: "full" | "move+scale" | "move";
+  /** seconds in the shot it shows (null: the whole shot) */
+  span: [number, number] | null;
+  fade: number;
+  ref?: { t: number; ang: number; ppmH: number };
+  strokes: PaintStroke[];
+  /** where the picture is erased: what is behind the person is drawn there ("behind"), or the hole is filled from around it ("fill") */
+  erase: PaintStroke[];
+  eraseMode: "behind" | "fill";
+  note?: string;
+}
+export interface PaintData {
+  v: 1;
+  on: boolean;
+  fixes: PaintFix[];
+}
+/** Where every part of every person is in every frame (1920 × 1080): [x, y, turn, px per metre, across 0…1] or 0. */
+export interface PaintTrack {
+  id: string;
+  fps: number;
+  frames: number;
+  width: number;
+  height: number;
+  actors: Record<string, { shown: number[]; parts: Record<string, (0 | [number, number, number, number, number])[]> }>;
 }

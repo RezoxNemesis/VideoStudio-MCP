@@ -216,6 +216,16 @@ over: layered(sticker('ui_balloon_round', { x: 0.7, y: 0.25, h: 0.3 }), pop('fx_
 - In Animate: Layers → 2D library (or `anim.library`) brings any of them into a drawing scene; characters come in as puppets
   that the Pose tool, `anim.pose`, `anim.ik` and `anim.motion` bend.
 
+## Fixes painted over shots
+
+Animate → **Fix a film shot** plays a shot frame by frame: draw over it and erase in it. Each fix holds on to a part of
+a body (the one you draw on, or the one picked: head face eyes jaw neck chest belly hips, and per side shoulder upperarm
+elbow forearm hand fingers thigh knee shin foot), so it moves, turns and sizes with that part on every frame of its span.
+Erasing shows what is behind the person (the film draws the frame again without them, under the erased area) or fills the
+hole from around it. Fixes live in `paint/<shot>.json` (part of the film), switch on and off any time, and only that
+shot is drawn again. `paint.parts {shot, t}` says where every part is; `paint.add`, `paint.set`, `paint.on`,
+`paint.remove`, `paint.frame` do the rest. Sensei's findings open there (Fix by painting) at their moment and part.
+
 ## People
 
 380 ready people in 28 groups: townsman townswoman farmer farmwoman merchant nobleman noblewoman monk elder elderwoman

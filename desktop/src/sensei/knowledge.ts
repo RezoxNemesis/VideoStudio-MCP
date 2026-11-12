@@ -61,6 +61,7 @@ export const FINDINGS: Record<string, { title: string; why: string; how: string;
 };
 
 const PRINCIPLES: [string, string, string][] = [
+  ["Fixing a shot by painting over it", "Animate → Fix a film shot (or Fix by painting on a finding): draw the better version once — a hand, a face, a fold — and the fix holds on to the body part you drew on, moving, turning and sizing with it on every frame of its span. Erase picture takes out what is wrong: the film draws what is behind the person there, or fills the hole from around it. Each fix switches on and off any time; the shot is drawn again with it (only that shot). Agents: paint.parts {shot, t} gives where every part is, paint.add paints, paint.set / paint.on switch.", "paint over fix hand face erase draw correct frame by frame follow part animate paint.add paint.parts"],
   ["Squash and stretch", "Deformation shows weight and flexibility: a ball squashes on impact and stretches in fast motion; keep the volume constant.", "principles squash stretch weight volume"],
   ["Anticipation", "A small move the opposite way before the main action prepares the viewer (crouch before a jump, wind-up before a strike).", "principles anticipation wind up strike jump prepare"],
   ["Staging", "Present one idea clearly: silhouette, figure–ground contrast, camera placement and timing all point at what matters.", "principles staging silhouette clarity composition"],

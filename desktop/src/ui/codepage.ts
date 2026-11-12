@@ -179,6 +179,7 @@ export class CodePage {
         this.tEl,
         b(null, "play", () => void this.playShot(), "", "Play this shot as it was drawn"),
         b("Sheet", null, () => void this.sheet(), "sm", "Six moments of this shot in one picture"),
+        b("Paint fix", "brush", () => this.shot && document.dispatchEvent(new CustomEvent("vsd:openScene", { detail: `fix:${this.shot}` })), "sm", "Fix this shot by painting over it in Animate: what you draw follows the body part on every frame"),
       ),
       this.probEl,
     );

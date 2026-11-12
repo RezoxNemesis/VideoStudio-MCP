@@ -113,7 +113,11 @@ const TOOLS = (s: BrainSettings): ToolDef[] => [
     { name: "web_search", description: "Search the internet.", parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } },
     { name: "web_read", description: "Read a web page as text.", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
   ] : []),
+  { name: "body_parts", description: "Where every part of every person is at a moment of a shot (1920 × 1080 picture: [x, y, turn°]): to know where to paint a fix.", parameters: { type: "object", properties: { shot: { type: "string" }, t: { type: "number" } }, required: ["shot", "t"] } },
+  { name: "shot_fixes", description: "The fixes painted over a shot (Animate → Fix a film shot).", parameters: { type: "object", properties: { shot: { type: "string" } }, required: ["shot"] } },
   ...(s.edits ? [
+    { name: "paint_fix", description: "Paint a fix over a shot that follows a body part on every frame: strokes and/or an erased area given in picture pixels (1920 × 1080) at moment t. part 'actor:hand.L' etc. (body_parts lists them).", parameters: { type: "object", properties: { shot: { type: "string" }, t: { type: "number" }, part: { type: "string" }, strokes: { type: "array", items: { type: "object" }, description: "[{tool, color, size, pts:[x,y,pressure,…]}]" }, erase: { type: "array", items: { type: "object" } }, eraseMode: { type: "string", enum: ["behind", "fill"] }, span: { type: "array", items: { type: "number" } }, name: { type: "string" } }, required: ["shot", "t"] } },
+    { name: "toggle_fix", description: "Switch a painted fix on or off (nothing is deleted).", parameters: { type: "object", properties: { shot: { type: "string" }, id: { type: "string" }, on: { type: "boolean" } }, required: ["shot", "id", "on"] } },
     { name: "patch_code", description: "Change the film's code: replace an exact piece of text in a file with new text.", parameters: { type: "object", properties: { file: { type: "string" }, find: { type: "string" }, replace: { type: "string" } }, required: ["file", "find", "replace"] } },
     { name: "build", description: "Draw the shots that changed (only those) and join the film.", parameters: { type: "object", properties: { only: { type: "array", items: { type: "string" } } } } },
   ] : []),
@@ -152,6 +156,10 @@ async function runTool(name: string, a: Record<string, unknown>, s: BrainSetting
     case "api_help": return search(await kb(), String(a.query ?? ""), 4).map((k) => `## ${k.title}\n${k.text.slice(0, 1600)}`).join("\n\n") || "Nothing found.";
     case "web_search": return clip(await brainApi().search(String(a.q ?? ""), 6));
     case "web_read": { const r = await brainApi().fetch(String(a.url ?? ""), 12000); return `${r.title}\n${r.text}`; }
+    case "body_parts": return clip(await cmd("paint.parts", { shot: a.shot, t: a.t }), 9000);
+    case "shot_fixes": return clip(await cmd("paint.get", { shot: a.shot }));
+    case "paint_fix": if (!s.edits) return "Not allowed."; return clip(await cmd("paint.add", { shot: a.shot, t: a.t, part: a.part, strokes: a.strokes, erase: a.erase, eraseMode: a.eraseMode, span: a.span, name: a.name }));
+    case "toggle_fix": if (!s.edits) return "Not allowed."; return clip(await cmd("paint.set", { shot: a.shot, id: a.id, on: a.on }));
     case "patch_code": if (!s.edits) return "Not allowed."; return clip(await cmd("code.patch", { file: a.file, find: a.find, replace: a.replace }));
     case "build": if (!s.edits) return "Not allowed."; return clip(await cmd("code.build", { only: a.only }));
   }

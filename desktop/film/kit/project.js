@@ -1,5 +1,6 @@
 // A code film on disk: a folder with film.js (its sequences), seq/*.js, script.json (lines and voices), cues.json
 // (music and sound) and .vs/ (everything made from them: solved motion, voices, sound, rendered shots).
+import { readPaint, paintKey } from './paint.js';
 import { resolveLook } from '../engine/look.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -83,13 +84,15 @@ export async function openProject(dir) {
       shots.push(sh);
     }
   }
+  // fixes painted over shots in Animate (paint/<shot>.json): drawn with the shot, part of its fingerprint
+  for (const sh of shots) sh.paint = readPaint(dir, sh.id);
   // MOTIONS: performances that are not a sequence of their own (stunt and fight libraries): solved once, used by any shot through `bake: name`
   return { dir, D, config, FILM, CAST, shots, total: t, src, shared, MOTIONS: Array.isArray(mod.MOTIONS) ? mod.MOTIONS : [] };
 }
 
 /** A shot of the film starting `off` seconds in (for looking at one frame). */
 export function shotFrom(P, id, off = 0) {
-  for (const seq of P.FILM) for (const sh of seq.shotList) if (`${seq.id}_${sh.id}` === id) return runnerShot(seq, sh, Math.max(0, Math.min(off, sh.t1 - sh.t0 - 1 / P.config.fps)));
+  for (const seq of P.FILM) for (const sh of seq.shotList) if (`${seq.id}_${sh.id}` === id) { const r = runnerShot(seq, sh, Math.max(0, Math.min(off, sh.t1 - sh.t0 - 1 / P.config.fps))); r.paint = readPaint(P.dir, id); if (r.paint && off > 0) r.paint = { ...r.paint, fixes: r.paint.fixes.map((f) => ({ ...f, span: f.span ? [f.span[0] - off, f.span[1] - off] : null })) }; return r; }
   throw new Error(`No shot ${id}.`);
 }
 
@@ -196,6 +199,12 @@ export function timeline(P) {
 }
 
 /** The rendered-shot index: { "<id>|<lang or ->": { fp, file, frames, ms } }. */
+/** The file of a shot's index entry drawn with this fingerprint: the current one, or an earlier version kept beside it. */
+export function variantFile(P, e, fp) {
+  if (!e) return null;
+  const hit = e.fp === fp ? e.file : (e.keep ?? []).find((k) => k.fp === fp)?.file;
+  return hit && fs.existsSync(path.join(P.D.shots, hit)) ? hit : null;
+}
 export function readIndex(P) { try { return JSON.parse(fs.readFileSync(path.join(P.D.shots, 'index.json'), 'utf8')); } catch { return {}; } }
 export function writeIndex(P, idx) { fs.writeFileSync(path.join(P.D.shots, 'index.json'), JSON.stringify(idx, null, 1)); }
 export const shotKey = (sh, lang) => `${sh.id}|${sh.lip ? lang : '-'}`;
@@ -221,8 +230,10 @@ export function fingerprints(P, ids = null) {
         const key = shotKey(sh, lang);
         let fp = m.fp[key], error;
         if (!fp) { try { fp = m.fp[key] = fingerprint(sh, P.CAST, { lang, W, H, fps, shared: P.shared }); dirty = true; } catch (e) { error = String(e?.message ?? e); } }
-        const e = idx[key], have = !!fp && e?.fp === fp && fs.existsSync(path.join(P.D.shots, e.file));
-        out.push({ id: sh.id, seq: sh.seq, lang: sh.lip ? lang : null, key, fp, have, file: have ? e.file : null, off: !!sh.off, dur: sh.dur, error });
+        const clean = fp, pk = fp ? paintKey(sh.paint) : '';
+        if (pk) fp = md5(fp + '|paint|' + pk).slice(0, 20);
+        const file = fp ? variantFile(P, idx[key], fp) : null;
+        out.push({ id: sh.id, seq: sh.seq, lang: sh.lip ? lang : null, key, fp, fpClean: clean, have: !!file, file, off: !!sh.off, dur: sh.dur, painted: !!pk, error });
       }
     }
   }
