@@ -110,6 +110,36 @@ export const HANDS = {
 const mixHand = (a, b, u) => ({ curl: a.curl.map((f, i) => f.map((v, j) => v + (b.curl[i][j] - v) * u)), spread: a.spread + (b.spread - a.spread) * u, thumbIn: a.thumbIn + (b.thumbIn - a.thumbIn) * u });
 
 /**
+ * The thumb of a closed hand brought onto the outside of the curled fingers: a few rounds of cyclic coordinate descent
+ * (each joint in turn turns the tip towards the place), with small steps so the thumb keeps a natural bend.
+ */
+function thumbOver(B, F, s) {
+  const { P, Q, head, tail } = B, T = F.chains[0], I = F.chains[1], M = F.chains[2], K = F.chains[4];
+  if ([...T, ...I, ...M].some((b) => b === undefined)) return;
+  const pos = (b) => [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]];
+  const tipOf = (b) => { const r = qrotv(Q, b * 4, [tail[b * 3] - head[b * 3], tail[b * 3 + 1] - head[b * 3 + 1], tail[b * 3 + 2] - head[b * 3 + 2]]); return [P[b * 3] + r[0], P[b * 3 + 1] + r[1], P[b * 3 + 2] + r[2]]; };
+  // the backs of the middle phalanges of index and middle finger, a finger's thickness out from them
+  const m1 = mid(pos(I[1]), pos(I[2])), m2 = mid(pos(M[1]), pos(M[2]));
+  const width = K && K[0] !== undefined ? Math.hypot(...sub(pos(I[0]), pos(K[0]))) : 0.07;
+  const wrist = B.parent[T[0]], palmOut = qrotv(Q, wrist * 4, F.palm);
+  const tgt = [0, 1, 2].map((k) => m1[k] * 0.6 + m2[k] * 0.4 + palmOut[k] * width * 0.26);
+  for (let it = 0; it < 10; it++) {
+    for (let j = 2; j >= 0; j--) {
+      const pv = pos(T[j]), cur = tipOf(T[2]), v1 = sub(cur, pv), v2 = sub(tgt, pv);
+      const ax = cross(v1, v2), sl = Math.hypot(...ax), ang = Math.min(j === 0 ? 0.12 : 0.22, Math.atan2(sl, v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]));
+      if (sl < 1e-9 || ang < 1e-4) continue;
+      const sn = Math.sin(ang / 2), d = [ax[0] / sl * sn, ax[1] / sl * sn, ax[2] / sl * sn, Math.cos(ang / 2)], o = [0, 0, 0, 0];
+      for (let k = j; k < 3; k++) {
+        const b = T[k];
+        qmulTo(o, 0, d[0], d[1], d[2], d[3], Q[b * 4], Q[b * 4 + 1], Q[b * 4 + 2], Q[b * 4 + 3]); Q[b * 4] = o[0]; Q[b * 4 + 1] = o[1]; Q[b * 4 + 2] = o[2]; Q[b * 4 + 3] = o[3];
+        if (k > j) { const r = qrotv(d, 0, sub(pos(b), pv)); P[b * 3] = pv[0] + r[0]; P[b * 3 + 1] = pv[1] + r[1]; P[b * 3 + 2] = pv[2] + r[2]; }
+      }
+    }
+    const e = sub(tipOf(T[2]), tgt); if (Math.hypot(...e) < width * 0.04) break;
+  }
+}
+
+/**
  * Pose the body at a moment of the baked performance (seconds) and place it in the film's world (xf: { pos, yaw, scale }).
  * hands: { L, R } each a name of HANDS, a [name, name, mix] blend, or a hand object. Fills every part's `out` (positions).
  */
@@ -152,6 +182,8 @@ export function poseBody(B, t, xf = null, hands = null, face = null) {
         pq = q; pp = np; ph = [head[b * 3], head[b * 3 + 1], head[b * 3 + 2]];
       });
     });
+    // a closed hand: the thumb lies across the backs of the curled index and middle fingers, as in a real fist or grip
+    if (hd.thumbIn >= 0.6) thumbOver(B, F, s);
   }
   // the face: expression shapes move the skin of the head before the bones carry it; the jaw swings open with the mouth
   const W = face ? faceShapes(face) : null;
