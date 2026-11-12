@@ -25,6 +25,8 @@ export function makeDesign(o) {
     sash: o.sash ?? null, cape: o.cape ?? null, armor: o.armor ?? null,
     sword: { blade: '#dfe6ee', guard: '#b08a3c', grip: '#2a1f24', ...(o.sword ?? {}) },
     spear: o.spear ?? null, staff: o.staff ?? null, shield: o.shield ?? null,
+    // the real body's own words (kept as given): its haircut, clothes colours and bands, the painted head instead of the real one
+    ...(o.hair3 !== undefined ? { hair3: o.hair3 } : {}), ...(o.body ? { body: o.body } : {}), ...(o.realHead !== undefined ? { realHead: o.realHead } : {}),
   };
   return d;
 }
