@@ -1221,6 +1221,17 @@ export class StageRuntime {
     return { pos: [a.root.position.x - o[0], a.root.position.y, a.root.position.z - o[2]], yaw: this.facing(rt) / D2R, head: [hp.x - o[0], hp.y, hp.z - o[2]], height: a.h.height };
   }
   /**
+   * The sculpted body of an actor — mesh parts with skin weights, the rest skeleton, colours — for a renderer outside
+   * the app that draws the real body instead of a stand-in. `scale` is the size of the body on the stage.
+   */
+  body(id: string): { data: Any; scale: number; colors: Record<string, number[]> } | null {
+    const rt = this.actors.get(id);
+    if (!rt) return null;
+    const h = rt.a.h;
+    h.root.updateWorldMatrix(true, false);
+    return { data: h.man, scale: h.root.getWorldScale(new THREE.Vector3()).y, colors: (h.look?.colors ?? {}) as Record<string, number[]> };
+  }
+  /**
    * The posed skeleton of an actor, for a renderer outside the app: joint positions in stage metres ("name:tail" is a
    * bone's far end), world orientations of the bones asked for, and where its props are.
    */

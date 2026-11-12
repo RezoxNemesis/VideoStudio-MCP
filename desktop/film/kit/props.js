@@ -104,3 +104,14 @@ export function put(sc, name, at, o = {}) {
 /** Two-point things: put a fence or a wall from a to b. */
 export const putFence = (sc, a, b, o) => (sc.add('world', fence(a, b, o)), sc);
 export const putWall = (sc, a, b, o) => (sc.add('world', wall(a, b, o)), sc);
+
+/* ---- the 3D model library ------------------------------------------------------------------------------------- */
+import { modelItem, modelIndex } from '../engine/model.js';
+/**
+ * Put a model of the library into a set: model(sc, 'medieval/building_home_A_blue', [x, z], { yaw, scale, tint }).
+ * 850+ pieces: medieval buildings and terrain, castle and dungeon parts, furniture, a restaurant's kitchen and food,
+ * a city's houses, cars and roads, a space base. models() lists them; a path to any .gltf file works too.
+ */
+export function model(sc, id, at, o = {}) { sc.add(o.layer ?? 'world', modelItem(id, at, o)); return sc; }
+/** The library's catalogue: [{ id, pack, name, size: [w, h, d] metres }], filtered by a word. */
+export function models(q = '') { const ix = modelIndex(); return ix.models.filter((m) => !q || m.id.includes(q)).map((m) => ({ id: m.id, pack: m.pack, name: m.name, size: m.size.map((v) => +(v * 1).toFixed(2)) })); }

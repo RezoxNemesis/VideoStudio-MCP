@@ -583,11 +583,11 @@ export function registerStageCommands(): void {
       const em = a.any("emphasis");
       let asset: import("../core/model").Asset, seconds: number;
       if (tone || Array.isArray(em)) {
-        const r = await sayToAsset(s, a.str("text"), a.str("voice", "hf_alpha"), tone, Array.isArray(em) ? em.map(String) : undefined);
+        const r = await sayToAsset(s, a.str("text"), a.str("voice", "hf_alpha"), tone, Array.isArray(em) ? em.map(String) : undefined, a.optStr("lang"));
         asset = r.asset;
         seconds = r.seconds;
       } else {
-        const r = await s.speak({ text: a.str("text"), voice: a.optStr("voice"), speed: a.optNum("speed") });
+        const r = await s.speak({ text: a.str("text"), voice: a.optStr("voice"), speed: a.optNum("speed"), lang: a.optStr("lang") });
         asset = r.asset;
         seconds = r.result.seconds;
       }
@@ -803,7 +803,7 @@ export function registerStageCommands(): void {
 
   registerCommand(
     "stage.bake",
-    '{sceneId, fps?=60, from?=0, to?, actors?: [id…], joints?: ["head", "wrist.L", "head:tail" (a bone\'s far end) …], quats?: [bone…]} The posed skeletons over time, for a renderer outside the app: for each actor a base64 Float32 block of frames × (joints × 3 + quats × 4 numbers) in stage metres, which feet are planted in each frame, and its props\' places.',
+    '{sceneId, fps?=60, from?=0, to?, actors?: [id…], joints?: ["head", "wrist.L", "head:tail" (a bone\'s far end) …], quats?: [bone…], bodies?: true | [id…] (also give these actors\' real bodies: mesh parts with skin weights and every bone in every rigEvery-th frame), rigEvery?=2} The posed skeletons over time, for a renderer outside the app: for each actor a base64 Float32 block of frames × (joints × 3 + quats × 4 numbers) in stage metres, which feet are planted in each frame, and its props\' places.',
     async (s, a) => {
       const { sc, l, spec } = stageLayer(s.project, a);
       const rt = await ready(spec, l.id);
@@ -814,6 +814,12 @@ export function registerStageCommands(): void {
       const list = spec.actors.filter((x) => !Array.isArray(want) || want.includes(x.id));
       const joints = (a.any("joints") as string[] | undefined) ?? BAKE_JOINTS, quats = (a.any("quats") as string[] | undefined) ?? BAKE_QUATS;
       const w = joints.length * 3 + quats.length * 4;
+      // bodies: the real mesh of these actors and every bone's place in every `rigEvery`-th frame, so a renderer outside the app can draw the true body
+      const wantBodies = a.any("bodies") as boolean | string[] | undefined, rigEvery = Math.max(1, Math.round(a.num("rigEvery", 2)));
+      const bodyOf = list.map((sa) => (wantBodies === true || (Array.isArray(wantBodies) && wantBodies.includes(sa.id)) ? rt.body(sa.id) : null));
+      const boneNames = bodyOf.map((b) => (b ? (b.data.bones as { name: string }[]).map((x) => x.name) : []));
+      const nr = Math.floor((n - 1) / rigEvery) + 1;
+      const rig = bodyOf.map((b, k) => (b ? new Float32Array(nr * boneNames[k]!.length * 7) : null));
       const data = list.map(() => new Float32Array(n * w)), contact = list.map(() => new Uint8Array(n));
       const props: Map<string, Float32Array>[] = list.map(() => new Map());
       // run in from a little earlier so anything that smooths over time has settled by the first frame
@@ -827,6 +833,10 @@ export function registerStageCommands(): void {
           data[k]!.set(sk.pos, i * w);
           data[k]!.set(sk.quat, i * w + joints.length * 3);
           contact[k]![i] = rt.motionAt(sa, t)?.contact ?? 0;
+          if (rig[k] && i % rigEvery === 0) {
+            const names = boneNames[k]!, full = rt.skeleton(sa.id, names, names), nb = names.length, o = (i / rigEvery) * nb * 7, out = rig[k]!;
+            if (full) for (let b = 0; b < nb; b++) { out[o + b * 7] = full.pos[b * 3]!; out[o + b * 7 + 1] = full.pos[b * 3 + 1]!; out[o + b * 7 + 2] = full.pos[b * 3 + 2]!; out[o + b * 7 + 3] = full.quat[b * 4]!; out[o + b * 7 + 4] = full.quat[b * 4 + 1]!; out[o + b * 7 + 5] = full.quat[b * 4 + 2]!; out[o + b * 7 + 6] = full.quat[b * 4 + 3]!; }
+          }
           for (const pr of sk.props) {
             let arr = props[k]!.get(pr.name);
             if (!arr) props[k]!.set(pr.name, (arr = new Float32Array(n * 8)));
@@ -846,6 +856,7 @@ export function registerStageCommands(): void {
           id: sa.id, height: rt.actorState(sa.id)?.height ?? 0,
           data: b64(new Uint8Array(data[k]!.buffer)), contact: b64(contact[k]!),
           props: [...props[k]!.entries()].map(([name, arr]) => ({ name, data: b64(new Uint8Array(arr.buffer)) })),
+          ...(bodyOf[k] ? { body: packBody(bodyOf[k]!, b64), rig: { fps: fps / rigEvery, frames: nr, bones: boneNames[k]!.length, data: b64(new Uint8Array(rig[k]!.buffer)) } } : {}),
         })),
       };
     },
@@ -964,4 +975,20 @@ export function registerStageCommands(): void {
       return { ok: !issues.some((x) => x.level === "bad"), seconds: r3(end), checkedFrames: Math.round(end / dt) + 1, issues };
     },
   );
+}
+
+/** A body for a renderer outside the app: rest skeleton, mesh parts (positions, triangles, skin weights), colours. */
+function packBody(b: { data: { name: string; height: number; bones: { name: string; parent: number; head: number[]; tail: number[] }[]; parts: { name: string; material: string; vcount: number; pos: Float32Array; idx: Uint32Array; skinIndex: Uint16Array; skinWeight: Float32Array; mask?: Float32Array; morphs?: { i: Uint32Array; d: Float32Array }[]; params: Record<string, unknown> }[]; morphNames?: string[]; landmarks: Record<string, number | number[]>; look: Record<string, unknown> }; scale: number; colors: Record<string, number[]> }, b64: (u: Uint8Array) => string): unknown {
+  const u8 = (x: { buffer: ArrayBufferLike; byteOffset: number; byteLength: number }) => b64(new Uint8Array(x.buffer, x.byteOffset, x.byteLength));
+  const look: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(b.data.look ?? {})) if (v === null || ["number", "string", "boolean"].includes(typeof v) || (Array.isArray(v) && v.length <= 4 && v.every((x) => typeof x === "number"))) look[k] = v;
+  return {
+    name: b.data.name, height: b.data.height, scale: b.scale, colors: b.colors, look, landmarks: b.data.landmarks, morphNames: b.data.morphNames ?? [],
+    bones: b.data.bones.map((x) => ({ name: x.name, parent: x.parent, head: x.head, tail: x.tail })),
+    parts: b.data.parts.map((p) => {
+      const params: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(p.params ?? {})) if (["number", "string", "boolean"].includes(typeof v)) params[k] = v;
+      return { name: p.name, material: p.material, vcount: p.vcount, params, pos: u8(p.pos), idx: u8(p.idx), skinIndex: u8(p.skinIndex), skinWeight: u8(p.skinWeight), ...(p.mask ? { mask: u8(p.mask) } : {}), ...(p.morphs ? { morphs: p.morphs.map((m) => ({ i: u8(m.i), d: u8(m.d) })) } : {}) };
+    }),
+  };
 }

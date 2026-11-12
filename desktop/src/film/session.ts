@@ -230,11 +230,12 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
   });
   registerCommand(
     "code.new",
-    '{name, template?="starter", width?, height?, fps?, langs?: ["en", "hi" …]} Start a new code film from a template and open it. Returns its files; read them with code.read, change them with code.write / code.patch, then code.build.',
+    '{name, template?="starter", width?, height?, fps?, langs?: ["en", "hi" …], look?: anime (2d) | multiplane (2.5d) | soft3d (3d) | cel3d (3.5d) | immersive (4d) | paper | puppet | flat | pixel | sketch | manga} Start a new code film from a template and open it. Returns its files; read them with code.read, change them with code.write / code.patch, then code.build.',
     async (_s, a) => {
       const cfg: Record<string, unknown> = {};
       for (const k of ["width", "height", "fps"]) if (a.optNum(k) !== undefined) cfg[k] = a.num(k);
       if (Array.isArray(a.any("langs"))) cfg.langs = (a.any("langs") as unknown[]).map(String);
+      if (a.any("look") !== undefined) cfg.look = a.any("look");
       const dir = await film().create(a.str("name"), a.str("template", "starter"), cfg);
       await code.open(dir);
       go();
@@ -365,8 +366,9 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
     const r = await runQuiet(st, [{ op: "clip.add", assetId: asset.id, start: a.optNum("start") ?? st.time }]);
     return { assetId: asset.id, clip: r[0]?.ok ? r[0].result : undefined, note: r[0]?.ok ? "On the timeline." : `In the media pool (${r[0]?.error}).` };
   });
-  registerCommand("code.config", "{name?, width?, height?, fps?, langs?: [..], crf? (quality, lower is finer; 15), preset?} The open film's settings; give values to change them (a new size or frame rate means every shot is drawn again).", async (_s, a) => {
+  registerCommand("code.config", "{name?, width?, height?, fps?, langs?: [..], crf? (quality, lower is finer; 15), preset?, look?: anime (2d) | multiplane (2.5d) | soft3d (3d) | cel3d (3.5d) | immersive (4d) | paper | puppet | flat | pixel | sketch | manga or {style, …} (the kind of animation the whole film is drawn as; null = anime)} The open film's settings; give values to change them (a new size, frame rate or look means every shot is drawn again).", async (_s, a) => {
     const patch: Record<string, unknown> = {};
+    if (a.any("look") !== undefined) patch.look = a.any("look") === "" ? null : a.any("look");
     for (const k of ["width", "height", "fps", "crf"]) if (a.optNum(k) !== undefined) patch[k] = a.num(k);
     for (const k of ["name", "preset"]) if (a.optStr(k) !== undefined) patch[k] = a.str(k);
     if (Array.isArray(a.any("langs"))) patch.langs = (a.any("langs") as unknown[]).map(String);

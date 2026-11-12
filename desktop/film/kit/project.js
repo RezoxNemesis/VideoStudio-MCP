@@ -1,5 +1,6 @@
 // A code film on disk: a folder with film.js (its sequences), seq/*.js, script.json (lines and voices), cues.json
 // (music and sound) and .vs/ (everything made from them: solved motion, voices, sound, rendered shots).
+import { resolveLook } from '../engine/look.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -14,7 +15,7 @@ import { fingerprint, ENGINE_VERSION } from './finger.js';
 
 const md5 = (s) => crypto.createHash('md5').update(s).digest('hex');
 const KIT_URL = new URL('./index.js', import.meta.url).href;
-export const DEFAULTS = { name: 'Film', width: 1920, height: 1080, fps: 60, langs: ['en'], crf: 15, preset: 'veryfast', entry: 'film.js', off: [] };
+export const DEFAULTS = { name: 'Film', width: 1920, height: 1080, fps: 60, langs: ['en'], crf: 15, preset: 'veryfast', entry: 'film.js', off: [], look: null };
 
 /** Folders of a project. */
 export function dirs(dir) {
@@ -51,7 +52,8 @@ export async function openProject(dir) {
   for (const d of [D.vs, D.bake, D.vo, D.audio, D.shots, D.out]) fs.mkdirSync(d, { recursive: true });
   // who says which line comes from script.json (so a film knows its speakers before any voice was made)
   const lines = {}; try { for (const l of JSON.parse(fs.readFileSync(path.join(dir, 'script.json'), 'utf8')).lines ?? []) lines[l.id] = l; } catch { /* a film without words */ }
-  setEnv({ bakeDir: D.bake, voDir: D.vo, langs: config.langs, script: lines });
+  setEnv({ bakeDir: D.bake, voDir: D.vo, langs: config.langs, script: lines, look: config.look ?? null });
+  resolveLook(config.look); // an unknown look is reported now, not when the first shot is drawn
   dropBakes(); loadVoices();
   // the film's code imports the kit through ./vs.js, written here so that it always points at this installation
   const shim = `// Written by VideoStudio: the film kit of this installation. Import from here: import { makeSeq, … } from '../vs.js'\nexport * from ${JSON.stringify(KIT_URL)};\n`;
@@ -81,7 +83,8 @@ export async function openProject(dir) {
       shots.push(sh);
     }
   }
-  return { dir, D, config, FILM, CAST, shots, total: t, src, shared };
+  // MOTIONS: performances that are not a sequence of their own (stunt and fight libraries): solved once, used by any shot through `bake: name`
+  return { dir, D, config, FILM, CAST, shots, total: t, src, shared, MOTIONS: Array.isArray(mod.MOTIONS) ? mod.MOTIONS : [] };
 }
 
 /** A shot of the film starting `off` seconds in (for looking at one frame). */
@@ -91,7 +94,8 @@ export function shotFrom(P, id, off = 0) {
 }
 
 const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
-const DEFAULT_VOICE = { en: 'af_heart', hi: 'hf_alpha' };
+// a character with no voice for a language keeps its English voice and speaks the language with it
+const DEFAULT_VOICE = { en: 'af_heart', hi: 'hf_alpha', es: 'ef_dora', fr: 'ff_siwis', it: 'if_sara', pt: 'pf_dora', de: 'bm_george', ru: 'af_heart' };
 /** JSON with keys in order (so the same thing always gives the same text). */
 const ordered = (v) => (Array.isArray(v) ? v.map(ordered) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v);
 
@@ -130,6 +134,11 @@ export function needs(P) {
     const have = fs.existsSync(kf) && fs.readFileSync(kf, 'utf8') === key && fs.existsSync(path.join(P.D.bake, `${seq.bakeName}.bin`));
     bakes.push({ seq: seq.id, name: seq.bakeName, key, have, spec: have ? undefined : spec });
   }
+  for (const m of P.MOTIONS ?? []) {
+    const spec = { ...m, seconds: +(+m.seconds).toFixed(2) }, key = md5(JSON.stringify(spec)), kf = path.join(P.D.bake, `${m.name}.key`);
+    const have = fs.existsSync(kf) && fs.readFileSync(kf, 'utf8') === key && fs.existsSync(path.join(P.D.bake, `${m.name}.bin`));
+    bakes.push({ seq: m.name, name: m.name, key, have, spec: have ? undefined : spec });
+  }
   const script = readJson(path.join(P.dir, 'script.json'), { lines: [] }), LN = Object.fromEntries((script.lines ?? []).map((l) => [l.id, l]));
   const voices = [];
   for (const lang of P.config.langs) {
@@ -163,7 +172,7 @@ export function timeline(P) {
     if (!shots.length) continue;
     const start = shots[0].start;
     // sequence time → film time (inside a shot that is off: where the cut now is; null = wholly cut away)
-    const map = (ts) => { let acc = start; for (const s of shots) { if (ts < s.t0) return acc; if (ts < s.t0 + s.dur + 1e-6) return acc + Math.min(ts - s.t0, s.len); acc += s.len; } return acc; };
+    const map = (ts) => { let acc = start; for (const s of shots) { if (ts < s.t0) return acc; if (ts < s.t0 + s.dur + 1e-6) return acc + Math.min(s.warpInv ? s.warpInv(ts - s.t0) : ts - s.t0, s.len); acc += s.len; } return acc; };
     const inside = (ts) => shots.some((s) => ts >= s.t0 - 1e-6 && ts < s.t0 + s.dur + 1e-6);
     for (const s of shots) out.shots.push({ id: s.id, seq: seq.id, start: +s.start.toFixed(4), dur: +s.len.toFixed(4), lip: !!s.lip, note: s.note ?? '' });
     out.seqs.push({ id: seq.id, start: +start.toFixed(3), end: +(shots[shots.length - 1].start + shots[shots.length - 1].len).toFixed(3) });
@@ -204,7 +213,7 @@ export function fingerprints(P, ids = null) {
   for (const seq of P.FILM) {
     const shots = P.shots.filter((s) => s.seq === seq.id && (!ids || ids.includes(s.id)));
     if (!shots.length) continue;
-    const skey = md5([ENGINE_VERSION, shots[0].seqText, P.shared, W, H, fps, P.config.langs.join(), vo, seq.bakeName ? mt(path.join(P.D.bake, `${seq.bakeName}.bin`)) : 0].join('|'));
+    const skey = md5([ENGINE_VERSION, shots[0].seqText, P.shared, W, H, fps, P.config.langs.join(), JSON.stringify(P.config.look ?? null), vo, seq.bakeName ? mt(path.join(P.D.bake, `${seq.bakeName}.bin`)) : 0, ...(P.MOTIONS ?? []).map((m) => mt(path.join(P.D.bake, `${m.name}.bin`)))].join('|'));
     let m = memo[seq.id];
     if (!m || m.key !== skey) { m = memo[seq.id] = { key: skey, fp: {} }; dirty = true; }
     for (const sh of shots) {

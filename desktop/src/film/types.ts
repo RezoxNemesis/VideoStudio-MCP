@@ -22,6 +22,8 @@ export interface FilmConfig {
   crf: number;
   preset: string;
   off: string[];
+  /** The kind of animation the film is drawn as (film/engine/look.js); null or absent = anime. */
+  look?: string | { style: string; [k: string]: unknown } | null;
 }
 export interface FilmOpen {
   dir: string;
@@ -58,7 +60,7 @@ export interface BakeNeed {
   name: string;
   key: string;
   have: boolean;
-  spec?: { name: string; seconds: number; fps?: number; env?: string; check?: boolean; joints?: string[]; actors: Record<string, unknown>[]; steps?: Record<string, unknown>[] };
+  spec?: { name: string; seconds: number; fps?: number; env?: string; check?: boolean; joints?: string[]; bodies?: boolean | string[]; rigEvery?: number; actors: Record<string, unknown>[]; steps?: Record<string, unknown>[] };
 }
 export interface SoundNeed {
   name: string;

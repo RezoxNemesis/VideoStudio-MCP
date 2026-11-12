@@ -22,6 +22,8 @@ export function loadBake(name) {
       data: new Float32Array(ab, a.data[0], a.data[1] / 4),
       contact: new Uint8Array(ab, a.contact[0], a.contact[1]),
       props: Object.fromEntries(a.props.map((p) => [p.name, new Float32Array(ab, p.data[0], p.data[1] / 4)])),
+      // the real body, when the performance was solved with `bodies` (see body.js)
+      bodyMeta: a.body ?? null, rigMeta: a.rig ?? null, ab,
     };
   }
   b = { name, fps: meta.fps, frames: meta.frames, dur: (meta.frames - 1) / meta.fps, joints: meta.joints, quats: meta.quats, stride: meta.stride, ji, qi, actors, info: meta.info, issues: meta.issues };

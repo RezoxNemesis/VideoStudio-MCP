@@ -17,7 +17,7 @@ import { vsd } from "../bridge";
 import { code } from "../film/session";
 import { film } from "../film/prepare";
 import type { FilmShot, LibraryPerson } from "../film/types";
-import { b, h, ic } from "./kit";
+import { b, h, ic, selectEl } from "./kit";
 
 const ink = EditorView.theme(
   {
@@ -80,6 +80,12 @@ export class CodePage {
 
   private titleEl = h("button", { class: "cs-film", type: "button", title: "Films" });
   private metaEl = h("span", { class: "cs-meta" });
+  /** The kind of animation the whole film is drawn as (film/engine/look.js). */
+  private lookSel = selectEl(
+    [["anime", "Look: 2D anime"], ["multiplane", "Look: 2.5D multiplane"], ["soft3d", "Look: 3D render"], ["cel3d", "Look: 3.5D cel-shaded"], ["immersive", "Look: 4D immersive"], ["paper", "Look: paper cut"], ["puppet", "Look: cut-out puppet"], ["flat", "Look: flat motion graphics"], ["pixel", "Look: pixel art"], ["sketch", "Look: pencil sketch"], ["manga", "Look: manga"]] as [string, string][],
+    "anime",
+    (v) => void this.setLook(v),
+  );
   private barEl = h("div", { class: "cs-bar" }, h("i", {}));
   private busyEl = h("span", { class: "cs-busy" });
   private sideEl = h("div", { class: "cs-side-body" });
@@ -128,6 +134,7 @@ export class CodePage {
       { class: "cs-top" },
       this.titleEl,
       this.metaEl,
+      this.lookSel,
       h("span", { class: "sp" }),
       this.busyEl,
       this.barEl,
@@ -226,8 +233,21 @@ export class CodePage {
     this.titleEl.replaceChildren(ic("film", 15), document.createTextNode(i ? i.config.name : code.dir ? code.dir.split("/").pop()! : "Open or start a film"), ic("down", 13));
     const todo = this.todo();
     this.metaEl.textContent = i ? `${i.config.width}×${i.config.height} · ${i.config.fps} fps · ${i.config.langs.join(" + ")} · ${fmt(i.total)} · ${i.shots.length} shots` : "";
+    const lk = i?.config.look, style = typeof lk === "string" ? lk : lk?.style ?? "anime";
+    const ALIAS: Record<string, string> = { "2d": "anime", "2.5d": "multiplane", "3d": "soft3d", "3.5d": "cel3d", "4d": "immersive" };
+    this.lookSel.value = ALIAS[style] ?? style;
+    this.lookSel.disabled = !i;
+    this.lookSel.title = "The kind of animation the whole film is drawn as. A sequence or a shot can have its own (look: 'sketch').";
     this.drawBtn.lastChild!.textContent = todo ? `Draw ${todo} changed` : "Up to date";
     this.drawBtn.classList.toggle("pri", todo > 0 || this.needsWork());
+  }
+  private async setLook(v: string): Promise<void> {
+    if (!code.info) return;
+    const { runQuiet } = await import("../../../src/agent/api");
+    const [r] = await runQuiet(this.s, [{ op: "code.config", look: v === "anime" ? "" : v } as never]);
+    if (r && !r.ok) toast(String(r.error ?? "The look could not be changed."));
+    else toast("The film will be drawn in the new look. Draw changed to see it.");
+    this.drawTop();
   }
   private needsWork(): boolean {
     const n = code.status?.needs;

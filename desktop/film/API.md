@@ -19,7 +19,7 @@ the film is joined again without re-encoding — a fix to one shot of a long fil
 ## The folder
 
 ```
-project.json   { name, width, height, fps, langs: ["en","hi"], crf, preset, off: [shot ids left out] }
+project.json   { name, width, height, fps, langs: ["en","hi"], crf, preset, off: [shot ids left out], look }
 film.js        export const FILM = [S01, S02, …]   (the sequences in order; optional: export const CAST = { name: design })
 seq/s01.js     one sequence each (see below)
 script.json    the spoken lines and who says them in which voice
@@ -81,7 +81,7 @@ Actions chain: each starts where the last left the body. `at: { pos, yaw }` jump
   laugh smirk sneer pain tired fading dead wonder; or `{ like: 'happy', tears: 0.5, blush: 0.4 }`.
 - `look: [[t, 'otherActorId' | 'cam' | [x, y, z]], …]` where the eyes go.
 
-**shots(T)** → `[{ id, t0, t1, cam, note?, dof?, post?, hide?, only?, actor?, over?, top?, fx?, settle? }]`
+**shots(T)** → `[{ id, t0, t1, cam, note?, dof?, post?, hide?, only?, actor?, over?, top?, fx?, settle?, hold?, warp?, look? }]`
 - `cam: (t, ctx, tInShot) => ({ pos: [x, y, z], target: [x, y, z], fov: 35, roll?, shake?: { amp, freq } })`.
   `at(ctx, 'mira', 'head' | 'chest' | 'hips' | 'feet', [dx, dy, dz])` is a point of a body right now.
   `move(camA, camB, t, t0, t1)` eases from one set-up to another; `breathe(cam, t, 0.005)` adds a living drift.
@@ -89,16 +89,69 @@ Actions chain: each starts where the last left the body. `at: { pos, yaw }` jump
 - `post: { fadeIn: 1, fadeOut: 1.2 }`; `hide: ['id']` / `only: ['id']` choose who is drawn; `note` is a reminder.
 - `top: (g, cam, sc, t, ctx, u) => caption(g, cam.W, cam.H, u, 'The park', { sub: 'morning' })` draws lettering on the
   picture (`mainTitle(g, W, H, u, { word: 'MY FILM', sub: 'A SHORT STORY' })` for a title card); `over` draws under it.
+- `hold: 2` holds every drawing for two frames ("on twos", the rhythm of drawn animation; cameras, cloth and effects
+  still move on every frame); a function `(t, ctx) => 1 | 2 | 3` puts fast action on ones. `seq.hold` sets it for all shots.
+- `warp: ramps(dur, [{ at, slow: 0.15, len: 0.5 }])` bends the shot's clock: slow motion and hit-stops at the moments that
+  matter; the time is won back afterwards, so the shot still ends when it would have.
+- `look` draws this shot (or `seq.look`, the whole sequence) in another kind of animation — see **Looks**.
 - Shots of one sequence share the performance, so continuity holds across every cut. Keep shots 1.5–6 s.
+
+## Real bodies
+
+`motion: (T) => ({ actors, steps, bodies: true })` keeps each performer's whole body: 163 bones, a skinned anatomical mesh,
+five-fingered hands (`hands: (t) => ({ L: 'relax' | 'open' | 'fist' | 'grip' | 'point' | 'claw', R: … })` on an actor),
+a real head whose jaw opens on the lines, drawn anime eyes and brows that act (`emote`), hair in clumps that swing
+(`design.hair3: 'short' | 'neat' | 'spiky' | 'shaggy' | 'bob' | 'long' | 'tied' | 'topknot' | 'buzz' | 'bald'`), cloth
+layers, cast shadows. Swords, spears, staffs and shields are real objects held by the fingers. Figures smaller than about
+40 px are drawn the old, simpler way. `actor: { id: { mesh: false } }` draws one the old way on purpose.
+
+## Action
+
+```js
+import { combat, fightEvents, ramps } from '../vs.js';
+const FX = combat([{ t: 3.2, kind: 'clash', by: 'orez', on: 'a1' }, { t: 4.1, kind: 'cut', by: 'orez', on: 'a1', power: 1.4 },
+                   { t: 5.0, kind: 'kill', by: 'orez', on: 'a2' }], { blood: true });
+// fx: FX.fx, and in a shot: over: FX.over, top: FX.top, cam: (t, ctx) => ({ …, shake: FX.shake(t) })
+```
+Events: `clash` (sparks, a star of light, ringing steel), `cut` / `stab` (blade arc, cut line, blood that sprays, drips and
+pools, staining the ground), `kill`, `kick`, `thud`, `whoosh`. `fightEvents(beats, ['orez', 'a1'])` turns the beats of a
+`stage.fight` into events. `ramps` (above) gives the slow motion. The sounds come with the events.
+
+## Looks
+
+The same film drawn as another kind of animation: `"look": "paper"` in project.json for the whole film, or
+`look: 'sketch'` on a sequence or a shot (a flashback in pencil, a dream in paper). Or `{ "style": "pixel", "size": 4 }`.
+
+| look | |
+|---|---|
+| `anime` (`2d`) | the default: cel tones, ink lines |
+| `multiplane` (`2.5d`) | anime drawing in layered depth: haze, a soft far background |
+| `soft3d` (`3d`) | a 3D render: smooth light, no lines, soft bloom |
+| `cel3d` (`3.5d`) | cel-shaded 3D: three tones, rim light, an outer line, fine inner lines |
+| `immersive` (`4d`) | cel-shaded 3D with light in the air: sun shafts, bloom, haze, floating motes, a breathing camera |
+| `paper` | paper cut: flat paper colours with pale cut edges, every layer casting a shadow, paper grain, on threes |
+| `puppet` | cut-out puppet theatre: paper pieces that jolt from drawing to drawing, on threes |
+| `flat` | flat motion-graphics design: clean colour, thin lines, no grain |
+| `pixel` | pixel art: a small canvas, a short palette, ordered dither, on twos |
+| `sketch` | pencil: graphite lines and hatching on paper, a faint colour wash |
+| `manga` | black and white: ink and screen tone |
+
+## Library models
+
+`model(sc, 'medieval/building_tower_A', [x, z], { yaw, scale, tint, recolor: { '#hex': '#hex' } })` puts one of 854 ready
+3D models (buildings, walls, furniture, dungeon, city, food, weapons …) into a place, drawn in the film's look. `models('tower')`
+finds them.
 
 **sound(T)** → `[{ t0, t1, amb: 'birds', gain: 0.4 }, { t0, t1, music: 'theme', gain: 0.6, fadeIn, fadeOut }, { t, sfx: 'step', gain: 0.3, pitch?, pan? }]`
 - Sounds that come with the kit — effects: bell block boom chime clash click cloth crackle deepWhoosh draw gong heart hoof
   hum impact kick land paper pop punch reverse riser rumble shimmer slash snowstep step stepstone subdrop swoosh tick
   whoosh; ambience: army birds city crowd fire night rain river sea shore wind.
 - Music comes from cues.json: `[{ "name": "theme", "op": "music.generate", "style": "motivational", "mood": "hopeful", "seconds": 34, "seed": 7 }]`
-  (styles: cinematic_epic action_battle emotional_piano sad_violin suspense horror adventure anime_rock pop lofi edm
-  synthwave hiphop jazz comedy ambient chiptune motivational lullaby bollywood_romantic bollywood_dance indian_classical
-  devotional folk_garba japanese). More beds: `{ "name": "storm", "dir": "amb", "op": "sfx.ambience", "type": "rain", "seconds": 60 }`.
+  (styles: cinematic_epic action_battle trailer emotional_piano sad_violin suspense horror adventure anime_rock pop lofi
+  edm house future_bass drum_and_bass trap drill phonk reggaeton afrobeats synthwave hiphop jazz comedy ambient chiptune
+  motivational lullaby bollywood_romantic bollywood_dance punjabi_pop sufi indian_classical devotional folk_garba japanese).
+  The instruments include VideoStudio's own Studio bank: 808s, supersaws, plucks, FM keys, choirs, braams, risers, sitar,
+  tanpura, bansuri, harmonium, santoor, shehnai, sarangi, and kits for trap, dance, lo-fi, film percussion and tabla. More beds: `{ "name": "storm", "dir": "amb", "op": "sfx.ambience", "type": "rain", "seconds": 60 }`.
 - Voices duck the music by themselves; the mix is levelled to −14 LUFS.
 
 ## script.json
@@ -108,8 +161,14 @@ Actions chain: each starts where the last left the body. `at: { pos, yaw }` jump
   "pace":  { "en": 0.92 },
   "lines": [ { "id": "M1", "who": "Mira", "en": "You came!", "hi": "Tum aa gaye!", "hi_say": "तुम आ गए!", "tone": "happy", "em_en": ["came"] } ] }
 ```
-`cast`: each speaker's voice per language (voices: af_heart af_nicole am_michael am_fenrir hf_alpha hf_beta hm_omega
-hm_psi …; blends like `"am_michael*0.6+am_fenrir*0.4"`) and own tone. `tone`: neutral warm happy excited sad angry
+`cast`: each speaker's voice per language and own tone. Voices: 32 trained ones (English af_heart af_bella af_nicole af_sky
+af_nova am_michael am_fenrir am_onyx am_puck bf_emma bm_george bm_fable bm_lewis …; Hindi hf_alpha hf_beta hm_omega hm_psi;
+Spanish ef_dora em_alex em_santa; French ff_siwis; Italian if_sara im_nicola; Portuguese pf_dora pm_alex pm_santa), the
+character voices (pre_young_hero pre_warrior pre_warlord pre_master pre_mother pre_little_boy pre_little_girl pre_queen
+pre_trickster pre_announcer pre_documentary pre_whisperer pre_storyteller …, Hindi pre_hi_nayak pre_hi_guru pre_hi_maa
+pre_hi_bachcha pre_hi_khalnayak pre_hi_sutradhar) and blends like `"am_michael*0.6+am_fenrir*0.4"`. Languages for `langs`:
+en hi es fr it pt de ru nl pl sv id ro el mr — any voice speaks any of them (its own accent); `voice.languages` lists them.
+Lines are read sentence by sentence the way a person reads: "!" "…" "?!" shape the delivery. `tone`: neutral warm happy excited sad angry
 stern calm afraid tired question whispery commanding playful, or `{ like, pitch, rate, energy, pauses, ending }`.
 `<lang>` is the subtitle, `<lang>_say` what is spoken if different, `em_<lang>` words to lean on. With several
 languages in project.json every line is spoken in each; the picture is timed to fit them all and lips follow each.

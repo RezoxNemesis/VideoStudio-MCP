@@ -413,6 +413,7 @@ function drawFace(g, cam, k, pass) {
     if (ly < fullH * 0.5) { const ky = (fullH * 0.5) / (ly || 1e-6); ey2 = [ey2[0] * ky, ey2[1] * ky]; }
     return { vis, c0, ex, ey: ey2 };
   };
+  if (k.frame3) return drawEyes3(g, k);
   const inFrame = (fm, mirror, fn) => { g.save(); g.transform(fm.ex[0] * (mirror ? -1 : 1), fm.ex[1] * (mirror ? -1 : 1), fm.ey[0], fm.ey[1], fm.c0[0], fm.c0[1]); fn(); g.restore(); };
   const big = px > 26, mid = px > 12;
   const blink = clamp(face.blink ?? 0), open = clamp((face.eyeOpen ?? 1) * (1 - blink), 0, 1.4);
@@ -423,9 +424,87 @@ function drawFace(g, cam, k, pass) {
     for (const sd of [1, -1]) { const fm = frame(sd * (eyeAz + 0.14), eyeEl - 0.27, 0.17, 0.08); if (fm.vis < 0.2) continue; g.save(); g.globalAlpha = 0.5 * (face.blush ?? fd.blush) * clamp(fm.vis * 2); inFrame(fm, false, () => { g.beginPath(); g.ellipse(0, 0, 1, 1, 0, 0, 7); }); g.fillStyle = lit('#f08a7a'); g.fill(); g.restore(); }
   }
 
+  eyesAndBrows(g, { ...k, over, mid, big, open, look, frame: (sd, kind, lift) => (kind === 'eye' ? frame(sd * eyeAz, eyeEl, ew, eh) : frame(sd * (eyeAz + 0.02), eyeEl + ((fd.brow ?? {}).gap ?? 0.27) + lift * 0.07, ew * 1.15, eh * 0.6 + 0.04)), inFrame });
+
+  // ---- nose: a tick under the tip, a small shadow on the side away from the light, the ridge when the head turns
+  if (under && mid && vl[2] > -0.2) {
+    const nb = k.nose, tip = P(nb[2]), base = P(nb[5]), wl = P(nb[3]), wr = P(nb[4]), ridge = P(V.lerp(nb[0], nb[1], 0.72));
+    const wing = (wl[0] - tip[0]) * -L[0] > (wr[0] - tip[0]) * -L[0] ? wl : wr; // the wing on the shadow side
+    const turn = Math.abs(vl[0]);
+    g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+    if (turn < 0.93) {
+      g.beginPath(); g.moveTo(tip[0], tip[1]); g.lineTo(wing[0], wing[1]); g.lineTo(base[0], base[1]); g.closePath();
+      g.fillStyle = skinSh; g.globalAlpha = 0.9; g.fill(); g.globalAlpha = 1;
+      // the ridge: only once the head has turned enough to show it
+      const ra = clamp((turn - 0.16) * 3.2);
+      if (ra > 0.02) { g.beginPath(); g.moveTo(ridge[0], ridge[1]); g.lineTo(tip[0], tip[1]); g.lineWidth = lw * 0.6; g.strokeStyle = ink; g.globalAlpha = 0.7 * ra; g.stroke(); g.globalAlpha = 1; }
+      g.beginPath(); g.moveTo(tip[0], tip[1]); g.lineTo(lerp(tip[0], base[0], 0.9), lerp(tip[1], base[1], 0.9));
+      g.lineWidth = lw * (big ? 0.8 : 0.6); g.strokeStyle = ink; g.globalAlpha = 0.8; g.stroke(); g.globalAlpha = 1;
+    }
+    g.restore();
+  }
+
+  // ---- mouth
+  if (under) {
+    const mo = clamp(face.mouthOpen ?? 0), wide = clamp(face.mouthWide ?? 0, -1, 1), smile = clamp(face.smile ?? 0, -1, 1);
+    const mw = (fd.mouthW ?? 0.2) * (1 + 0.3 * wide + 0.12 * Math.abs(smile)) * (1 - 0.25 * Math.max(0, -wide));
+    const fm = frame(0, fd.mouthEl ?? Math.atan2(sh.mouthY, sh.faceZat(sh.mouthY)), mw, 0.14, 1.0 + sh.lips * 1.3, 0.42);
+    if (fm.vis > -0.08 && mid) {
+      const cy = smile * 0.55; // corners up (smile) or down
+      g.save();
+      // in a head turned well away only the near half of the mouth is drawn
+      const half = fm.vis < 0.5, near = vl[0] > 0 ? 1 : -1;
+      if (half) { inFrame(fm, false, () => { g.beginPath(); g.rect(near > 0 ? -0.22 : -1.6, -4, 1.82, 8); }); g.clip(); }
+      if (mo < 0.06) {
+        inFrame(fm, false, () => { g.beginPath(); g.moveTo(-1, cy); g.quadraticCurveTo(0, -cy * 0.9 - 0.12, 1, cy); });
+        g.lineWidth = lw * (big ? 1.25 : 1); g.lineCap = 'round'; g.strokeStyle = ink; g.stroke();
+        if (big) { inFrame(fm, false, () => { g.beginPath(); g.moveTo(-0.4, -0.75 - cy * 0.3); g.quadraticCurveTo(0, -0.95, 0.4, -0.75 - cy * 0.3); }); g.lineWidth = lw * 0.5; g.strokeStyle = skinSh; g.stroke(); }
+      } else {
+        const top = 0.25 + 0.5 * mo * Math.max(0, wide), bot = -(0.5 + 2.6 * mo);
+        const shape = () => { g.beginPath(); g.moveTo(-1, cy); g.bezierCurveTo(-0.5, top + cy * 0.4, 0.5, top + cy * 0.4, 1, cy); g.bezierCurveTo(0.75, bot, -0.75, bot, -1, cy); g.closePath(); };
+        inFrame(fm, false, shape);
+        g.fillStyle = lit('#3d1519'); g.fill();
+        g.save(); g.clip();
+        if (mo > 0.18 && (face.teeth ?? true)) { inFrame(fm, false, () => { g.beginPath(); g.rect(-1.2, top - 0.42 + cy * 0.3, 2.4, 0.5); }); g.fillStyle = lit('#f4efe6'); g.fill(); }
+        if (mo > 0.3) { inFrame(fm, false, () => { g.beginPath(); g.ellipse(0, bot + 0.35, 0.62, 0.75, 0, 0, 7); }); g.fillStyle = lit('#a04a52'); g.fill(); }
+        g.restore();
+        inFrame(fm, false, shape);
+        g.lineWidth = lw * (big ? 1.1 : 0.9); g.lineJoin = 'round'; g.strokeStyle = ink; g.stroke();
+      }
+      g.restore();
+    }
+  }
+
+  // ---- lines of age, scars
+  if (under && big && fd.lines) {
+    g.save(); g.lineWidth = lw * 0.55; g.lineCap = 'round'; g.strokeStyle = skinSh;
+    for (const sd of [1, -1]) {
+      const fm = frame(sd * 0.33, -0.5, 0.1, 0.16); if (fm.vis < 0.2) continue;
+      inFrame(fm, sd < 0, () => { g.beginPath(); g.moveTo(-0.4, 1); g.quadraticCurveTo(0.6, 0.2, 0.5, -1); }); g.stroke();
+      const f2 = frame(sd * (eyeAz + 0.24), eyeEl - 0.1, 0.07, 0.07); if (f2.vis > 0.2) { inFrame(f2, sd < 0, () => { g.beginPath(); g.moveTo(-0.5, 0.4); g.lineTo(0.8, 0.9); g.moveTo(-0.5, -0.1); g.lineTo(0.9, -0.2); }); g.stroke(); }
+    }
+    const f3 = frame(0, 0.36, 0.3, 0.06); if (f3.vis > 0.2) { inFrame(f3, false, () => { g.beginPath(); g.moveTo(-0.9, 0.5); g.quadraticCurveTo(0, 1, 0.9, 0.5); g.moveTo(-0.7, -0.6); g.quadraticCurveTo(0, -0.2, 0.7, -0.6); }); g.stroke(); }
+    g.restore();
+  }
+  if (under && fd.scar && mid) {
+    const fm = frame(fd.scar.az ?? -0.5, fd.scar.el ?? -0.04, 0.07, fd.scar.len ?? 0.3);
+    if (fm.vis > 0.15) { g.save(); inFrame(fm, false, () => { g.beginPath(); g.moveTo(-0.6, 1); g.lineTo(0.5, -1); }); g.lineWidth = lw * 1.3; g.lineCap = 'round'; g.strokeStyle = lit(fd.scar.color ?? '#8a4a44'); g.stroke(); g.restore(); }
+  }
+  // ---- dramatic shade over the eyes (rage, grief)
+  if (under && (face.eyeShade ?? 0) > 0.02) {
+    const fm = frame(0, eyeEl + 0.16, 0.95, 0.42);
+    if (fm.vis > 0.2) { g.save(); inFrame(fm, false, () => { g.beginPath(); g.rect(-1.4, -0.6, 2.8, 1.9); }); g.fillStyle = `rgba(20,14,30,${0.55 * face.eyeShade})`; g.fill(); g.restore(); }
+  }
+  void skin;
+}
+
+/** Eyes and brows drawn in frames that ride on the face. k.frame(side, 'eye' | 'brow', lift) → { vis, c0, ex, ey }. */
+function eyesAndBrows(g, k) {
+  const { d, face, lit, ink, lw, L, skinSh, over, mid, big, open, look, inFrame } = k;
+  const fd = d.face ?? {}, ey = fd.eye ?? {};
   // ---- eyes
   for (const sd of over ? [1, -1] : []) {
-    const fm = frame(sd * eyeAz, eyeEl, ew, eh);
+    const fm = k.frame(sd, 'eye', 0);
     if (fm.vis < 0.1) continue;
     const mirror = sd < 0; // the path is written for the left eye: inner corner at −x
     const tilt = ey.tilt ?? 0.12, sharp = ey.sharp ?? 0;
@@ -504,7 +583,7 @@ function drawFace(g, cam, k, pass) {
   const br = fd.brow ?? {};
   for (const sd of over ? [1, -1] : []) {
     const lift = (sd > 0 ? face.browL : face.browR) ?? 0, tiltB = face.browTilt ?? 0; // tilt>0: inner ends up (worry); <0: inner ends down (anger)
-    const fm = frame(sd * (eyeAz + 0.02), eyeEl + (br.gap ?? 0.27) + lift * 0.07, ew * 1.15, eh * 0.6 + 0.04);
+    const fm = k.frame(sd, 'brow', lift);
     if (fm.vis < 0.12 || !mid) continue;
     const mirror = sd < 0, th = (br.thick ?? 0.16);
     const yi = tiltB * 0.75 - (face.eyeSmile ?? 0) * 0.1, yo = -tiltB * 0.35 + (br.arch ?? 0.1);
@@ -514,74 +593,12 @@ function drawFace(g, cam, k, pass) {
     g.restore();
   }
 
-  // ---- nose: a tick under the tip, a small shadow on the side away from the light, the ridge when the head turns
-  if (under && mid && vl[2] > -0.2) {
-    const nb = k.nose, tip = P(nb[2]), base = P(nb[5]), wl = P(nb[3]), wr = P(nb[4]), ridge = P(V.lerp(nb[0], nb[1], 0.72));
-    const wing = (wl[0] - tip[0]) * -L[0] > (wr[0] - tip[0]) * -L[0] ? wl : wr; // the wing on the shadow side
-    const turn = Math.abs(vl[0]);
-    g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
-    if (turn < 0.93) {
-      g.beginPath(); g.moveTo(tip[0], tip[1]); g.lineTo(wing[0], wing[1]); g.lineTo(base[0], base[1]); g.closePath();
-      g.fillStyle = skinSh; g.globalAlpha = 0.9; g.fill(); g.globalAlpha = 1;
-      // the ridge: only once the head has turned enough to show it
-      const ra = clamp((turn - 0.16) * 3.2);
-      if (ra > 0.02) { g.beginPath(); g.moveTo(ridge[0], ridge[1]); g.lineTo(tip[0], tip[1]); g.lineWidth = lw * 0.6; g.strokeStyle = ink; g.globalAlpha = 0.7 * ra; g.stroke(); g.globalAlpha = 1; }
-      g.beginPath(); g.moveTo(tip[0], tip[1]); g.lineTo(lerp(tip[0], base[0], 0.9), lerp(tip[1], base[1], 0.9));
-      g.lineWidth = lw * (big ? 0.8 : 0.6); g.strokeStyle = ink; g.globalAlpha = 0.8; g.stroke(); g.globalAlpha = 1;
-    }
-    g.restore();
-  }
-
-  // ---- mouth
-  if (under) {
-    const mo = clamp(face.mouthOpen ?? 0), wide = clamp(face.mouthWide ?? 0, -1, 1), smile = clamp(face.smile ?? 0, -1, 1);
-    const mw = (fd.mouthW ?? 0.2) * (1 + 0.3 * wide + 0.12 * Math.abs(smile)) * (1 - 0.25 * Math.max(0, -wide));
-    const fm = frame(0, fd.mouthEl ?? Math.atan2(sh.mouthY, sh.faceZat(sh.mouthY)), mw, 0.14, 1.0 + sh.lips * 1.3, 0.42);
-    if (fm.vis > -0.08 && mid) {
-      const cy = smile * 0.55; // corners up (smile) or down
-      g.save();
-      // in a head turned well away only the near half of the mouth is drawn
-      const half = fm.vis < 0.5, near = vl[0] > 0 ? 1 : -1;
-      if (half) { inFrame(fm, false, () => { g.beginPath(); g.rect(near > 0 ? -0.22 : -1.6, -4, 1.82, 8); }); g.clip(); }
-      if (mo < 0.06) {
-        inFrame(fm, false, () => { g.beginPath(); g.moveTo(-1, cy); g.quadraticCurveTo(0, -cy * 0.9 - 0.12, 1, cy); });
-        g.lineWidth = lw * (big ? 1.25 : 1); g.lineCap = 'round'; g.strokeStyle = ink; g.stroke();
-        if (big) { inFrame(fm, false, () => { g.beginPath(); g.moveTo(-0.4, -0.75 - cy * 0.3); g.quadraticCurveTo(0, -0.95, 0.4, -0.75 - cy * 0.3); }); g.lineWidth = lw * 0.5; g.strokeStyle = skinSh; g.stroke(); }
-      } else {
-        const top = 0.25 + 0.5 * mo * Math.max(0, wide), bot = -(0.5 + 2.6 * mo);
-        const shape = () => { g.beginPath(); g.moveTo(-1, cy); g.bezierCurveTo(-0.5, top + cy * 0.4, 0.5, top + cy * 0.4, 1, cy); g.bezierCurveTo(0.75, bot, -0.75, bot, -1, cy); g.closePath(); };
-        inFrame(fm, false, shape);
-        g.fillStyle = lit('#3d1519'); g.fill();
-        g.save(); g.clip();
-        if (mo > 0.18 && (face.teeth ?? true)) { inFrame(fm, false, () => { g.beginPath(); g.rect(-1.2, top - 0.42 + cy * 0.3, 2.4, 0.5); }); g.fillStyle = lit('#f4efe6'); g.fill(); }
-        if (mo > 0.3) { inFrame(fm, false, () => { g.beginPath(); g.ellipse(0, bot + 0.35, 0.62, 0.75, 0, 0, 7); }); g.fillStyle = lit('#a04a52'); g.fill(); }
-        g.restore();
-        inFrame(fm, false, shape);
-        g.lineWidth = lw * (big ? 1.1 : 0.9); g.lineJoin = 'round'; g.strokeStyle = ink; g.stroke();
-      }
-      g.restore();
-    }
-  }
-
-  // ---- lines of age, scars
-  if (under && big && fd.lines) {
-    g.save(); g.lineWidth = lw * 0.55; g.lineCap = 'round'; g.strokeStyle = skinSh;
-    for (const sd of [1, -1]) {
-      const fm = frame(sd * 0.33, -0.5, 0.1, 0.16); if (fm.vis < 0.2) continue;
-      inFrame(fm, sd < 0, () => { g.beginPath(); g.moveTo(-0.4, 1); g.quadraticCurveTo(0.6, 0.2, 0.5, -1); }); g.stroke();
-      const f2 = frame(sd * (eyeAz + 0.24), eyeEl - 0.1, 0.07, 0.07); if (f2.vis > 0.2) { inFrame(f2, sd < 0, () => { g.beginPath(); g.moveTo(-0.5, 0.4); g.lineTo(0.8, 0.9); g.moveTo(-0.5, -0.1); g.lineTo(0.9, -0.2); }); g.stroke(); }
-    }
-    const f3 = frame(0, 0.36, 0.3, 0.06); if (f3.vis > 0.2) { inFrame(f3, false, () => { g.beginPath(); g.moveTo(-0.9, 0.5); g.quadraticCurveTo(0, 1, 0.9, 0.5); g.moveTo(-0.7, -0.6); g.quadraticCurveTo(0, -0.2, 0.7, -0.6); }); g.stroke(); }
-    g.restore();
-  }
-  if (under && fd.scar && mid) {
-    const fm = frame(fd.scar.az ?? -0.5, fd.scar.el ?? -0.04, 0.07, fd.scar.len ?? 0.3);
-    if (fm.vis > 0.15) { g.save(); inFrame(fm, false, () => { g.beginPath(); g.moveTo(-0.6, 1); g.lineTo(0.5, -1); }); g.lineWidth = lw * 1.3; g.lineCap = 'round'; g.strokeStyle = lit(fd.scar.color ?? '#8a4a44'); g.stroke(); g.restore(); }
-  }
-  // ---- dramatic shade over the eyes (rage, grief)
-  if (under && (face.eyeShade ?? 0) > 0.02) {
-    const fm = frame(0, eyeEl + 0.16, 0.95, 0.42);
-    if (fm.vis > 0.2) { g.save(); inFrame(fm, false, () => { g.beginPath(); g.rect(-1.4, -0.6, 2.8, 1.9); }); g.fillStyle = `rgba(20,14,30,${0.55 * face.eyeShade})`; g.fill(); g.restore(); }
-  }
-  void skin;
 }
+
+/** The drawn eyes and brows on a real head (see bodydraw.js): k.frame3(side, kind, lift) gives the frames; k.px the head's size in the picture. */
+function drawEyes3(g, k) {
+  const face = k.face, blink = clamp(face.blink ?? 0), open = clamp((face.eyeOpen ?? 1) * (1 - blink), 0, 1.4);
+  const inFrame = (fm, mirror, fn) => { g.save(); g.transform(fm.ex[0] * (mirror ? -1 : 1), fm.ex[1] * (mirror ? -1 : 1), fm.ey[0], fm.ey[1], fm.c0[0], fm.c0[1]); fn(); g.restore(); };
+  eyesAndBrows(g, { ...k, over: true, mid: k.px > 12, big: k.px > 26, open, look: face.look ?? [0, 0], frame: k.frame3, inFrame });
+}
+export function drawEyesOn(g, k) { drawEyes3(g, k); }

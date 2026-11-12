@@ -5,6 +5,7 @@ import { capsule, capsuleOpen, smoothClosed, smoothOpen, poly, cel, capsuleSides
 import { makeHead, drawHead, skull } from './head.js';
 import { Cloth, Strand } from './sim.js';
 import { qrot } from './core.js';
+import { drawBodyMesh } from './bodydraw.js';
 
 const SIDES = ['L', 'R'];
 
@@ -161,6 +162,8 @@ export class Character {
     const zOf = (p) => cam.toCam(p)[2];
     const toCam = V.norm(V.sub(cam.pos, F.shc));
     const tiny = hpx < 46;
+    // the real body, when the performance carries one and the figure is big enough in the picture to show it
+    if (pose.body && hpx >= (o.meshFrom ?? 42) && drawBodyMesh(this, g, cam, pose, face, lit, o)) return;
     const skin = lit(d.skin), skinSh = lit(d.skinShade ?? shadeHex(d.skin, -0.2));
     const C = (c) => lit(c), S = (c, s) => lit(s ?? shadeHex(c, -0.26));
     // far figures are painted flat; nearer ones get their shadow side, and a rim of light when the sun is behind
@@ -459,6 +462,7 @@ export class Character {
     void zP;
   }
 
+  drawTuft(g, tf, col, sh, ink, lw) { drawTuftBody(g, tf, col, sh, ink, lw); }
   /** Hair locks as screen shapes. Each: { pts, w0, front, body } */
   tuftShapes(cam, F) {
     const d = this.d, out = [];
@@ -475,32 +479,79 @@ export class Character {
     return out;
   }
 
-  /** The hand as a mitten with a thumb, from the wrist, knuckles and fingertips. */
+  /**
+   * The hand. Near the lens it is drawn bone by bone: a palm, four fingers that bend at the middle joint, a thumb. A hand
+   * that holds something (or is clenched: pose.fist = { L, R }) closes into a fist round the grip — knuckles in a row,
+   * fingers wrapped over the handle, the thumb locked across them. Far away it is a simple shape.
+   */
   drawHand(g, cam, pose, s, F, o) {
     const j = pose.j, P = (p) => cam.project(p);
     const W = j[J.wr(s)], I = j[J.k2(s)], M = j[J.k3(s)], Pk = j[J.k5(s)], T = j[J.tip(s)], Th = j[J.thumb(s)];
-    const w = P(W), ppm = cam.ppm(w[2]), k = F.k;
+    const w = P(W), ppm = cam.ppm(w[2]), k = F.k * (this.d.build.hand ?? 1.08);
     const fill = o.glove ? o.glove[0] : o.skin, shd = o.glove ? o.glove[1] : o.skinSh;
-    if (o.tiny || 0.09 * k * ppm < 9) { const m = P(V.lerp(M, T, 0.5)); g.beginPath(); capsule(g, w[0], w[1], 0.03 * k * ppm, m[0], m[1], 0.036 * k * ppm); if (!o.tiny) { g.lineWidth = o.lw * 1.6; g.strokeStyle = o.ink; g.stroke(); } g.fillStyle = fill; g.fill(); return; }
-    // widen the knuckle line a little and build finger ends from the middle finger
-    const out = V.norm(V.sub(I, Pk)), fd = V.sub(T, M);
-    const I2 = V.add(I, V.mul(out, 0.012 * k)), P2 = V.add(Pk, V.mul(out, -0.012 * k));
-    const pts = [P(V.add(W, V.mul(out, 0.024 * k))), P(I2), P(V.add(I2, V.mul(fd, 0.93))), P(V.add(T, V.mul(out, 0.006 * k))), P(V.add(V.lerp(M, Pk, 0.55), V.mul(fd, 0.9))), P(V.add(P2, V.mul(fd, 0.72))), P(P2), P(V.add(W, V.mul(out, -0.024 * k)))];
-    const tb = V.lerp(W, I, 0.5), thumb = [P(V.add(tb, V.mul(out, 0.012 * k))), P(V.add(V.lerp(tb, Th, 0.6), V.mul(out, 0.014 * k))), P(Th), P(V.lerp(W, I, 0.75))];
-    const amt = 0.03 * k * ppm * 0.5;
-    cel(g, (q) => { smoothClosed(q, pts, 0.6); smoothClosed(q, thumb, 0.7); }, { fill, shade: shd, ink: o.ink, lw: o.lw * 0.9, light: o.light, amt, rim: o.rim, rimW: 1.5 });
-    if (0.09 * k * ppm > 26) {
-      // finger lines
-      g.lineWidth = o.lw * 0.5; g.strokeStyle = o.ink; g.globalAlpha = 0.6; g.beginPath();
-      for (const u of [0.3, 0.55, 0.78]) { const a = P(V.add(V.lerp(I, Pk, u), V.mul(fd, 0.12))), b = P(V.add(V.lerp(I, Pk, u), V.mul(fd, 0.86 - 0.12 * Math.abs(u - 0.4)))); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
-      g.stroke(); g.globalAlpha = 1;
+    const grip = this.grip?.[s] ?? null, clench = grip ? 1 : (pose.fist?.[s] ?? 0);
+    const px = 0.1 * k * ppm; // the palm's length in the picture
+    if (o.tiny || px < 7) { const m = clench > 0.5 ? P(V.lerp(W, M, 0.8)) : P(V.lerp(M, T, 0.5)); g.beginPath(); capsule(g, w[0], w[1], 0.03 * k * ppm, m[0], m[1], (clench > 0.5 ? 0.042 : 0.036) * k * ppm); if (!o.tiny) { g.lineWidth = o.lw * 1.6; g.strokeStyle = o.ink; g.stroke(); } g.fillStyle = fill; g.fill(); return; }
+    const out = V.norm(V.sub(I, Pk));
+    let palmN = V.norm(V.cross(V.sub(I, W), V.sub(Pk, W))); if (s === 'L') palmN = V.mul(palmN, -1); // out of the palm
+    const co = (amt) => ({ fill, shade: shd, ink: o.ink, lw: o.lw * 0.8, light: o.light, amt, rim: o.rim, rimW: 1.5 });
+    const parts = []; // { z, path }
+    const cap = (A, B, ra, rb) => { const a = P(A), b = P(B); parts.push({ z: (a[2] + b[2]) / 2, path: (q) => capsule(q, a[0], a[1], ra * cam.ppm(a[2]), b[0], b[1], rb * cam.ppm(b[2])) }); };
+    if (clench > 0.5) {
+      // ---- a fist: round the grip when there is one
+      const ax = grip ? grip.ax : out;
+      const C = grip ? grip.p : V.add(V.add(M, V.mul(palmN, 0.028 * k)), V.mul(V.norm(V.sub(M, W)), -0.012 * k));
+      let pd = V.sub(C, W); pd = V.sub(pd, V.mul(ax, V.dot(pd, ax))); pd = V.len(pd) < 1e-4 ? V.norm(V.sub(M, W)) : V.norm(pd);
+      let nb = V.norm(V.cross(ax, pd)); if (V.dot(nb, palmN) > 0) nb = V.mul(nb, -1); // towards the back of the hand
+      const along = V.dot(V.sub(W, C), ax), Wc = V.add(W, V.mul(ax, -along * 0.55));
+      const at = (a, f, n) => V.add(V.add(V.add(C, V.mul(ax, a * k)), V.mul(pd, f * k)), V.mul(nb, n * k));
+      // the body of the fist: wrist → heel of the hand → the knuckles' side
+      cap(Wc, at(0, -0.03, 0.006), 0.03 * k, 0.041 * k);
+      cap(at(0.03, -0.012, 0.012), at(-0.03, -0.012, 0.012), 0.034 * k, 0.03 * k);
+      // four fingers over the handle: knuckle → over the front → tip on the palm side
+      [0.036, 0.012, -0.012, -0.035].forEach((a, i) => {
+        const r = (i === 3 ? 0.0105 : 0.0122) * k;
+        cap(at(a, 0.004, 0.03), at(a, 0.034, 0.012), r * 1.08, r);
+        cap(at(a, 0.034, 0.012), at(a, 0.026, -0.024), r, r * 0.92);
+        cap(at(a, 0.026, -0.024), at(a, 0.0, -0.03), r * 0.92, r * 0.85);
+      });
+      // the thumb locks across the first fingers
+      cap(at(0.05, -0.034, -0.012), at(0.046, 0.0, -0.034), 0.0135 * k, 0.012 * k);
+      cap(at(0.046, 0.0, -0.034), at(0.022, 0.022, -0.04), 0.012 * k, 0.0105 * k);
+    } else {
+      // ---- an open hand: palm, four fingers with a natural curl, a thumb
+      const fd0 = V.sub(T, M), fl = V.len(fd0) || 1e-4, fd = V.mul(fd0, 1 / fl), back = V.mul(palmN, -1);
+      const curl = clamp(1 - fl / (0.088 * F.k), 0, 1) * 1.2 + 0.28 + clench * 1.6; // radians at the middle joint
+      const Rg = V.lerp(M, Pk, 0.5), kn = [[I, 0.93, 0.010, 0.4], [M, 1.0, 0.0105, 0.0], [Rg, 0.94, 0.0098, -0.35], [Pk, 0.76, 0.0086, -0.8]];
+      const L0 = Math.max(fl, 0.07 * F.k) * (this.d.build.hand ?? 1.08);
+      // the palm: from the wrist out to the knuckle line
+      { const a = P(V.add(W, V.mul(out, 0.027 * k))), b = P(V.add(I, V.mul(out, 0.011 * k))), c = P(V.add(Pk, V.mul(out, -0.011 * k))), e = P(V.add(W, V.mul(out, -0.025 * k))), m = P(V.add(V.lerp(I, Pk, 0.5), V.mul(fd, 0.006 * k)));
+        parts.push({ z: (a[2] + c[2]) / 2 + 0.004, path: (q) => smoothClosed(q, [a, b, m, c, e], 0.55) }); }
+      for (const [K0, len, r, fan] of kn) {
+        const dir = V.norm(V.add(fd, V.mul(out, fan * 0.09))), L = L0 * len, K = V.add(V.lerp(W, K0, 1 + 0.0), V.mul(fd, 0.004 * k));
+        const mid = V.add(K, V.mul(dir, L * 0.5)), c2 = Math.cos(curl), s2 = Math.sin(curl), tip = V.add(mid, V.add(V.mul(dir, L * 0.5 * c2), V.mul(palmN, L * 0.5 * s2)));
+        cap(K, mid, r * k * 1.1, r * k); cap(mid, tip, r * k, r * k * 0.82);
+      }
+      // the thumb: from the heel of the hand, out and forward
+      const tb = V.add(V.lerp(W, I, 0.38), V.mul(out, 0.016 * k)), tm = V.lerp(tb, Th, 0.55);
+      cap(tb, V.add(tm, V.mul(out, 0.006 * k)), 0.0145 * k, 0.012 * k); cap(V.add(tm, V.mul(out, 0.006 * k)), V.add(tb, V.mul(V.sub(Th, tb), this.d.build.hand ?? 1.08)), 0.012 * k, 0.0098 * k);
+      void back;
     }
+    parts.sort((a, b) => b.z - a.z);
+    if (px < 15) { // small in the picture: one outline round the whole hand
+      cel(g, (q) => { for (const p of parts) p.path(q); }, co(px * 0.16));
+      return;
+    }
+    for (const p of parts) cel(g, p.path, co(px * 0.12));
   }
 
   /** What a hand holds (sword, spear, staff, bucket): drawn just before the hand so the fingers close over the grip. */
   drawHeld(g, cam, pose, s, lit, o) {
     const pr = pose.props ?? {}, sw = pr.sword, k = pose.height / 1.8, wr = pose.j[J.wr(s)], other = pose.j[J.wr(s === 'L' ? 'R' : 'L')];
-    if (sw && swordHand(pose) === s) drawSword(g, cam, sw, this.d, pose.height, lit, o);
+    const G = this.grip ?? (this.grip = {}); G[s] = null;
+    const onLine = (A, B, p) => { const d = V.sub(B, A), l = V.len(d) || 1, u = V.mul(d, 1 / l); return { p: V.add(A, V.mul(u, clamp(V.dot(V.sub(p, A), u), 0, l))), ax: u }; };
+    if (sw && swordHand(pose) === s) { drawSword(g, cam, sw, this.d, pose.height, lit, o); const ax = qrot(sw.q, [0, 1, 0]); G[s] = { p: V.add(sw.pos, V.mul(ax, 0.05 * k)), ax }; }
+    if (s === 'L' && pr.shield?.visible) G[s] = { p: V.add(V.lerp(wr, pose.j[J.k3(s)], 0.85), V.mul(qrot(pr.shield.q, [0, 0, 1]), -0.02 * k)), ax: V.norm(V.sub(pose.j[J.k2(s)], pose.j[J.k5(s)])) };
     for (const name of ['spear', 'staff']) {
       const q = pr[name]; if (!q || !q.visible) continue;
       if (V.dist(q.pos, wr) > V.dist(q.pos, other)) continue;
@@ -518,18 +569,18 @@ export class Character {
         const ax = V.norm(V.sub(grip, butt));
         let A = butt, B = V.add(butt, V.mul(ax, L));
         if (mix < 1) { const bx = qrot(q.q, [0, 1, 0]), e2 = mix * mix * (3 - 2 * mix); A = V.lerp(V.add(q.pos, V.mul(bx, -L / 2)), A, e2); B = V.add(A, V.mul(V.norm(V.sub(V.lerp(V.add(q.pos, V.mul(bx, L / 2)), B, e2), A)), L)); }
-        drawPole(g, cam, A, B, name, this.d, k, lit, o, [-ax[1], ax[0], 0]);
+        drawPole(g, cam, A, B, name, this.d, k, lit, o, [-ax[1], ax[0], 0]); G[s] = onLine(A, B, grip);
       } else if (mode === 'carry') {
         // carried upright in the fist: a little sway, the butt clear of the ground
         const ax = V.norm([noise1(this.t * 0.7, 5 + k) * 0.05, 1, noise1(this.t * 0.6, 9 + k) * 0.05]), butt = V.add(grip, V.mul(ax, -1.0 * k));
-        drawPole(g, cam, butt, V.add(butt, V.mul(ax, L)), name, this.d, k, lit, o, [1, 0, 0]);
+        drawPole(g, cam, butt, V.add(butt, V.mul(ax, L)), name, this.d, k, lit, o, [1, 0, 0]); G[s] = { p: grip, ax };
       } else {
         const ax = qrot(q.q, [0, 1, 0]);
-        drawPole(g, cam, V.add(q.pos, V.mul(ax, -L / 2)), V.add(q.pos, V.mul(ax, L / 2)), name, this.d, k, lit, o, qrot(q.q, [0, 0, 1]));
+        drawPole(g, cam, V.add(q.pos, V.mul(ax, -L / 2)), V.add(q.pos, V.mul(ax, L / 2)), name, this.d, k, lit, o, qrot(q.q, [0, 0, 1])); G[s] = onLine(V.add(q.pos, V.mul(ax, -L / 2)), V.add(q.pos, V.mul(ax, L / 2)), grip);
       }
     }
     const bk = pr.bucket;
-    if (bk && bk.visible && V.dist(bk.pos, wr) <= V.dist(bk.pos, other)) drawBucket(g, cam, wr, this, k, lit, o);
+    if (bk && bk.visible && V.dist(bk.pos, wr) <= V.dist(bk.pos, other)) { drawBucket(g, cam, wr, this, k, lit, o); G[s] = { p: V.add(V.lerp(wr, pose.j[J.k3(s)], 0.9), [0, -0.02 * k, 0]), ax: V.norm(V.sub(pose.j[J.k2(s)], pose.j[J.k5(s)])) }; }
   }
   /** The shield on the left forearm: its face or its back, whichever the lens sees. Returns true when it faces the lens. */
   shieldFacing(cam, pose) { const sh = pose.props?.shield; if (!sh || !sh.visible) return null; return V.dot(qrot(sh.q, [0, 0, 1]), V.sub(cam.pos, sh.pos)) > 0; }

@@ -55,7 +55,7 @@ function wavBytes(pcm: Float32Array, rate: number): Uint8Array {
 const failed = (rs: CommandResult[]) => rs.filter((r) => !r.ok).map((r) => `${r.op}: ${r.error}`);
 
 async function speak(dir: string, v: VoiceNeed): Promise<void> {
-  const { pcm, voice } = await openVoice.say(v.text ?? "", v.voice ?? "af_heart", readTone(v.tone), v.emphasis?.length ? v.emphasis : undefined);
+  const { pcm, voice } = await openVoice.say(v.text ?? "", v.voice ?? "af_heart", readTone(v.tone), v.emphasis?.length ? v.emphasis : undefined, v.lang);
   if (!pcm.length) throw new Error(`The voice returned no sound for line ${v.id} (${v.lang}).`);
   let peak = 0;
   for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));
@@ -84,9 +84,10 @@ async function solve(dir: string, b: BakeNeed, problems: string[]): Promise<void
       if (ck?.ok) issues = ((ck.result as { issues?: { level: string; t?: number; actor?: string; what: string }[] }).issues ?? []).filter((i) => i.level !== "note" && !i.what.includes("shot") && !i.what.includes("frame"));
       for (const i of (issues ?? []).slice(0, 6)) problems.push(`${b.seq}${i.t !== undefined ? ` at ${i.t}s` : ""}${i.actor ? ` (${i.actor})` : ""}: ${i.what}`);
     }
-    const bk = (await runQuiet(s, [{ op: "stage.bake", sceneId, fps: spec.fps ?? 60, from: 0, to: spec.seconds, ...(spec.joints ? { joints: spec.joints } : {}) }]))[0];
+    const bk = (await runQuiet(s, [{ op: "stage.bake", sceneId, fps: spec.fps ?? 60, from: 0, to: spec.seconds, ...(spec.joints ? { joints: spec.joints } : {}), ...(spec.bodies ? { bodies: spec.bodies, rigEvery: spec.rigEvery ?? 2 } : {}) }]))[0];
     if (!bk?.ok) throw new Error(`${b.seq}: the motion could not be solved: ${bk?.error}`);
-    const r = bk.result as { fps: number; frames: number; joints: string[]; quats: string[]; stride: number; actors: { id: string; height: number; data: string; contact: string; props: { name: string; data: string }[] }[] };
+    type B64Part = { name: string; material: string; vcount: number; params: Record<string, unknown>; pos: string; idx: string; skinIndex: string; skinWeight: string; mask?: string; morphs?: { i: string; d: string }[] };
+    const r = bk.result as { fps: number; frames: number; joints: string[]; quats: string[]; stride: number; actors: { id: string; height: number; data: string; contact: string; props: { name: string; data: string }[]; body?: Record<string, unknown> & { parts: B64Part[] }; rig?: { fps: number; frames: number; bones: number; data: string } }[] };
     const parts: Uint8Array[] = [];
     let len = 0;
     const push = (u: Uint8Array): [number, number] => { const at = len; parts.push(u); len += u.length; return [at, u.length]; };
@@ -95,7 +96,15 @@ async function solve(dir: string, b: BakeNeed, problems: string[]): Promise<void
       actors: r.actors.map((a) => {
         const data = push(fromB64(a.data)), contact = push(fromB64(a.contact));
         if (len % 4) push(new Uint8Array(4 - (len % 4)));
-        return { id: a.id, height: a.height, data, contact, props: a.props.map((p) => ({ name: p.name, data: push(fromB64(p.data)) })) };
+        const out: Record<string, unknown> = { id: a.id, height: a.height, data, contact, props: a.props.map((p) => ({ name: p.name, data: push(fromB64(p.data)) })) };
+        if (a.body && a.rig) {
+          // the real body: every array on a 4-byte boundary so it can be read in place
+          const al = (u: Uint8Array): [number, number] => { if (len % 4) push(new Uint8Array(4 - (len % 4))); return push(u); };
+          out.rig = { fps: a.rig.fps, frames: a.rig.frames, bones: a.rig.bones, data: al(fromB64(a.rig.data)) };
+          out.body = { ...a.body, parts: a.body.parts.map((p) => ({ ...p, pos: al(fromB64(p.pos)), idx: al(fromB64(p.idx)), skinIndex: al(fromB64(p.skinIndex)), skinWeight: al(fromB64(p.skinWeight)), ...(p.mask ? { mask: al(fromB64(p.mask)) } : {}), ...(p.morphs ? { morphs: p.morphs.map((m) => ({ i: al(fromB64(m.i)), d: al(fromB64(m.d)) })) } : {}) })) };
+          if (len % 4) push(new Uint8Array(4 - (len % 4)));
+        }
+        return out;
       }),
     };
     const bin = new Uint8Array(len);

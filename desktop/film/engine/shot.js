@@ -6,10 +6,12 @@ import fs from 'node:fs';
 import { makeCam, inView } from './camera.js';
 import { ENV } from './env.js';
 import { loadBake, poseAt } from './bake.js';
+import { bodyOf } from './body.js';
 import { Character } from './character.js';
 import { V, clamp, hash, noise1 } from './core.js';
 import * as post from './post.js';
 import { dust, puff } from './fx.js';
+import { jolt, postLook, resolveLook, setLook } from './look.js';
 
 export const FPS = 60, FW = 1920, FH = 1080;
 
@@ -48,9 +50,13 @@ export class ShotRun {
   constructor(shot, cast, o = {}) {
     this.shot = shot; this.W = o.W ?? FW; this.H = o.H ?? FH; this.fps = o.fps ?? FPS;
     this.o = o;
+    // the kind of animation it is drawn as (engine/look.js): the shot's own, else the film's
+    this.look = resolveLook(shot.look ?? o.look ?? ENV.look); setLook(this.look);
     this.canvas = createCanvas(o.probe ? 2 : this.W, o.probe ? 2 : this.H); this.g = this.canvas.getContext('2d');
     this.ctx = { shot, t: 0, poses: {}, chars: {}, W: this.W, H: this.H, o };
-    this.scene = o.probe ? null : shot.set(this.ctx); this.ctx.scene = this.scene; // probe: poses, camera and faces only (for fingerprints)
+    this.scene = o.probe ? null : shot.set(this.ctx); this.ctx.scene = this.scene;
+    // a look that lives in the air (2.5D, 4D) thickens the haze with distance
+    if (this.scene && this.look.fog) { this.scene.fogD /= this.look.fog; this.scene.fogMax = Math.min(0.94, this.scene.fogMax * 1.04); } // probe: poses, camera and faces only (for fingerprints)
     this.actors = (shot.actors ?? []).map((a) => {
       const design = typeof a.design === 'string' ? cast[a.design] : a.design;
       if (!design) throw new Error(`shot ${shot.id}: no design ${a.design}`);
@@ -69,10 +75,20 @@ export class ShotRun {
     this.poseAll(0);
     if (shot.warm && !o.probe) for (let i = 0; i < shot.warm * this.fps; i++) for (const f of this.fx) f.step(dt, -shot.warm + i * dt, this.scene);
   }
-  poseAll(t) {
+  poseAll(t0) {
+    // story time: a shot may bend it (shot.warpT: speed ramps, hit-stop) — bodies, faces and cameras follow the bent clock
+    const t = this.shot.warpT && t0 > 0 ? this.shot.warpT(t0) : t0; this.ctx.tw = t;
+    // drawn animation holds each drawing: shot.hold = how many frames a character's drawing stays (2 = "on twos"); the
+    // camera, cloth, hair and effects still move on every frame. A function of story time lets fast action go "on ones".
+    // a look with its own stepping (paper, puppet and pixel animation) moves on that, whatever the shot asks
+    const hold = this.look.hold ?? (typeof this.shot.hold === 'function' ? this.shot.hold(t, this.ctx) : (this.shot.hold ?? this.o.hold ?? 1));
+    const th = hold > 1 && t0 >= 0 ? Math.floor(t * this.fps / hold + 1e-6) * hold / this.fps : t;
     for (const a of this.actors) {
+      const t = a.hold === 1 ? this.ctx.tw : th; // (an actor can opt out: hold: 1)
       const xf = typeof a.xf === 'function' ? a.xf(t, this.ctx) : a.xf;
       a.pose = poseAt(a.bk, a.as ?? a.id, (a.t0 ?? 0) + t * (a.rate ?? 1), xf ?? null);
+      // the real body of this actor, when the performance was solved with bodies (drawn by bodydraw.js)
+      if (!a.simple && a.mesh !== false && !this.o.probe && !this.o.noMesh) { const B = bodyOf(a.bk, a.as ?? a.id); if (B) a.pose.body = { B, t: (a.t0 ?? 0) + t * (a.rate ?? 1), xf: xf ?? null, hands: typeof a.hands === 'function' ? a.hands(t, this.ctx) : a.hands }; }
       // a body that stands is never still: it breathes and its weight drifts over its feet
       if (a.alive !== 0 && !this.o.probe) {
         const r = a.pose.j.root, sp = a.lastRoot ? Math.hypot(r[0] - a.lastRoot[0], r[2] - a.lastRoot[2]) * this.fps : 0; a.lastRoot = [r[0], r[1], r[2]];
@@ -94,8 +110,8 @@ export class ShotRun {
   }
   /** Draw the frame for time t (seconds from the start of the shot). Frames must be asked for in order. */
   draw(t) {
-    const { g, W, H, shot, scene, ctx } = this, dt = 1 / this.fps;
-    ctx.t = t;
+    const { g, W, H, shot, scene, ctx } = this, dt = 1 / this.fps, L = this.look;
+    ctx.t = t; setLook(L);
     this.poseAll(t);
     if (!this.settled) { // shot.settle: extra steps that let hair and cloth come to rest in the opening pose (for a shot that opens just after a jump in the motion)
       this.settled = true;
@@ -115,6 +131,8 @@ export class ShotRun {
     // camera
     const cp = { ...shot.cam(t, ctx) };
     if (cp.shake) { const s = cp.shake, k = H / 1080; cp.dx = (cp.dx ?? 0) + noise1(t * (s.freq ?? 9), 11) * s.amp * k; cp.dy = (cp.dy ?? 0) + noise1(t * (s.freq ?? 9), 23) * s.amp * k; cp.roll = (cp.roll ?? 0) + noise1(t * (s.freq ?? 9) * 0.7, 37) * s.amp * 0.012; }
+    // 4D: the camera is held by someone; it breathes
+    if (L.breathe) { const k = H / 1080 * L.breathe; cp.dx = (cp.dx ?? 0) + noise1(t * 0.31, 5) * 5 * k; cp.dy = (cp.dy ?? 0) + noise1(t * 0.27, 9) * 3.5 * k; }
     const cam = makeCam(cp, W, H); ctx.cam = cam;
     const light = scene.light2(cam);
     const dyn = [];
@@ -122,17 +140,29 @@ export class ShotRun {
       if (a.show && !a.show(t, ctx)) continue;
       const pose = a.pose, face = { ...(a.face ? a.face(t, ctx) : {}) };
       face.blink = Math.max(face.blink ?? 0, a.noBlink ? 0 : autoBlink(t + (shot.start ?? 0), a.seed ?? (a.id.length * 7 + a.id.charCodeAt(0))));
+      const jo = jolt(L, a.id, ctx.tw ?? t, this.fps, H);
       dyn.push({ p: pose.j.root, bias: a.bias ?? 0, zone: a.zone, draw: (gg, cm, sc) => {
+        if (jo[0] || jo[1]) { gg.save(); gg.translate(jo[0], jo[1]); try { return drawIt(gg, cm, sc); } finally { gg.restore(); } }
+        return drawIt(gg, cm, sc);
+      } });
+      const drawIt = (gg, cm, sc) => {
         if (!inView(cm, pose.j)) { if (globalThis.__cullLog) globalThis.__cullLog('actor', a.id, cm, pose, t); if (!this.o.noCull) return; } // beside or behind the lens: nothing of it belongs in the picture
         const d = V.dist(cm.pos, pose.j.root);
-        a.ch.draw(gg, cm, pose, face, a.lit ?? sc.litAt(d), { light: a.light ?? light, rim: a.rim ?? sc.o.rim ?? null, pole: typeof a.pole === 'function' ? a.pole(t, ctx) : a.pole, ground: a.gnd ?? 0, shadow: a.shadow ?? sc.o.shadow !== false, shadowAlpha: sc.o.shadowAlpha ?? 0.28, shadowColor: sc.o.shadowColor });
+        a.ch.draw(gg, cm, pose, face, a.lit ?? sc.litAt(d), { sun: scene.sun, light: a.light ?? light, rim: a.rim ?? sc.o.rim ?? null, pole: typeof a.pole === 'function' ? a.pole(t, ctx) : a.pole, ground: a.gnd ?? 0, shadow: a.shadow ?? sc.o.shadow !== false, shadowAlpha: sc.o.shadowAlpha ?? 0.28, shadowColor: sc.o.shadowColor });
         if (a.after) a.after(gg, cm, sc, t, pose, ctx);
-      } });
+      };
     }
     for (const f of this.fx) if (f.items) dyn.push(...f.items());
     if (shot.dyn) dyn.push(...shot.dyn(t, ctx));
-    const dof = shot.dof ? shot.dof(t, ctx) : null;
+    let dof = shot.dof ? shot.dof(t, ctx) : null;
+    if (!dof && L.autoDof) {
+      // 2.5D / 4D: the far world softens behind whoever is nearest
+      let near = 1e9; for (const a of this.actors) if (!a.show || a.show(t, ctx)) near = Math.min(near, V.dist(cam.pos, a.pose.j.root));
+      dof = { near: 0, far: (near < 1e8 ? near : 12) * L.autoDof, blur: L.dofBlur ?? 2.6 };
+    }
     g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+    // paper and puppets: every painted layer lies a little above the one behind and casts a soft shadow on it
+    if (L.layers) { const k = H / 1080; g.shadowColor = `rgba(36,26,14,${L.layers.a})`; g.shadowBlur = L.layers.blur * k; g.shadowOffsetX = L.layers.dx * k; g.shadowOffsetY = L.layers.dy * k; }
     if (dof && ((dof.blur ?? 0) > 0.5 || (dof.foreBlur ?? 0) > 0.5)) {
       const hw = W >> 1, hh = H >> 1;
       if (!this.bA) { this.bA = createCanvas(hw, hh); this.bB = createCanvas(hw, hh); }
@@ -151,8 +181,12 @@ export class ShotRun {
       if (shot.under) { scene.draw(g, cam, t, [], 'back', [0, 1e9]); shot.under(g, cam, scene, t, ctx); scene.draw(g, cam, t, dyn, 'mid', [-1e9, 1e9]); scene.draw(g, cam, t, dyn, 'fore', [1e9, 2e9]); }
       else scene.draw(g, cam, t, dyn);
     }
+    if (L.layers) { g.shadowColor = 'rgba(0,0,0,0)'; g.shadowBlur = 0; g.shadowOffsetX = 0; g.shadowOffsetY = 0; }
     if (shot.over) shot.over(g, cam, scene, t, ctx);
+    if (L.post) postLook(L, g, W, H, { canvas: this.canvas, cam, scene, t, frame: this.frame });
     const ps = { vignette: 0.32, grain: 0.055, ...(scene.o.post ?? {}), ...(shot.post ?? {}) };
+    if (L.vignette !== undefined) ps.vignette *= L.vignette;
+    if (L.grain !== undefined) ps.grain *= L.grain;
     if (ps.wash) for (const w of ps.wash) { const a = typeof w.a === 'function' ? w.a(t) : w.a; if (w.to) post.washGrad(g, W, H, w.color, w.to, a, w.op); else post.wash(g, W, H, w.color, a, w.op); }
     post.vignette(g, W, H, ps.vignette, ps.vignetteColor);
     if (!this.ctx.o.noGrain) post.grain(g, W, H, ps.grain, this.frame + (shot.seed ?? 0) * 977); // videos get their grain at the final encode

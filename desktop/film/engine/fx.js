@@ -28,6 +28,13 @@ export function glow(g, x, y, r, color, alpha = 1, op = 'screen') {
  */
 export class Particles {
   constructor(o) { this.o = o; this.ps = []; this.acc = 0; this.rand = rng(o.seed ?? 7); this.t = 0; }
+  /** Add one particle at p with velocity v. Ranges in the options ([lo, hi] for size and life, a list of colours) are picked here. */
+  add(p, v, e = {}) {
+    const o = this.o, r = this.rand; if (this.ps.length >= (o.max ?? 1500)) return null;
+    const pick = (x, d) => (Array.isArray(x) ? x[0] + (x[1] - x[0]) * r() : x ?? d);
+    const q = { p: [p[0], p[1], p[2]], v: [v[0], v[1], v[2]], age: 0, seed: r(), life: pick(o.life, 1), size: pick(o.size, 0.05), ...(o.colors ? { color: o.colors[Math.floor(r() * o.colors.length)] } : {}), ...e };
+    this.ps.push(q); return q;
+  }
   burst(n, make) { for (let i = 0; i < n; i++) { const p = make(this.rand, i); if (p) { p.age = 0; p.seed = this.rand(); this.ps.push(p); } } }
   step(dt, t, sc) {
     const o = this.o; this.t = t;
@@ -43,7 +50,7 @@ export class Particles {
       if (o.swirl) { ax += noise1(t * 0.9 + p.seed * 40, 1) * o.swirl; az += noise1(t * 0.8 + p.seed * 70, 2) * o.swirl; ay += noise1(t * 1.1 + p.seed * 90, 3) * o.swirl * 0.4; }
       p.v[0] += (ax - p.v[0] * drag) * dt; p.v[1] += (ay - p.v[1] * drag) * dt; p.v[2] += (az - p.v[2] * drag) * dt;
       p.p[0] += p.v[0] * dt; p.p[1] += p.v[1] * dt; p.p[2] += p.v[2] * dt;
-      if (ground !== undefined && p.p[1] < ground) { if (o.bounce) { p.p[1] = ground; p.v[1] = -p.v[1] * o.bounce; p.v[0] *= 0.6; p.v[2] *= 0.6; } else if (o.settle) { p.p[1] = ground; p.v = [0, 0, 0]; } else p.age = p.life + 1; }
+      if (ground !== undefined && ground !== null && p.p[1] < ground) { if (this.onGround) this.onGround(p.p, p); if (o.bounce) { p.p[1] = ground; p.v[1] = -p.v[1] * o.bounce; p.v[0] *= 0.6; p.v[2] *= 0.6; } else if (o.settle) { p.p[1] = ground; p.v = [0, 0, 0]; } else p.age = p.life + 1; }
     }
     if (this.ps.length) this.ps = this.ps.filter((p) => p.age < p.life);
   }

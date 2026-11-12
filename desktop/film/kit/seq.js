@@ -41,12 +41,14 @@ export function makeSeq(def) {
  */
 export function runnerShot(seq, sh, off = 0) {
   const T0 = sh.t0 + off;
+  // sh.warp(tFilm) → tStory, both counted from the start of the shot (speed ramps, hit-stop); it must end where it began: warp(len) = len
+  const wt = sh.warp ? (t) => sh.warp(t + off) - off : (t) => t;
   const actors = seq.actorList.filter((a) => !(sh.hide ?? []).includes(a.id) && (!sh.only || sh.only.includes(a.id))).map((a) => {
     const emo = typeof a.emote === 'function' ? a.emote(seq.T) : a.emote, looks = typeof a.look === 'function' ? a.look(seq.T) : a.look;
     return {
       ...a, ...(sh.actor?.[a.id] ?? {}), bake: a.bake ?? seq.bakeName, t0: (a.t0 ?? 0) + T0,
       face: (t, ctx) => {
-        const ts = T0 + t, f = emotionAt(emo, ts), m = a.who ? mouthAt(seq.cues, a.who, ts, ctx.o.lang ?? 'en') : null;
+        const ts = T0 + wt(t), f = emotionAt(emo, ts), m = a.who ? mouthAt(seq.cues, a.who, ts, ctx.o.lang ?? 'en') : null;
         if (m) { f.mouthOpen = Math.max(f.mouthOpen ?? 0, m.open * (a.mouth ?? 0.6)); f.mouthWide = (f.mouthWide ?? 0) + m.wide * 0.4; }
         // the eyes: on a target if one is set for this moment, else small movements of their own
         let tg = null;
@@ -67,17 +69,18 @@ export function runnerShot(seq, sh, off = 0) {
     ...sh, id: `${seq.id}_${sh.id}`, seq: seq.id, seqT: seq.T, dur: sh.t1 - T0, t0: T0, lip: sh.lip,
     set: (ctx) => seq.set({ ...(seq.setOpts ?? {}), ...(sh.setOpts ?? {}) }, ctx),
     actors,
-    cam: (t, ctx) => sh.cam(T0 + t, ctx, t + off),
-    dof: sh.dof ? (t, ctx) => sh.dof(T0 + t, ctx, t + off) : null,
+    warpT: sh.warp ? wt : null, warpInv: sh.warp?.inv ?? null,
+    cam: (t, ctx) => sh.cam(T0 + wt(t), ctx, t + off),
+    dof: sh.dof ? (t, ctx) => sh.dof(T0 + wt(t), ctx, t + off) : null,
     fx: (ctx) => [...(seq.fx ? seq.fx(ctx, sh, seq.T) : []), ...(sh.fx ? sh.fx(ctx) : [])],
-    dyn: (seq.dyn || sh.dyn) ? (t, ctx) => [...(seq.dyn ? seq.dyn(T0 + t, ctx, sh) : []), ...(sh.dyn ? sh.dyn(T0 + t, ctx) : [])] : null,
-    under: sh.under ? (g, cam, sc, t, ctx) => sh.under(g, cam, sc, T0 + t, ctx) : null,
-    over: (sh.over || seq.over) ? (g, cam, sc, t, ctx) => { if (seq.over) seq.over(g, cam, sc, T0 + t, ctx, sh); if (sh.over) sh.over(g, cam, sc, T0 + t, ctx, t + off); } : null,
-    top: sh.top ? (g, cam, sc, t, ctx) => sh.top(g, cam, sc, T0 + t, ctx, t + off) : null,
-    post, warm: sh.warm ?? seq.warm ?? 2, settle: sh.settle ?? 0,
+    dyn: (seq.dyn || sh.dyn) ? (t, ctx) => [...(seq.dyn ? seq.dyn(T0 + wt(t), ctx, sh) : []), ...(sh.dyn ? sh.dyn(T0 + wt(t), ctx) : [])] : null,
+    under: sh.under ? (g, cam, sc, t, ctx) => sh.under(g, cam, sc, T0 + wt(t), ctx) : null,
+    over: (sh.over || seq.over) ? (g, cam, sc, t, ctx) => { if (seq.over) seq.over(g, cam, sc, T0 + wt(t), ctx, sh); if (sh.over) sh.over(g, cam, sc, T0 + wt(t), ctx, t + off); } : null,
+    top: (sh.top || seq.top) ? (g, cam, sc, t, ctx) => { if (seq.top) seq.top(g, cam, sc, T0 + wt(t), ctx, sh); if (sh.top) sh.top(g, cam, sc, T0 + wt(t), ctx, t + off); } : null,
+    post, warm: sh.warm ?? seq.warm ?? 2, settle: sh.settle ?? 0, hold: sh.hold ?? seq.hold ?? null, look: sh.look ?? seq.look ?? null,
     // what the fingerprint of a shot is made from besides poses, camera and faces
     src: { setOpts: { ...(seq.setOpts ?? {}), ...(sh.setOpts ?? {}) }, set: String(seq.set), file: seq.file ?? null,
-      hooks: [sh.over, sh.top, sh.under, sh.dyn, sh.fx, sh.subs, seq.over, seq.dyn, seq.fx].map((f) => (f ? String(f) : '')).join('\u0001') },
+      hooks: [sh.over, sh.top, sh.under, sh.dyn, sh.fx, sh.subs, sh.warp, typeof (sh.hold ?? seq.hold) === 'function' ? (sh.hold ?? seq.hold) : String(sh.hold ?? seq.hold ?? ''), seq.over, seq.top, seq.dyn, seq.fx].map((f) => (f ? String(f) : '')).join('\u0001') },
   };
 }
 /** The shots of a sequence as the shot runner wants them. */
