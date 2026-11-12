@@ -22,15 +22,22 @@ import { ColorPage } from "./colorpage";
 import { DnaPanel, LensPanel } from "./insight";
 import { Scopes } from "./scopes";
 import { AgentStage } from "./stage";
+import { MusicPage } from "./musicpage";
+import { CodePage } from "./codepage";
+import { registerCodeCommands } from "../film/session";
+import { StagePage } from "./stage3d";
 import { setLiveHooks } from "../../../src/agent/api";
 
-export type WsName = "edit" | "color" | "insight" | "audio" | "animate" | "voice" | "deliver" | "claude";
+export type WsName = "edit" | "color" | "insight" | "audio" | "animate" | "stage" | "code" | "music" | "voice" | "deliver" | "claude";
 const WS: [WsName, string, string][] = [
   ["edit", "Edit", "film"],
   ["color", "Color", "color"],
   ["insight", "Insight", "eye"],
   ["audio", "Audio", "wave"],
   ["animate", "Animate", "brush"],
+  ["stage", "3D", "film"],
+  ["code", "Code", "code"],
+  ["music", "Music", "wave"],
   ["voice", "Voice", "mic"],
   ["deliver", "Deliver", "export"],
   ["claude", "Claude", "spark"],
@@ -78,6 +85,9 @@ export class Shell {
   private graphOn = false;
   private library: Library;
   private animate: AnimateView;
+  private music!: MusicPage;
+  private codePage!: CodePage;
+  private stage3d!: StagePage;
   private deliver: Deliver;
   private rendersBody: HTMLElement | null = null;
 
@@ -125,6 +135,23 @@ export class Shell {
     an.body.className = "hosted";
     an.body.append(this.animate.el);
     this.ws.animate = h("div", { class: "d-ws ws-full" }, an.el);
+    this.stage3d = new StagePage(s);
+    const sg = panel("3D Stage · characters, motion capture, fights, cameras");
+    sg.body.className = "hosted";
+    sg.body.append(this.stage3d.el);
+    this.ws.stage = h("div", { class: "d-ws ws-full" }, sg.el);
+    // Code Studio: films written as code, with instant frames and shot-by-shot redraws.
+    this.codePage = new CodePage(s);
+    const cd = panel("Code Studio · films written as code");
+    cd.body.className = "hosted";
+    cd.body.append(this.codePage.el);
+    this.ws.code = h("div", { class: "d-ws ws-full" }, cd.el);
+    registerCodeCommands(s, () => this.cur !== "code" && this.go("code"));
+    this.music = new MusicPage(s);
+    const mu = panel("Music · compose, instruments, piano roll");
+    mu.body.className = "hosted";
+    mu.body.append(this.music.el);
+    this.ws.music = h("div", { class: "d-ws ws-full" }, mu.el);
     const vo = panel("Voice · VolTune");
     vo.body.className = "hosted";
     vo.body.append(new VoiceView(s).el);
@@ -217,6 +244,28 @@ export class Shell {
       preview: () => this.viewer.preview,
       timeline: () => this.timeline,
     });
+    // 2.3: Code Studio, the libraries and the Blender forge — said once.
+    if (!localStorage.getItem("vs23.new")) {
+      setTimeout(
+        () => {
+          localStorage.setItem("vs23.new", "1");
+          const li = (t: string, d: string) => h("div", { style: "margin:0 0 9px" }, h("b", {}, t), h("div", { class: "muted", style: "font-size:12.5px;line-height:1.45" }, d));
+          const m = modal(
+            "New in VideoStudio 2.3",
+            h(
+              "div",
+              { class: "col", style: "max-width:540px" },
+              li("Code Studio", "A new Code page: a film written as code. Type on the left, see the frame on the right at once. Every shot is kept as its own video, so after a change only the shots that changed are drawn again and the film is joined in seconds. Claude writes and fixes films here while you watch."),
+              li("Ready people, places and things", "380 characters in 28 groups, 22 places at four times of day, 126 props, 43 sounds — click one to put it into the code."),
+              li("3D model library", "854 ready 3D models (city, furniture, castle and dungeon, kitchen, space base, medieval world and more) to stand beside the characters of the 3D Stage."),
+              li("Blender forge", "If Blender is installed, VideoStudio uses it as an asset machine: trees, rocks, land, buildings, 3D lettering and anything Claude writes for it are made in Blender and placed on the Stage."),
+            ),
+            [b("Open Code Studio", null, () => { m.close(); this.go("code"); }, "pri"), b("Later", null, () => m.close())],
+          );
+        },
+        localStorage.getItem("vs2.welcome") ? 2500 : 90_000,
+      );
+    }
     // First start of VideoStudio 2: say what changed, once.
     if (!localStorage.getItem("vs2.welcome")) {
       setTimeout(() => {
@@ -307,6 +356,9 @@ export class Shell {
       host.append(this.tlPanel);
     } else if (n === "audio") host.append(this.tlPanel);
     if (n === "animate") this.animate.open(arg);
+    this.music.shown(n === "music");
+    this.codePage.shown(n === "code");
+    this.stage3d.shown(n === "stage");
     if (n === "deliver") {
       this.deliver.draw();
       void this.drawRenders();

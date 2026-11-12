@@ -288,6 +288,15 @@ function setupProtocols() {
     const u = new URL(req.url);
     let rel = decodeURIComponent(u.pathname).replace(/^\/+/, "");
     if (!rel) rel = "index.html";
+    // Stage asset packs (bodies, motion library) live beside the app, not inside the web bundle.
+    if (rel.startsWith("stage-assets/")) {
+      const sub = rel.slice("stage-assets/".length);
+      for (const root of [path.join(process.resourcesPath || "", "stage-assets"), path.join(__dirname, "..", "stage-assets")]) {
+        const f = path.join(root, sub);
+        if (f.startsWith(root) && fs.existsSync(f) && fs.statSync(f).isFile()) return fileResponse(f, req, { ...ISOLATION, "cache-control": "max-age=86400" });
+      }
+      return new Response("missing stage asset", { status: 404 });
+    }
     let file = path.join(WEB_ROOT, rel);
     if (!file.startsWith(WEB_ROOT)) return new Response("no", { status: 403 });
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(WEB_ROOT, "index.html");
@@ -1344,6 +1353,13 @@ function setupIpc() {
     }
     return true;
   });
+  // Code Studio: films written as code, drawn by the film farm.
+  filmHost = require("./film.cjs").setupFilm({
+    handle, mustAllow, ffmpeg: FFMPEG, ffprobe: FFPROBE, root: path.join(OUT.Movies, "Code"), userData: app.getPath("userData"), resources: process.resourcesPath,
+    send: (channel, msg) => { if (win && !win.isDestroyed()) win.webContents.send(channel, msg); },
+  });
+  // The Blender forge: the person's own Blender as a machine for making 3D assets.
+  require("./forge.cjs").setupForge({ handle, mustAllow, models: path.join(OUT.Movies, "Models"), resources: process.resourcesPath });
   handle("win.capture", async (max = 1600, quality = 78) => {
     const img = await win.webContents.capturePage();
     const sz = img.getSize();
@@ -1395,6 +1411,8 @@ const clearGuard = () => {
 };
 app.on("will-quit", clearGuard);
 app.on("will-quit", () => mediaCore?.stopAll());
+let filmHost = null;
+app.on("will-quit", () => filmHost?.close());
 // Logging out or shutting down ends the app with a signal; that is a normal end too.
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"])
   process.on(sig, () => {

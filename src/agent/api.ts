@@ -5,6 +5,7 @@
  * There is deliberately no command that browses the phone's gallery or files.
  */
 import type { Studio } from "../app/studio";
+import { ANIME_COMMANDS } from "./anime";
 import * as ops from "../core/ops";
 import * as anim from "../anim/ops";
 import * as rig from "../anim/rig";
@@ -2222,6 +2223,8 @@ export const STOPPED = "Stopped by you in the app.";
 /** App-level events other parts of the app listen to (notifications). */
 /** Extra commands from a host (VideoStudio Desktop adds file-system, audio-reading and window commands). */
 export type HostArgs = Args;
+// Anime action for 2D scenes (shared by the phone and desktop apps).
+Object.assign(HANDLERS, ANIME_COMMANDS);
 export function registerCommand(op: string, help: string, run: (s: Studio, a: Args) => unknown | Promise<unknown>): void {
   HANDLERS[op] = { help, run: run as Handler };
 }

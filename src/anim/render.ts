@@ -3,9 +3,11 @@ import { valueAt } from "../core/keyframes";
 import { worldMatrix } from "./rig";
 import { drawBackdrop, drawPuppet } from "./puppet";
 import { drawProc } from "./proc";
+import { auraAt, cameraAt, flashAt, layerFrame, trailFrames } from "./anime";
 import { TRANSFORM_DEFAULTS, exposedKey, type AnimLayer, type AnimScene, type BlendMode, type Cel, type Stroke } from "../core/model";
 import { draw3D } from "./three3d";
 import { drawLiving } from "./living";
+import { drawStage } from "../stage/draw";
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
@@ -361,8 +363,10 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
   }
   const layer = scratchCanvas(W, H);
   const lc = ctx2d(layer);
-  const drawLayerAt = (l: AnimLayer, fr: number, tint: string | null, alpha: number, cel?: Cel) => {
-    const proc = l.kind === "puppet" || l.kind === "backdrop" || l.kind === "proc" || l.kind === "three" || l.kind === "living";
+  // anime action: the camera kick (shake, zoom punch) moves every layer together
+  const cam = cameraAt(s.anime, frame, W, H);
+  const drawLayerAt = (l: AnimLayer, fr: number, tint: string | null, alpha: number, cel?: Cel, glow?: { blur: number; lift: number }) => {
+    const proc = l.kind === "puppet" || l.kind === "backdrop" || l.kind === "proc" || l.kind === "three" || l.kind === "living" || l.kind === "stage";
     const key = exposedKey(l, fr);
     const use = cel ?? (key ? l.cels[key] : undefined);
     if (!use && !proc) return;
@@ -374,8 +378,9 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
     layerTransform(lc, l, fr, s);
     if (l.kind === "puppet") drawPuppet(lc, l, s, fr);
     else if (l.kind === "backdrop") drawBackdrop(lc, l, s, fr);
-    else if (l.kind === "proc") drawProc(lc, l, s, fr, o.images);
+    else if (l.kind === "proc") drawProc(lc, l, l.span ? { ...s, frames: Math.max(1, l.span[1] - l.span[0]) } : s, fr - (l.span?.[0] ?? 0), o.images);
     else if (l.kind === "three") draw3D(lc as CanvasRenderingContext2D, l, s, fr, W, H, o.onReady);
+    else if (l.kind === "stage") drawStage(lc as CanvasRenderingContext2D, l, s, fr, W, H, o.onReady);
     else if (l.kind === "living") drawLiving(lc as CanvasRenderingContext2D, l, s, fr, W, H, l.living && o.images ? o.images(l.living.assetId) : null);
     if (use) {
       if (l.drawOn && !cel) drawCelReveal(lc, use, (fr - l.drawOn.start) / Math.max(1, l.drawOn.dur), !!l.drawOn.sketch);
@@ -388,8 +393,15 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
       lc.fillRect(0, 0, W, H);
     }
     out.globalAlpha = alpha;
-    out.globalCompositeOperation = tint ? "source-over" : BLEND_2D[l.blend];
-    out.drawImage(layer as CanvasImageSource, 0, 0);
+    out.globalCompositeOperation = glow ? "lighter" : tint ? "source-over" : BLEND_2D[l.blend];
+    if (cam) out.setTransform(cam.zoom, 0, 0, cam.zoom, cam.cx * (1 - cam.zoom) + cam.dx, cam.cy * (1 - cam.zoom) + cam.dy);
+    if (glow) {
+      // a soft copy of the silhouette, lifted a little: the aura rises off the figure
+      (out as CanvasRenderingContext2D).filter = `blur(${Math.max(1, glow.blur).toFixed(1)}px)`;
+      out.drawImage(layer as CanvasImageSource, 0, -glow.lift);
+      (out as CanvasRenderingContext2D).filter = "none";
+    } else out.drawImage(layer as CanvasImageSource, 0, 0);
+    if (cam) out.setTransform(1, 0, 0, 1, 0, 0);
   };
   // Bottom layer first (layers[0] is the top).
   for (let i = s.layers.length - 1; i >= 0; i--) {
@@ -410,6 +422,7 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
       out.restore();
       continue;
     }
+    if (l.span && (frame < l.span[0] || frame >= l.span[1])) continue;
     const dim = o.focusLayer && o.focusLayer !== l.id ? 0.35 : 1;
     if (o.onion && o.onion.opacity > 0) {
       for (let b = o.onion.before; b >= 1; b--) {
@@ -424,7 +437,25 @@ export function renderScene(out: Ctx, s: AnimScene, frame: number, o: SceneRende
       }
     }
     const override = o.override && o.override.layerId === l.id ? o.override.cel : undefined;
-    drawLayerAt(l, frame, null, layerOpacityAt(l, frame) * dim, override);
+    // anime action: hit-stops and held poses choose the frame; afterimages and the aura go under the layer
+    const fr = override ? frame : layerFrame(l, frame, s.anime);
+    const base = layerOpacityAt(l, fr) * dim;
+    const aura = auraAt(l, frame);
+    if (aura) {
+      const px = aura.size * Math.min(W, H);
+      drawLayerAt(l, fr, aura.color, base * aura.strength * 0.8, undefined, { blur: px, lift: px * 0.55 });
+      drawLayerAt(l, fr, aura.color, base * aura.strength, undefined, { blur: px * 0.35, lift: px * 0.12 });
+    }
+    for (const g of trailFrames(l, fr)) drawLayerAt(l, g.frame, l.anime?.trail?.tint ?? null, base * g.alpha);
+    drawLayerAt(l, fr, null, base, override);
+  }
+  const flash = flashAt(s.anime, frame);
+  if (flash) {
+    out.setTransform(1, 0, 0, 1, 0, 0);
+    out.globalAlpha = flash.alpha;
+    out.globalCompositeOperation = flash.kind === "invert" ? "difference" : "source-over";
+    out.fillStyle = flash.kind === "black" ? "#000000" : "#ffffff";
+    out.fillRect(0, 0, W, H);
   }
   out.restore();
 }

@@ -1,3 +1,4 @@
+import { preloadStage } from "../stage/draw";
 import { preloadModels } from "../anim/three3d";
 import { getBlob } from "../core/storage";
 /** Small JPEG snapshots so an agent can see media, rendered frames and drawings before deciding edits. */
@@ -107,7 +108,7 @@ export async function frameSnapshot(p: Project, pool: MediaPool, t: number, max 
   const canvas = new OffscreenCanvas(w, h);
   const comp = new Compositor(canvas);
   try {
-    for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref));
+    for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref)), await preloadStage(s);
     const layers = await buildLayers(p, pool, t, { purpose: "export", wait: true, outW: w, outH: h });
     comp.render(layers, w, h, p.background);
     return { jpeg: await toJpeg(canvas), t };
@@ -121,7 +122,7 @@ export async function stillImage(p: Project, pool: MediaPool, t: number, type: "
   const canvas = new OffscreenCanvas(p.width, p.height);
   const comp = new Compositor(canvas);
   try {
-    for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref));
+    for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref)), await preloadStage(s);
     const layers = await buildLayers(p, pool, t, { purpose: "export", wait: true, outW: p.width, outH: p.height });
     comp.render(layers, p.width, p.height, p.background);
     return await canvas.convertToBlob({ type: `image/${type}`, quality: 0.95 });
@@ -135,7 +136,7 @@ export async function sceneSnapshot(p: Project, pool: MediaPool, sceneId: string
   const s = findScene(p, sceneId);
   if (!s) throw new Error(`No scene ${sceneId}`);
   await preloadFills(s);
-  await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref));
+  await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref)), await preloadStage(s);
   const k = Math.min(1, max / Math.max(s.width, s.height));
   const c = makeCanvas(Math.round(s.width * k), Math.round(s.height * k));
   renderScene(ctx2d(c), s, frame, { scale: k, images: (id) => pool.imageNow(id) });
@@ -147,7 +148,7 @@ export async function scenePng(p: Project, pool: MediaPool, sceneId: string, fra
   const s = findScene(p, sceneId);
   if (!s) throw new Error(`No scene ${sceneId}`);
   await preloadFills(s);
-  await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref));
+  await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref)), await preloadStage(s);
   const full = makeCanvas(s.width, s.height);
   renderScene(ctx2d(full), s, frame, { scale: 1, images: (id) => pool.imageNow(id), background });
   const box = crop ?? { x: 0, y: 0, w: s.width, h: s.height };

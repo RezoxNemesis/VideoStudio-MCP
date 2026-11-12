@@ -27,6 +27,8 @@ const QUIET = /^(state|help|undo|redo|.*\.(list|get|probe|peek|status|info|caps|
 const PAGE: [RegExp, string][] = [
   [/^(clip\.(grade|wheels|look|duotone)$|color\.)/, "color"],
   [/^(lens\.|dna\.)/, "insight"],
+  [/^stage\./, "stage"],
+  [/^music\.(generate|new|track|notes|edit|render|get|importMidi)$/, "music"],
   [/^(audio\.|sfx\.|music\.)/, "audio"],
   [/^voice\./, "voice"],
   [/^render\.(start|pro)$/, "deliver"],

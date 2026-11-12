@@ -10,6 +10,8 @@ A phone-first creative studio in one Android app:
 
 **Privacy.** The app has no permission to read the gallery. Media comes in only when you pick a file yourself, or when an agent supplies an https link. Renders are written to shared storage through MediaStore (write-only).
 
+**Desktop (VideoStudio 2).** `desktop/` is the PC app: colour page, scopes, a 3D page with motion capture, anime action for 2D, a Music page and VolTune voices that speak and sing. See [docs/studio-2.2.md](docs/studio-2.2.md).
+
 ## Build
 
 ```bash

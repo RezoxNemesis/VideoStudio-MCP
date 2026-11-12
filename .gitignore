@@ -14,3 +14,7 @@ desktop/dist-web
 desktop/release
 desktop-relay/dist
 desktop/vendor
+desktop/stage-assets
+__pycache__
+.stage-build
+desktop/release-lite

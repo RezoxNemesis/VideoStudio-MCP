@@ -1,0 +1,11 @@
+{
+ "name": "Starter",
+ "about": "Two friends meet in a park: two people from the library, three spoken lines, four shots. The pattern every film follows.",
+ "width": 1920,
+ "height": 1080,
+ "fps": 30,
+ "langs": ["en"],
+ "crf": 16,
+ "preset": "veryfast",
+ "off": []
+}

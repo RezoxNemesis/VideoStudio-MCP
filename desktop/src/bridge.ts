@@ -101,8 +101,31 @@ export interface Vsd {
   workWrite(name: string, bytes: Uint8Array): Promise<string>;
   workClean(): Promise<boolean>;
   onProgress(fn: (m: { tag: string; frac: number }) => void): void;
+  /** The Blender forge: the person's own Blender makes 3D assets for the Stage (electron/forge.cjs). */
+  forge?: {
+    status(again?: boolean): Promise<{ blender: string | null; version: string | null; recipes: Record<string, string>; folder: string; ready: boolean }>;
+    make(recipe: string, name?: string, params?: Record<string, unknown>): Promise<ForgeResult>;
+    script(name: string, code: string, params?: Record<string, unknown>): Promise<ForgeResult>;
+    convert(from: string, name?: string): Promise<ForgeResult>;
+    list(): Promise<{ folder: string; models: { name: string; path: string; bytes: number; modified: number }[] }>;
+  };
+  /** Code Studio: films written as code, drawn by the film farm (electron/film.cjs). */
+  film?: import("./film/types").FilmApi;
   /** The GPU process went away and restarted (driver hiccup); pictures in the window must be rebuilt. */
   onGpuLost?(fn: (m: { reason: string; code: number; restarts: number }) => void): void;
+}
+
+export interface ForgeResult {
+  path: string;
+  name: string;
+  bytes: number;
+  seconds: number;
+  objects: number;
+  triangles: number;
+  /** Width, height, depth in metres. */
+  size: [number, number, number];
+  materials: number;
+  blender: string;
 }
 
 export interface EncCaps {

@@ -6,6 +6,11 @@ import type { Studio } from "../../src/app/studio";
 import { registerCommand } from "../../src/agent/api";
 import { registerColorCommands } from "../../src/agent/color";
 import { registerSmartCommands } from "../../src/agent/smart";
+import { registerStageCommands } from "../../src/agent/stage";
+import { setModelFileUrl } from "../../src/stage/models";
+import { registerForgeCommands } from "./forge";
+import { registerMusicCommands } from "../../src/agent/music";
+import { registerOpenVoiceCommands } from "../../src/agent/voiceopen";
 import * as ops from "../../src/core/ops";
 import * as model from "../../src/core/model";
 import { ProRender, type ProCodec } from "./render";
@@ -62,8 +67,14 @@ function trim(r: AudioReport, detail: boolean) {
 }
 
 export function registerDesktopCommands(s: Studio): void {
+  // 3D models on this PC (made with Blender, or any .glb / .gltf) are read through the app's own file bridge.
+  setModelFileUrl((p) => need().fileUrl(p));
   registerColorCommands();
   registerSmartCommands();
+  registerStageCommands();
+  registerMusicCommands();
+  registerOpenVoiceCommands();
+  registerForgeCommands(s);
   registerCommand("desktop.info", "This PC: folders, drives, CPU, memory, GPU status, app version, where renders are saved.", () => need().info());
 
   registerCommand("fs.roots", "The person's main folders (Videos, Music, Pictures, Downloads, Desktop, Documents, home), mounted drives and the VideoStudio output folders.", async () => {

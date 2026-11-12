@@ -1,0 +1,10 @@
+{
+  "name": "vs-film",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The film engine of VideoStudio Code Studio: draws films written as code (Node worker processes).",
+  "dependencies": {
+    "@napi-rs/canvas": "1.1.0"
+  }
+}

@@ -1,7 +1,8 @@
+import { hinglishShare } from "./hinglish";
 import { autoAssignVoices, parseScript, segmentText, type Segment } from "./dialogue";
 import { splitLong, toChunks } from "./text";
 import { devanagariShare } from "./hindi";
-import { englishVoiceFor, hindiVoiceFor, isHindiVoice } from "./voices";
+import { hindiVoiceFor, isHindiVoice } from "./voices";
 import { NEUTRAL } from "./delivery";
 import { PRESETS, resolveVoice, type CustomVoice } from "./voicebank";
 
@@ -65,8 +66,10 @@ export function voiceForText(voice: string, text: string): string {
   const isMix = voice.includes("+") || voice.includes("*");
   const hindi = isMix ? voice.startsWith("h") : isHindiVoice(voice);
   const male = isMix ? voice[1] === "m" : undefined;
-  if (share >= 0.3 && !hindi) return isMix ? (male ? "hm_omega" : "hf_alpha") : hindiVoiceFor(voice);
-  if (share === 0 && hindi && /[A-Za-z]{2}/.test(text)) return isMix ? (male ? "am_michael" : "af_heart") : englishVoiceFor(voice);
+  // Hindi typed in Latin letters ("kal milte hain") is Hindi too
+  const roman = share < 0.3 ? hinglishShare(text) : 0;
+  if ((share >= 0.3 || roman >= 0.34) && !hindi) return isMix ? (male ? "hm_omega" : "hf_alpha") : hindiVoiceFor(voice);
+  // a Hindi voice keeps English lines and speaks them with Indian English sounds
   return voice;
 }
 

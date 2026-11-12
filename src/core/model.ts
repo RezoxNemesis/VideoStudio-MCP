@@ -266,6 +266,8 @@ export interface Project {
   tracks: Track[];
   assets: Asset[];
   scenes: AnimScene[];
+  /** Songs written in the Music section (notes on instrument tracks; rendered to audio assets). */
+  songs?: import("../music/model").Song[];
   markers: { t: number; label: string }[];
   /** LUTs this project uses (imported .cube files and built-in transforms), referenced by grading nodes. */
   luts?: import("../color/types").ProjectLut[];
@@ -299,7 +301,7 @@ export interface Cel {
 export interface AnimLayer {
   id: string;
   name: string;
-  kind: "draw" | "reference" | "puppet" | "backdrop" | "proc" | "three" | "living";
+  kind: "draw" | "reference" | "puppet" | "backdrop" | "proc" | "three" | "living" | "stage";
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -329,10 +331,16 @@ export interface AnimLayer {
   proc?: import("../anim/proc").ProcSpec;
   /** 3D scene (kind "three"). */
   three?: import("../anim/three3d").Scene3D;
+  /** 3D Stage (kind "stage"): real human characters, motion capture, choreography, cameras (see stage/spec.ts). */
+  stage?: import("../stage/spec").StageSpec;
   /** Living picture (kind "living"): a still drawing/photo animated by bending it on a mesh. */
   living?: import("../anim/living").LivingSpec;
   /** Draw-on: strokes write themselves on between these frames; sketch adds construction lines first. */
   drawOn?: { start: number; dur: number; sketch?: boolean };
+  /** The layer exists only between these frames [from, to) (effects placed inside a scene). */
+  span?: [number, number];
+  /** Anime action: poses held on twos, afterimages, an aura (see anim/anime.ts). */
+  anime?: import("../anim/anime").LayerAnime;
 }
 
 export interface AnimScene {
@@ -345,6 +353,8 @@ export interface AnimScene {
   background: string; // "" = transparent
   layers: AnimLayer[];
   palette: string[];
+  /** Anime action for the whole picture: hit-stops, camera shake, zoom punches, flashes (see anim/anime.ts). */
+  anime?: import("../anim/anime").SceneAnime;
 }
 
 /* -------------------------------- factories ------------------------------- */

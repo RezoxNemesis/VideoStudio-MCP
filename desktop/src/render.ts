@@ -4,6 +4,7 @@
  * CPU, or ProRes 422 HQ / 4444 masters — with the engine's offline audio mix as 48 kHz AAC (PCM for ProRes).
  * No browser encoder limits: any size up to 8K, any frame rate up to 120.
  */
+import { preloadStage } from "../../src/stage/draw";
 import { preloadModels } from "../../src/anim/three3d";
 import { preloadFills } from "../../src/anim/render";
 import { getBlob } from "../../src/core/storage";
@@ -95,7 +96,7 @@ export class ProRender {
     const frames = Math.round((to - from) * fps);
     const t0 = performance.now();
 
-    for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref));
+    for (const s of p.scenes) await preloadFills(s), await preloadModels(s, (id) => getBlob(p.assets.find((a) => a.id === id)!.ref)), await preloadStage(s);
     let audio: Uint8Array | null = null;
     if (o.audio !== false) {
       this.onProgress({ frame: 0, frames, fps: 0, stage: "audio", etaSec: 0 });

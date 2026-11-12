@@ -1,0 +1,12 @@
+{
+ "cast": {
+  "Mira": { "en": ["af_heart", { "pitch": 0.6 }], "hi": ["hf_alpha", { "pitch": 0.4 }] },
+  "Tom": { "en": ["am_michael", { "pitch": -0.6 }], "hi": ["hm_omega", { "pitch": -0.2 }] }
+ },
+ "pace": { "en": 0.92, "hi": 0.95 },
+ "lines": [
+  { "id": "M1", "who": "Mira", "en": "You came! I was not sure you would.", "hi": "Tum aa gaye! Mujhe yakeen nahi tha.", "tone": "happy" },
+  { "id": "T1", "who": "Tom", "en": "I said I would. I keep my word.", "hi": "Maine kaha tha na. Main apna vaada nibhata hoon.", "tone": "warm" },
+  { "id": "M2", "who": "Mira", "en": "Then come on. The whole town is waiting!", "hi": "To chalo. Poora sheher intezaar kar raha hai!", "tone": { "like": "excited", "rate": 0.95 } }
+ ]
+}

@@ -51,9 +51,12 @@ describe("script handling", () => {
     expect(splitScripts("आज meeting है").map((r) => r.script)).toEqual(["hindi", "other", "hindi"]);
   });
   it("phonemizes mixed text with the supplied English phonemizer", async () => {
-    const out = await hindiPhonemize("कल meeting है।", async (run) => `<${run.trim()}>`);
+    const out = await hindiPhonemize("कल meeting है।", async (run) => `<${run.trim()}>`, { indianEnglish: false });
     expect(out).toContain("<meeting>");
     expect(out.endsWith(".")).toBe(true);
+    // by default the English words get Indian sounds (retroflex t)
+    const indian = await hindiPhonemize("कल meeting है।", async () => "mˈiːɾɪŋ");
+    expect(indian).toContain("miːʈɪŋ");
   });
   it("splits Hindi sentences on the danda", () => {
     expect(splitSentences("मैं घर जा रहा हूँ। तुम कहाँ हो? ठीक है॥")).toEqual(["मैं घर जा रहा हूँ।", "तुम कहाँ हो?", "ठीक है॥"]);
@@ -63,10 +66,10 @@ describe("script handling", () => {
     const long = "आज सुबह से ही आसमान में काले बादल छाए हुए हैं और ठंडी हवा चल रही है। शाम तक तेज़ बारिश होने की पूरी संभावना है इसलिए छाता ज़रूर साथ रखें।";
     expect(toChunks(long).length).toBe(2);
   });
-  it("chooses a Hindi voice for Devanagari and an English voice for English", () => {
+  it("chooses a Hindi voice for Devanagari and lets a Hindi voice read English (with Indian sounds)", () => {
     expect(voiceForText("af_heart", "नमस्ते दोस्तों")).toBe("hf_alpha");
     expect(voiceForText("bm_george", "नमस्ते दोस्तों")).toBe("hm_omega");
-    expect(voiceForText("hf_beta", "Good morning everyone")).toBe("af_heart");
+    expect(voiceForText("hf_beta", "Good morning everyone")).toBe("hf_beta");
     expect(voiceForText("hf_beta", "नमस्ते")).toBe("hf_beta");
   });
   it("builds a plan with the right voice per line in a mixed dialogue", () => {

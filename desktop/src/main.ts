@@ -7,6 +7,7 @@ import "../../src/styles/app.css";
 import "./styles/desktop.css";
 import "./styles/colorpage.css";
 import "./styles/insight.css";
+import "./styles/code.css";
 import { Studio } from "../../src/app/studio";
 import { commandList, runBatch, type Command } from "../../src/agent/api";
 import { toast } from "../../src/ui/dom";

@@ -14,6 +14,8 @@ import { importBlob } from "../media/library";
 import { valueAt } from "../core/keyframes";
 import { saveBlob } from "../native/storage";
 import { btn, colorInput, confirmBox, h, icon, pickFiles, select, sheet, slider, toast, toggle } from "./dom";
+import { ANIME_MOVES, addBeat, addMove, addSceneFx } from "../agent/anime";
+import { FX_TYPES } from "../anim/proc";
 
 type Tool = BrushTool | "fill" | "lasso" | "line" | "rect" | "ellipse" | "picker" | "hand" | "pose";
 
@@ -312,6 +314,7 @@ export class AnimateView {
       sc ? btn("Layers", "layers", () => this.layersSheet(), "ghost") : null,
       sc ? btn("Rig", "bone", () => this.rigSheet(), "ghost") : null,
       sc ? btn("Character", "user", () => this.characterSheet(), "ghost") : null,
+      sc ? btn("Action", "spark", () => this.actionSheet(), "ghost") : null,
       sc ? btn("3D", "cube", () => this.threeSheet(), "ghost") : null,
       h("div", { class: "grow" }),
       btn("Undo", "undo", () => s.undo(), "icon-only ghost"),
@@ -973,6 +976,116 @@ export class AnimateView {
       );
     }
     sheet("Rig", body, { tall: true });
+  }
+
+  /**
+   * Anime action: whole moves (impact, dash, power-up, beam, clash, slash), effects placed inside the scene, impact
+   * beats, and per-layer timing (on twos), afterimages and aura. Everything lands at the current frame.
+   */
+  private actionSheet() {
+    const s = this.s;
+    const sc = this.scene();
+    if (!sc) return;
+    const sid = sc.id;
+    const body = h("div", { class: "stack" });
+    // the layer the action is about: a character if there is one, else the layer being drawn on
+    let whoId = sc.layers.find((l) => l.kind === "puppet")?.id ?? this.layerId ?? sc.layers.find((l) => l.kind !== "proc" && l.kind !== "backdrop")?.id ?? null;
+    let power = 1, auraColor = "#ffb020";
+    const run = (label: string, fn: (S: AnimScene) => unknown) => {
+      try {
+        s.mutate(label, (p) => fn(A.getScene(p, sid)));
+        this.drawStrip();
+        this.queue();
+        draw();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e), "error");
+      }
+    };
+    /** Where the chosen layer is in the picture right now (0..1): the middle of a character, else the middle of the frame. */
+    const where = (S: AnimScene): { x: number; y: number } => {
+      const l = whoId ? S.layers.find((x) => x.id === whoId) : undefined;
+      if (l?.kind === "puppet" && l.puppet) {
+        const u = l.puppet.height / 7.6;
+        const rx = valueAt(l.chan?.rootX, this.frame, 0) * u * (l.puppet.facing ?? 1);
+        return { x: Math.min(0.97, Math.max(0.03, (l.puppet.x + rx) / S.width)), y: Math.min(0.95, Math.max(0.05, (l.puppet.y - l.puppet.height * 0.55) / S.height)) };
+      }
+      return { x: 0.5, y: 0.5 };
+    };
+    const draw = () => {
+      const S = this.scene();
+      if (!S) return;
+      const layers = S.layers.filter((l) => l.kind !== "proc" && l.kind !== "reference");
+      const who = layers.find((l) => l.id === whoId);
+      const t = this.frame / S.fps;
+      const beats = (S.anime?.holds?.length ?? 0) + (S.anime?.shakes?.length ?? 0) + (S.anime?.punches?.length ?? 0) + (S.anime?.flashes?.length ?? 0);
+      const fxLayers = S.layers.filter((l) => l.kind === "proc" && l.span);
+      body.replaceChildren(
+        h("p", { class: "hint" }, `Action lands at the current frame (${t.toFixed(2)} s). Effects keep moving through a hit-stop, the way action anime does; every beat can be undone or cleared.`),
+        layers.length > 1 ? select("About", layers.map((l) => [l.id, l.name] as const), whoId ?? layers[0]!.id, (v) => ((whoId = v), draw())) : h("span"),
+        h("h3", {}, "Moves"),
+        h("div", { class: "chips" }, ...ANIME_MOVES.map((k) => h("button", { class: "chip", type: "button", onclick: () => run(`anime ${k}`, (X) => addMove(X, k, t, { ...where(X), layerId: whoId ?? undefined, power, accent: k === "powerup" ? auraColor : undefined })) }, k === "powerup" ? "power-up" : k))),
+        slider("Power", 0.4, 2.5, 0.1, power, (v) => (power = v), { fmt: (v) => `${v.toFixed(1)}×` }).el,
+        h("h3", {}, "Impact beat"),
+        h("div", { class: "chips" },
+          h("button", { class: "chip", type: "button", onclick: () => run("anime beat", (X) => addBeat(X, t, { ...where(X), hold: Math.round(3 * power), shake: power, punch: 0.1 * power })) }, "Hit-stop + shake + punch + flash"),
+          h("button", { class: "chip", type: "button", onclick: () => run("anime shake", (X) => addBeat(X, t, { hold: 0, punch: 0, flash: "none", shake: power, shakeFrames: 14 })) }, "Shake only"),
+          h("button", { class: "chip", type: "button", onclick: () => run("anime flash", (X) => addBeat(X, t, { hold: 0, punch: 0, shake: 0, flash: "invert" })) }, "Inverted flash"),
+          h("button", { class: "chip", type: "button", onclick: () => run("anime hit-stop", (X) => addBeat(X, t, { hold: Math.round(4 * power), punch: 0, shake: 0, flash: "none" })) }, "Hit-stop only"),
+        ),
+        h("h3", {}, "Effects in the scene (1 s from here)"),
+        h("div", { class: "chips" }, ...FX_TYPES.map((ty) => h("button", { class: "chip", type: "button", onclick: () => run(`effect ${ty}`, (X) => addSceneFx(X, ty, t, 1, { ...where(X), behind: ["rushlines", "actionbg", "aura", "speedlines"].includes(ty) && whoId ? whoId : undefined, color: ["rushlines", "focuslines", "speedlines"].includes(ty) ? "#ffffff" : undefined })) }, ty))),
+        who
+          ? h("div", { class: "stack" },
+              h("h3", {}, `Timing and energy · ${who.name}`),
+              select("Poses", [["1", "Every frame (smooth)"], ["2", "On twos (anime)"], ["3", "On threes"]] as const, String(who.anime?.step ?? 1) as "1" | "2" | "3", (v) => run("anime timing", (X) => {
+                const l = A.getLayer(X, who.id);
+                const cur = { ...(l.anime ?? {}) };
+                if (Number(v) > 1) cur.step = Number(v);
+                else delete cur.step;
+                l.anime = Object.keys(cur).length ? cur : undefined;
+              })),
+              toggle("Afterimages behind fast motion", !!who.anime?.trail, (on) => run("anime afterimages", (X) => {
+                const l = A.getLayer(X, who.id);
+                const cur = { ...(l.anime ?? {}) };
+                if (on) cur.trail = { count: 4, gap: 1, opacity: 0.45 };
+                else delete cur.trail;
+                l.anime = Object.keys(cur).length ? cur : undefined;
+              })),
+              toggle("Aura around the figure", !!who.anime?.aura, (on) => run("anime aura", (X) => {
+                const l = A.getLayer(X, who.id);
+                const cur = { ...(l.anime ?? {}) };
+                if (on) cur.aura = { color: auraColor, size: 0.035, strength: 0.8, flicker: 0.35 };
+                else delete cur.aura;
+                l.anime = Object.keys(cur).length ? cur : undefined;
+              })),
+              colorInput("Aura colour", auraColor, (v) => {
+                auraColor = v;
+                if (who.anime?.aura) run("anime aura colour", (X) => {
+                  const l = A.getLayer(X, who.id);
+                  if (l.anime?.aura) l.anime = { ...l.anime, aura: { ...l.anime.aura, color: v } };
+                });
+              }),
+            )
+          : h("span"),
+        h("h3", {}, "In this scene"),
+        h("p", { class: "hint" }, `${beats} beat part${beats === 1 ? "" : "s"} (hit-stops, shakes, punches, flashes) · ${fxLayers.length} effect${fxLayers.length === 1 ? "" : "s"}`),
+        h("div", { class: "row wrap" },
+          btn("Clear action near this frame", "trash", () => run("clear anime action here", (X) => {
+            const f0 = this.frame - Math.round(X.fps * 0.5), f1 = this.frame + Math.round(X.fps * 0.5);
+            const near = (f: number) => f >= f0 && f <= f1;
+            const an = X.anime;
+            if (an) for (const k of ["holds", "shakes", "punches", "flashes"] as const) if (an[k]) (an as Record<string, unknown>)[k] = (an[k] as [number, ...unknown[]][]).filter((x) => !near(x[0]));
+            X.layers = X.layers.filter((l) => !(l.kind === "proc" && l.span && near(l.span[0])));
+          }), "ghost"),
+          btn("Clear all action", "trash", () => run("clear anime action", (X) => {
+            delete X.anime;
+            X.layers = X.layers.filter((l) => !(l.kind === "proc" && l.span));
+          }), "ghost"),
+        ),
+      );
+    };
+    draw();
+    sheet("Action", body, { tall: true });
   }
 
   /** Procedural anime characters and painted backdrops: one tap per action, keyed at the current frame. */

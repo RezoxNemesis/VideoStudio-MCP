@@ -3,7 +3,7 @@ name: VideoStudio 2 (desktop)
 on:
   push:
     branches: [desktop, studio5]
-    paths: ["desktop/**", "src/**", ".github/workflows/desktop.yml", "package.json", "package-lock.json"]
+    paths: ["desktop/**", "src/**", "tools/**", ".github/workflows/desktop.yml", "package.json", "package-lock.json"]
     tags: ["desktop-v*"]
   workflow_dispatch:
 
@@ -17,9 +17,9 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     env:
-      VERSION: "2.1.${{ github.run_number }}"
+      VERSION: "2.3.${{ github.run_number }}"
     steps:
       - uses: actions/checkout@v4
 
@@ -41,6 +41,7 @@ jobs:
         working-directory: desktop
         run: |
           npm ci
+          npm ci --prefix film || npm install --prefix film   # the film engine of Code Studio (its canvas library)
           npx tsc --noEmit -p tsconfig.json
           npm version --no-git-tag-version --allow-same-version "$VERSION"
 
@@ -69,6 +70,43 @@ jobs:
           for e in h264_nvenc hevc_nvenc libx264 libx265 prores_ks; do grep -q " $e " /tmp/ff/enc.txt && echo "encoder $e: yes" || { echo "missing $e"; exit 1; }; done
           for f in vidstabdetect minterpolate nlmeans lut3d zscale loudnorm; do grep -q " $f " /tmp/ff/flt.txt && echo "filter $f: yes" || echo "filter $f: no"; done
 
+      # Bodies, motion capture, the instrument bank and the voice model are built from their public sources
+      # (pinned in the script) and kept between runs; the repository itself stays light.
+      - name: Stage, Music and Voice assets — restore
+        id: assets
+        uses: actions/cache@v4
+        with:
+          path: desktop/stage-assets
+          key: stage-assets-${{ hashFiles('tools/**') }}
+
+      - uses: actions/setup-python@v5
+        if: steps.assets.outputs.cache-hit != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Stage, Music and Voice assets — build
+        if: steps.assets.outputs.cache-hit != 'true'
+        run: |
+          pip install --quiet numpy onnx
+          JOBS=4 tools/build_stage_assets.sh desktop/stage-assets "$RUNNER_TEMP/stage-build"
+
+      - name: Stage, Music and Voice assets — check
+        run: |
+          set -e
+          for f in human.pack motion/index.json music/GeneralUser-GS.sf2 voice/dur.onnx voice/pros.onnx voice/voc.onnx voice/voices/hf_alpha.bin models/index.json; do
+            test -s "desktop/stage-assets/$f" || { echo "missing $f"; exit 1; }
+          done
+          du -sh desktop/stage-assets
+
+      - name: Code Studio — the film engine draws (its canvas library loads, the people library is there)
+        working-directory: desktop/film
+        run: |
+          set -e
+          node runner/worker.mjs people '{}' | head -c 300
+          node runner/worker.mjs personThumb '{"id":"queen_02","size":240}'
+          node runner/worker.mjs open "{\"dir\":\"$PWD/templates/starter\"}" | head -c 400
+          rm -rf templates/starter/.vs templates/starter/vs.js
+
       - name: Desktop — build .deb and AppImage
         working-directory: desktop
         run: npm run dist
@@ -88,6 +126,8 @@ jobs:
           done
           curl -s http://127.0.0.1:9333/json/list | grep -q '"title": "VideoStudio"' || { cat smoke.log; exit 1; }
           test -x squashfs-root/resources/ffmpeg/ffmpeg && echo "GPU ffmpeg is inside the package"
+          test -s squashfs-root/resources/film/runner/worker.mjs && test -d squashfs-root/resources/film/node_modules/@napi-rs/canvas && test -s squashfs-root/resources/forge/run.py && test -s squashfs-root/resources/stage-assets/models/index.json && echo "Code Studio, the forge and the model library are inside the package"
+          test -s squashfs-root/resources/stage-assets/human.pack && test -s squashfs-root/resources/stage-assets/voice/voc.onnx && test -s squashfs-root/resources/stage-assets/music/GeneralUser-GS.sf2 && echo "Stage, Music and Voice assets are inside the package"
           pkill -f squashfs-root/videostudio || true
 
       - name: Publish release
@@ -101,7 +141,9 @@ jobs:
           • VideoStudio-${VERSION}-amd64.deb — double-click to install (Discover / package installer). It removes the old VideoStudio Desktop package by itself and keeps your projects and the Claude link.
           • VideoStudio-${VERSION}-x86_64.AppImage — portable: allow executing, then open.
 
-          New in 2.1: a colour page (grading nodes, wheels, custom and hue curves, HSL qualifier, animated power windows, .cube LUTs with camera transforms and film looks, LUT export, compare wipe), Shot Match and Auto balance, Audience Lens (predicted score, attention curve, one-click fixes, Evolve), Style DNA (measure and transplant the feel of any video), faster split-screen and 4K renders.
+          New in 2.3: Code Studio — a Code page where a film is written as code: a real code editor, the frame under the cursor drawn at once, every shot kept as its own video so a change redraws only the shots it touches and the film is joined again in seconds (shots can be left out without deleting anything); a 2D library of 380 people, 22 places at four times of day, 126 props and 43 sounds; a 3D model library of 854 ready models (KayKit by Kay Lousberg, CC0) to stand beside the characters of the 3D Stage; and the Blender forge — your own Blender makes trees, rocks, land, buildings, 3D lettering or anything written for it, and converts fbx / obj / blend files, straight onto the Stage.
+          New in 2.2: a 3D page (real human characters, 2,500+ motion-capture performances, walking with planted feet, sword and unarmed fight choreography, cameras that frame like an operator, cinematic and anime looks, a director's view and an action timeline); anime action for 2D (hit-stop, shake, zoom punch, flashes, afterimages, auras, on twos, speed lines, lightning, beams, one-tap moves); a Music page (261 instruments, 13 drum kits, a composer with 25 styles, ragas and taals, piano roll, MIDI in and out); VolTune voices that read Hindi, Hinglish and Indian English, speak in 15 tones and sing your lyrics.
+          From 2.1: a colour page (grading nodes, wheels, custom and hue curves, HSL qualifier, animated power windows, .cube LUTs with camera transforms and film looks, LUT export, compare wipe), Shot Match and Auto balance, Audience Lens (predicted score, attention curve, one-click fixes, Evolve), Style DNA (measure and transplant the feel of any video), faster split-screen and 4K renders.
           From 2.0: native media core, professional player, video scopes, live view of every step Claude takes.
 
           Built from ${GITHUB_SHA::7}."

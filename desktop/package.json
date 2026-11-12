@@ -1,8 +1,8 @@
 {
   "name": "videostudio",
   "productName": "VideoStudio",
-  "version": "2.1.0",
-  "description": "VideoStudio 2: pro editing with a native media core, colour and scopes, 2D/3D animation, VolTune voices, sound and a live Claude link.",
+  "version": "2.3.0",
+  "description": "VideoStudio 2: pro editing with a native media core, colour and scopes, Code Studio (films written as code, drawn shot by shot), 2D anime action and a 3D Stage with motion capture and a model library, a Blender forge, music with 261 instruments, VolTune voices that speak and sing, and a live Claude link.",
   "author": {
     "name": "RezoxNemesis",
     "email": "vikastandon4510c@gmail.com"
@@ -51,12 +51,12 @@
       ],
       "category": "AudioVideo",
       "icon": "build/icon.png",
-      "synopsis": "Pro video editor, animation studio and voices — with Claude",
+      "synopsis": "Pro video editor, animation studio and voices \u2014 with Claude",
       "maintainer": "RezoxNemesis <vikastandon4510c@gmail.com>",
       "desktop": {
         "entry": {
           "Name": "VideoStudio",
-          "Comment": "Edit, animate and render — with Claude",
+          "Comment": "Edit, animate and render \u2014 with Claude",
           "Categories": "AudioVideo;Video;AudioVideoEditing;Graphics;",
           "StartupWMClass": "VideoStudio"
         }
@@ -78,7 +78,11 @@
         "--replaces",
         "videostudio-desktop",
         "--conflicts",
-        "videostudio-desktop"
+        "videostudio-desktop",
+        "--replaces",
+        "videostudio-content",
+        "--conflicts",
+        "videostudio-content"
       ]
     },
     "publish": [
@@ -97,7 +101,34 @@
           "ffmpeg",
           "ffprobe"
         ]
+      },
+      {
+        "from": "stage-assets",
+        "to": "stage-assets",
+        "filter": [
+          "**/*",
+          "!film_cast.json"
+        ]
+      },
+      {
+        "from": "film",
+        "to": "film",
+        "filter": [
+          "**/*",
+          "node_modules/**/*",
+          "!devtests/**",
+          "!**/.vs/**",
+          "!**/vs.js"
+        ]
+      },
+      {
+        "from": "forge",
+        "to": "forge",
+        "filter": [
+          "*.py"
+        ]
       }
-    ]
+    ],
+    "afterPack": "build/afterPack.cjs"
   }
 }

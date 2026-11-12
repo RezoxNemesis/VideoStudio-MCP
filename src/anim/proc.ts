@@ -59,7 +59,7 @@ export const PROC_TYPES = ["captions", "kinetic", "mograph", "fx", "overlay", "c
 export const CAPTION_STYLES = ["pop", "karaoke", "bold", "serif", "minimal", "torn"] as const;
 export const KINETIC_STYLES = ["stretch", "stack", "warp", "split", "typewriter", "slide"] as const;
 export const MOGRAPH_TYPES = ["ball", "morph", "halftone", "cube", "counter", "chart", "burst", "toggle"] as const;
-export const FX_TYPES = ["fire", "blaze", "splash", "ripple", "impact", "hitspark", "speedlines", "sparkle", "smoke", "shockwave", "slash", "debris", "dust", "clash"] as const;
+export const FX_TYPES = ["fire", "blaze", "splash", "ripple", "impact", "hitspark", "speedlines", "sparkle", "smoke", "shockwave", "slash", "debris", "dust", "clash", "focuslines", "rushlines", "actionbg", "lightning", "beam", "aura"] as const;
 export const OVERLAY_TYPES = ["lightLeak", "filmBurn", "dust", "vhs", "stripe", "paper", "rain", "flash", "impactFrame"] as const;
 export const PAPER_TONES = ["cream", "news", "kraft", "dark"] as const;
 
@@ -852,7 +852,7 @@ function fx(c: Ctx, p: ProcSpec, s: AnimScene, f: number) {
   const cy = (p.y ?? 0.6) * H;
   const R = (p.size ?? 0.25) * Math.min(W, H);
   const ink = p.color ?? "#1a1410";
-  const col = p.accent ?? (p.style === "fire" ? "#ff7a1a" : p.style === "splash" || p.style === "ripple" ? "#4fb3ff" : "#ffd23f");
+  const col = p.accent ?? (p.style === "fire" ? "#ff7a1a" : p.style === "splash" || p.style === "ripple" ? "#4fb3ff" : p.style === "lightning" || p.style === "beam" ? "#6ecbff" : p.style === "actionbg" ? "#2f6bff" : "#ffd23f");
   const two = Math.floor(f / 2); // animated on twos
   const t = (two * 2) / s.fps;
   const seed = (p.seed ?? 3) + two * 0.37;
@@ -1305,6 +1305,225 @@ function fx(c: Ctx, p: ProcSpec, s: AnimScene, f: number) {
         c.stroke();
         c.globalAlpha = 1;
       }
+      break;
+    }
+    case "focuslines": {
+      // Concentration lines: dense wedges from the frame edge towards a calm centre, redrawn on twos so they vibrate.
+      const n = 96, r1 = Math.hypot(W, H);
+      c.fillStyle = ink;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + (hash(i * 3.1 + two * 0.7) - 0.5) * 0.14;
+        const r0 = R * (1.1 + hash(i * 1.7 + two * 1.3) * 1.25);
+        const wdt = (0.0022 + hash(i * 5.7 + two) * 0.0095) * Math.PI;
+        c.globalAlpha = 0.5 + hash(i + two * 2.1) * 0.5;
+        c.beginPath();
+        c.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+        c.lineTo(cx + Math.cos(a - wdt) * r1, cy + Math.sin(a - wdt) * r1);
+        c.lineTo(cx + Math.cos(a + wdt) * r1, cy + Math.sin(a + wdt) * r1);
+        c.closePath();
+        c.fill();
+      }
+      c.globalAlpha = 1;
+      break;
+    }
+    case "rushlines":
+    case "actionbg": {
+      // Speed streaks all running one way (rot, degrees): a dash, a charge, the world tearing past.
+      // "actionbg" paints the colour field behind them, so it works as a whole background for a hero shot.
+      const D = Math.hypot(W, H), bg = p.style === "actionbg";
+      c.translate(W / 2, H / 2);
+      c.rotate(((p.rot ?? 0) * Math.PI) / 180);
+      if (bg) {
+        const g = c.createLinearGradient(0, -D / 2, 0, D / 2);
+        g.addColorStop(0, shade(col, -0.55));
+        g.addColorStop(0.5, col);
+        g.addColorStop(1, shade(col, -0.55));
+        c.fillStyle = g;
+        c.fillRect(-D, -D, D * 2, D * 2);
+      }
+      const n = bg ? 110 : 80;
+      const tt = f / s.fps; // streaks move every frame; their shapes boil on twos
+      for (let i = 0; i < n; i++) {
+        const y = (hash(i * 1.31 + 9) - 0.5) * D;
+        const len = D * (0.12 + hash(i * 2.17) * 0.55);
+        const speed = 1.6 + hash(i * 0.77) * 2.6;
+        const x = ((hash(i * 4.71) + tt * speed) % 1) * (D + len) - D / 2 - len;
+        const th = (0.0012 + hash(i * 7.3 + two * 0.5) * 0.0075) * Math.min(W, H) * (0.6 + (p.size ?? 0.25) * 1.6);
+        c.globalAlpha = bg ? 0.25 + hash(i * 3.3) * 0.6 : 0.45 + hash(i * 3.3) * 0.55;
+        c.fillStyle = bg ? (hash(i * 9.1) > 0.45 ? "#ffffff" : shade(col, -0.7)) : ink;
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(x + len, y - th / 2);
+        c.lineTo(x + len * 1.04, y);
+        c.lineTo(x + len, y + th / 2);
+        c.closePath();
+        c.fill();
+      }
+      c.globalAlpha = 1;
+      break;
+    }
+    case "lightning": {
+      // Jagged bolts from the point along rot (degrees), re-struck on twos, with forks and a dark frame now and then.
+      if (two % 5 === 3) break;
+      const count = Math.max(1, Math.min(6, Math.round(p.value ?? 2)));
+      const L = (p.w ?? 0.6) * Math.max(W, H);
+      const dir0 = ((p.rot ?? 90) * Math.PI) / 180;
+      const bolt = (x0: number, y0: number, dir: number, len: number, sd: number, depth: number) => {
+        const segs = Math.max(5, Math.round(len / (R * 0.22)));
+        const pts: [number, number][] = [[x0, y0]];
+        const nx = -Math.sin(dir), ny = Math.cos(dir);
+        for (let k = 1; k <= segs; k++) {
+          const u = k / segs;
+          const off = (hash(sd + k * 3.7) - 0.5) * R * 0.5 * (1 - Math.abs(u - 0.5)) * 1.6;
+          pts.push([x0 + Math.cos(dir) * len * u + nx * off, y0 + Math.sin(dir) * len * u + ny * off]);
+        }
+        const path = () => {
+          c.beginPath();
+          pts.forEach(([x, y], k) => (k ? c.lineTo(x, y) : c.moveTo(x, y)));
+        };
+        const wd = lw * (depth ? 0.55 : 1);
+        c.lineJoin = "miter";
+        path();
+        c.strokeStyle = rgba(col.length === 7 ? col : "#7fd4ff", 0.28);
+        c.lineWidth = wd * 7;
+        c.stroke();
+        path();
+        c.strokeStyle = col;
+        c.lineWidth = wd * 2.6;
+        c.stroke();
+        path();
+        c.strokeStyle = "#ffffff";
+        c.lineWidth = wd;
+        c.stroke();
+        if (depth < 2) {
+          for (let k = 2; k < segs - 1; k++) {
+            if (hash(sd * 1.9 + k * 5.3) > 0.72) {
+              const side = hash(sd + k) > 0.5 ? 1 : -1;
+              bolt(pts[k]![0], pts[k]![1], dir + side * (0.45 + hash(sd + k * 2.2) * 0.5), len * (0.22 + hash(sd + k * 1.1) * 0.25) * (1 - k / segs + 0.3), sd * 3.1 + k, depth + 1);
+            }
+          }
+        }
+      };
+      for (let i = 0; i < count; i++) bolt(cx, cy, dir0 + (count > 1 ? (i / (count - 1) - 0.5) * 0.9 : 0) + (hash(seed * 7 + i) - 0.5) * 0.25, L * (0.75 + hash(seed * 3 + i) * 0.35), seed * 11 + i * 17, 0);
+      // the strike point
+      c.fillStyle = "#ffffff";
+      c.beginPath();
+      c.arc(cx, cy, R * 0.16 * (0.8 + hash(seed) * 0.5), 0, Math.PI * 2);
+      c.fill();
+      break;
+    }
+    case "beam": {
+      // An energy beam from the point along rot (degrees): charge ball, a core that shoots out, boiling edges.
+      const tt = f / s.fps;
+      const L = (p.w ?? 1.2) * Math.max(W, H) * easeOut(clamp(tt / 0.18));
+      const dir = ((p.rot ?? 0) * Math.PI) / 180;
+      const half = R * 0.42 * (0.9 + hash(seed * 5) * 0.2) * (0.35 + 0.65 * easeOut(clamp(tt / 0.12)));
+      c.translate(cx, cy);
+      c.rotate(dir);
+      const body = (hw: number, wob: number) => {
+        c.beginPath();
+        const n = 26;
+        for (let k = 0; k <= n; k++) {
+          const u = k / n;
+          const w = hw * (0.75 + 0.25 * Math.min(1, u * 6)) * (1 + (hash(seed * 9 + k * 2.3) - 0.5) * wob);
+          if (k) c.lineTo(u * L, -w);
+          else c.moveTo(0, -w);
+        }
+        for (let k = n; k >= 0; k--) {
+          const u = k / n;
+          const w = hw * (0.75 + 0.25 * Math.min(1, u * 6)) * (1 + (hash(seed * 13 + k * 3.1) - 0.5) * wob);
+          c.lineTo(u * L, w);
+        }
+        c.closePath();
+      };
+      body(half * 2.1, 0.5);
+      c.fillStyle = rgba(col.length === 7 ? col : "#7fd4ff", 0.26);
+      c.fill();
+      body(half * 1.25, 0.35);
+      c.fillStyle = col;
+      c.fill();
+      c.lineWidth = lw;
+      c.strokeStyle = ink;
+      c.stroke();
+      body(half * 0.55, 0.25);
+      c.fillStyle = "#ffffff";
+      c.fill();
+      // streaks racing down the beam
+      c.strokeStyle = rgba("#ffffff", 0.85);
+      c.lineWidth = lw * 0.7;
+      for (let i = 0; i < 9; i++) {
+        const y = (hash(i * 2.9 + 4) - 0.5) * half * 1.9;
+        const x = ((hash(i * 5.1) + tt * (2.5 + hash(i) * 2)) % 1) * L;
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(Math.min(L, x + L * 0.12), y);
+        c.stroke();
+      }
+      // the charge at the source
+      const ball = half * (2.0 + 0.25 * Math.sin(tt * 40));
+      c.fillStyle = rgba(col.length === 7 ? col : "#7fd4ff", 0.35);
+      c.beginPath();
+      c.arc(0, 0, ball * 1.5, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = col;
+      c.beginPath();
+      c.arc(0, 0, ball, 0, Math.PI * 2);
+      c.fill();
+      c.lineWidth = lw;
+      c.strokeStyle = ink;
+      c.stroke();
+      c.fillStyle = "#ffffff";
+      c.beginPath();
+      c.arc(0, 0, ball * 0.6, 0, Math.PI * 2);
+      c.fill();
+      break;
+    }
+    case "aura": {
+      // A power aura: a hollow flame rising around a figure standing at the point (feet at y), with sparks streaming up.
+      const tt = f / s.fps;
+      const rx = R * 0.62, ry = R * 1.55;
+      const shape = (k0: number, grow: number) => {
+        c.beginPath();
+        const n = 56;
+        for (let k = 0; k <= n; k++) {
+          const a = (k / n) * Math.PI * 2 - Math.PI / 2;
+          const up = Math.max(0, -Math.sin(a)); // 1 at the top
+          const lick = Math.max(0, Math.sin(k * 0.9 + t * 9 + k0) + noise(k * 0.45 + t * 4, 3 + k0) * 0.9);
+          const rr = grow * (1 + lick * 0.2 * (0.35 + up)) + boil(k + k0 * 10, 2) / Math.max(1, R);
+          const x = cx + Math.cos(a) * rx * rr;
+          const y = cy - ry * 0.48 + Math.sin(a) * ry * 0.62 * rr - up * lick * R * 0.3;
+          if (k) c.lineTo(x, y);
+          else c.moveTo(x, y);
+        }
+        c.closePath();
+      };
+      const g = c.createRadialGradient(cx, cy - ry * 0.5, R * 0.1, cx, cy - ry * 0.5, ry * 0.95);
+      g.addColorStop(0, rgba(col.length === 7 ? col : "#ffd23f", 0.04));
+      g.addColorStop(0.55, rgba(col.length === 7 ? col : "#ffd23f", 0.38));
+      g.addColorStop(1, rgba(col.length === 7 ? col : "#ffd23f", 0.85));
+      shape(0, 1.12);
+      c.fillStyle = rgba(col.length === 7 ? col : "#ffd23f", 0.22);
+      c.fill();
+      shape(2, 1);
+      c.fillStyle = g;
+      c.fill();
+      c.lineWidth = lw * 0.9;
+      c.strokeStyle = rgba("#ffffff", 0.8);
+      c.stroke();
+      // sparks streaming up
+      c.strokeStyle = "#ffffff";
+      for (let i = 0; i < 16; i++) {
+        const ph = (hash(i * 3.3) + tt * (0.9 + hash(i * 1.7) * 1.3)) % 1;
+        const x = cx + (hash(i * 5.9) - 0.5) * rx * 2.1;
+        const y = cy - ph * ry * 1.25;
+        c.globalAlpha = (1 - ph) * 0.9;
+        c.lineWidth = lw * (0.5 + hash(i) * 0.8);
+        c.beginPath();
+        c.moveTo(x, y);
+        c.lineTo(x, y - R * (0.08 + hash(i * 2.1) * 0.16));
+        c.stroke();
+      }
+      c.globalAlpha = 1;
       break;
     }
   }

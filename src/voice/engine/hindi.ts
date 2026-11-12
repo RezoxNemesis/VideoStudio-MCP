@@ -4,6 +4,8 @@
  * The browser phonemizer bundled with kokoro-js only knows English, so Hindi is converted here.
  */
 
+import { indianEnglish, transliterateHinglish } from "./hinglish";
+
 export const DEVANAGARI = /[ऀ-ॿ]/;
 export const hasDevanagari = (s: string): boolean => DEVANAGARI.test(s);
 
@@ -238,14 +240,25 @@ export function splitScripts(text: string): ScriptRun[] {
  * Phonemes for mixed Hindi/English text. `english` converts a Latin-script run (the worker supplies
  * the English phonemizer). Danda marks become full stops.
  */
-export async function hindiPhonemize(text: string, english: (run: string) => Promise<string>): Promise<string> {
+export async function hindiPhonemize(text: string, english: (run: string) => Promise<string>, o: { hinglish?: boolean; indianEnglish?: boolean } = {}): Promise<string> {
   const parts: string[] = [];
-  for (const run of splitScripts(text.replace(/[।॥]/g, ". "))) {
+  // Hindi typed in Latin letters is spelled in Devanagari first, so one converter reads all of it
+  const src = o.hinglish === false ? text : transliterateHinglish(text);
+  for (const run of splitScripts(src.replace(/[।॥]/g, ". "))) {
     if (run.script === "hindi") parts.push(devanagariToPhonemes(run.text));
     else if (/[A-Za-z]/.test(run.text)) {
       // Keep the punctuation around English words; phonemize only the letters.
       const pieces = run.text.split(/([A-Za-z][A-Za-z0-9'’ -]*[A-Za-z0-9]|[A-Za-z])/);
-      for (const piece of pieces) parts.push(/[A-Za-z]/.test(piece) ? (await english(piece)).trim() : piece);
+      for (const piece of pieces) {
+        if (!/[A-Za-z]/.test(piece)) parts.push(piece);
+        else if (o.indianEnglish === false) parts.push((await english(piece)).trim());
+        else {
+          // word by word, so each word's spelling can settle its vowels
+          const words: string[] = [];
+          for (const w of piece.split(/\s+/)) if (w) words.push(indianEnglish((await english(w)).trim(), w));
+          parts.push(words.join(" "));
+        }
+      }
     } else parts.push(run.text);
   }
   return parts.join("").replace(/ {2,}/g, " ").replace(/\s+([,.;:!?])/g, "$1").trim();
