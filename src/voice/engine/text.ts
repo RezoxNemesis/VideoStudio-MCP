@@ -46,7 +46,8 @@ function spellAcronyms(text: string): string {
 const NON_TERMINAL = /\b(?:Doctor|Mister|Missus|Miss|Professor|Saint|Mr|Mrs|Ms|Dr|Prof|St|vs|No|Jr|Sr)\.$/;
 
 /** Strip markup and normalise characters so the phonemizer only sees speakable text. */
-export function normalize(input: string): string {
+/** `world`: the text is in another language, whose own rules read its numbers and abbreviations (not the English ones). */
+export function normalize(input: string, world = false): string {
   let t = input.normalize("NFC");
   t = t
     .replace(/\r\n?/g, "\n")
@@ -70,6 +71,7 @@ export function normalize(input: string): string {
   t = t
     .split("\n")
     .map((line) => {
+      if (world) return line;
       if (hasDevanagari(line)) return hindiNormalize(line);
       let l = line;
       for (const [re, rep] of ABBREVIATIONS) l = l.replace(re, rep);
@@ -166,8 +168,8 @@ function mergeShort(sentences: string[], max: number): string[] {
 }
 
 /** Turn arbitrary text into speakable chunks with pause lengths. */
-export function toChunks(input: string, max = MAX_CHUNK_CHARS): Chunk[] {
-  const text = normalize(input);
+export function toChunks(input: string, max = MAX_CHUNK_CHARS, world = false): Chunk[] {
+  const text = normalize(input, world);
   if (!text) return [];
   const chunks: Chunk[] = [];
   const paragraphs = text.split(/\n{2,}/);

@@ -2,6 +2,8 @@
 import { KokoroTTS, env } from "kokoro-js";
 import { Tensor, env as hfEnv } from "@huggingface/transformers";
 import { phonemize } from "phonemizer";
+import espeakWasm from "espeak-ng/dist/espeak-ng.wasm?url";
+import { espeakIpa, setEspeakWasm } from "./espeak";
 import { synthesize, VOICES_URL, type ModelRunner } from "./synth";
 import { VoiceTables } from "./voicebank";
 import type { Device, FromWorker, ToWorker } from "./protocol";
@@ -14,6 +16,10 @@ env.wasmPaths = `${self.location.origin}/ort/`;
 if (self.crossOriginIsolated && hfEnv.backends.onnx.wasm) {
   hfEnv.backends.onnx.wasm.numThreads = Math.max(1, Math.min(4, (self.navigator.hardwareConcurrency ?? 4) - 1));
 }
+
+setEspeakWasm(espeakWasm);
+/** Sounds of a run of words: English by the small built-in dictionary, every other language by eSpeak NG. */
+const speak = (t: string, lang: string) => (lang === "en-us" || lang === "en" ? phonemize(t, lang) : espeakIpa(t, lang));
 
 const post = (msg: FromWorker, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(msg, transfer);
 
@@ -127,7 +133,7 @@ self.onmessage = async (ev: MessageEvent<ToWorker>) => {
           post({ type: "cancelled", id: msg.id });
           return;
         }
-        const pcm = await synthesize(job, { phonemize, tables, run: runner });
+        const pcm = await synthesize(job, { phonemize: speak as never, tables, run: runner });
         post({ type: "chunk", id: msg.id, index: job.index, pcm, sampleRate: 24_000 }, [pcm.buffer]);
       }
       if (cancelled.delete(msg.id)) post({ type: "cancelled", id: msg.id });

@@ -69,6 +69,17 @@ export interface Tone {
   stress?: [number, number][];
   /** Lengthen the pauses at commas and stops. */
   pauses?: number;
+  /**
+   * Natural reading (./natural.ts): 1 (default) reads sentence by sentence, each a little different, and lets the
+   * writing shape the delivery ("!", "…", "?!"); 0 says the line exactly as the voice model gives it.
+   */
+  natural?: number;
+  /** Breaths before longer sentences, 0…1 (0 = none, the default). */
+  breath?: number;
+  /** Slow wandering of the pitch, as in live speech: 1 natural, 0 none. */
+  drift?: number;
+  /** Which wandering (set by the natural reading). */
+  seed?: number;
 }
 
 /** Named tones. `tone: "sad"` in a speak request picks one; fields given beside it override. */
@@ -153,6 +164,8 @@ export async function sayOpen(m: OpenModel, table: Float32Array, phonemes: strin
   const centre = cnt ? sum / cnt : Math.log(200);
   const st = (tone.pitch ?? 0) / 12 * Math.LN2;
   const range = tone.range ?? 1;
+  const drift = tone.drift ?? 0;
+  const ph1 = ((tone.seed ?? 0) % 628) / 100, ph2 = ((tone.seed ?? 0) % 997) / 158;
   let lastVoiced = T - 1;
   while (lastVoiced > 0 && f0[lastVoiced]! <= 40) lastVoiced--;
   const tail = Math.max(8, Math.min(Math.round(CURVE_RATE * 0.55), Math.round(lastVoiced * 0.35)));
@@ -167,6 +180,8 @@ export async function sayOpen(m: OpenModel, table: Float32Array, phonemes: strin
       else lg = lg + (centre + st - lg) * e * 0.6;
     }
     if (tone.shake) lg += Math.sin(i * 0.92) * Math.sin(i * 0.37 + 1.3) * 0.018 * tone.shake;
+    // live speech never holds its height: about a third of a semitone of slow wandering
+    if (drift) lg += drift * (0.012 * Math.sin(i * 0.021 + ph1) + 0.008 * Math.sin(i * 0.047 + ph2));
     f0[i] = Math.exp(lg);
   }
   for (const [a, b] of tone.stress ?? []) {

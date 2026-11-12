@@ -9,6 +9,7 @@ import { colour, pitchShift, polish, SAMPLE_RATE } from "./audio";
 import { hindiPhonemize } from "./hindi";
 import { englishPhonemes, MAX_TOKENS, tokenize, type Phonemizer } from "./phonemes";
 import { mixLang, parseMix, styleRow, type VoiceTables } from "./voicebank";
+import { langOf, langOfText, langOfVoice, worldPhonemes, type Lang } from "./world";
 import type { Job } from "./protocol";
 
 /** Runs Kokoro: token ids (with pads), one 256-float style row and a speed → raw 24 kHz audio. */
@@ -21,10 +22,21 @@ export interface SynthDeps {
 }
 
 /** Text → phonemes for the voice's language. */
-export async function phonemesFor(text: string, voice: string, phonemize: Phonemizer): Promise<string> {
+/**
+ * The other language a line is in, if any: the one asked for, else the one the voice was trained in, else the one
+ * the letters are plainly in. English and Hindi / Hinglish (undefined) keep their own, finer rules.
+ */
+export function worldLang(text: string, voice: string, language?: string): Lang | undefined {
+  if (language && /^(en|hi)\b/i.test(language)) return undefined;
+  return langOf(language) ?? langOfVoice(voice) ?? (mixLang(parseMix(voice)) === "h" ? undefined : langOfText(text));
+}
+
+export async function phonemesFor(text: string, voice: string, phonemize: Phonemizer, language?: string): Promise<string> {
   const lang = mixLang(parseMix(voice));
+  const world = worldLang(text, voice, language);
+  if (world) return worldPhonemes(text, world, phonemize);
   if (lang === "h") return hindiPhonemize(text, async (run) => (await phonemize(run, "en-us")).join(" "));
-  return englishPhonemes(text, lang, phonemize);
+  return englishPhonemes(text, lang === "b" ? "b" : "a", phonemize);
 }
 
 /** Apply a job's delivery to a polished clip: pitch first, then colour (gain, softness, edge). */
@@ -37,7 +49,7 @@ export function shape(pcm: Float32Array, job: Pick<Job, "pitch" | "gain" | "soft
 
 /** Synthesize one job and return polished, delivery-shaped audio. */
 export async function synthesize(job: Job, deps: SynthDeps): Promise<Float32Array> {
-  const phonemes = await phonemesFor(job.text, job.voice, deps.phonemize);
+  const phonemes = await phonemesFor(job.text, job.voice, deps.phonemize, job.lang);
   let ids = tokenize(phonemes);
   if (ids.length > MAX_TOKENS + 2) ids = [...ids.slice(0, MAX_TOKENS + 1), 0];
   const table = await deps.tables.table(job.voice);

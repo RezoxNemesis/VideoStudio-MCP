@@ -5,6 +5,7 @@ import { devanagariShare } from "./hindi";
 import { hindiVoiceFor, isHindiVoice } from "./voices";
 import { NEUTRAL } from "./delivery";
 import { PRESETS, resolveVoice, type CustomVoice } from "./voicebank";
+import { langOf } from "./world";
 
 export interface PlanItem {
   text: string;
@@ -13,6 +14,8 @@ export interface PlanItem {
   /** Voice for the engine: a stock id or a mix expression ("af_heart*0.6+am_puck*0.4"). */
   voice: string;
   speed: number;
+  /** Language to read in, when it is not English or Hindi (see ./world.ts). */
+  lang?: string;
   /** Pitch shift in semitones (voice recipe + delivery). */
   pitch?: number;
   /** Delivery colour applied after synthesis. */
@@ -33,6 +36,8 @@ export interface PlanOptions {
   pauseScale: number;
   voice: string;
   cast: Record<string, string>;
+  /** Language of the script: "de", "ru", "es" … Empty or "auto": worked out from the voice and the letters. */
+  lang?: string;
   /** The person's own voices (Voice Lab). Presets are always available. */
   customs?: readonly CustomVoice[];
 }
@@ -92,6 +97,7 @@ function itemsFor(
   before?: PlanItem,
 ): PlanItem[] {
   const v = resolveVoice(ref, o.customs ?? []);
+  const world = o.lang && !/^(auto|en|hi)\b/i.test(o.lang) ? langOf(o.lang)?.code : undefined;
   const out: PlanItem[] = [];
   for (const seg of segs) {
     if (!seg.text) {
@@ -100,13 +106,14 @@ function itemsFor(
       continue;
     }
     const d = seg.delivery ?? NEUTRAL;
-    const chunks = seg.sound ? [{ text: seg.text, pauseMs: 160 }] : toChunks(seg.text);
+    const chunks = seg.sound ? [{ text: seg.text, pauseMs: 160 }] : toChunks(seg.text, undefined, !!world);
     chunks.forEach((c, i) => {
       const last = i === chunks.length - 1;
       out.push({
         text: c.text,
         pauseMs: Math.round(c.pauseMs * d.pause) + (last ? seg.pauseAfterMs ?? 0 : 0),
-        voice: voiceForText(v.mix, c.text),
+        voice: world ? v.mix : voiceForText(v.mix, c.text),
+        lang: world ?? (o.lang && /^(en|hi)\b/i.test(o.lang) ? o.lang.slice(0, 2).toLowerCase() : undefined),
         speed: r2(Math.min(1.6, Math.max(0.55, o.speed * v.speed * (extra.speed ?? 1) * d.speed))),
         pitch: r2(v.pitch + (extra.pitch ?? 0) + d.pitch),
         gain: r2(d.gain),
@@ -129,6 +136,7 @@ function compact(it: PlanItem): PlanItem {
   if (!o.soft) delete o.soft;
   if (!o.edge) delete o.edge;
   if (!o.tags) delete o.tags;
+  if (!o.lang) delete o.lang;
   if (o.speaker === undefined) delete o.speaker;
   return o;
 }

@@ -4,6 +4,7 @@
  * Strings like "$0.id" refer to earlier results in the same batch. Every edit is undoable.
  * There is deliberately no command that browses the phone's gallery or files.
  */
+import { LANGS } from "../voice/engine/world";
 import type { Studio } from "../app/studio";
 import { ANIME_COMMANDS } from "./anime";
 import * as ops from "../core/ops";
@@ -2175,11 +2176,19 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
     },
   },
 
-  "voice.list": { help: "Voices: stock, character presets and your Voice Lab voices.", run: (s) => s.voice.list() },
+  "voice.list": { help: "Voices: stock (with the language each was trained in), character presets and your Voice Lab voices. Any voice can read any language of voice.languages.", run: (s) => s.voice.list() },
+  "voice.languages": {
+    help: "Languages a line can be spoken in (lang: on voice.speak and voice.say), with the voice that suits each best.",
+    run: () => [
+      { code: "en", name: "English", voice: "af_heart", native: true },
+      { code: "hi", name: "Hindi and Hinglish", voice: "hf_alpha", native: true },
+      ...LANGS.map((l) => ({ code: l.code, name: l.name, voice: l.voice, native: !!l.prefix })),
+    ],
+  },
   "voice.speak": {
-    help: "{text, mode?: speak|dialogue, voice?, speed?, cast?:{Name:voice}, add?=true, start?} VolTune speech → audio asset (+lip-sync). Dialogue: 'Name: line', '(whispering)', '[pause 1s]'.",
+    help: "{text, mode?: speak|dialogue, voice?, lang?: de|ru|es|fr|it|pt|… (voice.languages; empty = from the voice and the letters), speed?, cast?:{Name:voice}, add?=true, start?} VolTune speech → audio asset (+lip-sync). Dialogue: 'Name: line', '(whispering)', '[pause 1s]'.",
     run: async (s, a) => {
-      const { result, asset } = await s.speak({ text: a.str("text"), mode: a.optStr("mode") as never, voice: a.optStr("voice"), speed: a.optNum("speed"), cast: a.any("cast") as Record<string, string> | undefined });
+      const { result, asset } = await s.speak({ text: a.str("text"), mode: a.optStr("mode") as never, voice: a.optStr("voice"), lang: a.optStr("lang"), speed: a.optNum("speed"), cast: a.any("cast") as Record<string, string> | undefined });
       let clipId: string | undefined;
       if (a.bool("add", true)) clipId = s.mutate("voice to timeline", (p) => ops.addClip(p, { assetId: asset.id, start: a.optNum("start") ?? s.time }).id);
       return { assetId: asset.id, clipId, seconds: r3(result.seconds), cast: result.cast, lines: result.lines.map((l) => ({ ...l, start: r3(l.start), end: r3(l.end) })) };

@@ -26,7 +26,7 @@ SF_REPO=https://github.com/mrbumpy409/GeneralUser-GS.git
 SF_REV=684543d5e5efaef08d02be50dcda8d552478fa60
 KOKORO_URL=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx
 KOKORO_SHA=6e742170d309016e5891a994e1ce1559c702a2ccd0075e67ef7157974f6406cb
-VOICES="hf_alpha hf_beta hm_omega hm_psi af_heart af_bella af_nicole am_michael am_adam am_fenrir bf_emma bm_george"
+VOICES="af_alloy af_aoede af_bella af_heart af_jessica af_kore af_nicole af_nova af_river af_sarah af_sky am_adam am_echo am_eric am_fenrir am_liam am_michael am_onyx am_puck am_santa bf_alice bf_emma bf_isabella bf_lily bm_daniel bm_fable bm_george bm_lewis ef_dora em_alex em_santa ff_siwis hf_alpha hf_beta hm_omega hm_psi if_sara im_nicola pf_dora pm_alex pm_santa"
 
 fetch() { # fetch <repo> <rev> <dir> [git clone options]
   local repo="$1" rev="$2" dir="$3"; shift 3

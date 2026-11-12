@@ -4,16 +4,20 @@
  */
 import * as ort from "onnxruntime-web";
 import { phonemize } from "phonemizer";
-import { polish } from "./audio";
+import espeakWasm from "espeak-ng/dist/espeak-ng.wasm?url";
+import { espeakIpa, setEspeakWasm } from "./espeak";
+import { pitchShift, polish } from "./audio";
 import { OpenModel, TONES, emphasisRanges, sayOpen, type Tone } from "./open";
 import { voiceForText } from "./plan";
 import { lineSyllables, sing, type SingOptions, type SungNote } from "./sing";
-import { VOICES_URL, phonemesFor } from "./synth";
+import { VOICES_URL, phonemesFor, worldLang } from "./synth";
+import { joinReading, reading } from "./natural";
+import { langOfVoice } from "./world";
 import { VoiceTables } from "./voicebank";
 
 export type OpenRequest =
   | { id: number; type: "syllables"; lines: string[]; voice: string }
-  | { id: number; type: "say"; text: string; voice: string; tone?: Tone | string; emphasis?: string[] }
+  | { id: number; type: "say"; text: string; voice: string; tone?: Tone | string; emphasis?: string[]; lang?: string; /** A character voice's own pitch (semitones) and pace. */ shift?: number; pace?: number }
   | { id: number; type: "sing"; notes: SungNote[]; voice: string; options?: SingOptions };
 export type OpenReply = { id: number; ok: true; syllables?: string[][]; pcm?: Float32Array; voice?: string } | { id: number; ok: false; error: string } | { id: 0; ok: true; progress: number; what: string };
 
@@ -51,7 +55,9 @@ const tables = new VoiceTables(async (id) => {
   }
   throw new Error(`Voice ${id} could not be loaded.`);
 });
-const speak = (t: string, lang: string) => phonemize(t, lang);
+setEspeakWasm(espeakWasm);
+/** Sounds of a run of words: English by the small built-in dictionary, every other language by eSpeak NG. */
+const speak = (t: string, lang: string) => (lang === "en-us" || lang === "en" ? phonemize(t, lang) : espeakIpa(t, lang));
 
 self.onmessage = async (ev: MessageEvent<OpenRequest>) => {
   const msg = ev.data;
@@ -64,17 +70,37 @@ self.onmessage = async (ev: MessageEvent<OpenRequest>) => {
     }
     const m = await load();
     if (msg.type === "say") {
-      const voice = voiceForText(msg.voice, msg.text);
-      const ph = await phonemesFor(msg.text, voice, speak as never);
-      const base: Tone = typeof msg.tone === "string" ? (TONES[msg.tone] ?? {}) : (msg.tone ?? {});
-      const tone: Tone = { ...base };
-      if (msg.emphasis?.length) {
-        // words to lean on, found by their place in the line
-        const words = msg.text.split(/\s+/).map((w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ""));
-        const idx = msg.emphasis.map((e) => words.indexOf(e.toLowerCase())).filter((i) => i >= 0);
-        tone.stress = [...(tone.stress ?? []), ...emphasisRanges(ph, idx)];
-      }
-      const pcm = polish(await sayOpen(m, await tables.table(voice), ph, tone));
+      const voice = msg.lang && !/^(en|hi)\b/i.test(msg.lang) ? msg.voice : voiceForText(msg.voice, msg.text);
+      const base: Tone = { ...(typeof msg.tone === "string" ? (TONES[msg.tone] ?? {}) : (msg.tone ?? {})) };
+      if (msg.pace && msg.pace !== 1) base.rate = (base.rate ?? 1) * msg.pace;
+      const world = worldLang(msg.text, voice, msg.lang);
+      // a voice that never learnt an evenly timed language keeps its own stress rhythm unless it is evened out
+      if (world?.even && langOfVoice(voice)?.code !== world.code && base.even === undefined) base.even = 0.35;
+      const table = await tables.table(voice);
+      const emphasis = (msg.emphasis ?? []).map((e) => e.toLowerCase());
+      const one = async (text: string, tone: Tone): Promise<Float32Array> => {
+        const ph = await phonemesFor(text, voice, speak as never, msg.lang);
+        const t: Tone = { ...tone };
+        if (emphasis.length) {
+          // words to lean on, found by their place in the sentence
+          const words = text.split(/\s+/).map((w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ""));
+          const idx = emphasis.map((e) => words.indexOf(e)).filter((i) => i >= 0);
+          if (idx.length) t.stress = [...(t.stress ?? []), ...emphasisRanges(ph, idx)];
+        }
+        return polish(await sayOpen(m, table, ph, t));
+      };
+      let pcm: Float32Array;
+      const plan = (base.natural ?? 1) > 0 ? reading(msg.text, base, `${voice}|${msg.text}`, { world: !!world, breath: base.breath }) : [];
+      if (plan.length) {
+        const parts: { pcm: Float32Array; pauseMs: number; gain: number; breath?: boolean }[] = [];
+        for (const r of plan) {
+          const p = await one(r.text, r.tone);
+          if (p.length) parts.push({ pcm: p, pauseMs: r.pauseMs, gain: r.gain, breath: r.breath });
+        }
+        if (parts.length) parts[parts.length - 1]!.pauseMs = 0;
+        pcm = joinReading(parts, { breath: base.breath, seedText: msg.text });
+      } else pcm = await one(msg.text, base);
+      if (msg.shift) pcm = pitchShift(pcm, msg.shift);
       post({ id: msg.id, ok: true, pcm, voice }, [pcm.buffer]);
     } else if (msg.type === "sing") {
       const pcm = await sing(m, await tables.table(msg.voice), msg.notes, { ...msg.options, onProgress: (d) => post({ id: 0, ok: true, progress: d, what: "Singing" }) });

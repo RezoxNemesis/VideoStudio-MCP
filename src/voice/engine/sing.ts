@@ -12,6 +12,8 @@ const VOWELS = new Set([..."aeiouɑɐɒæɔəɚɛɜɪʊʌɨøœɯɤyAIOWYᵻᵊ"
 const LONG_MARK = "ː", NASAL = "̃";
 const STRESS = new Set(["ˈ", "ˌ"]);
 const GLIDES = new Set([..."jɾlʋwɹr"]);
+/** Hissing and breathy consonants: they need time to be heard. */
+const FRICATIVES = new Set([..."sʃfzʒθðhxçʂɕʧʤʦʣ"]);
 const hz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
 /**
  * Measured on the model: the sound of a phoneme comes out about 60 ms before its place on the frame grid, loudness
@@ -104,6 +106,11 @@ export interface SingOptions {
   glide?: number;
   /** Tuning offset in semitones (after the range fit). */
   transpose?: number;
+  /**
+   * How clearly the consonants are sung, 0…1 (default 0.6). Sung vowels are long and loud, so consonants that keep
+   * their spoken size are lost under them and under the band; this gives them room and weight.
+   */
+  crisp?: number;
 }
 
 interface Tok {
@@ -139,9 +146,14 @@ export async function singPhrase(m: OpenModel, table: Float32Array, notes: SungN
   const nat = await m.durations(ids, style, 1);
   const N = ids.length;
   const dur = new Array<number>(N).fill(1);
-  // consonants keep their natural length, within reason
+  const crisp = Math.max(0, Math.min(1, o.crisp ?? 0.6));
+  // consonants keep their natural length, within reason; sung clearly, none is shorter than 50 ms and the hissing
+  // ones and the closing ones of a syllable may take a little longer
   toks.forEach((t, i) => {
-    if (t.part !== "core") dur[i + 1] = Math.max(1, Math.min(STRESS.has(t.ch) || t.ch === "ʰ" ? 1 : t.part === "coda" ? 2 : 3, Math.round(nat[i + 1]!)));
+    if (t.part === "core") return;
+    const mark = STRESS.has(t.ch) || t.ch === "ʰ";
+    const cap = mark ? 1 : t.part === "coda" ? (crisp >= 0.5 ? 3 : 2) : FRICATIVES.has(t.ch) && crisp >= 0.5 ? 4 : 3;
+    dur[i + 1] = Math.max(mark || crisp < 0.5 ? 1 : 2, Math.min(cap, Math.round(nat[i + 1]!)));
   });
   const t0 = notes[0]!.start;
   const fr = (sec: number) => Math.round((sec - t0) * FRAME_RATE);
@@ -246,6 +258,9 @@ export async function singPhrase(m: OpenModel, table: Float32Array, notes: SungN
       const endOf = ne.start + ne.dur - secE;
       const rel = ei === notes.length - 1 ? Math.min(1, Math.max(0, endOf / 0.1)) : 1;
       energy[i] = Math.max(src, hold + v * 1.6) * rel + (1 - rel) * Math.min(src, 3);
+    } else if (te && crisp > 0 && src > 1) {
+      // consonants: a little more weight, so they are not lost beside the held vowels
+      energy[i] = src + 0.5 * crisp;
     }
   }
   const pcm = await m.render(ids, style, dur, f0, energy);

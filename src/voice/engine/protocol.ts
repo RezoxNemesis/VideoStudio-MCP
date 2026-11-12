@@ -8,6 +8,8 @@ export interface Job {
   /** Stock voice id or mix expression ("af_heart*0.6+am_puck*0.4"). */
   voice: string;
   speed: number;
+  /** Language to read the text in ("de", "ru", "es" …, see ./world.ts). Empty: the voice's own, or what the letters show. */
+  lang?: string;
   /** Delivery shaping applied in the worker after synthesis. */
   pitch?: number;
   gain?: number;

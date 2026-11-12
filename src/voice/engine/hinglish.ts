@@ -45,6 +45,8 @@ aana|ana=आना aata|ata=आता aati|ati=आती aate|ate_h=आते aa
 khana_v=खाना khata|khaata=खाता khati=खाती khate=खाते khaunga=खाऊँगा khayega=खाएगा khaoge=खाओगे khao=खाओ khakar=खाकर kha=खा peena|pina=पीना peeta|pita_v=पीता peeti=पीती peete=पीते piyo=पियो pee|pi=पी
 lena=लेना leta=लेता leti=लेती lete=लेते lunga|loonga=लूँगा lungi=लूँगी lega=लेगा legi=लेगी lenge=लेंगे loge=लोगे lekar=लेकर le=ले dena=देना deta=देता deti=देती dete=देते dunga|doonga=दूँगा dungi=दूँगी dega=देगा degi=देगी denge=देंगे doge=दोगे dekar=देकर de=दे
 sona_v=सोना sota=सोता soti=सोती sote=सोते so_h=सो rona=रोना rota=रोता roti_v=रोती rote=रोते ro=रो jeena|jina=जीना jeeta|jita=जीता jeete=जीते jee|ji_v=जी marna=मरना
+wapas|vapas|waapas=वापस raja|raaja=राजा rani|raani=रानी yuddh|yudh=युद्ध talwar|talvar=तलवार tyohar=त्योहार sena=सेना sipahi=सिपाही mahal=महल rajya=राज्य rajkumar=राजकुमार rajkumari=राजकुमारी veer=वीर bahadur=बहादुर khoon=खून badla=बदला insaaf=इंसाफ़ nyay|nyaay=न्याय shakti=शक्ति ladai|ladaai=लड़ाई maut=मौत taqdeer|takdeer=तक़दीर dharti=धरती samundar|samandar=समुंदर toofan|tufan=तूफ़ान aag=आग wada|vaada|waada=वादा kasam|qasam=क़सम pooja|puja=पूजा nafrat=नफ़रत dosti=दोस्ती dushmani=दुश्मनी parivar|parivaar=परिवार mata=माता
+yoddha=योद्धा samrat=सम्राट senapati=सेनापति qila|kila=क़िला singhasan=सिंहासन praja=प्रजा asur=असुर rakshas=राक्षस amar=अमर anant=अनंत vijay=विजय parajay=पराजय rakt=रक्त pratishodh=प्रतिशोध balidan=बलिदान kartavya=कर्तव्य dharm=धर्म karm=कर्म aatma|atma=आत्मा shraap|shrap=श्राप vardaan|vardan=वरदान
 `;
 
 /** Verb roots (consonant-final) whose forms are built by rule: roman=Devanagari root. */

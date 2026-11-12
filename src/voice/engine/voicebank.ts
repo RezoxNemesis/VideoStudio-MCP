@@ -15,6 +15,8 @@ export const BASE_VOICES: readonly string[] = [
   "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
   "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
   "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+  // trained in Spanish, French, Italian, Brazilian Portuguese
+  "ef_dora", "em_alex", "em_santa", "ff_siwis", "if_sara", "im_nicola", "pf_dora", "pm_alex", "pm_santa",
 ];
 const BASE = new Set(BASE_VOICES);
 
@@ -22,6 +24,7 @@ export const STYLE_ROWS = 510;
 export const STYLE_DIM = 256;
 
 export type Mix = Array<[string, number]>;
+export type Accent = "US" | "UK" | "India" | "Spain" | "France" | "Italy" | "Brazil";
 
 export interface Recipe {
   /** Stock voices and their weights (normalised to sum to 1). */
@@ -36,7 +39,7 @@ export interface CustomVoice {
   id: string;
   name: string;
   gender: "Female" | "Male";
-  accent: "US" | "UK" | "India";
+  accent: Accent;
   tone: string;
   recipe: Recipe;
   /** Built-in character presets cannot be edited or deleted. */
@@ -110,6 +113,26 @@ export const PRESETS: readonly CustomVoice[] = [
   P("pre_grandma", "Grandma", "Female", "UK", "Character · soft, kindly", "bf_isabella*0.6+af_nicole*0.4", -0.8, 0.9),
   P("pre_narrator", "Deep narrator", "Male", "UK", "Narration · rich, unhurried", "bm_fable*0.55+am_fenrir*0.45", -1, 0.95),
   P("pre_storyteller", "Storyteller", "Female", "US", "Narration · warm, intimate", "af_heart*0.6+af_aoede*0.4", -0.4, 0.96),
+  // ---- more characters (blends of the trained voices: each is a new, steady voice of its own)
+  P("pre_young_hero", "Young hero", "Male", "US", "Character · earnest, bright", "am_michael*0.5+am_puck*0.3+am_adam*0.2", 1.2, 1.02),
+  P("pre_warrior", "Warrior", "Male", "US", "Character · hard, controlled", "am_fenrir*0.6+am_onyx*0.4", -1.2, 0.96),
+  P("pre_warlord", "Warlord", "Male", "UK", "Character · heavy, cruel", "am_onyx*0.5+bm_george*0.3+am_fenrir*0.2", -3.4, 0.9),
+  P("pre_master", "Old master", "Male", "UK", "Character · worn, wise", "bm_fable*0.5+bm_lewis*0.3+bm_george*0.2", -2.2, 0.86),
+  P("pre_mother", "Mother", "Female", "US", "Character · tender, steady", "af_heart*0.5+af_sarah*0.3+bf_emma*0.2", -0.6, 0.96),
+  P("pre_little_boy", "Little boy", "Male", "US", "Character · small, eager", "am_puck*0.6+af_sky*0.4", 4.6, 1.06),
+  P("pre_little_girl", "Little girl", "Female", "US", "Character · small, sweet", "af_sky*0.5+af_bella*0.5", 4.2, 1.06),
+  P("pre_queen", "Queen", "Female", "UK", "Character · cool, commanding", "bf_emma*0.55+bf_isabella*0.25+af_kore*0.2", -1.2, 0.94),
+  P("pre_trickster", "Trickster", "Male", "UK", "Character · quick, sly", "bm_fable*0.45+am_puck*0.55", 1.4, 1.08),
+  P("pre_announcer", "Announcer", "Male", "US", "Narration · big, bright", "am_michael*0.5+am_adam*0.2+bm_george*0.3", -0.4, 1.03),
+  P("pre_documentary", "Documentary", "Female", "UK", "Narration · calm, exact", "bf_emma*0.6+af_nova*0.4", -0.5, 0.97),
+  P("pre_whisperer", "Night voice", "Female", "US", "Narration · close, hushed", "af_nicole*0.7+af_aoede*0.3", -0.8, 0.93),
+  // ---- Hindi and Hinglish characters
+  P("pre_hi_nayak", "नायक (Hero)", "Male", "India", "हिन्दी · young, firm", "hm_omega*0.6+hm_psi*0.4", 0.6, 1),
+  P("pre_hi_guru", "गुरु (Master)", "Male", "India", "हिन्दी · old, deep", "hm_omega*0.8+hm_psi*0.2", -2.6, 0.88),
+  P("pre_hi_maa", "माँ (Mother)", "Female", "India", "हिन्दी · soft, warm", "hf_alpha*0.5+hf_beta*0.5", -0.8, 0.95),
+  P("pre_hi_bachcha", "बच्चा (Child)", "Female", "India", "हिन्दी · small, bright", "hf_beta*0.6+hf_alpha*0.4", 4, 1.05),
+  P("pre_hi_khalnayak", "खलनायक (Villain)", "Male", "India", "हिन्दी · low, cold", "hm_psi*0.5+hm_omega*0.5", -3.6, 0.9),
+  P("pre_hi_sutradhar", "सूत्रधार (Narrator)", "Male", "India", "हिन्दी · rich, unhurried", "hm_psi*0.7+hm_omega*0.3", -1.2, 0.94),
 ];
 
 /** A preset or custom voice by id, or by its display name ("Teen girl", "rusty"). */

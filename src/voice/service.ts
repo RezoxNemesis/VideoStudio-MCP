@@ -16,6 +16,8 @@ export interface SpeakRequest {
   speed?: number;
   pauseScale?: number;
   cast?: Record<string, string>;
+  /** Language of the text: "de", "ru", "es", "fr", "it", "pt" … (voice.languages). Empty: worked out from the voice and the letters. */
+  lang?: string;
 }
 
 export interface SpeakResult {
@@ -44,9 +46,9 @@ export class VoiceService {
   }
 
   /** Voices an agent or the menu can use: stock ids, presets, and the person's own Voice Lab voices. */
-  list(): { id: string; name: string; kind: "stock" | "preset" | "custom"; detail: string }[] {
+  list(): { id: string; name: string; kind: "stock" | "preset" | "custom"; detail: string; lang?: string }[] {
     return [
-      ...VOICES.map((v) => ({ id: v.id, name: v.name, kind: "stock" as const, detail: `${v.gender} · ${v.accent} · ${v.tone}` })),
+      ...VOICES.map((v) => ({ id: v.id, name: v.name, kind: "stock" as const, detail: `${v.gender} · ${v.accent} · ${v.tone}`, lang: v.lang })),
       ...PRESETS.map((v) => ({ id: v.id, name: v.name, kind: "preset" as const, detail: v.tone })),
       ...loadCustoms().map((v) => ({ id: v.id, name: v.name, kind: "custom" as const, detail: v.tone })),
     ];
@@ -68,6 +70,7 @@ export class VoiceService {
       pauseScale: req.pauseScale ?? 1,
       voice: req.voice ?? DEFAULT_VOICE,
       cast: req.cast ?? {},
+      lang: req.lang,
       customs: loadCustoms(),
     });
     if (items.length === 0) throw new Error("Nothing to speak in that script.");

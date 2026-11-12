@@ -1,4 +1,5 @@
 /** VolTune voice studio inside VideoStudio. */
+import { LANGS } from "../voice/engine/world";
 import type { Studio } from "../app/studio";
 import { fillVoiceSelect, loadCustoms, openVoiceLab, scriptTips } from "../voice/voicelab";
 import { DEFAULT_VOICE } from "../voice/engine/voices";
@@ -13,6 +14,7 @@ export class VoiceView {
   readonly el: HTMLElement;
   private text: HTMLTextAreaElement;
   private voice: HTMLSelectElement;
+  private lang: HTMLSelectElement;
   private status: HTMLElement;
   private bar: HTMLElement;
   private result: HTMLElement;
@@ -35,6 +37,8 @@ export class VoiceView {
       }
     });
     this.voice = h("select", { "aria-label": "Voice" }) as HTMLSelectElement;
+    this.lang = h("select", { "aria-label": "Language", title: "Any voice can read any of these languages. Auto reads English, Hindi and Hinglish as before, and other languages from the voice or the letters." }) as HTMLSelectElement;
+    this.lang.append(h("option", { value: "" }, "Auto (English · Hindi · Hinglish · by voice)"), ...LANGS.map((l) => h("option", { value: l.code }, l.name)));
     fillVoiceSelect(this.voice, DEFAULT_VOICE, loadCustoms());
     this.status = h("p", { class: "muted small" }, s.voice.supported ? "Voices run on this phone. The first use downloads the voice model once (~90–330 MB)." : "Speech needs WebAssembly, which this device lacks.");
     this.bar = h("div", { class: "progress" }, h("i", {}));
@@ -54,6 +58,7 @@ export class VoiceView {
         modeSel,
         this.text,
         h("label", { class: "frow" }, h("span", { class: "lbl" }, "Voice"), this.voice),
+        h("label", { class: "frow" }, h("span", { class: "lbl" }, "Language"), this.lang),
         slider("Pace", 0.6, 1.6, 0.01, this.speed, (v) => (this.speed = v), { fmt: (v) => `${v.toFixed(2)}×` }).el,
         h("div", { class: "row wrap" },
           btn("Generate", "mic", () => void this.generate(), "primary"),
@@ -98,7 +103,7 @@ export class VoiceView {
     this.setBar(0);
     this.status.textContent = "Preparing voices…";
     try {
-      const { result, asset } = await this.s.speak({ text, mode: this.mode, voice: this.voice.value, speed: this.speed }, (done, total) => {
+      const { result, asset } = await this.s.speak({ text, mode: this.mode, voice: this.voice.value, speed: this.speed, lang: this.lang.value || undefined }, (done, total) => {
         this.setBar(done / total);
         this.status.textContent = `Speaking… ${done}/${total} lines`;
       });

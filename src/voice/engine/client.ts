@@ -15,6 +15,7 @@ export interface Segment {
   pauseMs: number;
   voice: string;
   speed: number;
+  lang?: string;
   pitch?: number;
   gain?: number;
   soft?: number;
@@ -176,7 +177,7 @@ export class SpeechEngine {
     const jobs: Job[] = [];
     for (let index = first; index < segments.length; index++) {
       const s = segments[index]!;
-      jobs.push({ index, text: s.text, voice: s.voice, speed: s.speed, pitch: s.pitch, gain: s.gain, soft: s.soft, edge: s.edge });
+      jobs.push({ index, text: s.text, voice: s.voice, speed: s.speed, lang: s.lang, pitch: s.pitch, gain: s.gain, soft: s.soft, edge: s.edge });
     }
     if (jobs.length === 0) {
       this.active = null;

@@ -1,8 +1,9 @@
 export interface Voice {
   id: string;
   name: string;
-  accent: "US" | "UK" | "India";
-  lang: "en" | "hi";
+  accent: "US" | "UK" | "India" | "Spain" | "France" | "Italy" | "Brazil";
+  /** The language the voice was trained in. Any voice can also speak the other languages of ./world.ts, with its own accent. */
+  lang: "en" | "hi" | "es" | "fr" | "it" | "pt";
   gender: "Female" | "Male";
   /** One-line character description shown in the picker. */
   tone: string;
@@ -27,6 +28,23 @@ export const VOICES: readonly Voice[] = [
   { id: "hf_beta", name: "Beta", accent: "India", lang: "hi", gender: "Female", tone: "हिन्दी · Soft, gentle" },
   { id: "hm_omega", name: "Omega", accent: "India", lang: "hi", gender: "Male", tone: "हिन्दी · Steady, deep" },
   { id: "hm_psi", name: "Psi", accent: "India", lang: "hi", gender: "Male", tone: "हिन्दी · Calm, friendly" },
+  // more English voices of the same family
+  { id: "af_alloy", name: "Alloy", accent: "US", lang: "en", gender: "Female", tone: "Even, modern" },
+  { id: "af_nova", name: "Nova", accent: "US", lang: "en", gender: "Female", tone: "Crisp, confident" },
+  { id: "af_sky", name: "Sky", accent: "US", lang: "en", gender: "Female", tone: "Light, youthful" },
+  { id: "am_adam", name: "Adam", accent: "US", lang: "en", gender: "Male", tone: "Plain, direct" },
+  { id: "am_onyx", name: "Onyx", accent: "US", lang: "en", gender: "Male", tone: "Dark, low" },
+  { id: "bm_lewis", name: "Lewis", accent: "UK", lang: "en", gender: "Male", tone: "Dry, grounded" },
+  // trained in other languages
+  { id: "ef_dora", name: "Dora", accent: "Spain", lang: "es", gender: "Female", tone: "Español · Clear, bright" },
+  { id: "em_alex", name: "Alex", accent: "Spain", lang: "es", gender: "Male", tone: "Español · Warm, steady" },
+  { id: "em_santa", name: "Santa", accent: "Spain", lang: "es", gender: "Male", tone: "Español · Deep, jolly" },
+  { id: "ff_siwis", name: "Siwis", accent: "France", lang: "fr", gender: "Female", tone: "Français · Soft, precise" },
+  { id: "if_sara", name: "Sara", accent: "Italy", lang: "it", gender: "Female", tone: "Italiano · Bright, lively" },
+  { id: "im_nicola", name: "Nicola", accent: "Italy", lang: "it", gender: "Male", tone: "Italiano · Calm, rounded" },
+  { id: "pf_dora", name: "Dora (Brasil)", accent: "Brazil", lang: "pt", gender: "Female", tone: "Português · Clear, friendly" },
+  { id: "pm_alex", name: "Alex (Brasil)", accent: "Brazil", lang: "pt", gender: "Male", tone: "Português · Warm, relaxed" },
+  { id: "pm_santa", name: "Santa (Brasil)", accent: "Brazil", lang: "pt", gender: "Male", tone: "Português · Deep, jolly" },
 ] as const;
 
 export const DEFAULT_VOICE = "af_heart";

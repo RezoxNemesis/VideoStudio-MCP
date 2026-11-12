@@ -2,6 +2,7 @@
  * Voice commands on the open-prosody engine: a line said with a tone (mood, emphasis, a question's rise), Hindi typed
  * in Latin letters, English with Indian sounds; and a helper the Stage uses so characters can speak that way.
  */
+import { langOf } from "../voice/engine/world";
 import type { Studio } from "../app/studio";
 import type { Asset } from "../core/model";
 import * as ops from "../core/ops";
@@ -44,7 +45,7 @@ export function readTone(v: unknown): Tone | undefined {
     const o = v as Record<string, unknown>;
     const base = typeof o.like === "string" ? (TONES[o.like.toLowerCase()] ?? {}) : {};
     const t: Tone = { ...base };
-    for (const k of ["pitch", "range", "rate", "energy", "even", "shake", "pauses"] as const) if (typeof o[k] === "number") t[k] = o[k] as number;
+    for (const k of ["pitch", "range", "rate", "energy", "even", "shake", "pauses", "natural", "breath", "drift"] as const) if (typeof o[k] === "number") t[k] = o[k] as number;
     if (o.ending === "rise" || o.ending === "fall" || o.ending === "level") t.ending = o.ending;
     return t;
   }
@@ -52,11 +53,11 @@ export function readTone(v: unknown): Tone | undefined {
 }
 
 /** Say one line with the open voice and add it to the media pool (with its mouth movement for lip sync). */
-export async function sayToAsset(s: Studio, text: string, voice: string, tone?: Tone, emphasis?: string[]): Promise<{ asset: Asset; seconds: number; voice: string }> {
+export async function sayToAsset(s: Studio, text: string, voice: string, tone?: Tone, emphasis?: string[], lang?: string): Promise<{ asset: Asset; seconds: number; voice: string }> {
   s.setStatus("Speaking…");
   openVoice.onProgress = (d, what) => s.setStatus(`${what}… ${Math.round(d * 100)}%`);
   try {
-    const { pcm, voice: used } = await openVoice.say(text, voice, tone, emphasis);
+    const { pcm, voice: used } = await openVoice.say(text, voice, tone, emphasis, lang);
     if (!pcm.length) throw new ops.OpError("The voice returned no sound for this line.");
     let peak = 0;
     for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));
@@ -72,17 +73,17 @@ export async function sayToAsset(s: Studio, text: string, voice: string, tone?: 
 export function registerOpenVoiceCommands(): void {
   registerCommand("voice.tones", "The tones a line can be said in, with what each changes.", () => ({
     tones: TONES,
-    fields: { pitch: "semitones up/down", range: "how wide the melody swings (1 natural)", rate: "speed (1 natural)", energy: "-1 hushed … 1 forceful", ending: "rise | fall | level", even: "0…1 even syllables (Hindi / Indian English rhythm)", shake: "0…1 trembling", pauses: "longer pauses at commas and stops" },
+    fields: { pitch: "semitones up/down", range: "how wide the melody swings (1 natural)", rate: "speed (1 natural)", energy: "-1 hushed … 1 forceful", ending: "rise | fall | level", even: "0…1 even syllables (Hindi / Indian English rhythm)", shake: "0…1 trembling", pauses: "longer pauses at commas and stops", natural: "1 (default) natural reading: sentence by sentence, each a little different, the writing shapes the delivery; 0 exactly as the model says it", breath: "0…1 breaths before longer sentences (0 = none)", drift: "slow wandering of the pitch (1 natural, 0 none)" },
   }));
 
   registerCommand(
     "voice.say",
-    `{text, voice?="hf_alpha" (Hindi voices: hf_alpha, hf_beta, hm_omega, hm_psi; any other voice works too), tone?: ${Object.keys(TONES).join("|")} or {like?: <tone>, pitch?, range?, rate?, energy?, ending?: rise|fall|level, even?, shake?, pauses?}, emphasis?: ["word", …], toTimeline?=true, start?, volume?} Say one line with control over how it is said: mood, a question's rise, words to lean on. Reads Hindi (Devanagari), Hinglish (Hindi typed in English letters, mixed with English) and English; a Hindi voice gives English words Indian sounds. Returns {assetId, clipId, seconds, voice, readAs}.`,
+    `{text, voice?="hf_alpha" (Hindi voices: hf_alpha, hf_beta, hm_omega, hm_psi; any other voice works too), lang?: de|ru|es|fr|it|pt|… (voice.languages; empty = from the voice and the letters), tone?: ${Object.keys(TONES).join("|")} or {like?: <tone>, pitch?, range?, rate?, energy?, ending?: rise|fall|level, even?, shake?, pauses?}, emphasis?: ["word", …], toTimeline?=true, start?, volume?} Say one line with control over how it is said: mood, a question's rise, words to lean on. Reads Hindi (Devanagari), Hinglish (Hindi typed in English letters, mixed with English) and English; a Hindi voice gives English words Indian sounds. Returns {assetId, clipId, seconds, voice, readAs}.`,
     async (s, a) => {
       const text = a.str("text").trim();
       if (!text) throw new ops.OpError("There is no text to say.");
       const em = a.any("emphasis");
-      const { asset, seconds, voice } = await sayToAsset(s, text, a.str("voice", "hf_alpha"), readTone(a.any("tone")), Array.isArray(em) ? em.map(String) : undefined);
+      const { asset, seconds, voice } = await sayToAsset(s, text, a.str("voice", a.optStr("lang") ? (langOf(a.optStr("lang"))?.voice ?? "hf_alpha") : "hf_alpha"), readTone(a.any("tone")), Array.isArray(em) ? em.map(String) : undefined, a.optStr("lang"));
       let clipId: string | undefined;
       if (a.bool("toTimeline", true))
         clipId = s.mutate("place voice", (p) => {
@@ -90,7 +91,7 @@ export function registerOpenVoiceCommands(): void {
           if (a.optNum("volume") !== undefined) ops.patchClip(p, c.id, { volume: a.num("volume") });
           return c.id;
         });
-      return { assetId: asset.id, clipId, seconds: Math.round(seconds * 100) / 100, voice, readAs: hinglishShare(text) >= 0.12 ? transliterateHinglish(text) : undefined };
+      return { assetId: asset.id, clipId, seconds: Math.round(seconds * 100) / 100, voice, readAs: !langOf(a.optStr("lang")) && hinglishShare(text) >= 0.12 ? transliterateHinglish(text) : undefined };
     },
   );
 
