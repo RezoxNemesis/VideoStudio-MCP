@@ -82,9 +82,33 @@ function setupFilm(o) {
     const s = source(dir, file);
     if (s.rel === "vs.js") throw new Error("vs.js is written by VideoStudio (it points at the film kit): leave it as it is.");
     await fsp.mkdir(path.dirname(s.f), { recursive: true });
+    // the file as it was goes into its history first (the last 60 versions of each file are kept)
+    try {
+      const old = await fsp.readFile(s.f, "utf8");
+      if (old !== String(text)) {
+        const hd = historyDir(dir, s.rel);
+        await fsp.mkdir(hd, { recursive: true });
+        await fsp.writeFile(path.join(hd, `${Date.now()}.txt`), old);
+        const all = (await fsp.readdir(hd)).filter((x) => /^\d+\.txt$/.test(x)).sort();
+        for (const x of all.slice(0, Math.max(0, all.length - 60))) await fsp.rm(path.join(hd, x), { force: true });
+      }
+    } catch { /* a new file has no history */ }
     await fsp.writeFile(s.f, String(text));
     return { file: s.rel, bytes: Buffer.byteLength(String(text)) };
   });
+  const historyDir = (dir, rel) => path.join(film(dir), ".vs", "history", rel.replace(/[\\/]/g, "__"));
+  /** Earlier versions of a film file (newest first): [{ at (ms), bytes }]. */
+  h("film.history", async (dir, file) => {
+    const s = source(dir, file), hd = historyDir(dir, s.rel);
+    let all = [];
+    try { all = (await fsp.readdir(hd)).filter((x) => /^\d+\.txt$/.test(x)); } catch { return []; }
+    return Promise.all(all.sort().reverse().map(async (x) => ({ at: Number(x.slice(0, -4)), bytes: (await fsp.stat(path.join(hd, x))).size })));
+  });
+  h("film.historyRead", async (dir, file, at) => { const s = source(dir, file); return fsp.readFile(path.join(historyDir(dir, s.rel), `${Number(at)}.txt`), "utf8"); });
+  // the code assistant: the kit's names and notes, the catalogues; the film's console
+  let kitIdx = null;
+  h("film.kitIndex", async () => (kitIdx ??= await farm().ask("kitIndex", {})));
+  h("film.eval", (dir, expr) => farm().ask("evalExpr", { dir: film(dir), expr: String(expr).slice(0, 20000) }));
   // Nothing is ever deleted for good: a removed file goes to the film's .vs/trash.
   h("film.remove", async (dir, file) => {
     const s = source(dir, file), t = path.join(s.d, ".vs", "trash");

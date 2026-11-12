@@ -18,6 +18,9 @@ import { code } from "../film/session";
 import { film } from "../film/prepare";
 import type { Asset2D, FilmShot, LibraryPerson } from "../film/types";
 import { snippet2d } from "../film/session";
+import { assistant, diffLines, outline, type AssistContext } from "../film/codeassist";
+import { sensei } from "../sensei/store";
+import type { KitIndex } from "../film/types";
 import { b, h, ic, selectEl } from "./kit";
 
 const ink = EditorView.theme(
@@ -76,6 +79,18 @@ export class CodePage {
   private groups: { id: string; name: string; count: number }[] = [];
   private places: string[] | null = null;
   private assets: Asset2D[] | null = null;
+  /** the code assistant's knowledge: the kit's names and catalogues; the film's lines, cues and actors */
+  private kit: KitIndex | null = null;
+  private scriptLines: Record<string, string> = {};
+  private cueNames: string[] = [];
+  private outlineSel = h("select", { class: "cs-outline", title: "Go to a sequence, a shot or a function of this file" }) as HTMLSelectElement;
+  private consoleEl = h("div", { class: "cs-console" });
+  private consoleOut = h("div", { class: "cs-conout mono" });
+  private consoleIn = h("input", { class: "cs-conin mono", placeholder: "Console: an expression with the film kit — T('s01').t('M1'), models('tower'), shot('s01_a').dur …", spellcheck: "false" }) as HTMLInputElement;
+  private consoleHist: string[] = [];
+  private consoleAt = -1;
+  private findQ = "";
+  private findHits: { file: string; line: number; text: string }[] | null = null;
   private assetCat = "backgrounds";
   private assetQ = "";
   private thumbs = new IntersectionObserver((es) => {
@@ -120,7 +135,9 @@ export class CodePage {
           this.lang.of(javascript()),
           ink,
           inkSyntax,
+          ...assistant(this.assist()),
           EditorView.updateListener.of((u) => {
+            if (u.docChanged) this.drawOutline();
             if (!u.docChanged || this.loading) return;
             this.markDirty();
             window.clearTimeout(this.saveTimer);
@@ -158,7 +175,26 @@ export class CodePage {
       this.tabsEl.append(el);
     }
     const side = h("div", { class: "cs-side" }, this.tabsEl, this.sideEl);
-    const editor = h("div", { class: "cs-mid" }, h("div", { class: "cs-edhead" }, this.fileEl, this.dirtyEl, h("span", { class: "sp" }), h("span", { class: "cs-hint" }, "Ctrl+S save · Ctrl+Enter draw changed")), this.edEl);
+    this.outlineSel.addEventListener("change", () => {
+      const ln = Number(this.outlineSel.value);
+      if (ln > 0) this.goLine(ln);
+      this.outlineSel.value = "";
+    });
+    const insertSel = h("select", { class: "cs-outline", title: "Put a ready piece of film code at the cursor" }) as HTMLSelectElement;
+    insertSel.append(h("option", { value: "" }, "Insert…"), ...SNIPPETS.map(([label], i) => h("option", { value: String(i) }, label)));
+    insertSel.addEventListener("change", () => {
+      const sn = SNIPPETS[Number(insertSel.value)];
+      if (sn) this.insert(sn[1]);
+      insertSel.value = "";
+    });
+    this.consoleIn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") void this.runConsole();
+      else if (e.key === "ArrowUp" && this.consoleHist.length) { this.consoleAt = Math.min(this.consoleHist.length - 1, this.consoleAt + 1); this.consoleIn.value = this.consoleHist[this.consoleHist.length - 1 - this.consoleAt] ?? ""; e.preventDefault(); }
+      else if (e.key === "ArrowDown") { this.consoleAt = Math.max(-1, this.consoleAt - 1); this.consoleIn.value = this.consoleAt < 0 ? "" : this.consoleHist[this.consoleHist.length - 1 - this.consoleAt] ?? ""; e.preventDefault(); }
+    });
+    this.consoleEl.append(this.consoleOut, this.consoleIn);
+    const conBtn = b(null, "code", () => { this.consoleEl.classList.toggle("on"); if (this.consoleEl.classList.contains("on")) this.consoleIn.focus(); }, "sm ghost", "Console: run an expression with the film kit and this film");
+    const editor = h("div", { class: "cs-mid" }, h("div", { class: "cs-edhead" }, this.fileEl, this.dirtyEl, h("span", { class: "sp" }), this.outlineSel, insertSel, b(null, "undo", () => void this.history(), "sm ghost", "Earlier versions of this file: compare and bring one back"), conBtn, h("span", { class: "cs-hint" }, "Ctrl+S save · Ctrl+Enter draw · Ctrl+Space complete")), this.edEl, this.consoleEl);
     this.stageEl.append(this.imgEl, this.vidEl);
     this.scrub.addEventListener("input", () => {
       const sh = this.curShot();
@@ -190,6 +226,8 @@ export class CodePage {
       if (e === "film") {
         this.file = null;
         this.shot = null;
+        this.findHits = null;
+        void this.loadFilmWords();
         this.drawAll();
         void this.openFile(this.firstFile());
       } else if (e === "files") {
@@ -220,6 +258,9 @@ export class CodePage {
       else await code.refresh();
       this.drawAll();
       if (!this.file) await this.openFile(this.firstFile());
+      if (!this.kit) this.kit = (await film().kitIndex?.().catch(() => null)) ?? null;
+      void this.loadFilmWords();
+      void sensei.load?.().catch(() => undefined);
     })();
   }
 
@@ -291,7 +332,35 @@ export class CodePage {
       return el;
     });
     const add = b("New file", "plus", () => void this.newFile(), "sm ghost", "Add a sequence or a helper file");
-    this.sideEl.replaceChildren(...(rows.length ? rows : [h("div", { class: "cs-note" }, code.dir ? (code.error ?? "This film has no files yet.") : "Open a film, or start a new one from a template.")]), h("div", { class: "cs-sidefoot" }, add, b("Guide", "info", () => void this.guide(), "sm ghost", "How to write a film as code")));
+    // find in every file of the film
+    const q = h("input", { class: "cs-sel", type: "search", placeholder: "Find in all files…", value: this.findQ }) as HTMLInputElement;
+    q.addEventListener("keydown", (e) => { if (e.key === "Enter") void this.findAll(q.value); else if (e.key === "Escape") { this.findQ = ""; this.findHits = null; this.drawFiles(); } });
+    let body: HTMLElement[] = rows.length ? rows : [h("div", { class: "cs-note" }, code.dir ? (code.error ?? "This film has no files yet.") : "Open a film, or start a new one from a template.")];
+    if (this.findHits) {
+      body = this.findHits.length
+        ? [h("div", { class: "cs-note" }, `${this.findHits.length} place${this.findHits.length === 1 ? "" : "s"} · Esc to go back`), ...this.findHits.slice(0, 300).map((x) => {
+            const el = h("button", { class: "cs-row cs-hit", type: "button", title: `${x.file}:${x.line}` }, h("span", { class: "nm" }, `${x.file}:${x.line}`), h("span", { class: "tx mono" }, x.text.trim().slice(0, 90)));
+            el.addEventListener("click", () => void this.openFile(x.file).then(() => this.goLine(x.line)));
+            return el;
+          })]
+        : [h("div", { class: "cs-note" }, `"${this.findQ}" is in no file of this film.`)];
+    }
+    this.sideEl.replaceChildren(q, ...body, h("div", { class: "cs-sidefoot" }, add, b("Guide", "info", () => void this.guide(), "sm ghost", "How to write a film as code")));
+  }
+  private async findAll(query: string): Promise<void> {
+    this.findQ = query;
+    if (!query.trim() || !code.dir) {
+      this.findHits = null;
+      return this.drawFiles();
+    }
+    const dir = code.dir, files = (code.info?.files ?? []).filter((f) => f.file !== "vs.js" && /\.(js|mjs|json)$/.test(f.file)), hits: { file: string; line: number; text: string }[] = [];
+    const re = (() => { try { return query.startsWith("/") && query.lastIndexOf("/") > 0 ? new RegExp(query.slice(1, query.lastIndexOf("/")), query.slice(query.lastIndexOf("/") + 1) || "i") : null; } catch { return null; } })(), low = query.toLowerCase();
+    for (const f of files) {
+      const text = f.file === this.file ? this.view.state.doc.toString() : await film().read(dir, f.file).catch(() => "");
+      text.split("\n").forEach((l, i) => { if (re ? re.test(l) : l.toLowerCase().includes(low)) hits.push({ file: f.file, line: i + 1, text: l }); });
+    }
+    this.findHits = hits;
+    this.drawFiles();
   }
   private async drawPeople(): Promise<void> {
     if (!this.people) {
@@ -415,7 +484,8 @@ export class CodePage {
       for (const sh of shots) {
         const v = st?.shots.find((x) => x.id === sh.id)?.variants ?? [];
         const state = sh.off ? "off" : v.some((x) => x.state === "error") ? "error" : v.length && v.every((x) => x.state === "ready") ? "ready" : v.some((x) => x.state === "changed") ? "changed" : "new";
-        const chip = h("button", { class: `cs-chip ${state} ${sh.id === this.shot ? "on" : ""}`, type: "button", style: `flex:${Math.max(0.6, sh.dur)} 1 0`, title: `${sh.id} · ${sh.dur.toFixed(2)}s · ${state === "ready" ? "drawn" : state === "changed" ? "changed — will be drawn again" : state === "new" ? "not drawn yet" : state}${sh.note ? `\n${sh.note}` : ""}\nRight-click: switch off / on` }, sh.id.slice(seq.id.length + 1));
+        const ms = v.find((x) => x.ms)?.ms, painted = v.some((x) => (x as { painted?: boolean }).painted), frames = Math.max(1, Math.round(sh.dur * (code.info?.config.fps ?? 30)));
+        const chip = h("button", { class: `cs-chip ${state} ${sh.id === this.shot ? "on" : ""} ${painted ? "painted" : ""}`, type: "button", style: `flex:${Math.max(0.6, sh.dur)} 1 0`, title: `${sh.id} · ${sh.dur.toFixed(2)}s · ${state === "ready" ? "drawn" : state === "changed" ? "changed — will be drawn again" : state === "new" ? "not drawn yet" : state}${ms ? ` · drawn in ${(ms / 1000).toFixed(1)} s (${Math.round(ms / frames)} ms a frame)` : ""}${painted ? " · has painted fixes" : ""}${sh.note ? `\n${sh.note}` : ""}\nRight-click: switch off / on` }, sh.id.slice(seq.id.length + 1));
         chip.addEventListener("click", () => this.selectShot(sh.id));
         chip.addEventListener("contextmenu", (e) => {
           e.preventDefault();
@@ -470,6 +540,92 @@ export class CodePage {
     this.loading = false;
     this.fileEl.textContent = file ?? "No file";
     this.markDirty();
+    this.drawOutline();
+  }
+  /** What the assistant knows about this film, as the editor asks for it. */
+  private assist(): AssistContext {
+    return {
+      index: () => this.kit,
+      file: () => this.file,
+      lines: () => this.scriptLines,
+      actors: () => [...new Set((code.info?.shots ?? []).flatMap((x) => (x as FilmShot & { actors?: string[] }).actors ?? []))],
+      cues: () => this.cueNames,
+      error: () => code.error,
+      findings: () => sensei.report?.issues ?? [],
+      seq: () => (this.file && /^seq\/([\w-]+)\.js$/.test(this.file) ? this.file.slice(4, -3) : null),
+      act: (kind, i) => {
+        if (kind === "paint" && i.shot) document.dispatchEvent(new CustomEvent("vsd:openScene", { detail: `fix:${i.shot}#${i.id}` }));
+        else document.dispatchEvent(new CustomEvent("vsd:go", { detail: "sensei" }));
+      },
+    };
+  }
+  /** The film's own words for completion: its lines (script.json) and music cues (cues.json). */
+  private async loadFilmWords(): Promise<void> {
+    if (!code.dir) return;
+    try {
+      const sc = JSON.parse(await film().read(code.dir, "script.json")) as { lines?: { id: string; who?: string }[] };
+      this.scriptLines = Object.fromEntries((sc.lines ?? []).map((l) => [l.id, l.who ?? ""]));
+    } catch {
+      this.scriptLines = {};
+    }
+    try {
+      this.cueNames = (JSON.parse(await film().read(code.dir, "cues.json")) as { name: string }[]).map((c) => c.name).filter(Boolean);
+    } catch {
+      this.cueNames = [];
+    }
+  }
+  private drawOutline(): void {
+    const items = outline(this.view.state.doc.toString());
+    this.outlineSel.replaceChildren(h("option", { value: "" }, items.length ? `Go to… (${items.filter((x) => x.kind === "shot").length} shots)` : "Go to…"), ...items.map((x) => h("option", { value: String(x.line) }, x.label)));
+    this.outlineSel.disabled = !items.length;
+  }
+  private goLine(line: number): void {
+    const doc = this.view.state.doc, ln = doc.line(Math.max(1, Math.min(doc.lines, line)));
+    this.view.dispatch({ selection: { anchor: ln.from }, effects: EditorView.scrollIntoView(ln.from, { y: "center" }) });
+    this.view.focus();
+  }
+  /** Earlier versions of the open file: a list, a comparison with now, and bringing one back. */
+  private async history(): Promise<void> {
+    const f = film();
+    if (!code.dir || !this.file || !f.history || !f.historyRead) return;
+    await this.save();
+    const dir = code.dir, file = this.file, list = await f.history(dir, file);
+    if (!list.length) return void toast("No earlier versions of this file yet: one is kept every time it is saved.", "info", 3200);
+    const now = this.view.state.doc.toString(), pane = h("pre", { class: "cs-diff mono" }), items = h("div", { class: "cs-hlist" });
+    let pick: { at: number; text: string } | null = null;
+    const show = async (at: number) => {
+      const text = await f.historyRead!(dir, file, at);
+      pick = { at, text };
+      const d = diffLines(text, now), lines = d.filter((x) => x.op !== " ").length;
+      pane.replaceChildren(h("div", { class: "cs-dhead" }, `${new Date(at).toLocaleString()} → now · ${lines} line${lines === 1 ? "" : "s"} differ`), ...d.map((x) => h("div", { class: `dl ${x.op === "+" ? "add" : x.op === "-" ? "del" : ""}` }, `${x.op} ${x.text}`)));
+    };
+    items.append(...list.slice(0, 60).map((v) => {
+      const el = h("button", { class: "cs-hrow", type: "button" }, new Date(v.at).toLocaleString(), h("small", {}, ` ${(v.bytes / 1024).toFixed(1)} KB`));
+      el.addEventListener("click", () => { items.querySelectorAll(".on").forEach((x) => x.classList.remove("on")); el.classList.add("on"); void show(v.at); });
+      return el;
+    }));
+    const { modal } = await import("./kit");
+    const m = modal(`History · ${file}`, h("div", { class: "cs-history" }, items, pane), [
+      b("Bring this version back", "undo", () => { if (!pick) return; this.view.dispatch({ changes: { from: 0, to: this.view.state.doc.length, insert: pick.text } }); void this.save(); m.close(); toast("The earlier version is back (the one you had is in the history too)."); }, "pri"),
+    ]);
+    (items.firstElementChild as HTMLElement | null)?.click();
+  }
+  /** Run a line in the film's console. */
+  private async runConsole(): Promise<void> {
+    const f = film(), expr = this.consoleIn.value.trim();
+    if (!expr || !code.dir || !f.eval) return;
+    this.consoleHist.push(expr);
+    this.consoleAt = -1;
+    this.consoleIn.value = "";
+    const row = h("div", { class: "in" }, `› ${expr}`);
+    this.consoleOut.append(row);
+    try {
+      const r = await f.eval(code.dir, expr);
+      this.consoleOut.append(h("div", { class: "out" }, r.value), h("div", { class: "dim" }, `${r.type} · ${r.ms} ms`));
+    } catch (e) {
+      this.consoleOut.append(h("div", { class: "err" }, (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, "")));
+    }
+    this.consoleOut.scrollTop = this.consoleOut.scrollHeight;
   }
   /** A file changed on disk (Claude wrote it): show the new text unless the person is typing in it. */
   private async syncFile(): Promise<void> {
@@ -708,3 +864,36 @@ export class CodePage {
     name.focus();
   }
 }
+
+/** Ready pieces of film code (Insert…). */
+const SNIPPETS: [string, string][] = [
+  ["A shot", `{ id: 'x', t0: 0, t1: 3, note: 'what the shot shows',
+  cam: (t, ctx) => breathe({ pos: [0, 1.5, 4], target: at(ctx, 'ACTOR', 'head'), fov: 30 }, t, 0.004) },`],
+  ["A camera move", `cam: (t) => move({ pos: [-3, 1.6, 5], target: [0, 1.4, 0], fov: 38 }, { pos: [2, 1.5, 3], target: [0, 1.5, 0], fov: 30 }, t, T0, T1),`],
+  ["Over the shoulder", `cam: (t, ctx) => { const a = at(ctx, 'A', 'head'), b = at(ctx, 'B', 'head'); return breathe({ pos: V.add(b, V.add(V.mul(V.norm(V.sub(b, a)), 0.9), [0.35, 0.05, 0])), target: a, fov: 28 }, t, 0.004); },`],
+  ["A walk (Stage)", `{ op: 'stage.do', actor: 'ACTOR', actions: [{ t: 0, idle: true }, { t: 1, go: [x, z], gait: 'walk', speed: 1.3, face: 90 }] },`],
+  ["Look at someone", `{ op: 'stage.overlay', actor: 'ACTOR', add: [{ t0: 0, t1: 6, fade: 0.4, look: 'OTHER', head: 0.8 }] },`],
+  ["Faces: emotions", `emote: [[0, 'calm'], [2, 'happy', 0.6], [T.t('LINE'), 'determined']],`],
+  ["A line in the script", `['say', 'LINE', 0.3],`],
+  ["Slow motion moment", `warp: ramps(3, [{ at: 1.2, slow: 0.2, len: 0.6 }]),`],
+  ["On twos", `hold: 2,`],
+  ["Title card", `top: (g, cam, sc, t, ctx, u) => mainTitle(g, cam.W, cam.H, u, { word: 'TITLE', sub: 'A FILM BY VIKAS' }),`],
+  ["Place caption", `top: (g, cam, sc, t, ctx, u) => caption(g, cam.W, cam.H, u, 'The village', { sub: 'dusk' }),`],
+  ["Sound: ambience + music + a hit", `sound: (T) => [{ t0: 0, t1: T.dur, amb: 'wind', gain: 0.35 }, { t0: 0.5, t1: T.dur, music: 'theme', gain: 0.55, fadeIn: 1.5, fadeOut: 2 }, { t: 2.1, sfx: 'impact', gain: 0.7 }],`],
+  ["2D library: multiplane set", `set: () => parallax('bg_village_dusk'),`],
+  ["2D library: cut-out actor", `dyn: (t) => [cutoutActor('char_mira', { ...standOn('bg_village_dusk', 0.45, 0.9, 0.6), t, pose: (u) => walkPose(u), who: 'Mira', cues: T.cues })],`],
+  ["2D library: effect pop", `top: layered(pop('fx_impact_comic_white', 2.0, { x: 0.6, y: 0.4, h: 0.4, dur: 0.6 })),`],
+  ["Rain / snow / petals", `fx: (ctx) => [rain({ x: [-8, 8], z: [-6, 10], y: [0, 7] })],`],
+  ["A new sequence file", `import { makeSeq, at, move, breathe, V, park, person, presetOf } from '../vs.js';
+
+export const S0X = makeSeq({
+  id: 's0x',
+  script: [['wait', 2], ['mark', 'end']],
+  set: () => park({ time: 'day' }),
+  motion: (T) => ({ actors: [{ id: 'a', preset: presetOf('townsman_07'), kit: 'none', at: [0, 0], yaw: 0 }], steps: [] }),
+  actors: (T) => [{ id: 'a', design: person('townsman_07') }],
+  shots: (T) => [{ id: 'a', t0: 0, t1: T.m('end'), cam: (t, ctx) => breathe({ pos: [0, 1.5, 4], target: at(ctx, 'a', 'head'), fov: 32 }, t, 0.004) }],
+  sound: (T) => [{ t0: 0, t1: T.dur, amb: 'birds', gain: 0.35 }],
+});
+`],
+];

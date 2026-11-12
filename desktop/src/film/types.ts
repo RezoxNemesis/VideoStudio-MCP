@@ -154,6 +154,13 @@ export interface FilmApi {
   remove(dir: string, file: string): Promise<{ file: string; keptAt: string }>;
   config(dir: string, patch?: Partial<FilmConfig>): Promise<FilmConfig>;
   frame(dir: string, id: string, t?: number, lang?: string, scale?: number, quality?: number, paint?: boolean): Promise<{ jpeg: string; width: number; height: number; t: number; shot: string }>;
+  /** earlier versions of a film file, newest first */
+  history?(dir: string, file: string): Promise<{ at: number; bytes: number }[]>;
+  historyRead?(dir: string, file: string, at: number): Promise<string>;
+  /** what the film kit offers, for completion, notes and checks */
+  kitIndex?(): Promise<KitIndex>;
+  /** the film's console: an expression run with the kit and the open film */
+  eval?(dir: string, expr: string): Promise<{ value: string; ms: number; type: string }>;
   /** fixes painted over shots (Animate → Fix a film shot) */
   paintGet?(dir: string, id: string): Promise<{ data: PaintData; anchors: string[] }>;
   paintSave?(dir: string, id: string, data: PaintData): Promise<{ data: PaintData }>;
@@ -234,4 +241,18 @@ export interface PaintTrack {
   width: number;
   height: number;
   actors: Record<string, { shown: number[]; parts: Record<string, (0 | [number, number, number, number, number])[]> }>;
+}
+
+/** What the film kit offers: every name with its parameters and notes, and the catalogues ids come from. */
+export interface KitIndex {
+  exports: { name: string; kind: "fn" | "const" | "class"; sig: string; doc: string; file: string }[];
+  people: string[];
+  cast: string[];
+  places: string[];
+  props: string[];
+  sounds: { sfx: string[]; amb: string[] } | Record<string, string[]>;
+  looks: string[];
+  emotions: string[];
+  library: { id: string; cat: string; name: string }[];
+  parts: string[];
 }

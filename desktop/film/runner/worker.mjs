@@ -106,6 +106,46 @@ const methods = {
     return { shots: Object.keys(idx).length };
   },
 
+  /* ---- the code assistant: what the kit offers (names, signatures, notes) and the catalogues ids come from ----- */
+  async kitIndex() {
+    const kit = await import('../kit/index.js'), names = new Set(Object.keys(kit)), out = [];
+    // every exported name with the comment above it and its parameters, read from the kit's own source
+    const files = ['kit', 'engine'].flatMap((d) => fs.readdirSync(path.join(HERE, '..', d)).filter((f) => f.endsWith('.js')).map((f) => path.join(HERE, '..', d, f)));
+    for (const f of files) {
+      const src = fs.readFileSync(f, 'utf8'), re = /(\/\*\*((?:(?!\*\/)[\s\S])*)\*\/\s*)?export\s+(async\s+)?(function\*?|const|class|let)\s+([A-Za-z_$][\w$]*)\s*(=\s*(?:async\s*)?(\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>|\(([^)]*)\))?/g;
+      let m;
+      while ((m = re.exec(src))) {
+        const name = m[5]; if (!names.has(name) || out.some((x) => x.name === name)) continue;
+        const doc = (m[2] ?? '').split('\n').map((l) => l.replace(/^\s*\*\s?/, '').trim()).join(' ').replace(/\s+/g, ' ').trim();
+        const params = m[8] ?? (m[7] ? m[7].replace(/^\(|\)$/g, '') : null);
+        out.push({ name, kind: m[4] === 'class' ? 'class' : m[4].startsWith('function') || params != null ? 'fn' : 'const', sig: params != null ? `${name}(${params.replace(/\s+/g, ' ').trim()})` : name, doc: doc.slice(0, 900), file: path.relative(path.join(HERE, '..'), f) });
+      }
+    }
+    for (const n of names) if (!out.some((x) => x.name === n)) out.push({ name: n, kind: typeof kit[n] === 'function' ? 'fn' : 'const', sig: typeof kit[n] === 'function' ? `${n}(${'…'.repeat(kit[n].length ? 1 : 0)})` : n, doc: '', file: '' });
+    let lib = []; try { lib = kit.library2d().assets.map((a) => ({ id: a.id, cat: a.cat, name: a.name })); } catch { /* the 2D library is not built here */ }
+    const { LOOKS } = await import('../engine/look.js'), { EMO } = await import('../kit/acting.js');
+    return {
+      exports: out.sort((a, b) => a.name.localeCompare(b.name)),
+      people: PEOPLE_LIST.map((p) => p.id), cast: Object.keys(KIT_CAST), places: [...Object.keys(PLACES), 'town', 'village', 'courtyard', 'hall', 'terrace', 'bridge', 'steps'], props: Object.keys(PROPS),
+      sounds: kitSounds(), looks: Object.keys(LOOKS), emotions: Object.keys(EMO), library: lib, parts: ANCHOR_NAMES,
+    };
+  },
+  /**
+   * The film's console: an expression (or a few statements) run with the film kit and the open film at hand —
+   * P (the film), seq(id) (a sequence: its clock T, cues, shots), shot(id) (a runner shot). Same reach as the film's code.
+   */
+  async evalExpr({ dir, expr }) {
+    const kit = await import('../kit/index.js'), Pr = await project(dir);
+    const seq = (id) => { const s = Pr.FILM.find((q) => q.id === id); if (!s) throw new Error(`No sequence ${id}: ${Pr.FILM.map((q) => q.id).join(' ')}`); return s; };
+    const env = { ...kit, P: Pr, seq, shot: (id) => shotOf(Pr, id), T: (id) => seq(id).T };
+    const keys = Object.keys(env).filter((k) => /^[A-Za-z_$][\w$]*$/.test(k)), vals = keys.map((k) => env[k]);
+    let fn; const src = String(expr ?? '').trim();
+    try { fn = new Function(...keys, `"use strict"; return (${src});`); } catch { fn = new Function(...keys, `"use strict"; ${src}`); }
+    const t0 = Date.now(); let v = fn(...vals); if (v && typeof v.then === 'function') v = await v;
+    const seen = new WeakSet(), show = JSON.stringify(v, (k, x) => { if (typeof x === 'function') return `ƒ ${x.name || 'anonymous'}(${x.length})`; if (x && typeof x === 'object') { if (seen.has(x)) return '[…]'; seen.add(x); if (ArrayBuffer.isView(x)) return `<${x.constructor.name} ${x.length}>`; } return x; }, 1);
+    return { value: show === undefined ? String(v) : show.length > 20000 ? show.slice(0, 20000) + '\n…' : show, ms: Date.now() - t0, type: Array.isArray(v) ? 'array' : typeof v };
+  },
+
   /* ---- fixes painted over shots (Animate → Fix a film shot) ---------------------------------------------------- */
   /** A shot's fixes and the parts a fix can hold on to. */
   async paintGet({ dir, id }) { const Pr = await project(dir); shotOf(Pr, id); return { data: readPaint(dir, id) ?? { v: 1, on: true, fixes: [] }, anchors: ANCHOR_NAMES }; },

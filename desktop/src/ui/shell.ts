@@ -252,6 +252,7 @@ export class Shell {
     void vsd?.workClean();
     setTimeout(() => void this.checkUpdate(false), 15_000);
     document.addEventListener("vsd:openScene", (e) => this.go("animate", (e as CustomEvent<string>).detail));
+    document.addEventListener("vsd:go", (e) => { const n = (e as CustomEvent<string>).detail; if (WS.some(([id]) => id === n)) this.go(n as WsName); });
     (window as unknown as { vsdFullscreen: () => void }).vsdFullscreen = () => void vsd?.win.fullscreen();
     this.keys();
     this.dnd(drop);

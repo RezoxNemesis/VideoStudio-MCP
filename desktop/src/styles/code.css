@@ -79,3 +79,28 @@
 /* the 2D library tab: square pictures that fit whole */
 .cs-assets .cs-person img, .cs-assets .cs-person .ph { aspect-ratio: 1; object-fit: contain; background: #20232b; }
 .cs-assets .cs-person .nm { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-family: inherit; }
+/* the code assistant: go to, insert, history, console, find in files */
+.cs-outline { max-width: 190px; background: #151922; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; font-size: 11.5px; padding: 2px 4px; }
+.cs-console { display: none; flex-direction: column; border-top: 1px solid var(--line); background: #0d1016; max-height: 38%; min-height: 120px; }
+.cs-console.on { display: flex; }
+.cs-conout { flex: 1; overflow: auto; padding: 6px 10px; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.cs-conout .in { color: #8fe3cf; }
+.cs-conout .out { color: var(--ink); }
+.cs-conout .err { color: #ff7a8a; }
+.cs-conout .dim { color: var(--muted); font-size: 10.5px; margin-bottom: 4px; }
+.cs-conin { border: 0; border-top: 1px solid var(--line); background: #11151d; color: var(--ink); padding: 7px 10px; font-size: 12px; outline: none; }
+.cs-history { display: grid; grid-template-columns: 210px 1fr; gap: 10px; width: min(1100px, 86vw); height: min(640px, 70vh); }
+.cs-hlist { overflow: auto; display: flex; flex-direction: column; gap: 3px; }
+.cs-hrow { text-align: left; padding: 5px 7px; border-radius: 6px; border: 1px solid var(--line); background: #151922; color: var(--ink); cursor: pointer; font-size: 11.5px; }
+.cs-hrow.on { border-color: var(--neon); }
+.cs-hrow small { color: var(--muted); }
+.cs-diff { overflow: auto; margin: 0; padding: 8px; background: #0d1016; border-radius: 8px; font-size: 11.5px; line-height: 1.4; }
+.cs-diff .cs-dhead { color: var(--muted); margin-bottom: 6px; }
+.cs-diff .dl { white-space: pre; }
+.cs-diff .dl.add { background: rgba(62, 230, 140, 0.13); color: #a6f3c6; }
+.cs-diff .dl.del { background: rgba(255, 90, 110, 0.13); color: #ffb0ba; }
+.cs-hit { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+.cs-hit .tx { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.cs-chip.painted { box-shadow: inset 0 -2px 0 #ffd23f; }
+.cs-edhead .cs-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 1700px) { .cs-edhead .cs-hint { display: none; } }
