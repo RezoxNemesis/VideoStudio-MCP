@@ -13,6 +13,14 @@ import type { BuildOptions, BuildResult, FilmOpen, FilmProgress, FilmStatus } fr
 export type CodeEvent = "film" | "files" | "status" | "busy" | "frame" | "library";
 const KEY = "vs.code.film";
 const dataUrl = (b64: string) => `data:image/jpeg;base64,${b64}`;
+/** The line of film code that puts a 2D library asset on screen. */
+export function snippet2d(x: { id: string; cat: string; layers?: unknown; rig?: unknown }): string {
+  if (x.cat === "backgrounds") return `set: () => parallax('${x.id}'),  // then sc.stand(x, y, h) gives where a cut-out character stands on its ground`;
+  if (x.cat === "characters") return `cutoutActor('${x.id}', { ...sc.stand(0.5, 0.88, 0.6), pose: (t) => walkPose(t), who: 'NAME', cues })`;
+  if (x.cat === "fx") return `pop('${x.id}', 1.0, { x: 0.5, y: 0.45, h: 0.35, dur: 0.6 })  // in over: or top:`;
+  if (x.cat === "textures") return `sticker('${x.id}', { x: 0.5, y: 0.5, w: 1.0, alpha: 0.25, blend: 'multiply' })`;
+  return `sticker('${x.id}', { x: 0.5, y: 0.6, h: 0.3 })  // or { at: [x, y, z], size: metres } to stand in the world`;
+}
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 export interface Busy {
@@ -396,6 +404,19 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
     return { groups: r.groups, count: people.length, people: (a.optStr("group") || q.length ? people : people.filter((_p, i) => i % 8 === 0)).slice(0, 120).map((p) => ({ id: p.id, group: p.group, body: p.preset, about: p.about })), named: r.cast, note: a.optStr("group") || q.length ? undefined : "A sample of every group; give group or q for all of one kind." };
   });
   registerCommand("code.person", "{id, size?=360} A picture of a library person.", async (_s, a) => ({ id: a.str("id"), jpeg: dataUrl((await film().personThumb(a.str("id"), a.num("size", 360))).jpeg) }));
+  registerCommand("library.list", "{cat? (backgrounds | characters | fx | props | hands | faces | ui | textures | pixel | stick), q? (words), limit?=80} The 2D library: 587 pictures drawn by the app — layered backgrounds for the multiplane camera, cut-out characters with rigs, effects, props, faces, hands, balloons and titles, textures, pixel sprites, stick figures. Each comes with the code that puts it in a film.", async (_s, a) => {
+    const lib = film().library2d; if (!lib) throw new Error("The 2D library needs the desktop app.");
+    const r = await lib(), cat = a.optStr("cat"), q = (a.optStr("q") ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const list = r.assets.filter((x) => (!cat || x.cat === cat) && q.every((w) => `${x.id} ${x.name} ${(x.tags ?? []).join(" ")}`.toLowerCase().includes(w)));
+    return { count: list.length, cats: r.cats, assets: list.slice(0, a.num("limit", 80)).map((x) => ({ id: x.id, name: x.name, cat: x.cat, sub: x.sub, size: [x.w, x.h], code: snippet2d(x) })) };
+  });
+  registerCommand("library.get", "{id, picture?=false} One 2D library asset: its size, its layers (backgrounds) or parts and pivots (cut-out characters), the code that uses it, and a picture when asked.", async (_s, a) => {
+    const f = film(); if (!f.asset2d) throw new Error("The 2D library needs the desktop app.");
+    const x = await f.asset2d(a.str("id"));
+    const out: Record<string, unknown> = { id: x.id, name: x.name, cat: x.cat, sub: x.sub, tags: x.tags, size: [x.w, x.h], code: snippet2d(x), layers: x.layers, parts: x.parts ? Object.keys(x.parts) : undefined, rig: x.rig };
+    if (a.bool("picture", false) && f.asset2dThumb) out.png = `data:image/png;base64,${(await f.asset2dThumb(x.id)).png}`;
+    return out;
+  });
   registerCommand("code.sets", "The ready-made places a sequence can play in (set: () => town({ time: 'dusk' }) …) — see code.help for their options.", async () => film().sets());
   void s;
   void toast;

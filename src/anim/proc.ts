@@ -10,6 +10,7 @@
  *   cutout     paper-cut collage photo: torn edge, white border, shadow, stop-motion jitter
  *   label      torn-paper label with text
  *   paper      paper / newspaper / kraft background texture
+ *   picture    a picture as it is (a library asset, a painted layer of a background): placed, sized, turned, entering
  */
 import type { AnimLayer, AnimScene } from "../core/model";
 import { fontStack } from "../render/fonts";
@@ -26,7 +27,7 @@ export interface CaptionWord {
 }
 
 export interface ProcSpec {
-  type: "captions" | "kinetic" | "mograph" | "fx" | "overlay" | "cutout" | "label" | "paper" | "motion";
+  type: "captions" | "kinetic" | "mograph" | "fx" | "overlay" | "cutout" | "label" | "paper" | "motion" | "picture";
   /** "motion": a full motion-design sequence (see motion.ts). */
   motion?: import("./motion").MotionSpec;
   /** Sub-type: caption style, kinetic style, mograph/fx/overlay kind, paper tone. */
@@ -55,7 +56,7 @@ export interface ProcSpec {
   boil?: number;
 }
 
-export const PROC_TYPES = ["captions", "kinetic", "mograph", "fx", "overlay", "cutout", "label", "paper"] as const;
+export const PROC_TYPES = ["captions", "kinetic", "mograph", "fx", "overlay", "cutout", "label", "paper", "picture"] as const;
 export const CAPTION_STYLES = ["pop", "karaoke", "bold", "serif", "minimal", "torn"] as const;
 export const KINETIC_STYLES = ["stretch", "stack", "warp", "split", "typewriter", "slide"] as const;
 export const MOGRAPH_TYPES = ["ball", "morph", "halftone", "cube", "counter", "chart", "burst", "toggle"] as const;
@@ -180,6 +181,9 @@ export function drawProc(c: Ctx, l: AnimLayer, s: AnimScene, f: number, images?:
         break;
       case "paper":
         paper(c, p, s);
+        break;
+      case "picture":
+        picture(c, p, s, t, images);
         break;
       case "motion":
         if (p.motion) drawMotion(c, p.motion, s.width, s.height, t, images);
@@ -1795,6 +1799,18 @@ function cutout(c: Ctx, p: ProcSpec, s: AnimScene, t: number, f: number, images?
     c.fillRect(-w / 2, -h / 2, w, h);
   }
   void f;
+}
+
+/** A picture placed as it is: centre x, y and width w as shares of the scene, turned by rot degrees; it can pop, slide or drop in. */
+function picture(c: Ctx, p: ProcSpec, s: AnimScene, t: number, images?: ImageLookup) {
+  const img = p.assetId && images ? images(p.assetId) : null;
+  if (!img) return;
+  const W = s.width, H = s.height, iw = (img as { width: number }).width || 1, ih = (img as { height: number }).height || 1;
+  const w = (p.w ?? 0.5) * W, h = (w * ih) / iw, k = !p.enter || p.enter === "none" ? 1 : enterK(p, t);
+  c.translate((p.x ?? 0.5) * W + (p.enter === "slide" ? (1 - k) * W : 0), (p.y ?? 0.5) * H + (p.enter === "drop" ? (k - 1) * H * 0.6 : 0));
+  if (p.rot) c.rotate((p.rot * Math.PI) / 180);
+  if (p.enter === "pop") c.scale(Math.max(0.001, k), Math.max(0.001, k));
+  c.drawImage(img, -w / 2, -h / 2, w, h);
 }
 
 function label(c: Ctx, p: ProcSpec, s: AnimScene, t: number, f: number) {

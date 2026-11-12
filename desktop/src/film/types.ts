@@ -119,6 +119,20 @@ export interface FilmProgress {
   ids?: string[];
   lang?: string;
 }
+export interface Asset2D {
+  id: string;
+  name: string;
+  cat: string;
+  sub?: string;
+  tags?: string[];
+  w: number;
+  h: number;
+  /** a background's painted layers (for the multiplane camera) */
+  layers: number | unknown[];
+  /** a cut-out character with parts and pivots */
+  rig: boolean | unknown;
+  frames?: number;
+}
 export interface LibraryPerson {
   id: string;
   group: string;
@@ -153,6 +167,11 @@ export interface FilmApi {
   people(group?: string): Promise<{ groups: { id: string; name: string; count: number }[] | Record<string, unknown>; people: LibraryPerson[]; cast: string[] }>;
   sets(): Promise<{ sets: string[] }>;
   personThumb(id: string, size?: number): Promise<{ jpeg: string }>;
+  /** the 2D library: backgrounds in layers, cut-out characters, effects, props, faces, hands, UI, textures, pixel art, stick figures */
+  library2d?(): Promise<{ count: number; cats: Record<string, number>; license: string; assets: Asset2D[] }>;
+  asset2d?(id: string): Promise<Asset2D & { file: string; layers?: { name: string; depth: number; file: string; speed: number }[]; parts?: Record<string, { file: string; pivot: [number, number]; parent: string | null; z: number }>; rig?: unknown; anchor?: [number, number] }>;
+  asset2dThumb?(id: string): Promise<{ png: string }>;
+  asset2dSvg?(id: string, file?: string): Promise<{ svg: string; file: string }>;
   onProgress(fn: (m: FilmProgress) => void): () => void;
   // Sensei (the judge): see desktop/film/sensei and src/sensei
   sensei(dir: string, opts?: Record<string, unknown>): Promise<{ digest: import("../sensei/types").SenseiDigest; files: { json: string; md: string } }>;

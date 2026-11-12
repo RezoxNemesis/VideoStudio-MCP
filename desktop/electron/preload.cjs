@@ -105,6 +105,10 @@ contextBridge.exposeInMainWorld("vsd", {
     people: (group) => call("film.people", group),
     sets: () => call("film.sets"),
     personThumb: (id, size) => call("film.personThumb", id, size),
+    library2d: () => call("film.library2d"),
+    asset2d: (id) => call("film.asset2d", id),
+    asset2dThumb: (id) => call("film.asset2dThumb", id),
+    asset2dSvg: (id, file) => call("film.asset2dSvg", id, file),
     onProgress: (fn) => { const l = (_e, m) => fn(m); ipcRenderer.on("film:progress", l); return () => ipcRenderer.removeListener("film:progress", l); },
   },
   /** The Blender forge (see electron/forge.cjs). */

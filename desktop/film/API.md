@@ -191,6 +191,31 @@ Build your own from `box(at, w, h, d, yaw, { side, top }, { front: DET.planks(0.
 Effects for a shot or sequence, `fx: (ctx) => [rain(box), snow(box), petals(box), embers(box), smoke(box)]`,
 `fire({ p, w, h })` as a thing in the place.
 
+## The 2D library
+
+587 pictures drawn by the app (all original, free to use): 48 backgrounds (16 places × day, dusk, night) each in five
+painted layers, 36 cut-out characters (24 at six and a half heads, 12 chibi) with rigs of parts, 142 effects (impacts,
+slashes, focus lines, fire, smoke, explosions, energy, magic circles, splashes, emotion marks, weather), 138 props, 44
+face parts, 32 hands, 40 balloons / titles / lower thirds, 29 textures and screen tones, 38 pixel sprites, 40 stick-figure
+poses. `library.list {cat, q}` finds them (each with the code that uses it), `library.get {id}` shows one.
+
+```js
+// a 2.5D place: its layers stand at their depths, so a truck or a push-in moves them past each other (multiplane)
+set: () => parallax('bg_village_dusk'),
+// in a shot (sc = the set): a puppet that stands on the near ground, walks, blinks and speaks its lines
+dyn: [cutoutActor('char_mira', { ...sc.stand(0.42, 0.9, 0.62), pose: (t) => walkPose(t), who: 'Mira', cues })],
+// stickers and effects, in over: or top:
+over: layered(sticker('ui_balloon_round', { x: 0.7, y: 0.25, h: 0.3 }), pop('fx_impact_comic_white', 2.1, { x: 0.6, y: 0.4, h: 0.4 })),
+```
+- `sticker(id, { x, y | at: [x, y, z], size, w | h, rot, flip, blend, alpha, t0, t1, fade, anim })`, `pop(id, t0, { dur, spin, grow })`,
+  `drawAsset(g, id, x, y, o)` for your own drawing code.
+- Cut-out poses: `CUTOUT_POSES` (stand wave point cheer think shrug hips surprised crossed sad angry run), `walkPose(t)`,
+  `idlePose(t)`, `posesOver([[t, pose], …])` (pose to pose, eased), `mixPose(a, b, u)`. A pose is `{ rot: { part: degrees },
+  sy, z, eyes, mouth, bob, lean, squash }`; parts: torso head hair_back hair_front upperarm_R/L forearm_R/L hand_R/L thigh_R/L
+  shin_R/L foot_R/L skirt. The right arm (_R) hangs on the picture's left and opens with positive degrees.
+- In Animate: Layers → 2D library (or `anim.library`) brings any of them into a drawing scene; characters come in as puppets
+  that the Pose tool, `anim.pose`, `anim.ik` and `anim.motion` bend.
+
 ## People
 
 380 ready people in 28 groups: townsman townswoman farmer farmwoman merchant nobleman noblewoman monk elder elderwoman

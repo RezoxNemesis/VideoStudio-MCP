@@ -102,6 +102,8 @@ jobs:
         working-directory: desktop/film
         run: |
           set -e
+          node library2d/build.mjs library2d/out   # the 2D library: 587 assets drawn by code (backgrounds, cut-out rigs, effects, props, faces, hands, pixel, stickman)
+          node -e "const i=require('./library2d/out/index.json'); if (i.count < 500) { console.error('library too small', i.count); process.exit(1) } console.log('2D library', i.count, JSON.stringify(i.cats))"
           node runner/worker.mjs people '{}' | head -c 300
           node runner/worker.mjs personThumb '{"id":"queen_02","size":240}'
           node runner/worker.mjs open "{\"dir\":\"$PWD/templates/starter\"}" | head -c 400
@@ -126,7 +128,7 @@ jobs:
           done
           curl -s http://127.0.0.1:9333/json/list | grep -q '"title": "VideoStudio"' || { cat smoke.log; exit 1; }
           test -x squashfs-root/resources/ffmpeg/ffmpeg && echo "GPU ffmpeg is inside the package"
-          test -s squashfs-root/resources/film/runner/worker.mjs && test -d squashfs-root/resources/film/node_modules/@napi-rs/canvas && test -s squashfs-root/resources/forge/run.py && test -s squashfs-root/resources/stage-assets/models/index.json && echo "Code Studio, the forge and the model library are inside the package"
+          test -s squashfs-root/resources/film/runner/worker.mjs && test -d squashfs-root/resources/film/node_modules/@napi-rs/canvas && test -s squashfs-root/resources/forge/run.py && test -s squashfs-root/resources/stage-assets/models/index.json && test -s squashfs-root/resources/film/library2d/out/index.json && echo "Code Studio, the forge, the model library and the 2D library are inside the package"
           test -s squashfs-root/resources/stage-assets/human.pack && test -s squashfs-root/resources/stage-assets/voice/voc.onnx && test -s squashfs-root/resources/stage-assets/music/GeneralUser-GS.sf2 && echo "Stage, Music and Voice assets are inside the package"
           pkill -f squashfs-root/videostudio || true
 

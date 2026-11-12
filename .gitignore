@@ -18,3 +18,4 @@ desktop/stage-assets
 __pycache__
 .stage-build
 desktop/release-lite
+desktop/film/library2d/out

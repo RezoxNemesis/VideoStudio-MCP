@@ -76,3 +76,6 @@
 .cs-pick h3 { margin: 0; font-size: 14px; }
 .cs-pick-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; max-height: 300px; }
 .cs-pick-new { display: grid; grid-template-columns: 1fr 150px auto; gap: 8px; }
+/* the 2D library tab: square pictures that fit whole */
+.cs-assets .cs-person img, .cs-assets .cs-person .ph { aspect-ratio: 1; object-fit: contain; background: #20232b; }
+.cs-assets .cs-person .nm { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-family: inherit; }

@@ -16,6 +16,7 @@ import { saveBlob } from "../native/storage";
 import { btn, colorInput, confirmBox, h, icon, pickFiles, select, sheet, slider, toast, toggle } from "./dom";
 import { ANIME_MOVES, addBeat, addMove, addSceneFx } from "../agent/anime";
 import { FX_TYPES } from "../anim/proc";
+import { lib2d, libraryLayers } from "../anim/library2d";
 
 type Tool = BrushTool | "fill" | "lasso" | "line" | "rect" | "ellipse" | "picker" | "hand" | "pose";
 
@@ -228,8 +229,8 @@ export class AnimateView {
       images: (id) => this.s.pool.imageNow(id),
       onReady: () => this.queue(),
     });
-    for (const l of sc.layers) if (l.kind === "reference" && l.assetId) {
-      const a = findAsset(this.s.project, l.assetId);
+    for (const l of sc.layers) if ((l.kind === "reference" && l.assetId) || l.proc?.assetId) {
+      const a = findAsset(this.s.project, (l.kind === "reference" ? l.assetId : l.proc?.assetId)!);
       if (a && !this.s.pool.imageNow(a.id)) void this.s.pool.image(a).then(() => this.queue());
     }
     this.drawSelection();
@@ -445,12 +446,68 @@ export class AnimateView {
             void s.pool.image(a).then(() => this.queue());
             draw();
           }),
+          ...(lib2d() ? [btn("2D library", "image", () => this.libraryPicker())] : []),
           btn("Merge down", "layers", () => this.mergeDown()),
         ),
       );
     };
     draw();
     sheet("Layers", body, { tall: true });
+  }
+
+  /** The app's 2D library: backgrounds (whole, or their painted layers apart for parallax), cut-out characters as puppets, effects, props, faces, hands, balloons, textures, pixel art. */
+  private libraryPicker() {
+    const api = lib2d(), sc = this.scene();
+    if (!api || !sc) return;
+    let cat = "backgrounds", q = "", apart = true, all: Awaited<ReturnType<typeof api.library2d>>["assets"] = [];
+    const grid = h("div", { class: "an-lib" }), note = h("p", { class: "hint" });
+    const seen = new IntersectionObserver((es) => {
+      for (const e of es) {
+        if (!e.isIntersecting) continue;
+        const card = e.target as HTMLElement;
+        seen.unobserve(card);
+        void api.asset2dThumb(card.dataset.id!).then((r) => card.querySelector(".ph")?.replaceWith(h("img", { alt: "", src: `data:image/png;base64,${r.png}` }))).catch(() => undefined);
+      }
+    });
+    const draw = () => {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const list = all.filter((a) => (!cat || a.cat === cat) && words.every((w) => `${a.id} ${a.name} ${(a.tags ?? []).join(" ")}`.toLowerCase().includes(w))).slice(0, 300);
+      grid.replaceChildren(...list.map((a) => {
+        const card = h("button", { class: "an-libcard", type: "button", title: a.name, "data-id": a.id }, h("span", { class: "ph" }), h("span", { class: "nm" }, a.name));
+        card.addEventListener("click", () => void this.addFromLibrary(a.id, a.cat === "backgrounds" ? (apart ? "layers" : "picture") : a.cat === "characters" ? (apart ? "puppet" : "picture") : "picture", sc.id));
+        seen.observe(card);
+        return card;
+      }));
+      note.textContent = cat === "backgrounds" ? (apart ? "A background comes in as its painted layers (sky, far, middle, near, foreground): move them at different speeds for parallax." : "A background comes in as one picture.") : cat === "characters" ? (apart ? "A character comes in as a puppet: every part hangs from its joint, so the Pose tool and IK bend it." : "A character comes in as one picture.") : "Click a picture to put it in the scene on its own layer.";
+    };
+    const cats = select("Kind", [["", "Everything"], ["backgrounds", "Backgrounds"], ["characters", "Characters"], ["fx", "Effects"], ["props", "Props"], ["hands", "Hands"], ["faces", "Faces"], ["ui", "Balloons & titles"], ["textures", "Textures"], ["pixel", "Pixel art"], ["stick", "Stick figures"]] as [string, string][], cat, (v: string) => ((cat = v), draw()));
+    const search = h("input", { type: "search", placeholder: "Search…", class: "an-libq" }) as HTMLInputElement;
+    search.addEventListener("input", () => ((q = search.value), draw()));
+    const body = h("div", { class: "an-libbox" }, h("div", { class: "row wrap" }, cats, search, toggle("Layers apart / puppet", apart, (v) => ((apart = v), draw()))), note, grid);
+    sheet("2D library", body, { tall: true });
+    grid.append(h("p", { class: "hint" }, "Loading the library…"));
+    void api.library2d().then((r) => ((all = r.assets), draw())).catch((e) => grid.replaceChildren(h("p", { class: "hint" }, e instanceof Error ? e.message : String(e))));
+  }
+  private async addFromLibrary(id: string, mode: "picture" | "layers" | "puppet", sceneId: string) {
+    const api = lib2d(), sc = this.scene();
+    if (!api || !sc || sc.id !== sceneId) return;
+    try {
+      toast("Bringing it in…", "info", 1500);
+      const r = await libraryLayers(sc, api, id, mode, (blob, name) => this.s.addBlobAsset(blob, name, "user"));
+      this.s.mutate("2D library", (p) => {
+        const S = A.getScene(p, sceneId);
+        if (r.bottom) S.layers.push(...r.layers);
+        else S.layers.unshift(...r.layers);
+      });
+      for (const l of r.layers) {
+        const a = l.proc?.assetId ? findAsset(this.s.project, l.proc.assetId) : undefined;
+        if (a) void this.s.pool.image(a).then(() => this.queue());
+      }
+      toast(mode === "puppet" ? "The puppet is in: pick the Pose tool to bend it" : mode === "layers" ? `${r.layers.length} painted layers are in` : "It is in the scene", "ok", 2600);
+      this.queue();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
   }
 
   private mergeDown() {

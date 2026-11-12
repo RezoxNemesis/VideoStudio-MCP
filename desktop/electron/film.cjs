@@ -189,6 +189,27 @@ function setupFilm(o) {
     await fsp.writeFile(f, Buffer.from(r.jpeg, "base64"));
     return r;
   });
+  // ---- the 2D library: pictures drawn by code when the app is built (film/library2d/out); only files it lists are served ----
+  let lib2d = null;
+  const lib2dIndex = () => {
+    if (lib2d) return lib2d;
+    const d = [process.env.VS_LIBRARY2D, filmDir && path.join(filmDir, "library2d", "out")].find((x) => x && fs.existsSync(path.join(x, "index.json")));
+    if (!d) throw new Error("The 2D library is not part of this installation.");
+    const idx = JSON.parse(fs.readFileSync(path.join(d, "index.json"), "utf8"));
+    lib2d = { dir: d, idx, byId: new Map(idx.assets.map((a) => [a.id, a])) };
+    return lib2d;
+  };
+  const asset2d = (id) => { const a = lib2dIndex().byId.get(String(id)); if (!a) throw new Error(`No 2D asset ${id}.`); return a; };
+  h("film.library2d", async () => {
+    const { idx } = lib2dIndex();
+    return { count: idx.count, cats: idx.cats, license: idx.license, assets: idx.assets.map((a) => ({ id: a.id, name: a.name, cat: a.cat, sub: a.sub, tags: a.tags, w: a.w, h: a.h, layers: a.layers ? a.layers.length : 0, rig: !!a.parts, frames: a.frames ?? 0 })) };
+  });
+  h("film.asset2d", async (id) => asset2d(id));
+  h("film.asset2dThumb", async (id) => { const a = asset2d(id); return { png: (await fsp.readFile(path.join(lib2dIndex().dir, "thumbs", `${a.id}.png`))).toString("base64") }; });
+  h("film.asset2dSvg", async (id, file) => {
+    const a = asset2d(id), files = [a.file, ...(a.layers ?? []).map((l) => l.file), ...Object.values(a.parts ?? {}).map((p) => p.file)], f = file && files.includes(file) ? file : a.file;
+    return { svg: await fsp.readFile(path.join(lib2dIndex().dir, f), "utf8"), file: f };
+  });
   return { close: () => pool && pool.close(), filmDir };
 }
 

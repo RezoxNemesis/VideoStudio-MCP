@@ -5,6 +5,7 @@
  * There is deliberately no command that browses the phone's gallery or files.
  */
 import { LANGS } from "../voice/engine/world";
+import { lib2d as lib2dApi, libraryLayers } from "../anim/library2d";
 import type { Studio } from "../app/studio";
 import { ANIME_COMMANDS } from "./anime";
 import * as ops from "../core/ops";
@@ -892,6 +893,23 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
         if (!Array.isArray(shapes)) throw new ops.OpError(`"shapes" must be a list of frame numbers.`);
         return anim.lipSync(anim.getScene(p, a.str("sceneId")), a.str("layerId"), asset.mouth, shapes.map(Number), Math.round(a.num("start", 0)));
       }),
+  },
+  "anim.library": {
+    help: "{sceneId, id (a 2D library asset: library.list), mode?: picture|layers|puppet, x?, y?, h? (px: where it stands and how tall)} Bring a picture from the app's 2D library into a drawing scene: backgrounds as one picture or their painted layers apart (parallax), cut-out characters as puppets (every part hangs from its joint: pose them with anim.pose / anim.ik / anim.motion), effects, props, balloons, textures. Desktop app.",
+    run: async (s, a) => {
+      const api = lib2dApi();
+      if (!api) throw new ops.OpError("The 2D library comes with the desktop app.");
+      const sc = anim.getScene(s.project, a.str("sceneId")), id = a.str("id"), mode = (a.optStr("mode") as "picture" | "layers" | "puppet" | undefined) ?? (id.startsWith("bg_") ? "layers" : id.startsWith("char_") ? "puppet" : "picture");
+      const at = a.optNum("x") !== undefined || a.optNum("y") !== undefined || a.optNum("h") !== undefined ? { x: a.num("x", sc.width / 2), y: a.num("y", sc.height * 0.92), h: a.num("h", sc.height * 0.8) } : undefined;
+      const r = await libraryLayers(sc, api, id, mode, (blob, name) => s.addBlobAsset(blob, name, "agent"), at);
+      s.mutate("2D library", (p) => {
+        const S = anim.getScene(p, sc.id);
+        if (r.bottom) S.layers.push(...r.layers);
+        else S.layers.unshift(...r.layers);
+      });
+      for (const l of r.layers) { const as = l.proc?.assetId ? findAsset(s.project, l.proc.assetId) : undefined; if (as) await s.pool.image(as); }
+      return { layers: r.layers.map((l) => ({ id: l.id, name: l.name, part: l.part })), rig: r.layers.find((l) => l.rig)?.rig, under: r.bottom };
+    },
   },
   "anim.rig.create": {
     help: "{sceneId, x?, y? (hip joint px), height? (px, head to sole), view?: side|front, skin?, shirt?, pants?, shoes?, hair?, outline?, name?} Jointed puppet: hips, torso, head, upperArm/foreArm/hand and thigh/shin/foot for B (far) and F (near) sides.",

@@ -16,7 +16,8 @@ import { toast } from "../../../src/ui/dom";
 import { vsd } from "../bridge";
 import { code } from "../film/session";
 import { film } from "../film/prepare";
-import type { FilmShot, LibraryPerson } from "../film/types";
+import type { Asset2D, FilmShot, LibraryPerson } from "../film/types";
+import { snippet2d } from "../film/session";
 import { b, h, ic, selectEl } from "./kit";
 
 const ink = EditorView.theme(
@@ -53,7 +54,7 @@ const inkSyntax = syntaxHighlighting(
 );
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(s < 10 ? 2 : 1).padStart(s < 10 ? 4 : 4, "0")}`;
-type Tab = "files" | "people" | "places";
+type Tab = "files" | "people" | "places" | "assets";
 
 export class CodePage {
   readonly el: HTMLElement;
@@ -74,6 +75,9 @@ export class CodePage {
   private people: LibraryPerson[] | null = null;
   private groups: { id: string; name: string; count: number }[] = [];
   private places: string[] | null = null;
+  private assets: Asset2D[] | null = null;
+  private assetCat = "backgrounds";
+  private assetQ = "";
   private thumbs = new IntersectionObserver((es) => {
     for (const e of es) if (e.isIntersecting) this.loadThumb(e.target as HTMLElement);
   });
@@ -145,7 +149,7 @@ export class CodePage {
       b("Export", "export", () => void this.exportFilm(), "", "Save the film into your Videos folder"),
       b(null, "folderOpen", () => code.dir && void vsd?.openPath(code.dir), "", "Open the film's folder"),
     );
-    for (const [id, label] of [["files", "Files"], ["people", "People"], ["places", "Places"]] as [Tab, string][]) {
+    for (const [id, label] of [["files", "Files"], ["people", "People"], ["places", "Places"], ["assets", "2D"]] as [Tab, string][]) {
       const el = h("button", { class: "cs-tab", type: "button" }, label);
       el.addEventListener("click", () => {
         this.tab = id;
@@ -272,9 +276,10 @@ export class CodePage {
   }
 
   private drawSide(): void {
-    [...this.tabsEl.children].forEach((el, i) => el.classList.toggle("on", ["files", "people", "places"][i] === this.tab));
+    [...this.tabsEl.children].forEach((el, i) => el.classList.toggle("on", ["files", "people", "places", "assets"][i] === this.tab));
     if (this.tab === "files") this.drawFiles();
     else if (this.tab === "people") void this.drawPeople();
+    else if (this.tab === "assets") void this.drawAssets();
     else void this.drawPlaces();
   }
   private drawFiles(): void {
@@ -319,9 +324,55 @@ export class CodePage {
     }
     this.sideEl.replaceChildren(sel, grid, h("div", { class: "cs-note" }, this.peopleGroup ? "Click a person to put them into the code at the cursor." : "Pick a group to see everyone in it."));
   }
+  /** The 2D library: pick a kind, search, click to put the asset's code at the cursor. */
+  private async drawAssets(): Promise<void> {
+    const f = film();
+    if (!this.assets) {
+      if (!f.library2d) return void this.sideEl.replaceChildren(h("div", { class: "cs-note" }, "The 2D library comes with the desktop app."));
+      this.sideEl.replaceChildren(h("div", { class: "cs-note" }, "Loading the 2D library…"));
+      try {
+        this.assets = (await f.library2d()).assets;
+      } catch (e) {
+        return void this.sideEl.replaceChildren(h("div", { class: "cs-note" }, e instanceof Error ? e.message : String(e)));
+      }
+      if (this.tab !== "assets") return;
+    }
+    const all = this.assets, cats = [...new Set(all.map((a) => a.cat))];
+    const sel = h("select", { class: "cs-sel" }) as HTMLSelectElement;
+    sel.append(h("option", { value: "" }, `Everything · ${all.length}`), ...cats.map((c) => h("option", { value: c }, `${c} · ${all.filter((a) => a.cat === c).length}`)));
+    sel.value = this.assetCat;
+    sel.addEventListener("change", () => {
+      this.assetCat = sel.value;
+      void this.drawAssets();
+    });
+    const q = h("input", { class: "cs-sel", type: "search", placeholder: "Search: fire, katana, dusk, chibi…", value: this.assetQ }) as HTMLInputElement;
+    q.addEventListener("change", () => {
+      this.assetQ = q.value;
+      void this.drawAssets();
+    });
+    const words = this.assetQ.toLowerCase().split(/\s+/).filter(Boolean);
+    const list = all.filter((a) => (!this.assetCat || a.cat === this.assetCat) && words.every((w) => `${a.id} ${a.name} ${(a.tags ?? []).join(" ")}`.toLowerCase().includes(w))).slice(0, 240);
+    const grid = h("div", { class: "cs-people cs-assets" });
+    for (const a of list) {
+      const card = h("button", { class: "cs-person", type: "button", title: `${a.name}\n${a.id}${a.layers ? ` · ${a.layers} layers for the multiplane camera` : ""}${a.rig ? " · a cut-out rig: walks, poses, blinks, speaks" : ""}\nClick to put it into the code`, "data-id": a.id, "data-kind": "asset" }, h("span", { class: "ph" }), h("span", { class: "nm" }, a.name.replace(/ — /g, " · ")));
+      card.addEventListener("click", () => this.insert(snippet2d(a)));
+      this.thumbs.observe(card);
+      grid.append(card);
+    }
+    this.sideEl.replaceChildren(sel, q, grid, h("div", { class: "cs-note" }, list.length ? "Click an asset to put the code that uses it at the cursor. The film kit draws it: parallax(), cutoutActor(), sticker(), pop()." : "Nothing matches."));
+  }
   private loadThumb(card: HTMLElement): void {
     this.thumbs.unobserve(card);
     const id = card.dataset.id!;
+    if (card.dataset.kind === "asset") {
+      const f = film();
+      if (!f.asset2dThumb) return;
+      void f
+        .asset2dThumb(id)
+        .then((r) => card.querySelector(".ph")?.replaceWith(h("img", { alt: id, src: `data:image/png;base64,${r.png}` })))
+        .catch(() => card.querySelector(".ph")?.classList.add("bad"));
+      return;
+    }
     void film()
       .personThumb(id, 240)
       .then((r) => {
