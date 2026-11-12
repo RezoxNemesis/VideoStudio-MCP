@@ -1080,10 +1080,14 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       }),
   },
   "char.say": {
-    help: "{sceneId, layerId, text, at? (s), voice?, speed?, clipStart? (timeline s where the scene starts, default 0)} VolTune speaks the line, puts it on the timeline and lip-syncs the character.",
+    help: "{sceneId, layerId, text, at? (s), voice?, tone? (voice.tones), speed?, lang?, clipStart? (timeline s where the scene starts, default 0)} VolTune speaks the line (the open voice: tones, works offline), puts it on the timeline and lip-syncs the character.",
     run: async (s, a) => {
       const at = a.num("at", 0);
-      const { result, asset } = await s.speak({ text: a.str("text"), voice: a.optStr("voice"), speed: a.optNum("speed") });
+      // the open voice (the one code films speak with): toned, and it needs no download, so a line never waits on the network
+      const { sayToAsset, readTone } = await import("./voiceopen");
+      const tone = readTone(a.any("tone")), sp = a.optNum("speed");
+      const said = await sayToAsset(s, a.str("text"), a.str("voice", "af_heart"), sp !== undefined ? { ...(tone ?? {}), rate: sp } as never : tone, undefined, a.optStr("lang"));
+      const result = { seconds: said.seconds }, asset = said.asset;
       return s.mutate("character line", (p) => {
         const sc = anim.getScene(p, a.str("sceneId"));
         const l = anim.getLayer(sc, a.str("layerId"));

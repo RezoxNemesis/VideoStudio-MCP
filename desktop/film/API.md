@@ -173,6 +173,45 @@ stern calm afraid tired question whispery commanding playful, or `{ like, pitch,
 `<lang>` is the subtitle, `<lang>_say` what is spoken if different, `em_<lang>` words to lean on. With several
 languages in project.json every line is spoken in each; the picture is timed to fit them all and lips follow each.
 
+## Scenes in a few lines (the director)
+
+`scene()` writes a whole sequence from who is there and what happens: the Stage performance (standing alive, walks,
+captured gestures, heads turning to whoever speaks, talking hands), the faces, the sound, and the coverage a film editor
+wants — an establishing wide, shot and reverse shot over the shoulders on one side of the line, close-ups, a reaction
+when someone listens, a closing two-shot, with focus and breathing cameras.
+
+```js
+import { scene, rooftop, backdrop } from '../vs.js';
+export const S01 = scene({
+  id: 's01',
+  set: () => backdrop(rooftop({ time: 'dusk', town: 0 }), 'bg_city_dusk'),   // a painted city round the roof
+  cast: [
+    { id: 'aya', person: 'youngwoman_05', who: 'Aya', at: [-0.6, 0], mood: 'soft' },
+    { id: 'ren', person: 'teen_04', who: 'Ren', at: [0.75, 0.35], stage: { outfit: 'hoodie' }, changes: { top: { color: '#3b6fa6', shade: '#264a72' } } },
+  ],
+  beats: [
+    { wait: 3.6 },
+    { say: 'A1', emote: ['sad', 0.6] },
+    { say: 'R1', gap: 0.7, gesture: 'shrug' },
+    { walk: 'ren', to: [3, -2], speed: 1.2 },
+    { look: 'aya', at: [0, 9, -6] },
+    { do: 'aya', gesture: 'wave' },
+  ],
+  amb: 'wind', music: 'dusk', title: { word: 'Rooftop Promise' },   // the title card says A FILM BY …
+});
+```
+- Beats: `{ say, by?, to?, emote?, gesture?, hands? }` `{ wait }` `{ walk, to, gait?, speed?, face? }` `{ do, gesture, travel? }`
+  `{ look, at: id | [x, y, z] }` `{ emote: { id: emotion } }` `{ sfx }`. Gestures by name (`GESTURES`: wave hello shrug think
+  laugh cry bow lookaround angry phone drink sit comfort handshake pickup explain) or `['clipName', in, out]` from
+  `stage.motions`; they play on the spot unless `travel: true`.
+- `coverage: (T, D) => shots` to shoot it yourself: `D.ots(ctx, from, to)`, `D.cu(ctx, id, to)`, `D.wide(ctx)`, `D.two(ctx)` keep
+  to one side of the line; `cu low high chase wide two ots facing steady push mixCams` work anywhere.
+- `steps: (T) => [...]` adds Stage steps (a `stage.fight`, a hand on a prop); `fx`, `dyn`, `over`, `top`, `sounds: (T) => [...]`
+  and `warm` (seconds of snow or fireflies already falling when a shot starts) as in `makeSeq`.
+- `backdrop(set, 'bg_mountains_day')` rings any 3D place with the painted layers of a library background.
+- A cast member's `stage` goes to the Stage body (`outfit`: tshirt_jeans shirt_trousers hoodie suit school_boy school_girl
+  dress kurta robe gi armor shorts); `changes` edits the person's sheet (`headgear: { type: 'crown' }`, `hair3: 'tied'`).
+
 ## Places and things
 
 `set: () => place({ time: 'dawn' | 'day' | 'dusk' | 'night' })` — studio({ color, floor }) meadow forest desert snowfield
