@@ -30,3 +30,4 @@ export * from './props.js';
 export * from './places.js';
 export * from './combat.js';
 export * from './library2d.js';
+export * from './director.js';

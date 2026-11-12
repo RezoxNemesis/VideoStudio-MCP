@@ -134,6 +134,52 @@ export function standOn(bgId, x, y, h = 0.5, layer = 'near', o = {}) {
   return { at: V.add(ref.pos, V.mul(d, D)), height: h * 2 * tanH * D };
 }
 
+/**
+ * Painted distance round a 3D set: the far layers of a library background (mountains, a skyline, a tree line) stand
+ * as a ring of cards far out round the place, mirrored card to card so they meet without a seam, the art's horizon at
+ * eye height — the way anime puts painted backgrounds behind its 3D sets. → the same Scene.
+ * o: { layers: ['far', 'middle'], center: [x, z], radius: { far: 320, middle: 110 }, cards: 8, turn (deg), eye (m), horizon (0…1 of the art) }
+ */
+export function backdrop(sc, bgId, o = {}) {
+  const a = asset2d(bgId); if (!a.layers) throw new Error(`${bgId} is not a layered background.`);
+  const names = o.layers ?? ['far', 'middle'], N = Math.max(4, o.cards ?? 8), c = o.center ?? [0, 0], eye = o.eye ?? 1.6, hz = o.horizon ?? 0.6, turn = ((o.turn ?? 0) * Math.PI) / 180;
+  const RAD = { sky: 900, far: 320, middle: 110, near: 45, ...(o.radius ?? {}) };
+  for (const name of names) {
+    const L = a.layers.find((q) => q.name === name); if (!L) continue;
+    const R = RAD[name] ?? 200, half = Math.PI / N, W = 2 * R * Math.tan(half), Hc = W * (a.h / a.w) * (o.stretch ?? 1), yb = eye - Hc * (1 - hz), strips = 10;
+    const item = {
+      p: [c[0], 0, c[1]], depth: R,
+      draw(g, cam) {
+        for (let k = 0; k < N; k++) {
+          const ang = turn + (k / N) * Math.PI * 2, n = [Math.sin(ang), 0, Math.cos(ang)], t = [Math.cos(ang), 0, -Math.sin(ang)], mid = [c[0] + n[0] * R, 0, c[1] + n[2] * R];
+          if (V.dot(V.norm(V.sub(mid, cam.pos)), cam.F) < 0.05) continue; // behind the lens
+          let im = null; const mir = k % 2 === 1;
+          for (let sIdx = 0; sIdx < strips; sIdx++) {
+            const u0 = sIdx / strips, u1 = (sIdx + 1) / strips;
+            const P = (u, y) => [mid[0] + t[0] * (u - 0.5) * W, y, mid[2] + t[2] * (u - 0.5) * W];
+            const TL = P(u0, yb + Hc), TR = P(u1, yb + Hc), BL = P(u0, yb);
+            const z0 = cam.toCam(TL)[2], z1 = cam.toCam(TR)[2]; if (z0 < 1 || z1 < 1) continue;
+            const p0 = cam.project(TL), p1 = cam.project(TR), p2 = cam.project(BL);
+            const xs = Math.min(p0[0], p1[0], p2[0]), xe = Math.max(p0[0], p1[0], p2[0]); if (xe < -50 || xs > cam.W + 50) continue;
+            if (!im) { const scr = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) * strips / a.w; im = image2d(L.file, Math.min(1.2, Math.max(0.15, scr * 1.1))); }
+            // the strip of the art this piece of the card shows (mirrored cards read the art backwards)
+            const a0 = (mir ? 1 - u1 : u0) * a.w, a1 = (mir ? 1 - u0 : u1) * a.w, sx0 = Math.max(a0, im.x0), sx1 = Math.min(a1, im.x0 + im.w); if (sx1 <= sx0) continue;
+            const sw = a1 - a0;
+            g.save(); g.transform((p1[0] - p0[0]) / sw, (p1[1] - p0[1]) / sw, (p2[0] - p0[0]) / a.h, (p2[1] - p0[1]) / a.h, p0[0], p0[1]);
+            if (mir) { g.translate(sw, 0); g.scale(-1, 1); }
+            const k2 = im.cv.width / im.w; g.drawImage(im.cv, (sx0 - im.x0) * k2, 0, (sx1 - sx0) * k2, im.cv.height, sx0 - a0 - 0.5, im.y0, sx1 - sx0 + 1, im.h);
+            g.restore();
+          }
+        }
+      },
+    };
+    // the painted distance goes behind everything the set already has far away (nearest ring last)
+    const layer = sc.layers[name === 'sky' ? 'sky' : 'far'], at = layer.findIndex((it) => it._ring && it._ring < R);
+    item._ring = R; if (at < 0) { const firstSet = layer.findIndex((it) => !it._ring); layer.splice(firstSet < 0 ? layer.length : firstSet, 0, item); } else layer.splice(at, 0, item);
+  }
+  return sc;
+}
+
 // ---------------------------------------------------------------- cut-out characters
 const ORDER_FALLBACK = ['hair_back', 'thigh_R', 'shin_R', 'foot_R', 'upperarm_R', 'forearm_R', 'hand_R', 'thigh_L', 'shin_L', 'foot_L', 'torso', 'skirt', 'upperarm_L', 'forearm_L', 'hand_L', 'head', 'eyes', 'mouth', 'hair_front'];
 /**

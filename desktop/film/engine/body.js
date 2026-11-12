@@ -408,7 +408,7 @@ export class CelPainter {
       ao = new Float32Array(N);
       const R = Math.max(3, Math.round((o.aoR ?? 6) * SS)), r7 = Math.round(R * 0.7), offs = [[R, 0], [-R, 0], [0, R], [0, -R], [r7, r7], [-r7, r7], [r7, -r7], [-r7, -r7]];
       for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
-        const q = y * w + x; if (!ib[q]) continue; const z = 1 / zb[q]; let occ = 0;
+        const q = y * w + x; if (!ib[q] || P[ib[q]].noAO) continue; const z = 1 / zb[q]; let occ = 0;
         for (let k = 0; k < 8; k++) { const xx = x + offs[k][0], yy = y + offs[k][1]; if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue; const q2 = yy * w + xx; if (!ib[q2]) continue; const d = z - 1 / zb[q2]; if (d > 0.01 && d < 0.3) occ += Math.min(1, (d - 0.01) / 0.05); }
         ao[q] = occ / 8;
       }
@@ -442,7 +442,7 @@ export class CelPainter {
             const lt = p._lit ??= [Math.min(255, p.fill[0] + 26), Math.min(255, p.fill[1] + 22), Math.min(255, p.fill[2] + 16)];
             const dp = p._deep ??= [p.shade[0] * 0.66, p.shade[1] * 0.66, p.shade[2] * 0.72 + 6];
             for (let m = 0; m < 3; m++) { const L1 = p.fill[m] + (lt[m] - p.fill[m]) * up, S1 = p.shade[m] + (dp[m] - p.shade[m]) * Math.min(1, occ * 1.15); tone[m] = S1 + (L1 - S1) * k; }
-            if (occ > 0.05 && k > 0) for (let m = 0; m < 3; m++) tone[m] += (dp[m] - tone[m]) * occ * 0.45 * k; // occlusion reaches into the light a little
+            if (occ > 0.25 && k > 0) for (let m = 0; m < 3; m++) tone[m] += (dp[m] - tone[m]) * (occ - 0.25) * 0.22 * k; // only deep tucks darken the light a little
             if (p.skin && k > 0 && k < 1) { const band = 4 * k * (1 - k) * 0.85; tone[0] += 26 * band; tone[1] -= 4 * band; tone[2] -= 12 * band; }
             if (p.metal) { const sp = sstep(0.8, 0.95, l * 0.5 + v * 0.5) * 0.7; const dk = sstep(0.16, 0.3, l) * (1 - sstep(0.3, 0.46, l)); const hi = p.hi ?? [250, 250, 252]; for (let m = 0; m < 3; m++) { tone[m] += (hi[m] - tone[m]) * sp; tone[m] *= 1 - dk * 0.3; } }
             if (p.hairy && k > 0.5) { const ring = sstep(0.5, 0.58, l) * (1 - sstep(0.62, 0.72, l)) * sstep(0.35, 0.6, v); if (ring > 0) { const hi = p._sheen ??= p.fill.map((f, m) => f + ((p.hi ?? lt)[m] - f) * 0.45); for (let m = 0; m < 3; m++) tone[m] += (hi[m] - tone[m]) * ring * 0.8; } }

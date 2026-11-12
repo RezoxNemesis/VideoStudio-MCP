@@ -192,6 +192,19 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * (pm ? 2.1 : 1.75), lwIn: lwB * (pm ? 1.05 : 0.95) });
   const limbIds = new Set(), eyeIds = new Set();
   const rgbOf = (c) => hex(lit(c)), fd = d.face ?? {}, lmk = B.landmarks, eyeY = lmk.eyeL?.[1] ?? 0, eyeZ = lmk.eyeL?.[2] ?? 0;
+  // the middle of the head: anime shading treats a face and its hair as one round form, so their normals lean out from
+  // here (a clean terminator, no patches where a low-poly surface turns), blended with the surface's own normal
+  const headC = real && lmk.eyeL ? onBone(B, 'head', [0, eyeY + 0.025, eyeZ - 0.088]) : null;
+  const rounded = (pos, nrm, k, near = 0) => {
+    if (!headC) return nrm; const out = new Float32Array(nrm.length);
+    for (let v = 0; v < nrm.length / 3; v++) {
+      const dx = pos[v * 3] - headC[0], dy = pos[v * 3 + 1] - headC[1], dz = pos[v * 3 + 2] - headC[2], dl = Math.hypot(dx, dy, dz) || 1;
+      const w = near ? k * (1 - Math.min(1, Math.max(0, (dl - near) / (near * 0.6)))) : k;
+      let nx = nrm[v * 3] * (1 - w) + (dx / dl) * w, ny = nrm[v * 3 + 1] * (1 - w) + (dy / dl) * w, nz = nrm[v * 3 + 2] * (1 - w) + (dz / dl) * w; const l = Math.hypot(nx, ny, nz) || 1;
+      out[v * 3] = nx / l; out[v * 3 + 1] = ny / l; out[v * 3 + 2] = nz / l;
+    }
+    return out;
+  };
   for (const p of B.parts) {
     if (real && (p.name === 'eyes' || p.name === 'teeth' || p.name === 'tongue' || p.name === 'lashes')) {
       const nr = normalsOf(p.out, p.idx, p.nrm);
@@ -210,7 +223,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       else cp.add(p.out, p.idx, { fill: hex(ink), shade: hex(ink), flat: true, two: true, bias: 0.002, line: false, group: 'eye' }, nr);
       continue;
     }
-    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair' }, normalsOf(p.out, p.idx, p.nrm)); continue; }
+    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
     const paint = paintOf(ch, B, p, lit), nr = normalsOf(p.out, p.idx, p.nrm);
     if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
@@ -221,7 +234,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       const br = fd.brow3 ?? {}, by = br.y ?? 0.0235, th = br.thick ?? 0.0036, x0 = br.x0 ?? 0.011, x1 = br.x1 ?? 0.058, arch = br.arch ?? 0.0055, tilt = br.tilt ?? 0.0;
       const bc = d.hair?.color ?? '#1c1a22';
       const map = (x, y) => { const ax = x < 0 ? -x : x; if (ax < x0 || ax > x1) return -1; const u = (ax - x0) / (x1 - x0), yc = by + arch * Math.sin(Math.PI * Math.min(1, u * 1.15)) - tilt * (1 - u) - 0.004 * u * u, h = th * (1 - 0.62 * u) * (u < 0.08 ? 0.5 + u * 6.25 : 1); return Math.abs(y - yc) < h ? 0 : -1; };
-      eyeIds.add(cp.add(p.out, p.idxHead, drawn ? { ...paint, thr: -0.32, group: 'skin', edge: 2.4 } : { ...paint, thr: -0.32, group: 'skin', map, maps: [{ fill: rgbOf(bc), shade: rgbOf(bc), flat: true, line: false }] }, nr, null, drawn ? null : xy));
+      const nrF = rounded(p.out, nr, 0.55, 0.13);
+      eyeIds.add(cp.add(p.out, p.idxHead, drawn ? { ...paint, thr: -0.32, group: 'skin', edge: 2.4, recv: false, noAO: true } : { ...paint, thr: -0.32, group: 'skin', recv: false, noAO: true, map, maps: [{ fill: rgbOf(bc), shade: rgbOf(bc), flat: true, line: false }] }, nrF, null, drawn ? null : xy));
       if (p.idxMouth.length) cp.add(p.out, p.idxMouth, { fill: rgbOf('#4a1c22'), shade: rgbOf('#2a0e12'), line: false, group: 'mouth', flat: true }, nr);
     }
   }
@@ -230,7 +244,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
       const hc = d.hair.color, hp = { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi: rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), hiAt: 0.9, thr: 0.1, group: 'hair', hairy: true, bias: 0.002, edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 };
-      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, hp));
+      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, { ...hp, noAO: true }, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82)));
       ch.hairT = ch.t;
     }
   }
