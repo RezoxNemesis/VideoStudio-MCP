@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      VERSION: "2.4.${{ github.run_number }}"
+      VERSION: "2.5.${{ github.run_number }}"
     steps:
       - uses: actions/checkout@v4
 
@@ -139,6 +139,8 @@ jobs:
         run: |
           tag="desktop-v${VERSION}"
           notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ). Installs over VideoStudio 2.0 (and replaces VideoStudio Desktop 1.0.x); projects and the Claude link are kept.
+
+          New in 2.5, the grand mega upgrade. Sensei — VideoStudio's own judge and helper: a measured review of every frame of a code film (motion, anatomy, camera, framing, picture, sound, story, and the drawing style against your own reference art), scores and a grade per category, marked frames with the exact fix, a gate that stops an export while a MUST is open; it talks (built in, a local model through Ollama, or your own key), searches the web, runs jobs side by side. A painted anime look (soft cel light, warm skin at the turn of the light, polished metal, hair sheen, rim light, painted skies). A 2D library of 587 pictures drawn by the app: backgrounds in five painted layers for the multiplane camera, cut-out characters with rigs that walk, pose, blink and speak, effects, props, faces, hands, balloons and titles, textures, pixel sprites, stick figures — in films, in the Code page and in Animate (characters come in as posable puppets). Animate → Fix a film shot: draw the better hand once and it follows that hand on every frame; erase what is wrong and the film draws what is behind it; every fix switches on and off. Code Studio: completion that knows the whole film kit and every id, checks while you type, Sensei's findings on the shot that has them, history of every file with a diff, a console, find in all files, ready pieces to insert.
 
           New in 2.4, the mega update. Real bodies: characters drawn from a full anatomical body (163 bones) with five-finger hands that grip, real heads with acting faces and anime eyes, hair that swings, cloth layers and cast shadows; action with speed ramps, hit-stops, blade arcs, clashes and blood. Code Studio films in 11 looks: 2D anime, 2.5D multiplane, 3D render, 3.5D cel-shaded, 4D immersive, paper cut, puppet, flat motion graphics, pixel art, pencil sketch, manga; 854 library 3D models. Voices: 15 more voices, 18 new character voices, speech in German, Russian, Spanish, French, Italian, Portuguese, Dutch, Polish and more, read sentence by sentence like a person. Music: 33 new instruments made by the app (808, supersaws, FM keys, choirs, braams, risers, sitar, tanpura, bansuri, harmonium, santoor, shehnai, sarangi), trap, dance, lo-fi, film and tabla kits, 11 new styles, clearer singing and Vocals / Music / Clarity faders with stems.
 
