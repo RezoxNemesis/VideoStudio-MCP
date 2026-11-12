@@ -78,3 +78,7 @@
 .sg .mu-bar > * { flex: none; }
 .sg .mu-bar .sp { flex: 1 1 0; min-width: 0; }
 .sg .mu-bar .mu-status { flex: 0 1 260px; min-width: 0; }
+
+/* Music page: voice against music (three columns: name, fader, value) */
+.mu-row:has(.mu-val) { grid-template-columns: 64px minmax(0, 1fr) 62px; }
+.mu-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text, inherit); }

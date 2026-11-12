@@ -254,6 +254,7 @@ export class MusicPage {
       num("Swing", "swing", "0.02"),
       num("Human feel", "humanize", "0.05"),
       num("Room", "room", "0.05"),
+      ...this.mixCard(sg),
       h("div", { class: "mu-h" }, "Sections"),
       ...sg.sections.map((x) => {
         const r = h("div", { class: "mu-sec" }, h("b", {}, x.name), h("span", {}, `bars ${x.bar + 1}–${x.bar + x.bars}`), h("i", { style: `width:${Math.round(x.energy * 100)}%` }));
@@ -641,8 +642,31 @@ export class MusicPage {
     const sg = this.song();
     if (!sg) return;
     this.say("Rendering to the timeline…");
-    const r = (await this.run({ op: "music.render", songId: sg.id, toTimeline: true })) as { seconds?: number } | null;
-    if (r) this.say(`On the timeline (${r.seconds}s). Open Edit to place it.`);
+    const r = (await this.run({ op: "music.render", songId: sg.id, toTimeline: true })) as { seconds?: number; levels?: { balance: number; note: string } } | null;
+    if (r) this.say(`On the timeline (${r.seconds}s).${r.levels ? ` Voice ${r.levels.balance >= 0 ? "+" : ""}${r.levels.balance} dB against the music: ${r.levels.note}.` : " Open Edit to place it."}`);
+  }
+  /** Voice against instruments, for songs with singing: two faders and a clarity control. */
+  private mixCard(sg: Song): HTMLElement[] {
+    if (!sg.tracks.some((t) => t.kind === "vocal" && t.notes.length)) return [];
+    const m = { vocals: 1, music: 1, clarity: 0.6, ...sg.mix };
+    const row = (label: string, key: "vocals" | "music" | "clarity", max: number, title: string) => {
+      const pct = (v: number) => (key === "clarity" ? `${Math.round(v * 100)}%` : `${v >= 1 ? "+" : ""}${(20 * Math.log10(Math.max(v, 0.01))).toFixed(1)} dB`);
+      const out = h("span", { class: "mu-val" }, pct(m[key]));
+      const e = h("input", { type: "range", min: "0", max: String(max), step: "0.05", value: String(m[key]), title, class: "mu-sl" });
+      e.addEventListener("input", () => (out.textContent = pct(Number(e.value))));
+      e.addEventListener("change", () => {
+        this.cache = null;
+        void this.run({ op: "music.mix", songId: sg.id, [key]: Number(e.value), render: false });
+      });
+      return h("label", { class: "mu-row" }, h("span", {}, label), e, out);
+    };
+    return [
+      h("div", { class: "mu-h" }, "Voice and music"),
+      row("Vocals", "vocals", 2, "How loud the singing is. The middle is the balanced level; right is louder."),
+      row("Music", "music", 2, "How loud the instruments are. The middle is the balanced level; right is louder."),
+      row("Clarity", "clarity", 1, "Presence and consonants of the voice, and the room the instruments leave for it."),
+      h("p", { class: "hint" }, "The voice is placed just in front of the instruments by itself; these move it from there. Play or render to hear the change."),
+    ];
   }
   private exportMid(): void {
     const sg = this.song();

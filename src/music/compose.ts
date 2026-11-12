@@ -31,7 +31,11 @@ const P = {
   square: 80, saw: 81, calliope: 82, charang: 84, fifths: 86, newage: 88, warmPad: 89, polysynth: 90, choirPad: 91, bowed: 92, halo: 94, sweep: 95, crystal: 98, atmosphere: 99, brightness: 100,
   sitar: 104, banjo: 105, shamisen: 106, koto: 107, kalimba: 108, bagpipe: 109, fiddle: 110, shehnai: 111, tinkle: 112, steelDrum: 114, woodblock: 115, taiko: 116, melodicTom: 117, revCymbal: 119,
 } as const;
-const KIT = { standard: 0, room: 8, power: 16, electronic: 24, tr808: 25, jazz: 32, brush: 40, orchestra: 48 } as const;
+const KIT = { standard: 0, room: 8, power: 16, electronic: 24, tr808: 25, jazz: 32, brush: 40, orchestra: 48, trap: 80, dance: 81, lofi: 82, film: 83, tabla: 84 } as const;
+/** The Studio bank (music/studio/bank.ts): instruments VideoStudio makes itself. Program numbers inside each bank. */
+const M = { bass808: 0, reese: 1, acid: 2, fmBass: 3, sub: 4, superLead: 5, superPad: 6, superChords: 7, pluck: 8, fmPiano: 9, fmBell: 10, lofiKeys: 11, chipSquare: 12, chipPulse: 13, chipTri: 14, aah: 15, ooh: 16, analogPad: 17, glassPad: 18 } as const;
+const IN = { sitar: 0, tanpura: 1, bansuri: 2, harmonium: 3, santoor: 4, shehnai: 5, sarangi: 6 } as const;
+const F = { braam: 0, boom: 1, riser: 2, tension: 3, drone: 4, impact: 5, swell: 6 } as const;
 /** General MIDI drum sounds. */
 const D = { kick: 36, rim: 37, snare: 38, clap: 39, tomL: 41, hat: 42, tomM: 45, hatO: 46, tomH: 48, crash: 49, tomHH: 50, ride: 51, tamb: 54, cowbell: 56, bongoH: 60, bongoL: 61, congaM: 62, congaH: 63, congaL: 64, cabasa: 69, maracas: 70, claves: 75, triM: 80, triO: 81, shaker: 82 } as const;
 
@@ -39,8 +43,10 @@ type Role = "lead" | "counter" | "chords" | "pad" | "arp" | "bass" | "drums" | "
 interface Part {
   role: Role;
   name: string;
-  /** Program (or drum kit) and optional variation bank. */
+  /** Program (or drum kit). */
   prog: number;
+  /** Variation bank: 0 (or none) General MIDI; 100, 101, 102 the Studio bank's Modern, Indian and Film instruments. */
+  bank?: number;
   /** How the part plays (meaning depends on the role). */
   how?: string;
   /** Plays only where the section's energy is at least this. */
@@ -73,16 +79,20 @@ interface Style {
 }
 
 const part = (role: Role, name: string, prog: number, o: Partial<Part> = {}): Part => ({ role, name, prog, ...o });
+/** Parts played by the Studio bank's Modern, Indian and Film instruments. */
+const mod = (role: Role, name: string, prog: number, o: Partial<Part> = {}): Part => ({ role, name, prog, bank: 100, ...o });
+const ind = (role: Role, name: string, prog: number, o: Partial<Part> = {}): Part => ({ role, name, prog, bank: 101, ...o });
+const film = (role: Role, name: string, prog: number, o: Partial<Part> = {}): Part => ({ role, name, prog, bank: 102, ...o });
 
 export const STYLES: Record<string, Style> = {
   cinematic_epic: {
     about: "Trailer-style orchestra: driving strings, horns, choir, big drums", bpm: [96, 126], scales: ["minor", "harmonic_minor", "dorian"], harmony: "epic", density: 0.7,
-    parts: [part("ostinato", "Strings ostinato", P.strings, { how: "spiccato", from: 0.3, vol: 0.7, pan: -0.2 }), part("pad", "Strings", P.slowStrings, { vol: 0.62, rev: 0.5 }), part("pad", "Choir", P.choir, { from: 0.6, vol: 0.5, rev: 0.6, oct: 0 }), part("lead", "Horns", P.horn, { from: 0.35, vol: 0.85, rev: 0.5 }), part("counter", "Trumpets", P.trumpet, { from: 0.8, vol: 0.6, pan: 0.2 }), part("bass", "Low strings", P.contrabass, { how: "long", vol: 0.8 }), part("chords", "Piano", P.piano, { how: "ballad", upTo: 0.45, vol: 0.6 }), part("drums", "Orchestral drums", KIT.orchestra, { how: "epic", from: 0.45, vol: 0.9 }), part("hits", "Timpani", P.timpani, { from: 0.55, vol: 0.8 })],
+    parts: [part("ostinato", "Strings ostinato", P.strings, { how: "spiccato", from: 0.3, vol: 0.7, pan: -0.2 }), part("pad", "Strings", P.slowStrings, { vol: 0.62, rev: 0.5 }), part("pad", "Choir", P.choir, { from: 0.6, vol: 0.5, rev: 0.6, oct: 0 }), part("lead", "Horns", P.horn, { from: 0.35, vol: 0.85, rev: 0.5 }), part("counter", "Trumpets", P.trumpet, { from: 0.8, vol: 0.6, pan: 0.2 }), part("bass", "Low strings", P.contrabass, { how: "long", vol: 0.8 }), part("chords", "Piano", P.piano, { how: "ballad", upTo: 0.45, vol: 0.6 }), part("drums", "Film percussion", KIT.film, { how: "epic", from: 0.45, vol: 0.9 }), part("hits", "Timpani", P.timpani, { from: 0.55, vol: 0.8 }), film("hits", "Braam", F.braam, { how: "open", from: 0.8, vol: 0.6, rev: 0.4 })],
     form: [["intro", 4, 0.2], ["build", 8, 0.5], ["theme", 8, 0.85], ["breakdown", 4, 0.3], ["finale", 8, 1]],
   },
   action_battle: {
     about: "Fast, relentless: chopping strings, brass stabs, pounding drums", bpm: [138, 168], scales: ["minor", "phrygian", "harmonic_minor"], harmony: "dark", density: 1.1,
-    parts: [part("ostinato", "Strings", P.strings, { how: "sixteenths", vol: 0.75, pan: -0.15 }), part("ostinato", "Low strings", P.cello, { how: "spiccato", vol: 0.7, oct: -1, pan: 0.15 }), part("lead", "Brass", P.brass, { from: 0.4, vol: 0.85 }), part("counter", "Horns", P.horn, { from: 0.75, vol: 0.6 }), part("bass", "Synth bass", P.synthBass, { how: "eighths", vol: 0.8 }), part("drums", "Power drums", KIT.power, { how: "battle", vol: 0.95 }), part("hits", "Timpani", P.timpani, { from: 0.5, vol: 0.8 }), part("pad", "Choir", P.choir, { from: 0.7, vol: 0.5 })],
+    parts: [part("ostinato", "Strings", P.strings, { how: "sixteenths", vol: 0.75, pan: -0.15 }), part("ostinato", "Low strings", P.cello, { how: "spiccato", vol: 0.7, oct: -1, pan: 0.15 }), part("lead", "Brass", P.brass, { from: 0.4, vol: 0.85 }), part("counter", "Horns", P.horn, { from: 0.75, vol: 0.6 }), part("bass", "Synth bass", P.synthBass, { how: "eighths", vol: 0.8 }), part("drums", "Power drums", KIT.power, { how: "battle", vol: 0.95 }), part("perc", "Taikos", KIT.film, { how: "epic", from: 0.6, vol: 0.8 }), part("hits", "Timpani", P.timpani, { from: 0.5, vol: 0.8 }), film("hits", "Braam", F.braam, { how: "open", from: 0.9, vol: 0.55, rev: 0.4 }), part("pad", "Choir", P.choir, { from: 0.7, vol: 0.5 })],
     form: [["intro", 4, 0.45], ["attack", 8, 0.8], ["surge", 8, 1], ["hold", 4, 0.55], ["final", 8, 1]],
   },
   emotional_piano: {
@@ -97,12 +107,12 @@ export const STYLES: Record<string, Style> = {
   },
   suspense: {
     about: "Tension: low drones, trembling strings, a pulse, sparse high piano", bpm: [70, 100], scales: ["phrygian", "harmonic_minor", "todi"], harmony: "dark", density: 0.35,
-    parts: [part("drone", "Low drone", P.contrabass, { vol: 0.75, rev: 0.5 }), part("pad", "Tremolo strings", P.tremolo, { vol: 0.55, rev: 0.5 }), part("lead", "High piano", P.piano, { vol: 0.6, rev: 0.7, oct: 1 }), part("ostinato", "Pulse", P.synthBass2, { how: "pulse", from: 0.4, vol: 0.55 }), part("hits", "Taiko", P.taiko, { from: 0.6, vol: 0.7 }), part("pad", "Pad", P.sweep, { from: 0.5, vol: 0.4 })],
+    parts: [film("drone", "Dark drone", F.drone, { vol: 0.7, rev: 0.5 }), film("pad", "Tension strings", F.tension, { vol: 0.5, rev: 0.5 }), part("lead", "High piano", P.piano, { vol: 0.6, rev: 0.7, oct: 1 }), part("ostinato", "Pulse", P.synthBass2, { how: "pulse", from: 0.4, vol: 0.55 }), part("hits", "Taiko", P.taiko, { from: 0.6, vol: 0.7 }), part("pad", "Pad", P.sweep, { from: 0.5, vol: 0.4 })],
     form: [["creep", 8, 0.3], ["closer", 8, 0.6], ["edge", 8, 0.9]],
   },
   horror: {
     about: "Unsettling: music box, clusters, breath of strings", bpm: [56, 76], scales: ["whole_tone", "phrygian", "marwa"], harmony: "dark", density: 0.4,
-    parts: [part("lead", "Music box", P.musicbox, { vol: 0.7, rev: 0.7, oct: 1 }), part("pad", "Tremolo strings", P.tremolo, { vol: 0.5, rev: 0.6 }), part("drone", "Drone", P.bowed, { vol: 0.6, rev: 0.7 }), part("pad", "Choir", P.oohs, { from: 0.55, vol: 0.45, rev: 0.7 }), part("hits", "Timpani", P.timpani, { from: 0.7, vol: 0.6 })],
+    parts: [part("lead", "Music box", P.musicbox, { vol: 0.7, rev: 0.7, oct: 1 }), part("pad", "Tremolo strings", P.tremolo, { vol: 0.5, rev: 0.6 }), film("drone", "Dark drone", F.drone, { vol: 0.55, rev: 0.7 }), mod("pad", "Choir", M.ooh, { from: 0.55, vol: 0.45, rev: 0.7 }), part("hits", "Timpani", P.timpani, { from: 0.7, vol: 0.6 })],
     form: [["lullaby", 8, 0.3], ["wrong", 8, 0.6], ["dread", 8, 0.9]],
   },
   adventure: {
@@ -122,22 +132,22 @@ export const STYLES: Record<string, Style> = {
   },
   lofi: {
     about: "Lo-fi study beat: warm electric piano sevenths, lazy swung drums", bpm: [68, 88], scales: ["dorian", "minor", "major"], harmony: "jazz", swing: 0.22, density: 0.6,
-    parts: [part("chords", "Electric piano", P.epiano, { how: "lofi", vol: 0.8, chorus: 0.4 }), part("bass", "Bass", P.fretless, { how: "lofi", vol: 0.8 }), part("drums", "Drums", KIT.brush, { how: "lofi", vol: 0.8 }), part("lead", "Vibes", P.vibes, { from: 0.45, vol: 0.6, rev: 0.5 }), part("pad", "Pad", P.warmPad, { vol: 0.35 }), part("arp", "Guitar", P.jazzGtr, { from: 0.7, vol: 0.5, pan: 0.3 })],
+    parts: [mod("chords", "Lo-fi keys", M.lofiKeys, { how: "lofi", vol: 0.8, chorus: 0.3 }), part("bass", "Bass", P.fretless, { how: "lofi", vol: 0.8 }), part("drums", "Lo-fi drums", KIT.lofi, { how: "lofi", vol: 0.8 }), part("lead", "Vibes", P.vibes, { from: 0.45, vol: 0.6, rev: 0.5 }), part("pad", "Pad", P.warmPad, { vol: 0.35 }), part("arp", "Guitar", P.jazzGtr, { from: 0.7, vol: 0.5, pan: 0.3 })],
     form: [["intro", 4, 0.3], ["a", 8, 0.55], ["b", 8, 0.75], ["a", 8, 0.6], ["outro", 4, 0.3]],
   },
   edm: {
     about: "Festival dance: four-on-the-floor, big saw chords, a rising lead", bpm: [122, 130], scales: ["minor", "major"], harmony: "minor", density: 1,
-    parts: [part("chords", "Saw chords", P.saw, { how: "stabs", from: 0.5, vol: 0.6, chorus: 0.5 }), part("pad", "Pad", P.polysynth, { vol: 0.5 }), part("lead", "Lead", P.square, { from: 0.45, vol: 0.65, rev: 0.4 }), part("bass", "Bass", P.synthBass, { how: "offbeat", from: 0.4, vol: 0.9 }), part("drums", "Drums", KIT.electronic, { how: "house", from: 0.3, vol: 0.95 }), part("arp", "Pluck", P.crystal, { vol: 0.5, pan: 0.25 })],
+    parts: [mod("chords", "Supersaw chords", M.superChords, { how: "stabs", from: 0.5, vol: 0.7 }), mod("pad", "Supersaw pad", M.superPad, { vol: 0.5 }), mod("lead", "Supersaw lead", M.superLead, { from: 0.45, vol: 0.7, rev: 0.4 }), mod("bass", "Bass", M.fmBass, { how: "offbeat", from: 0.4, vol: 0.9 }), part("drums", "Dance kit", KIT.dance, { how: "house", from: 0.3, vol: 0.95 }), mod("arp", "Pluck", M.pluck, { vol: 0.55, pan: 0.25 })],
     form: [["intro", 8, 0.3], ["build", 8, 0.6], ["drop", 8, 1], ["break", 4, 0.35], ["drop", 8, 1]],
   },
   synthwave: {
     about: "Eighties night drive: pulsing bass, wide pads, gated drums, a singing lead", bpm: [84, 110], scales: ["minor", "dorian"], harmony: "minor", density: 0.8,
-    parts: [part("bass", "Bass", P.synthBass, { how: "eighths", vol: 0.85 }), part("pad", "Pad", P.synthStrings, { vol: 0.6, chorus: 0.5 }), part("arp", "Arp", P.polysynth, { vol: 0.5, pan: 0.3 }), part("lead", "Lead", P.saw, { from: 0.45, vol: 0.7, rev: 0.5 }), part("drums", "Drums", KIT.electronic, { how: "gated", from: 0.3, vol: 0.9 }), part("chords", "Brass", P.synthBrass, { how: "stabs", from: 0.8, vol: 0.5 })],
+    parts: [mod("bass", "Bass", M.fmBass, { how: "eighths", vol: 0.85 }), mod("pad", "Analog pad", M.analogPad, { vol: 0.6, chorus: 0.4 }), mod("arp", "Arp", M.pluck, { vol: 0.5, pan: 0.3 }), mod("lead", "Lead", M.superLead, { from: 0.45, vol: 0.65, rev: 0.5 }), part("drums", "Drums", KIT.dance, { how: "gated", from: 0.3, vol: 0.9 }), part("chords", "Brass", P.synthBrass, { how: "stabs", from: 0.8, vol: 0.5 })],
     form: [["intro", 4, 0.3], ["cruise", 8, 0.6], ["neon", 8, 0.9], ["drift", 4, 0.4], ["neon", 8, 1]],
   },
   hiphop: {
     about: "Trap-leaning beat: 808 kit, sub bass, dark keys, rolling hats", bpm: [130, 150], scales: ["minor", "phrygian", "harmonic_minor"], harmony: "dark", density: 0.6,
-    parts: [part("chords", "Keys", P.piano, { how: "sparse", vol: 0.65, rev: 0.5 }), part("lead", "Bell", P.musicbox, { from: 0.4, vol: 0.6, rev: 0.5, oct: 1 }), part("bass", "808", P.synthBass2, { how: "trap", from: 0.35, vol: 0.95, oct: -1 }), part("drums", "808 kit", KIT.tr808, { how: "trap", from: 0.3, vol: 0.9 }), part("pad", "Pad", P.halo, { vol: 0.35 })],
+    parts: [part("chords", "Keys", P.piano, { how: "sparse", vol: 0.65, rev: 0.5 }), mod("lead", "Bell", M.fmBell, { from: 0.4, vol: 0.55, rev: 0.5, oct: 1 }), mod("bass", "808", M.bass808, { how: "trap", from: 0.35, vol: 0.95, oct: -1 }), part("drums", "Trap kit", KIT.trap, { how: "trap", from: 0.3, vol: 0.9 }), part("pad", "Pad", P.halo, { vol: 0.35 })],
     form: [["intro", 4, 0.3], ["verse", 8, 0.65], ["hook", 8, 0.95], ["verse", 8, 0.7], ["hook", 8, 1]],
   },
   jazz: {
@@ -157,7 +167,7 @@ export const STYLES: Record<string, Style> = {
   },
   chiptune: {
     about: "8-bit game music: square lead, fast arps, simple drums", bpm: [128, 168], scales: ["major", "minor"], harmony: "major", density: 1.4,
-    parts: [part("lead", "Square lead", P.square, { vol: 0.6, rev: 0.05 }), part("arp", "Arp", P.square, { how: "fast", vol: 0.4, rev: 0.05, pan: 0.3 }), part("bass", "Bass", P.saw, { how: "eighths", vol: 0.6, rev: 0.05, oct: -1 }), part("drums", "Kit", KIT.electronic, { how: "chip", vol: 0.7 })],
+    parts: [mod("lead", "Square lead", M.chipSquare, { vol: 0.6, rev: 0.05 }), mod("arp", "Pulse arp", M.chipPulse, { how: "fast", vol: 0.4, rev: 0.05, pan: 0.3 }), mod("bass", "Triangle bass", M.chipTri, { how: "eighths", vol: 0.7, rev: 0.05, oct: -1 }), part("drums", "Kit", KIT.electronic, { how: "chip", vol: 0.7 })],
     form: [["title", 4, 0.6], ["stage", 8, 0.8], ["boss", 8, 1], ["clear", 4, 0.7]],
   },
   motivational: {
@@ -172,28 +182,83 @@ export const STYLES: Record<string, Style> = {
   },
   bollywood_romantic: {
     about: "Film love song: guitar strum, flute and strings, tabla-style keherwa", bpm: [80, 104], scales: ["yaman", "khamaj", "pahadi", "charukeshi", "major"], harmony: "major", density: 0.9, ornament: true, taal: "keherwa",
-    parts: [part("lead", "Bansuri (flute)", P.flute, { vol: 0.85, rev: 0.5 }), part("lead", "Sitar", P.sitar, { from: 0.72, vol: 0.7, rev: 0.4, upTo: 0.9 }), part("chords", "Guitar", P.nylon, { how: "strum", vol: 0.65, pan: -0.25 }), part("pad", "Strings", P.strings, { from: 0.45, vol: 0.6, rev: 0.5 }), part("counter", "Violins", P.violin, { from: 0.75, vol: 0.55, rev: 0.5, pan: 0.25 }), part("bass", "Bass", P.fingerBass, { how: "pop", from: 0.35, vol: 0.8 }), part("perc", "Tabla-style hand drums", KIT.standard, { how: "taal", from: 0.3, vol: 0.85 }), part("arp", "Santoor", P.santur, { upTo: 0.5, vol: 0.55, rev: 0.5, pan: 0.3 })],
+    parts: [ind("lead", "Bansuri", IN.bansuri, { vol: 0.85, rev: 0.5 }), ind("lead", "Sitar", IN.sitar, { from: 0.72, vol: 0.8, rev: 0.4, upTo: 0.9 }), part("chords", "Guitar", P.nylon, { how: "strum", vol: 0.65, pan: -0.25 }), part("pad", "Strings", P.strings, { from: 0.45, vol: 0.6, rev: 0.5 }), part("counter", "Violins", P.violin, { from: 0.75, vol: 0.55, rev: 0.5, pan: 0.25 }), part("bass", "Bass", P.fingerBass, { how: "pop", from: 0.35, vol: 0.8 }), part("perc", "Tabla", KIT.tabla, { how: "taal", from: 0.3, vol: 0.85 }), part("arp", "Santoor", P.santur, { upTo: 0.5, vol: 0.55, rev: 0.5, pan: 0.3 })],
     form: [["alaap", 4, 0.25], ["mukhda", 8, 0.6], ["antara", 8, 0.8], ["mukhda", 8, 0.95], ["end", 4, 0.4]],
   },
   bollywood_dance: {
     about: "Party number: dhol groove, claps, a bright hook", bpm: [104, 128], scales: ["khamaj", "kafi", "mixolydian", "bilawal"], harmony: "major", swing: 0.12, density: 1.2, taal: "bhangra",
-    parts: [part("lead", "Hook (tumbi-style)", P.banjo, { vol: 0.75, rev: 0.25 }), part("lead", "Shehnai", P.shehnai, { from: 0.8, vol: 0.7, rev: 0.35 }), part("chords", "Synth brass", P.synthBrass, { how: "stabs", from: 0.5, vol: 0.55 }), part("bass", "Bass", P.synthBass, { how: "offbeat", vol: 0.9 }), part("drums", "Kit", KIT.power, { how: "dhol", vol: 0.95 }), part("perc", "Dhol-style hand drums", KIT.standard, { how: "taal", vol: 0.85 }), part("pad", "Strings", P.strings, { from: 0.6, vol: 0.45 })],
+    parts: [part("lead", "Hook (tumbi-style)", P.banjo, { vol: 0.75, rev: 0.25 }), ind("lead", "Shehnai", IN.shehnai, { from: 0.8, vol: 0.7, rev: 0.35 }), part("chords", "Synth brass", P.synthBrass, { how: "stabs", from: 0.5, vol: 0.55 }), part("bass", "Bass", P.synthBass, { how: "offbeat", vol: 0.9 }), part("drums", "Kit", KIT.power, { how: "dhol", vol: 0.95 }), part("perc", "Dhol and dholak", KIT.tabla, { how: "taal", vol: 0.9 }), part("pad", "Strings", P.strings, { from: 0.6, vol: 0.45 })],
     form: [["intro", 4, 0.5], ["verse", 8, 0.7], ["hook", 8, 1], ["break", 4, 0.5], ["hook", 8, 1]],
   },
   indian_classical: {
     about: "Raga performance: sitar over a drone, slow opening, then tabla-style teentaal", bpm: [72, 132], scales: ["yaman", "bhairav", "bhimpalasi", "malkauns", "desh", "bageshri", "darbari", "todi"], harmony: "drone", density: 1, ornament: true, taal: "teentaal",
-    parts: [part("lead", "Sitar", P.sitar, { vol: 0.9, rev: 0.4 }), part("drone", "Tanpura-style drone", P.sitar, { how: "tanpura", vol: 0.45, rev: 0.5, pan: 0.2 }), part("perc", "Tabla-style hand drums", KIT.standard, { how: "taal", from: 0.4, vol: 0.85 }), part("counter", "Bansuri (flute)", P.flute, { from: 0.8, vol: 0.6, rev: 0.5, pan: -0.25 }), part("pad", "Drone pad", P.bowed, { vol: 0.3, rev: 0.6 })],
+    parts: [ind("lead", "Sitar", IN.sitar, { vol: 0.95, rev: 0.4 }), ind("drone", "Tanpura", IN.tanpura, { how: "tanpura", vol: 0.5, rev: 0.5, pan: 0.2 }), part("perc", "Tabla", KIT.tabla, { how: "taal", from: 0.4, vol: 0.9 }), ind("counter", "Bansuri", IN.bansuri, { from: 0.8, vol: 0.6, rev: 0.5, pan: -0.25 }), part("pad", "Drone pad", P.bowed, { vol: 0.3, rev: 0.6 })],
     form: [["alaap", 8, 0.2], ["jor", 8, 0.5], ["gat", 8, 0.75], ["jhala", 8, 1]],
   },
   devotional: {
     about: "Bhajan: harmonium, flute, hand drums and small cymbals", bpm: [76, 104], scales: ["bhupali", "yaman", "bhairavi", "durga", "kafi"], harmony: "drone", density: 0.8, ornament: true, taal: "bhajani",
-    parts: [part("chords", "Harmonium", P.harmonium, { how: "harmonium", vol: 0.7 }), part("lead", "Bansuri (flute)", P.flute, { vol: 0.85, rev: 0.5 }), part("drone", "Tanpura-style drone", P.sitar, { how: "tanpura", vol: 0.4, rev: 0.5 }), part("perc", "Hand drums and manjira", KIT.standard, { how: "taal", from: 0.35, vol: 0.8 }), part("pad", "Voices", P.oohs, { from: 0.7, vol: 0.45, rev: 0.6 }), part("counter", "Santoor", P.santur, { from: 0.6, vol: 0.5, pan: 0.3 })],
+    parts: [ind("chords", "Harmonium", IN.harmonium, { how: "harmonium", vol: 0.7 }), ind("lead", "Bansuri", IN.bansuri, { vol: 0.85, rev: 0.5 }), ind("drone", "Tanpura", IN.tanpura, { how: "tanpura", vol: 0.45, rev: 0.5 }), part("perc", "Tabla and manjira", KIT.tabla, { how: "taal", from: 0.35, vol: 0.85 }), mod("pad", "Voices", M.ooh, { from: 0.7, vol: 0.45, rev: 0.6 }), ind("counter", "Santoor", IN.santoor, { from: 0.6, vol: 0.6, pan: 0.3 })],
     form: [["invocation", 4, 0.25], ["sthayi", 8, 0.6], ["antara", 8, 0.8], ["sthayi", 8, 0.95]],
   },
   folk_garba: {
     about: "Festival dance: fast hand drums, shehnai, clapping sticks", bpm: [116, 140], scales: ["kafi", "khamaj", "bilawal", "pahadi"], harmony: "drone", density: 1.2, taal: "garba",
-    parts: [part("lead", "Shehnai", P.shehnai, { vol: 0.8, rev: 0.35 }), part("chords", "Harmonium", P.harmonium, { how: "harmonium", vol: 0.55 }), part("perc", "Dhol-style hand drums", KIT.standard, { how: "taal", vol: 0.9 }), part("drums", "Sticks and claps", KIT.standard, { how: "dandiya", from: 0.45, vol: 0.7 }), part("bass", "Bass", P.fingerBass, { how: "pop", from: 0.5, vol: 0.75 }), part("counter", "Flute", P.flute, { from: 0.75, vol: 0.55 })],
+    parts: [ind("lead", "Shehnai", IN.shehnai, { vol: 0.8, rev: 0.35 }), ind("chords", "Harmonium", IN.harmonium, { how: "harmonium", vol: 0.55 }), part("perc", "Dhol and dholak", KIT.tabla, { how: "taal", vol: 0.9 }), part("perc", "Sticks and claps", KIT.tabla, { how: "dandiya", from: 0.45, vol: 0.7 }), part("bass", "Bass", P.fingerBass, { how: "pop", from: 0.5, vol: 0.75 }), part("counter", "Flute", P.flute, { from: 0.75, vol: 0.55 })],
     form: [["call", 4, 0.5], ["round", 8, 0.75], ["faster", 8, 1], ["round", 8, 0.9]],
+  },
+  trap: {
+    about: "Modern trap: long 808 bass, rolling hats, bell and pluck melodies", bpm: [130, 150], scales: ["minor", "phrygian", "harmonic_minor"], harmony: "dark", density: 0.7,
+    parts: [mod("lead", "Bell", M.fmBell, { vol: 0.6, rev: 0.5, oct: 1 }), mod("arp", "Pluck", M.pluck, { from: 0.55, vol: 0.5, rev: 0.4, pan: 0.25 }), mod("chords", "Dark keys", M.lofiKeys, { how: "sparse", vol: 0.6, rev: 0.5 }), mod("bass", "808", M.bass808, { how: "trap", from: 0.35, vol: 1, oct: -1 }), part("drums", "Trap kit", KIT.trap, { how: "trap", from: 0.3, vol: 0.9 }), mod("pad", "Choir", M.ooh, { from: 0.6, vol: 0.35, rev: 0.6 })],
+    form: [["intro", 4, 0.3], ["verse", 8, 0.65], ["hook", 8, 0.95], ["verse", 8, 0.7], ["hook", 8, 1]],
+  },
+  drill: {
+    about: "Drill: sliding 808s, late snares, hats in threes, a cold piano", bpm: [138, 146], scales: ["minor", "phrygian", "harmonic_minor"], harmony: "dark", density: 0.6,
+    parts: [part("chords", "Piano", P.piano, { how: "sparse", vol: 0.7, rev: 0.45 }), mod("lead", "Bell", M.fmBell, { from: 0.5, vol: 0.5, rev: 0.5, oct: 1 }), mod("bass", "808", M.bass808, { how: "trap", from: 0.3, vol: 1, oct: -1 }), part("drums", "Trap kit", KIT.trap, { how: "drill", from: 0.3, vol: 0.9 }), film("pad", "Tension strings", F.tension, { from: 0.6, vol: 0.3, rev: 0.5 })],
+    form: [["intro", 4, 0.3], ["verse", 8, 0.7], ["hook", 8, 0.95], ["verse", 8, 0.75], ["hook", 8, 1]],
+  },
+  phonk: {
+    about: "Phonk: driven 808, hard kick and clap, a ringing bell riff", bpm: [120, 160], scales: ["phrygian", "minor", "minor_pentatonic"], harmony: "dark", density: 1.1,
+    parts: [mod("lead", "Bell riff", M.fmBell, { vol: 0.7, rev: 0.3, oct: 1 }), mod("bass", "808", M.bass808, { how: "eighths", vol: 1, oct: -1 }), part("drums", "Trap kit", KIT.trap, { how: "house", vol: 0.95 }), mod("pad", "Choir", M.aah, { from: 0.5, vol: 0.35, rev: 0.6 }), mod("arp", "Pluck", M.pluck, { from: 0.8, vol: 0.45, pan: -0.25 })],
+    form: [["intro", 4, 0.5], ["ride", 8, 0.8], ["peak", 8, 1], ["ride", 8, 0.85]],
+  },
+  future_bass: {
+    about: "Future bass: wide supersaw chords that swell and fall, bright plucks, a big drop", bpm: [140, 160], scales: ["major", "lydian", "minor"], harmony: "major", density: 0.9,
+    parts: [mod("chords", "Supersaw chords", M.superChords, { how: "stabs", from: 0.5, vol: 0.8 }), mod("pad", "Supersaw pad", M.superPad, { vol: 0.5, rev: 0.5 }), mod("lead", "Lead", M.superLead, { from: 0.6, vol: 0.6, rev: 0.4, oct: 1 }), mod("arp", "Pluck", M.pluck, { vol: 0.55, rev: 0.4, pan: 0.25 }), mod("bass", "Sub", M.sub, { how: "long", from: 0.4, vol: 0.95, oct: -1 }), part("drums", "Dance kit", KIT.dance, { how: "trap", from: 0.45, vol: 0.9 }), mod("pad", "Voices", M.aah, { from: 0.8, vol: 0.35, rev: 0.6 })],
+    form: [["intro", 4, 0.3], ["build", 8, 0.6], ["drop", 8, 1], ["break", 4, 0.35], ["drop", 8, 1]],
+  },
+  house: {
+    about: "House: four-on-the-floor, off-beat bass, warm keys and a vocal pad", bpm: [120, 128], scales: ["minor", "dorian", "major"], harmony: "jazz", density: 0.8,
+    parts: [mod("chords", "Electric piano", M.fmPiano, { how: "comp", vol: 0.7, chorus: 0.3 }), mod("bass", "Bass", M.fmBass, { how: "offbeat", from: 0.35, vol: 0.9 }), part("drums", "Dance kit", KIT.dance, { how: "house", from: 0.25, vol: 0.95 }), mod("pad", "Analog pad", M.analogPad, { vol: 0.45 }), mod("lead", "Pluck", M.pluck, { from: 0.5, vol: 0.6, rev: 0.4 }), mod("pad", "Voices", M.ooh, { from: 0.75, vol: 0.35, rev: 0.6 })],
+    form: [["intro", 8, 0.3], ["groove", 8, 0.65], ["lift", 8, 0.9], ["break", 4, 0.4], ["lift", 8, 1]],
+  },
+  drum_and_bass: {
+    about: "Drum and bass: fast two-step break, deep moving bass, airy pads", bpm: [168, 176], scales: ["minor", "dorian"], harmony: "minor", density: 0.8,
+    parts: [mod("bass", "Reese bass", M.reese, { how: "long", from: 0.35, vol: 0.95, oct: -1 }), part("drums", "Dance kit", KIT.dance, { how: "dnb", from: 0.3, vol: 0.95 }), mod("pad", "Glass pad", M.glassPad, { vol: 0.5, rev: 0.6 }), mod("chords", "Electric piano", M.fmPiano, { how: "sparse", vol: 0.6, rev: 0.5 }), mod("lead", "Lead", M.superLead, { from: 0.7, vol: 0.5, rev: 0.5 }), mod("arp", "Pluck", M.pluck, { from: 0.55, vol: 0.45, pan: 0.3 })],
+    form: [["intro", 8, 0.3], ["roll", 8, 0.8], ["deep", 8, 0.6], ["roll", 8, 1]],
+  },
+  reggaeton: {
+    about: "Reggaeton: the dembow beat, a plucked hook, warm bass", bpm: [88, 100], scales: ["minor", "harmonic_minor", "dorian"], harmony: "minor", density: 1,
+    parts: [mod("lead", "Pluck hook", M.pluck, { vol: 0.7, rev: 0.3 }), part("chords", "Guitar", P.nylon, { how: "strum", from: 0.5, vol: 0.55, pan: -0.25 }), mod("bass", "Bass", M.sub, { how: "pop", from: 0.3, vol: 0.95, oct: -1 }), part("drums", "Dance kit", KIT.dance, { how: "dembow", from: 0.3, vol: 0.9 }), mod("pad", "Pad", M.analogPad, { vol: 0.4 }), mod("arp", "Bell", M.fmBell, { from: 0.8, vol: 0.4, pan: 0.3, oct: 1 })],
+    form: [["intro", 4, 0.4], ["verse", 8, 0.65], ["coro", 8, 0.95], ["verse", 8, 0.7], ["coro", 8, 1]],
+  },
+  afrobeats: {
+    about: "Afrobeats: a loping groove of shakers and hand drums, bright guitar, soft keys", bpm: [98, 114], scales: ["major", "mixolydian", "dorian"], harmony: "major", swing: 0.08, density: 1,
+    parts: [part("arp", "Guitar", P.cleanGtr, { vol: 0.6, pan: 0.3 }), mod("chords", "Electric piano", M.fmPiano, { how: "comp", vol: 0.65 }), mod("lead", "Pluck", M.pluck, { from: 0.45, vol: 0.6, rev: 0.35 }), mod("bass", "Bass", M.sub, { how: "pop", from: 0.3, vol: 0.9, oct: -1 }), part("drums", "Lo-fi kit", KIT.lofi, { how: "afro", from: 0.25, vol: 0.9 }), mod("pad", "Voices", M.ooh, { from: 0.7, vol: 0.4, rev: 0.5 })],
+    form: [["intro", 4, 0.4], ["verse", 8, 0.65], ["hook", 8, 0.95], ["verse", 8, 0.7], ["hook", 8, 1]],
+  },
+  punjabi_pop: {
+    about: "Punjabi pop: dhol and 808 together, a tumbi-style hook, shehnai on the drop", bpm: [92, 108], scales: ["khamaj", "kafi", "mixolydian", "minor"], harmony: "minor", swing: 0.1, density: 1.2, taal: "bhangra",
+    parts: [part("lead", "Tumbi-style hook", P.banjo, { vol: 0.75, rev: 0.25 }), ind("lead", "Shehnai", IN.shehnai, { from: 0.85, vol: 0.65, rev: 0.35 }), mod("bass", "808", M.bass808, { how: "trap", vol: 1, oct: -1 }), part("drums", "Trap kit", KIT.trap, { how: "trap", from: 0.35, vol: 0.85 }), part("perc", "Dhol", KIT.tabla, { how: "taal", vol: 0.9 }), mod("chords", "Supersaw chords", M.superChords, { how: "stabs", from: 0.7, vol: 0.5 }), ind("pad", "Harmonium", IN.harmonium, { upTo: 0.6, vol: 0.4 })],
+    form: [["intro", 4, 0.5], ["verse", 8, 0.7], ["hook", 8, 1], ["break", 4, 0.5], ["hook", 8, 1]],
+  },
+  sufi: {
+    about: "Sufi and qawwali: harmonium, claps, tabla and dholak, a soaring line", bpm: [84, 116], scales: ["bhairavi", "kafi", "yaman", "khamaj"], harmony: "drone", density: 0.9, ornament: true, taal: "keherwa",
+    parts: [ind("lead", "Sarangi", IN.sarangi, { vol: 0.8, rev: 0.45 }), ind("chords", "Harmonium", IN.harmonium, { how: "harmonium", vol: 0.75 }), ind("drone", "Tanpura", IN.tanpura, { how: "tanpura", vol: 0.45, rev: 0.5 }), part("perc", "Tabla and dholak", KIT.tabla, { how: "taal", from: 0.35, vol: 0.9 }), part("perc", "Claps", KIT.tabla, { how: "claps", from: 0.6, vol: 0.6 }), mod("pad", "Chorus voices", M.aah, { from: 0.75, vol: 0.45, rev: 0.6 })],
+    form: [["alaap", 4, 0.25], ["sthayi", 8, 0.6], ["antara", 8, 0.8], ["sthayi", 8, 1]],
+  },
+  trailer: {
+    about: "Hybrid trailer: braams, risers and booms under a pounding string pulse", bpm: [100, 140], scales: ["minor", "phrygian", "harmonic_minor"], harmony: "epic", density: 0.5,
+    parts: [part("ostinato", "Strings pulse", P.strings, { how: "sixteenths", from: 0.4, vol: 0.7, pan: -0.15 }), film("hits", "Braam", F.braam, { how: "open", vol: 0.8, rev: 0.4 }), film("drone", "Dark drone", F.drone, { vol: 0.5, rev: 0.5 }), part("drums", "Film percussion", KIT.film, { how: "epic", from: 0.5, vol: 0.95 }), mod("bass", "Sub", M.sub, { how: "long", from: 0.5, vol: 0.9, oct: -1 }), part("lead", "Horns", P.horn, { from: 0.7, vol: 0.8, rev: 0.5 }), mod("pad", "Choir", M.aah, { from: 0.8, vol: 0.5, rev: 0.6 }), film("pad", "Tension strings", F.tension, { upTo: 0.5, vol: 0.4, rev: 0.5 })],
+    form: [["dread", 4, 0.3], ["rise", 8, 0.6], ["assault", 8, 1], ["silence", 2, 0.2], ["final", 8, 1]],
   },
   japanese: {
     about: "Koto and shakuhachi over taiko", bpm: [72, 110], scales: ["japanese", "hirajoshi", "minor_pentatonic"], harmony: "drone", density: 0.8, ornament: true,
@@ -220,8 +285,9 @@ export interface Brief {
   scale?: string;
   seed?: number;
   name?: string;
-  /** Replace the lead instrument (General MIDI program). */
+  /** Replace the lead instrument (program, and its variation bank when it is not a General MIDI one). */
   lead?: number;
+  leadBank?: number;
   leadName?: string;
   taal?: string;
   /** No melody (a bed to sing or speak over). */
@@ -578,6 +644,33 @@ function drumBar(how: string, r: Rnd, bb: number, e: number, bar: number, fill: 
       if (e > 0.6) { const s0 = Math.floor(r() * 3) + 0.5; for (let k = 0; k < 6; k++) hit(s0 + k / 12, D.hat, 0.4 + k * 0.06); }
       if (bar % 4 === 3) hit(bb - 0.5, D.hatO, 0.6);
       break;
+    case "drill":
+      // sliding, off-centre kicks, the snare late in the bar, hats in threes
+      hit(0, D.kick, 1); hit(bar % 2 ? 1.25 : 0.75, D.kick, 0.8); hit(2.5, D.kick, 0.9); if (e > 0.7) hit(3.25, D.kick, 0.7);
+      hit(1.5, D.snare, 0.9); if (bb >= 4) hit(3.5, D.snare, 1);
+      for (const b of [0, 0.75, 1.5, 2, 2.75, 3.5]) hit(b, D.hat, 0.7);
+      if (e > 0.6) for (let k = 0; k < 3; k++) hit((bar % 2 ? 2.25 : 1) + k / 6, D.hat, 0.45 + k * 0.08);
+      if (bar % 4 === 3) hit(bb - 0.25, D.hatO, 0.55);
+      break;
+    case "dnb":
+      // the two-step break of drum and bass
+      hit(0, D.kick, 1); hit(2.5, D.kick, 0.95); if (e > 0.8 && bar % 2) hit(1.75, D.kick, 0.6);
+      hit(1, D.snare, 1); hit(3, D.snare, 1); if (e > 0.6) { hit(1.75, D.snare, 0.35); hit(3.75, D.snare, 0.4); }
+      each(0.5, (b, i) => hit(b, D.hat, i % 2 ? 0.5 : 0.7)); if (e > 0.75) each(0.25, (b, i) => { if (i % 4 === 3) hit(b, D.hat, 0.35); });
+      if (bar % 4 === 0 && e > 0.6) hit(0, D.crash, 0.8);
+      break;
+    case "dembow":
+      // reggaeton: kick on every beat, the snare answering before two and before four
+      each(1, (b) => hit(b, D.kick, 1)); for (const b of [0.75, 1.5, 2.75, 3.5]) hit(b, D.snare, b % 1 === 0.5 ? 0.95 : 0.8);
+      if (e > 0.5) each(0.5, (b, i) => hit(b, D.hat, i % 2 ? 0.4 : 0.55)); if (e > 0.8) each(1, (b) => hit(b + 0.5, D.shaker, 0.4));
+      break;
+    case "afro":
+      // afrobeats: a loping kick, rim on two and four, shaker and hand drums between
+      hit(0, D.kick, 1); hit(1.5, D.kick, 0.7); hit(2, D.kick, 0.9); if (bar % 2) hit(3.5, D.kick, 0.75);
+      hit(1, D.rim, 0.85); hit(3, D.rim, 0.9); if (e > 0.7) hit(3, D.clap, 0.6);
+      each(0.25, (b, i) => hit(b, D.shaker, i % 4 === 0 ? 0.55 : i % 2 ? 0.3 : 0.42));
+      for (const b of [0.75, 1.75, 2.5, 3.25]) hit(b, bar % 2 ? D.congaH : D.congaM, 0.6); if (e > 0.6) hit(2.75, D.congaL, 0.7);
+      break;
     case "lofi":
       hit(0, D.kick, 0.9); hit(bb / 2 + 0.5, D.kick, 0.75); if (bar % 2) hit(bb / 2 - 0.5, D.kick, 0.6);
       each(2, (b) => hit(b + 1, D.rim, 0.8)); each(0.5, (b, i) => hit(b, D.hat, i % 2 ? 0.35 : 0.55));
@@ -602,7 +695,7 @@ function drumBar(how: string, r: Rnd, bb: number, e: number, bar: number, fill: 
     default:
       each(1, (b, i) => hit(b, i % 2 ? D.snare : D.kick, 0.9));
   }
-  if (fill && e > 0.35 && !["lofi", "swing", "woodblock", "dandiya", "chip"].includes(how)) {
+  if (fill && e > 0.35 && !["lofi", "swing", "woodblock", "dandiya", "chip", "afro", "dembow"].includes(how)) {
     // a fill over the last beat or two
     const start = bb - (e > 0.7 ? 2 : 1);
     const keep = o.filter((x) => x[0] < start || x[1] === D.kick);
@@ -643,7 +736,7 @@ function taalBar(taal: string, r: Rnd, bb: number, e: number, bar: number, fill:
 
 function writePart(song: Song, p: Part, secs: Section[], chords: ChordEvent[], r: Rnd, st: Style, lead: { notes: Note[] } | null): Track | null {
   const bb = barBeats(song);
-  const tr = newTrack({ name: p.name, kind: p.role === "drums" || p.role === "perc" ? "drums" : "inst", program: p.prog, volume: p.vol ?? 0.7, pan: p.pan ?? 0, reverb: p.rev ?? (p.role === "drums" || p.role === "perc" || p.role === "bass" ? 0.12 : 0.35), chorus: p.chorus });
+  const tr = newTrack({ name: p.name, kind: p.role === "drums" || p.role === "perc" ? "drums" : "inst", program: p.prog, bank: p.bank, volume: p.vol ?? 0.7, pan: p.pan ?? 0, reverb: p.rev ?? (p.role === "drums" || p.role === "perc" || p.role === "bass" ? 0.12 : 0.35), chorus: p.chorus });
   const N = tr.notes;
   const oct = (p.oct ?? 0) * 12;
   let prevVoicing: number[] | null = null;
@@ -777,6 +870,11 @@ function writePart(song: Song, p: Part, secs: Section[], chords: ChordEvent[], r
         }
         case "hits": {
           const root = 36 + (first.root % 12) + (p.prog === P.timpani ? 0 : 0);
+          if (p.how === "open") {
+            // one long blast where a section opens, and again at its middle when it is long
+            if (b === 0 || (s.bars >= 8 && b === s.bars / 2)) N.push([at, Math.min(bb * 2, 8), root - 12 + oct, vel(112)]);
+            break;
+          }
           N.push([at, 1.5, root, vel(104)]);
           if (e > 0.7 && bb >= 4) {
             N.push([at + 2.5, 0.4, root, vel(84)]);
@@ -917,7 +1015,7 @@ export function composeSong(b: Brief): Song {
       const m = perLead.get(p);
       if (!m || !m.notes.length) continue;
       const first = leadParts.indexOf(p) === 0;
-      const tr = newTrack({ name: first && b.leadName ? b.leadName : p.name, program: first && b.lead !== undefined ? b.lead : p.prog, volume: p.vol ?? 0.8, pan: p.pan ?? 0, reverb: p.rev ?? 0.4, notes: m.notes, bends: m.bends.length ? m.bends : undefined });
+      const tr = newTrack({ name: first && b.leadName ? b.leadName : p.name, program: first && b.lead !== undefined ? b.lead : p.prog, bank: first && b.lead !== undefined ? b.leadBank : p.bank, volume: p.vol ?? 0.8, pan: p.pan ?? 0, reverb: p.rev ?? 0.4, notes: m.notes, bends: m.bends.length ? m.bends : undefined });
       song.tracks.push(tr);
       continue;
     }
@@ -1007,7 +1105,7 @@ function composeWithWords(song: Song, st: Style, b: Brief, r: Rnd, moodEnergy: n
   const leadParts = st.parts.filter((p) => p.role === "lead");
   const firstLead = leadParts[0];
   if (firstLead) {
-    const tr = newTrack({ name: b.leadName ?? firstLead.name, program: b.lead ?? firstLead.prog, volume: (firstLead.vol ?? 0.8) * 0.9, pan: firstLead.pan ?? 0, reverb: firstLead.rev ?? 0.4 });
+    const tr = newTrack({ name: b.leadName ?? firstLead.name, program: b.lead ?? firstLead.prog, bank: b.lead !== undefined ? b.leadBank : firstLead.bank, volume: (firstLead.vol ?? 0.8) * 0.9, pan: firstLead.pan ?? 0, reverb: firstLead.rev ?? 0.4 });
     const bends: [number, number][] = [];
     for (const s of secs) {
       if (sung.has(s)) continue;

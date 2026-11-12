@@ -50,13 +50,21 @@ function parseNotes(raw: unknown): Note[] {
   });
 }
 
-async function bounce(st: Studio, songId: string, o: { toTimeline: boolean; start?: number; volume?: number; only?: string[]; name?: string }): Promise<Record<string, unknown>> {
+/** What the balance means, in words (for the result of a render). */
+function balanceNote(b: number): string {
+  if (b < -1) return "the voice is under the instruments: raise vocals or lower music (music.mix)";
+  if (b < 1.5) return "voice and instruments are level: the words may be hard to follow in busy passages";
+  if (b <= 6) return "the voice sits just in front of the instruments";
+  return "the voice is well in front; the instruments are a quiet bed";
+}
+
+async function bounce(st: Studio, songId: string, o: { toTimeline: boolean; start?: number; volume?: number; only?: string[]; name?: string; stems?: boolean }): Promise<Record<string, unknown>> {
   const song = songOf(st.project, songId);
   if (!song.tracks.some((t) => t.notes.length)) throw new ops.OpError("This song has no notes yet.");
   st.setStatus(`Rendering ${song.name}…`);
   const sung = song.tracks.some((t) => t.kind === "vocal" && t.notes.length && !t.mute);
   openVoice.onProgress = (d, what) => st.setStatus(`${what}… ${Math.round(d * 100)}%`);
-  const audio = await renderWithVocals(song, sung ? openVoice : null, { only: o.only, onProgress: (d) => st.setStatus(`Rendering ${song.name}… ${Math.round(d * 100)}%`) });
+  const audio = await renderWithVocals(song, sung ? openVoice : null, { only: o.only, stems: o.stems && sung, onProgress: (d) => st.setStatus(`Rendering ${song.name}… ${Math.round(d * 100)}%`) });
   const blob = new Blob([wavBytes(audio) as BlobPart], { type: "audio/wav" });
   st.setStatus("");
   return await st.mutateAsync("render music", async (p) => {
@@ -77,7 +85,14 @@ async function bounce(st: Studio, songId: string, o: { toTimeline: boolean; star
       clipId = clip.id;
     }
     if (!o.only) sg.assetId = asset.id;
-    return { assetId: asset.id, clipId, seconds: r2(audio.seconds), peak: r2(audio.peak) };
+    // the voice and the instruments on their own, for balancing them by hand on the timeline
+    let stems: Record<string, string> | undefined;
+    if (audio.stems) {
+      const v = await importBlob(p, new Blob([wavBytes(audio.stems.vocals) as BlobPart], { type: "audio/wav" }), `${o.name ?? sg.name} (vocals).wav`, "agent");
+      const m = await importBlob(p, new Blob([wavBytes(audio.stems.music) as BlobPart], { type: "audio/wav" }), `${o.name ?? sg.name} (music).wav`, "agent");
+      stems = { vocals: v.id, music: m.id };
+    }
+    return { assetId: asset.id, clipId, seconds: r2(audio.seconds), peak: r2(audio.peak), levels: audio.levels ? { ...audio.levels, note: balanceNote(audio.levels.balance) } : undefined, mix: audio.levels ? { vocals: 1, music: 1, lead: 3, duck: 3, clarity: 0.6, ...sg.mix } : undefined, stems };
   });
 }
 
@@ -133,13 +148,13 @@ export function registerMusicCommands(): void {
     },
   );
 
-  registerCommand("music.instruments", '{q?: "sitar" | "strings" | "kit" …, family?} The instruments in the sound bank (261 instruments, 13 drum kits) with their families. Search by word, or list a family.', async (_s, a) => {
+  registerCommand("music.instruments", '{q?: "sitar" | "strings" | "kit" …, family?} The instruments: the General MIDI bank (261 instruments, 13 drum kits) and the Studio bank VideoStudio makes itself (families "Studio · Modern": 808 bass, supersaws, plucks, FM keys, chip waves, choirs, pads; "Studio · Indian": sitar, tanpura, bansuri, harmonium, santoor, shehnai, sarangi; "Studio · Film": braam, booms, riser, tension strings; kits 80-84: trap 808, dance, lo-fi, film percussion, tabla and dholak). Search by word, or list a family.', async (_s, a) => {
     const all = await listInstruments();
     const q = (a.optStr("q") ?? "").toLowerCase(), fam = (a.optStr("family") ?? "").toLowerCase();
-    const hit = all.filter((i) => (!q || i.name.toLowerCase().includes(q) || i.family.toLowerCase().includes(q)) && (!fam || i.family.toLowerCase().includes(fam)));
+    const hit = all.filter((i) => (!q || i.name.toLowerCase().includes(q) || i.family.toLowerCase().includes(q) || (i.about ?? "").toLowerCase().includes(q)) && (!fam || i.family.toLowerCase().includes(fam)));
     const fams: Record<string, number> = {};
     for (const i of all) fams[i.family] = (fams[i.family] ?? 0) + 1;
-    return { total: all.length, families: fams, instruments: (q || fam ? hit : all).slice(0, 300).map((i) => (i.drums ? `${i.name} (kit ${i.program})` : `${i.name} (${i.program}${i.bank ? "/" + i.bank : ""}) · ${i.family}`)) };
+    return { total: all.length, families: fams, instruments: (q || fam ? hit : all).slice(0, 400).map((i) => (i.drums ? `${i.name} (kit ${i.program})${i.about ? " — " + i.about : ""}` : `${i.name} (${i.program}${i.bank ? "/" + i.bank : ""}) · ${i.family}${i.about ? " — " + i.about : ""}`)) };
   });
 
   registerCommand("music.styles", "The composer's styles, moods, scales and ragas, and rhythm cycles (taals).", () => ({
@@ -175,6 +190,7 @@ export function registerMusicCommands(): void {
       if (leadName) {
         const ins = await findInstrument(leadName);
         brief.lead = ins.program;
+        brief.leadBank = ins.bank || undefined;
         brief.leadName = ins.name;
       }
       const song = wrap(() => composeSong(brief));
@@ -351,12 +367,37 @@ export function registerMusicCommands(): void {
 
   registerCommand(
     "music.render",
-    "{songId?, toTimeline?=true, start? (s), volume?, tracks?: [ids or names] (only these: a stem), name?} Bounce a song to audio in the media pool and (by default) onto the timeline. Rendering a song again replaces its clip where it sits.",
+    "{songId?, toTimeline?=true, start? (s), volume?, tracks?: [ids or names] (only these: a stem), stems?: true (also put the voice and the instruments in the media pool as two separate files), name?} Bounce a song to audio in the media pool and (by default) onto the timeline. Rendering a song again replaces its clip where it sits. A song with singing reports `levels`: how loud the voice and the instruments are while it sings and the balance between them (music.mix changes it).",
     async (st, a) => {
       const song = songOf(st.project, a.optStr("songId"));
       const names = a.any("tracks") as string[] | undefined;
       const only = Array.isArray(names) ? names.map((n) => trackOf(song, String(n)).id) : undefined;
-      return bounce(st, song.id, { toTimeline: a.bool("toTimeline", true), start: a.optNum("start"), volume: a.optNum("volume"), only, name: a.optStr("name") });
+      return bounce(st, song.id, { toTimeline: a.bool("toTimeline", true), start: a.optNum("start"), volume: a.optNum("volume"), only, name: a.optStr("name"), stems: a.bool("stems", false) });
+    },
+  );
+
+  registerCommand(
+    "music.mix",
+    "{songId?, vocals? (1 = as balanced, 0.5 half as loud, 2 twice as loud), music? (the same for the instruments), lead? (dB the voice is placed in front of the instruments, default 3), duck? (dB the instruments step back while the voice sings, default 3), clarity? (0…1 voice presence and consonants, default 0.6), reset?: true, render?=true} The balance of a song with singing: how loud the voice is against the instruments. Renders the song again (unless render: false) and reports the new levels.",
+    async (st, a) => {
+      const song0 = songOf(st.project, a.optStr("songId"));
+      st.mutate("song mix", (p) => {
+        const song = songOf(p, song0.id);
+        const m = a.bool("reset", false) ? {} : { ...song.mix };
+        const set = (k: "vocals" | "music" | "lead" | "duck" | "clarity", lo: number, hi: number) => {
+          if (a.optNum(k) !== undefined) m[k] = Math.max(lo, Math.min(hi, a.num(k)));
+        };
+        set("vocals", 0, 4);
+        set("music", 0, 4);
+        set("lead", -12, 18);
+        set("duck", 0, 12);
+        set("clarity", 0, 1);
+        song.mix = Object.keys(m).length ? m : undefined;
+      });
+      const mix = { vocals: 1, music: 1, lead: 3, duck: 3, clarity: 0.6, ...songOf(st.project, song0.id).mix };
+      if (!a.bool("render", true)) return { mix };
+      const onTimeline = !!song0.assetId && st.project.tracks.some((t) => t.clips.some((c) => c.assetId === song0.assetId));
+      return { ...(await bounce(st, song0.id, { toTimeline: onTimeline })), mix };
     },
   );
 

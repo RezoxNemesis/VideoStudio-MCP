@@ -57,6 +57,20 @@ export interface Section {
   energy: number;
 }
 
+/** The balance of a song with singing. Every field is optional; the defaults give a voice that sits just in front of the band. */
+export interface SongMix {
+  /** Loudness of the singing: 1 as balanced, 0.5 half as loud (-6 dB), 2 twice as loud (+6 dB). */
+  vocals?: number;
+  /** Loudness of the instruments: 1 as balanced, 0.5 half as loud, 2 twice as loud. */
+  music?: number;
+  /** How far in front of the instruments the voice is placed before those two are applied, in dB (default 3). */
+  lead?: number;
+  /** How far the instruments step back while the voice sings, in dB (default 3; 0 = they do not move). */
+  duck?: number;
+  /** Clarity of the voice 0…1 (default 0.6): presence and air, an even level, room made for it in the band. */
+  clarity?: number;
+}
+
 export interface Song {
   id: string;
   name: string;
@@ -78,6 +92,8 @@ export interface Song {
   /** Master reverb size 0…1 and output gain. */
   room?: number;
   gain?: number;
+  /** Voice against instruments (songs with singing). */
+  mix?: SongMix;
   /** What it was generated from, if it was. */
   brief?: Record<string, unknown>;
   /** The rendered audio in the media pool, and the settings it was rendered with. */

@@ -5,6 +5,7 @@
  */
 import { SoundBankLoader, SpessaSynthProcessor } from "spessasynth_core";
 import { loadAsset } from "../stage/pack";
+import { buildStudioBank, studioCatalogue, type StudioNeed } from "./studio/bank";
 import { barBeats, beatSec, songBeats, type Song, type Track } from "./model";
 
 export interface Instrument {
@@ -13,6 +14,8 @@ export interface Instrument {
   bank: number;
   drums: boolean;
   family: string;
+  /** What it is for (Studio instruments). */
+  about?: string;
 }
 
 const FAMILIES = ["Piano", "Chromatic percussion", "Organ", "Guitar", "Bass", "Strings", "Ensemble", "Brass", "Reed", "Pipe", "Synth lead", "Synth pad", "Synth effects", "World", "Percussive", "Sound effects"];
@@ -26,7 +29,10 @@ let problem = "";
 /** Why the instruments are not available (the sound bank is missing), or "". */
 export const musicProblem = (): string => problem;
 
-async function makeSynth(): Promise<SpessaSynthProcessor> {
+/** Give the app a moment between two notes of an instrument being made. */
+const breathe = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+async function makeSynth(needs: StudioNeed[] = []): Promise<SpessaSynthProcessor> {
   bankBytes ??= loadAsset(BANK_FILE);
   let bytes: ArrayBuffer;
   try {
@@ -40,6 +46,9 @@ async function makeSynth(): Promise<SpessaSynthProcessor> {
   const bank = SoundBankLoader.fromArrayBuffer(bytes.slice(0));
   const synth = new SpessaSynthProcessor(SAMPLE_RATE, { eventsEnabled: false } as never);
   synth.soundBankManager.addSoundBank(bank, "main");
+  // the instruments VideoStudio makes itself (808s, supersaws, sitar, tabla …): only the ones this song plays
+  const studio = await buildStudioBank(needs, breathe);
+  if (studio) synth.soundBankManager.addSoundBank(studio, "studio");
   await synth.ready;
   try {
     synth.setSystemParameter("autoAllocateVoices" as never, true as never);
@@ -47,9 +56,13 @@ async function makeSynth(): Promise<SpessaSynthProcessor> {
     /* older builds cap voices instead */
   }
   if (!instruments) {
-    instruments = synth.soundBankManager.presetList
-      .map((p) => ({ name: p.name.trim(), program: p.program, bank: p.isDrum ? 0 : p.bankMSB, drums: !!p.isDrum, family: p.isDrum ? "Drum kits" : (FAMILIES[p.program >> 3] ?? "Other") }))
-      .sort((a, b) => Number(a.drums) - Number(b.drums) || a.program - b.program || a.bank - b.bank);
+    const own = studioCatalogue();
+    instruments = [
+      ...synth.soundBankManager.presetList
+        .map((p) => ({ name: p.name.trim(), program: p.program, bank: p.isDrum ? 0 : p.bankMSB, drums: !!p.isDrum, family: p.isDrum ? "Drum kits" : (FAMILIES[p.program >> 3] ?? "Other") }))
+        .filter((p) => !own.some((o) => o.drums === p.drums && o.program === p.program && o.bank === p.bank)),
+      ...own,
+    ].sort((a, b) => Number(a.drums) - Number(b.drums) || a.bank - b.bank || a.program - b.program);
   }
   problem = "";
   return synth;
@@ -77,6 +90,8 @@ export async function findInstrument(q: string | number, drums = false): Promise
     let s = 0;
     for (const w of words) if (n.includes(w)) s += w.length + (n.startsWith(w) ? 2 : 0);
     if (n === q.toLowerCase()) s += 50;
+    // "tabla", "dholak", "dhol" are strokes of a kit, not instrument names: they are found by what the kit is for
+    if (i.about && s === 0) for (const w of words) if (w.length > 2 && i.about.toLowerCase().includes(w)) s += w.length * 0.6;
     if (s > 0 && i.bank === 0) s += 1;
     s -= n.length * 0.01;
     if (s > score) {
@@ -84,7 +99,7 @@ export async function findInstrument(q: string | number, drums = false): Promise
       best = i;
     }
   }
-  if (!best || score < 2) throw new Error(`No instrument matches "${q}". music.instruments lists all ${all.length}; try a plainer word (piano, sitar, flute, strings, tabla is not in the bank: use the hand drums of a kit).`);
+  if (!best || score < 2) throw new Error(`No instrument matches "${q}". music.instruments lists all ${all.length}; try a plainer word (piano, sitar, flute, strings, 808, supersaw, tabla).`);
   return best;
 }
 
@@ -127,11 +142,11 @@ export interface Rendered {
 
 /** Bounce a song (or part of it, or some of its tracks) to stereo audio. */
 export async function renderSong(song: Song, o: RenderOptions = {}): Promise<Rendered> {
-  const synth = await makeSynth();
   const spb = beatSec(song);
   const from = o.from ?? 0, to = o.to ?? songBeats(song);
   const soloed = song.tracks.some((t) => t.solo);
   const tracks = song.tracks.filter((t) => t.kind !== "vocal" && !t.mute && (!soloed || t.solo) && (!o.only || o.only.includes(t.id)));
+  const synth = await makeSynth(tracks.map((t) => ({ bank: t.bank, program: t.program, drums: t.kind === "drums" })));
   while (synth.midiChannels.length < Math.max(16, tracks.length + 1)) synth.createMIDIChannel();
   const evs: Ev[] = [];
   const swing = song.swing ?? 0, human = song.humanize ?? 0;
