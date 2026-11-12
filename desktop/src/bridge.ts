@@ -111,6 +111,8 @@ export interface Vsd {
   };
   /** Code Studio: films written as code, drawn by the film farm (electron/film.cjs). */
   film?: import("./film/types").FilmApi;
+  /** Sensei's brain in the main process (electron/sensei.cjs). */
+  sensei?: import("./sensei/types").SenseiBrainApi;
   /** The GPU process went away and restarted (driver hiccup); pictures in the window must be rebuilt. */
   onGpuLost?(fn: (m: { reason: string; code: number; restarts: number }) => void): void;
 }

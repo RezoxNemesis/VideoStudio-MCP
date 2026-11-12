@@ -111,6 +111,32 @@ function setupFilm(o) {
   h("film.farm", async () => (pool ? pool.status() : { workers: 0, busy: 0, waiting: 0, started: false }));
   h("film.scan", (file, threshold) => farm().work("scan", { file: o.mustAllow(file), threshold }));
 
+  // ---- Sensei: the film is judged by every farm worker at once (shots shared out), then the whole is joined
+  h("film.sensei", async (dir, opts = {}) => {
+    const d = film(dir), pool = farm(), t0 = Date.now(), group = "sensei:" + d;
+    pool.cancelled.delete(group);
+    const info = await pool.ask("open", { dir: d });
+    const only = Array.isArray(opts.only) && opts.only.length ? new Set(opts.only) : null;
+    const ids = info.shots.filter((s) => !s.off && (!only || only.has(s.id) || only.has(s.seq))).map((s) => s.id);
+    if (!ids.length) throw new Error("No shots to look at.");
+    const n = Math.max(1, Math.min(pool.size, ids.length)), chunks = Array.from({ length: n }, () => []);
+    ids.forEach((id, i) => chunks[i % n].push(id));
+    let done = 0;
+    o.send("sensei:progress", { dir: d, phase: "shots", done: 0, of: ids.length });
+    const parts = await Promise.all(chunks.map((c) => pool.work("senseiShots", { dir: d, ids: c, opts }, (e) => { if (e.done) { done++; o.send("sensei:progress", { dir: d, phase: "shots", done, of: ids.length, shot: e.shot }); } }, group)));
+    o.send("sensei:progress", { dir: d, phase: "finish" });
+    const r = await pool.work("senseiFinish", { dir: d, parts, opts: { ...opts, ms: Date.now() - t0, scope: only ? "part" : "film" } }, (e) => o.send("sensei:progress", { dir: d, phase: e.phase || "finish", done: e.done, of: e.of }), group);
+    o.send("sensei:progress", { dir: d, phase: "done", ms: Date.now() - t0 });
+    return r;
+  });
+  h("film.senseiCancel", async (dir) => { farm().cancel("sensei:" + film(dir)); return true; });
+  h("film.senseiReport", async (dir) => { try { return JSON.parse(await fsp.readFile(path.join(film(dir), ".vs", "sensei", "latest.json"), "utf8")); } catch { return null; } });
+  h("film.senseiMarkdown", async (dir) => { try { return await fsp.readFile(path.join(film(dir), ".vs", "sensei", "latest.md"), "utf8"); } catch { return null; } });
+  h("film.senseiIssue", (dir, issue, scale) => farm().ask("senseiIssue", { dir: film(dir), issue, scale }));
+  h("film.senseiStyle", (files) => farm().ask("senseiStyle", { files: (files || []).map((f) => o.mustAllow(f)) }));
+  h("film.senseiStyles", () => farm().ask("senseiStyles", {}));
+  h("film.senseiImage", async (file) => { const f = o.mustAllow(file); if (!/\.jpe?g$/i.test(f) || !f.includes(`${path.sep}.vs${path.sep}sensei${path.sep}`)) throw new Error("Not a Sensei picture."); return (await fsp.readFile(f)).toString("base64"); });
+
   // ---- what the window makes for a film (motion solved by the Stage, voices, music) and hands over to keep ----
   h("film.putBake", async (dir, name, key, meta, bin) => {
     const d = path.join(film(dir), ".vs", "bake"), n = String(name).replace(/[^\w-]/g, "");

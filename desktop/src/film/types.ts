@@ -154,4 +154,14 @@ export interface FilmApi {
   sets(): Promise<{ sets: string[] }>;
   personThumb(id: string, size?: number): Promise<{ jpeg: string }>;
   onProgress(fn: (m: FilmProgress) => void): () => void;
+  // Sensei (the judge): see desktop/film/sensei and src/sensei
+  sensei(dir: string, opts?: Record<string, unknown>): Promise<{ digest: import("../sensei/types").SenseiDigest; files: { json: string; md: string } }>;
+  senseiCancel(dir: string): Promise<boolean>;
+  senseiReport(dir: string): Promise<import("../sensei/types").SenseiReport | null>;
+  senseiMarkdown(dir: string): Promise<string | null>;
+  senseiIssue(dir: string, issue: import("../sensei/types").SenseiIssue, scale?: number): Promise<{ jpeg: string; width: number; height: number }>;
+  senseiStyle(files: string[]): Promise<Record<string, number>>;
+  senseiStyles(): Promise<Record<string, { name: string; from: string; fp: Record<string, number> }>>;
+  senseiImage(file: string): Promise<string>;
+  onSensei(fn: (m: { dir: string; phase: string; done?: number; of?: number; shot?: string; ms?: number }) => void): () => void;
 }

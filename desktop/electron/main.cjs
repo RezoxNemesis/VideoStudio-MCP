@@ -318,6 +318,7 @@ const fileUrl = (p) => `vsfile://f${p.split("/").map(encodeURIComponent).join("/
 
 /* ------------------------------------------------------------------ native media core (VideoStudio 2) */
 let mediaCore = null;
+let senseiHost = null;
 function media() {
   if (!mediaCore) {
     mediaCore = require("./media-core.cjs")({
@@ -1358,6 +1359,8 @@ function setupIpc() {
     handle, mustAllow, ffmpeg: FFMPEG, ffprobe: FFPROBE, root: path.join(OUT.Movies, "Code"), userData: app.getPath("userData"), resources: process.resourcesPath,
     send: (channel, msg) => { if (win && !win.isDestroyed()) win.webContents.send(channel, msg); },
   });
+  // Sensei: the judge's brain (language models, the internet, a local Ollama it can install and run).
+  senseiHost = require("./sensei.cjs").setupSensei({ handle, userData: app.getPath("userData"), safeStorage: require("electron").safeStorage, send: (channel, msg) => { if (win && !win.isDestroyed()) win.webContents.send(channel, msg); } });
   // The Blender forge: the person's own Blender as a machine for making 3D assets.
   require("./forge.cjs").setupForge({ handle, mustAllow, models: path.join(OUT.Movies, "Models"), resources: process.resourcesPath });
   handle("win.capture", async (max = 1600, quality = 78) => {
@@ -1413,6 +1416,7 @@ app.on("will-quit", clearGuard);
 app.on("will-quit", () => mediaCore?.stopAll());
 let filmHost = null;
 app.on("will-quit", () => filmHost?.close());
+app.on("will-quit", () => senseiHost?.stop());
 // Logging out or shutting down ends the app with a signal; that is a normal end too.
 for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"])
   process.on(sig, () => {

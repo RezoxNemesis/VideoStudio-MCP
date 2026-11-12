@@ -108,6 +108,11 @@ export function mix(TL, D, lang, outFile) {
     for (let k = i; k < Math.min(N, i + step); k++) { mus.l[k] *= gm; mus.r[k] *= gm; amb.l[k] *= ga; amb.r[k] *= ga; }
   }
   const fxpk = peak(fx), fg = fxpk > 0.95 ? 0.95 / fxpk : 1, out = Buffer.alloc(N * 4);
+  // what Sensei listens to: how far each line stands above the bed under it, and where the film goes silent
+  const rmsDb = (bufs, gains, a0, a1) => { let sq = 0, n = 0; for (let i = Math.max(0, a0); i < Math.min(N, a1); i += 4) { let l = 0, r = 0; bufs.forEach((b, q) => { l += b.l[i] * gains[q]; r += b.r[i] * gains[q]; }); sq += l * l + r * r; n += 2; } return n ? 10 * Math.log10(sq / n + 1e-12) : -120; };
+  const lines = TL.cues.filter((c) => c[lang]).map((c) => { const a0 = Math.round((c.at + (c[lang]?.off ?? 0)) * SR), a1 = a0 + Math.round((c[lang]?.secs || c.slot || 1) * SR); const v = rmsDb([dia], [1], a0, a1), b = rmsDb([mus, amb, fx], [0.9, 0.8, 0.9 * fg], a0, a1); return { id: c.id, at: +(a0 / SR).toFixed(2), secs: +((a1 - a0) / SR).toFixed(2), voice: +v.toFixed(1), bed: +b.toFixed(1), over: +(v - b).toFixed(1) }; });
+  const quiet = []; { const win = SR / 2; let run0 = -1; for (let i = 0; i < N; i += win) { const lv = rmsDb([dia, mus, amb, fx], [1, 0.9, 0.8, 0.9 * fg], i, i + win); if (lv < -52) { if (run0 < 0) run0 = i; } else { if (run0 >= 0 && (i - run0) / SR >= 2) quiet.push([+(run0 / SR).toFixed(1), +(i / SR).toFixed(1)]); run0 = -1; } } if (run0 >= 0 && (N - run0) / SR >= 2) quiet.push([+(run0 / SR).toFixed(1), +(N / SR).toFixed(1)]); }
+  try { fs.mkdirSync(path.dirname(outFile), { recursive: true }); fs.writeFileSync(outFile.replace(/\.wav$/, '.stats.json'), JSON.stringify({ lines, quiet, peaks: { dialogue: +peak(dia).toFixed(3), music: +peak(mus).toFixed(3), ambience: +peak(amb).toFixed(3), effects: +fxpk.toFixed(3) } })); } catch { /* the stats are a help, never in the way of the mix */ }
   let pk = 0; const L = new Float32Array(N), R = new Float32Array(N);
   for (let i = 0; i < N; i++) { L[i] = dia.l[i] + mus.l[i] * 0.9 + amb.l[i] * 0.8 + fx.l[i] * 0.9 * fg; R[i] = dia.r[i] + mus.r[i] * 0.9 + amb.r[i] * 0.8 + fx.r[i] * 0.9 * fg; pk = Math.max(pk, Math.abs(L[i]), Math.abs(R[i])); }
   const lim = pk > 0.85, k = Math.tanh(1.1);

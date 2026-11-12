@@ -24,11 +24,13 @@ import { Scopes } from "./scopes";
 import { AgentStage } from "./stage";
 import { MusicPage } from "./musicpage";
 import { CodePage } from "./codepage";
+import { SenseiPage } from "./senseipage";
 import { registerCodeCommands } from "../film/session";
+import { registerSenseiCommands } from "../sensei/commands";
 import { StagePage } from "./stage3d";
 import { setLiveHooks } from "../../../src/agent/api";
 
-export type WsName = "edit" | "color" | "insight" | "audio" | "animate" | "stage" | "code" | "music" | "voice" | "deliver" | "claude";
+export type WsName = "edit" | "color" | "insight" | "audio" | "animate" | "stage" | "code" | "sensei" | "music" | "voice" | "deliver" | "claude";
 const WS: [WsName, string, string][] = [
   ["edit", "Edit", "film"],
   ["color", "Color", "color"],
@@ -37,6 +39,7 @@ const WS: [WsName, string, string][] = [
   ["animate", "Animate", "brush"],
   ["stage", "3D", "film"],
   ["code", "Code", "code"],
+  ["sensei", "Sensei", "spark"],
   ["music", "Music", "wave"],
   ["voice", "Voice", "mic"],
   ["deliver", "Deliver", "export"],
@@ -87,6 +90,7 @@ export class Shell {
   private animate: AnimateView;
   private music!: MusicPage;
   private codePage!: CodePage;
+  private senseiPage!: SenseiPage;
   private stage3d!: StagePage;
   private deliver: Deliver;
   private rendersBody: HTMLElement | null = null;
@@ -147,6 +151,13 @@ export class Shell {
     cd.body.append(this.codePage.el);
     this.ws.code = h("div", { class: "d-ws ws-full" }, cd.el);
     registerCodeCommands(s, () => this.cur !== "code" && this.go("code"));
+    // Sensei: the judge and helper, with its own workspace.
+    this.senseiPage = new SenseiPage(s, (shot, t) => { this.go("code"); this.codePage.showShot(shot, t); });
+    const sx = panel("Sensei · the judge — measures every frame, says what is wrong and how to fix it");
+    sx.body.className = "hosted";
+    sx.body.append(this.senseiPage.el);
+    this.ws.sensei = h("div", { class: "d-ws ws-full" }, sx.el);
+    registerSenseiCommands(s, () => this.cur !== "code" && this.cur !== "sensei" && this.go("sensei"));
     this.music = new MusicPage(s);
     const mu = panel("Music · compose, instruments, piano roll");
     mu.body.className = "hosted";
@@ -358,6 +369,7 @@ export class Shell {
     if (n === "animate") this.animate.open(arg);
     this.music.shown(n === "music");
     this.codePage.shown(n === "code");
+    this.senseiPage.shown(n === "sensei");
     this.stage3d.shown(n === "stage");
     if (n === "deliver") {
       this.deliver.draw();

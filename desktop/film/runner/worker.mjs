@@ -24,6 +24,7 @@ import { PEOPLE, PEOPLE_LIST, PEOPLE_GROUPS } from '../kit/people.js';
 import { CAST as KIT_CAST } from '../kit/design.js';
 import * as SETS from '../kit/sets.js';
 import { ENGINE_VERSION } from '../kit/finger.js';
+import { reviewShots, finish as senseiFinish, annotateIssue, styleOfFiles, BUILTIN_STYLES } from '../sensei/index.js';
 
 register('./hooks.mjs', import.meta.url);
 const HERE = path.dirname(new URL(import.meta.url).pathname), ASSETS = path.join(HERE, '..', 'assets');
@@ -171,6 +172,13 @@ const methods = {
   },
   /** Look at every frame of a video for parts of the picture that change for an instant and come back. */
   async scan({ file, threshold }) { return flashScan(file, { threshold }); },
+
+  // ---- Sensei, the judge (film/sensei): shots are looked at by every farm worker side by side, then joined
+  async senseiShots({ dir, ids, opts }, emit) { return reviewShots(await project(dir), ids, opts ?? {}, (e) => emit(e)); },
+  async senseiFinish({ dir, parts, opts }, emit) { return senseiFinish(await project(dir), parts, opts ?? {}, (e) => emit(e)); },
+  async senseiIssue({ dir, issue, scale = 0.5, quality = 84 }) { const cv = annotateIssue(await project(dir), issue, { scale }); return { jpeg: jpeg(cv, quality), width: cv.width, height: cv.height }; },
+  async senseiStyle({ files }) { return styleOfFiles(files); },
+  async senseiStyles() { return BUILTIN_STYLES; },
 
   /* ---- the library -------------------------------------------------------------------------------------------- */
   async people({ group }) { return { groups: PEOPLE_GROUPS, people: PEOPLE_LIST.filter((p) => !group || p.group === group), cast: Object.keys(KIT_CAST) }; },

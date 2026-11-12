@@ -488,6 +488,12 @@ export class CodePage {
   private curShot(): FilmShot | null {
     return code.info?.shots.find((s) => s.id === this.shot) ?? null;
   }
+  /** Show a shot at a moment (Sensei's findings open here). */
+  showShot(id: string, t?: number): void {
+    this.selectShot(id);
+    const sh = this.curShot();
+    if (sh && t != null) { this.shotT = Math.max(0, Math.min(sh.dur, t)); this.scrub.value = String(sh.dur ? this.shotT / sh.dur : 0); this.tEl.textContent = `${this.shotT.toFixed(2)}s`; this.askFrame(0); }
+  }
   private selectShot(id: string): void {
     this.shot = id;
     const sh = this.curShot();

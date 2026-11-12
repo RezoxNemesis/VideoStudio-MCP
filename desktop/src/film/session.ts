@@ -34,6 +34,8 @@ export class CodeSession {
   /** The picture last asked for (a frame or a sheet), for the workspace's viewer. */
   shown: { jpeg: string; shot: string; t: number; sheet?: boolean } | null = null;
   lastBuild: (BuildResult & { prep: PrepResult; draft: boolean }) | null = null;
+  /** When the last build finished (ms), so a review older than it is known to be out of date. */
+  lastBuildAt: number | null = null;
   private listeners = new Set<(e: CodeEvent) => void>();
 
   on(fn: (e: CodeEvent) => void): () => void {
@@ -167,6 +169,7 @@ export class CodeSession {
       const r = await film().build({ ...rest, dir, scale: draft ? (o.scale ?? 0.5) : o.scale });
       this.problems = prep.problems;
       this.lastBuild = { ...r, prep, draft };
+      this.lastBuildAt = Date.now();
       return { ...r, prep, draft, problems: prep.problems };
     } finally {
       off?.();
@@ -343,10 +346,20 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
   );
   registerCommand(
     "code.export",
-    '{lang?, to? (file or folder; default the Videos/VideoStudio folder), subs?: "soft" | "burn" (drawn into the picture: the whole film is encoded once more) | "none"} Save the finished film where the person keeps videos. Build first.',
+    '{lang?, to? (file or folder; default the Videos/VideoStudio folder), subs?: "soft" | "burn" (drawn into the picture: the whole film is encoded once more) | "none", force?=false} Save the finished film where the person keeps videos. Build first. Sensei\'s gate must be open (no MUST findings) unless force: true.',
     async (_s, a) => {
       const dir = code.must(), info = code.info;
       if (!info) throw new Error(code.error ?? "The film does not load.");
+      // Sensei's gate: MUST findings are the person's own words — they block an export unless it is forced
+      if (!a.bool("force", false)) {
+        const { sensei } = await import("../sensei/store");
+        let r = await sensei.load(dir);
+        if (!r || sensei.stale()) { await sensei.review({ bench: r?.bench.id ?? "youtube", checks: ["motion", "camera", "story"], images: 0, draw: false }); r = await sensei.load(dir); }
+        if (r && !r.pass) {
+          const must = r.issues.filter((i) => i.sev === "must");
+          throw new Error(`Sensei's gate is closed: ${must.length} MUST finding${must.length === 1 ? "" : "s"} (${r.bench.name}), e.g. ${must.slice(0, 3).map((i) => `${i.shot ?? "film"}: ${i.msg}`).join(" | ")}. Fix them (sensei.report {sev: "must"}) or export with force: true.`);
+        }
+      }
       const lang = a.optStr("lang") ?? info.config.langs[0]!;
       const pc = await need().info();
       let to = a.optStr("to") ?? pc.out.Movies;
