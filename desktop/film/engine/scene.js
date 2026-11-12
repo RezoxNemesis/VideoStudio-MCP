@@ -92,7 +92,7 @@ export function clipSeg(cam, a, b, near = 0.08) {
 /** Picture height of an elevation angle (radians above the horizon) straight ahead. */
 export function yOfEl(cam, el) { const pitch = Math.asin(clamp(cam.F[1], -1, 1)); return cam.cy - cam.f * Math.tan(clamp(el - pitch, -1.45, 1.45)); }
 /** Picture point of a direction at infinity; null behind the lens. */
-export function projDir(cam, d) { const z = V.dot(d, cam.F); if (z < 0.05) return null; return [cam.cx + cam.f * V.dot(d, cam.R) / z, cam.cy - cam.f * V.dot(d, cam.U) / z, z]; }
+export function projDir(cam, d) { if (!d) return null; const z = V.dot(d, cam.F); if (z < 0.05) return null; return [cam.cx + cam.f * V.dot(d, cam.R) / z, cam.cy - cam.f * V.dot(d, cam.U) / z, z]; }
 export const dirOf = (azDeg, elDeg) => { const a = azDeg * Math.PI / 180, e = elDeg * Math.PI / 180, ce = Math.cos(e); return [Math.sin(a) * ce, Math.sin(e), Math.cos(a) * ce]; };
 
 /* ----------------------------------------------------------------------------- sky */

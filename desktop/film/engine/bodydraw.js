@@ -95,8 +95,8 @@ function helmetMeshes(B, L, hg) {
   const band = []; for (let j = 0; j <= N; j++) { const az = (j / N) * Math.PI * 2, y = rimY(az); band.push(...[W(pt(az, y + 0.016, 1.03)), W(pt(az, y - 0.004, 1.035))]); }
   const bp = [], bi = []; band.forEach((p) => bp.push(p[0], p[1], p[2])); for (let j = 0; j < N; j++) { const a = j * 2; bi.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
   out.push({ pos: Float32Array.from(bp), idx: Uint32Array.from(bi), c: hg.band ?? '#5a6270', metal: true });
-  if (hg.crest) { // a plume of horsehair along the top, front to back
-    const cp2 = [], ci = []; for (let i = 0; i <= 10; i++) { const u = i / 10, a = lerp(-0.35, 2.4, u), y = cy + Math.cos(a) * ry * 1.02, z = cz + Math.sin(a) * rz * 1.02; const lo = W([0, y, z]), hi2 = W([0, y + Math.cos(a) * 0.07, z + Math.sin(a) * 0.07 + 0.012 * u]); cp2.push(lo[0], lo[1], lo[2], hi2[0], hi2[1], hi2[2]); }
+  if (hg.crest) { // a plume of horsehair along the top, from over the brow (+z is the face) back to the nape, taller behind
+    const cp2 = [], ci = []; for (let i = 0; i <= 10; i++) { const u = i / 10, a = lerp(0.62, -2.05, u), y = cy + Math.cos(a) * ry * 1.02, z = cz + Math.sin(a) * rz * 1.02, h = 0.05 + 0.035 * Math.sin(Math.PI * Math.min(1, u * 1.25)); const lo = W([0, y, z]), hi2 = W([0, y + Math.cos(a) * h, z + Math.sin(a) * h - 0.018 * u]); cp2.push(lo[0], lo[1], lo[2], hi2[0], hi2[1], hi2[2]); }
     for (let i = 0; i < 10; i++) { const a = i * 2; ci.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     out.push({ pos: Float32Array.from(cp2), idx: Uint32Array.from(ci), c: hg.crest });
   }
