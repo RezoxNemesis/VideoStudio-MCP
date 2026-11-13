@@ -93,11 +93,13 @@ export class Motion {
     return [best[1], best[2]];
   }
   /** keep feet out of the ground: lift the root if the lowest ankle/toe is below groundY (world); also returns lowest point */
-  groundFix(groundY = 0, snap = false) {
+  /** Feet out of the ground; with snap, a standing body is set down on it (w: how much of a downward settle to take now). */
+  groundFix(groundY = 0, snap = false, w = 1) {
     const h = this.h; h.root.updateMatrixWorld(true); let low = 1e9;
     for (const n of ['foot.L', 'foot.R']) { const y = h.wpos(n, _v).y - this.ankleY * h.root.scale.y; low = Math.min(low, y); }
     for (const n of ['toe2-1.L', 'toe2-1.R']) { const y = h.wpos(n, _v).y - h.rest[n].head.y * h.root.scale.y; low = Math.min(low, y); }
-    const d = groundY - low; if (d > 0 || snap) { h.B.root.position.y += d / h.root.scale.y; h.root.updateMatrixWorld(true); }
+    let d = groundY - low; if (d < 0 && snap) d *= w;
+    if (d > 0 || snap) { h.B.root.position.y += d / h.root.scale.y; h.root.updateMatrixWorld(true); }
     return low;
   }
 }

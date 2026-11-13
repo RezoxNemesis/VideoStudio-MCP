@@ -107,19 +107,30 @@ interface Anchor {
   yaw: number;
   cut: boolean;
 }
+/** The feet's ground spots (world x, z) an idle keeps them on. */
+interface Pins { L: [number, number]; R: [number, number] }
+
 interface ActorRt {
   a: Any;
   sig: string;
   chainSig: string;
   anchors: Anchor[];
   snaps: (Any | null)[];
+  /** Where the feet stood when an idle block began (world x/z per foot), by block index; null = nothing to hold. */
+  pins?: (Pins | null)[];
   loco: Map<string, Loco>;
   lastSim: number;
   swordHome: string;
   faceW: Record<string, number>;
   /** The body is in a solved stance (it faces where the stance faces). */
   solved?: boolean;
+  /** Feet in the air while stepping into a stance (bit 1 = left, 2 = right), for the frame at stepAt. */
+  stepping?: number;
+  stepAt?: number;
 }
+
+/** Seconds a stance takes to step into after another action: the feet go one after the other, lifted. */
+const STEP_IN = 0.46;
 
 /** Framings: [frame height in body heights, aim height (fraction of the body), fov, lift, depth-of-field range]. */
 const FRAMING: Record<string, [number, number, number, number, number]> = {
@@ -460,6 +471,9 @@ export class StageRuntime {
   /** Place the actor and pose the body for block `b` at `local` seconds into it. No overlays, no face. */
   private basePose(rt: ActorRt, sa: StageActor, b: Block | null, A: Anchor, local: number, t: number): void {
     const a = rt.a, h = a.h, mo = a.mo;
+    // standing still keeps the feet where the action before left them; measuring that poses the body, so it comes first
+    const bi = b && b.kind === "idle" ? sa.blocks.indexOf(b) : -1;
+    const pins = bi > 0 ? this.idlePins(rt, sa, bi) : null;
     const scale = sa.scale ?? 1;
     const o = this.origin();
     const gx = A.x + o[0], gz = A.z + o[2];
@@ -476,6 +490,7 @@ export class StageRuntime {
         const ph = (local / span) % 2;
         mo.apply(b.clip, t0 + (ph < 1 ? ph : 2 - ph) * span, { inPlace: true, face: true });
       } else stand(h, t);
+      if (pins) this.pinFeet(rt, pins, true);
       return;
     }
     if (b.kind === "clip") {
@@ -622,8 +637,125 @@ export class StageRuntime {
     }
     rt.anchors = anchors;
     rt.snaps = [];
+    rt.pins = [];
     rt.chainSig = sig;
     return anchors;
+  }
+
+  /**
+   * Where the feet stood when idle block i began: the block before it, posed at its last moment, in the world.
+   * An idle that blended to its own stance from there would skate both feet across the ground; it keeps them instead.
+   */
+  private idlePins(rt: ActorRt, sa: StageActor, i: number): Pins | null {
+    const pins = (rt.pins ??= []);
+    const have = pins[i];
+    if (have !== undefined) return have;
+    pins[i] = null; // nothing to hold while the block before is being measured
+    const prev = sa.blocks[i - 1], cur = sa.blocks[i], anchors = rt.anchors;
+    if (!prev || !cur || !anchors[i] || anchors[i]!.cut || !anchors[i - 1] || prev.kind === "fall") return null;
+    const h = rt.a.h;
+    this.basePose(rt, sa, prev, anchors[i - 1]!, Math.max(0, cur.t - prev.t), prev.t);
+    h.root.updateMatrixWorld(true);
+    const l = h.wpos("foot.L", new THREE.Vector3()), r = h.wpos("foot.R", new THREE.Vector3());
+    const out: Pins = { L: [l.x, l.z], R: [r.x, r.z] };
+    pins[i] = out;
+    return out;
+  }
+
+  /**
+   * Keep both feet on their spots with leg IK (the soles stay as the idle has them); a spot out of the leg's reach is let go.
+   * settle (the idle's own pose, which the crossfade then blends into): the hips first move over the middle of the two spots
+   * and sink as far as the wider stance needs, the way a person stands on feet that are where they are.
+   */
+  private pinFeet(rt: ActorRt, pins: Pins, settle: boolean): void {
+    const a = rt.a, h = a.h;
+    const lim = 0.3 * (h.height ?? 1.75) * (a.root.scale.y || 1), sc = h.root.scale.y || 1;
+    h.root.updateMatrixWorld(true);
+    // the ankles as the idle stands them (on the ground): the spots are held at these heights
+    const own = { L: h.wpos("foot.L", new THREE.Vector3()), R: h.wpos("foot.R", new THREE.Vector3()) };
+    const spot = (s: "L" | "R"): [number, number] => {
+      const [px, pz] = pins[s], o = own[s];
+      return Math.hypot(px - o.x, pz - o.z) > lim ? [o.x, o.z] : [px, pz];
+    };
+    const want = { L: spot("L"), R: spot("R") };
+    if (settle) {
+      const R = h.B.root, P = R?.parent;
+      if (R && P) {
+        // over the middle of the feet
+        let dx = (want.L[0] + want.R[0] - own.L.x - own.R.x) / 2, dz = (want.L[1] + want.R[1] - own.L.z - own.R.z) / 2;
+        const m = Math.hypot(dx, dz);
+        if (m > 0.25) { dx *= 0.25 / m; dz *= 0.25 / m; }
+        if (m > 0.002) {
+          const ps = P.getWorldScale(new THREE.Vector3()).y || 1;
+          R.position.add(new THREE.Vector3(dx, 0, dz).applyQuaternion(P.getWorldQuaternion(new THREE.Quaternion()).invert()).divideScalar(ps));
+          h.root.updateMatrixWorld(true);
+        }
+        // and as low as the stance needs for both legs to reach the ground
+        let drop = 0;
+        for (const s of ["L", "R"] as const) {
+          const up = `upperleg01.${s}`, lo = `lowerleg01.${s}`, ft = `foot.${s}`;
+          if (!h.B[up] || !h.rest[up] || !h.rest[lo] || !h.rest[ft]) continue;
+          const hip = h.wpos(up, new THREE.Vector3());
+          const leg = (h.rest[up].head.distanceTo(h.rest[lo].head) + h.rest[lo].head.distanceTo(h.rest[ft].head)) * sc * 0.995;
+          const dh = Math.hypot(want[s][0] - hip.x, want[s][1] - hip.z);
+          if (dh >= leg) continue;
+          drop = Math.max(drop, hip.y - own[s].y - Math.sqrt(leg * leg - dh * dh));
+        }
+        if (drop > 0.002) {
+          const ps = P.getWorldScale(new THREE.Vector3()).y || 1;
+          R.position.add(new THREE.Vector3(0, -Math.min(drop, 0.12), 0).applyQuaternion(P.getWorldQuaternion(new THREE.Quaternion()).invert()).divideScalar(ps));
+          h.root.updateMatrixWorld(true);
+        }
+      }
+    }
+    for (const s of ["L", "R"] as const) {
+      const name = `foot.${s}`, B = h.B[name];
+      if (!B || !B.parent) continue;
+      const [px, pz] = want[s];
+      const cur = h.wpos(name, new THREE.Vector3());
+      if (Math.hypot(px - cur.x, pz - cur.z) < 0.002 && Math.abs(cur.y - own[s].y) < 0.002) continue;
+      const wq = B.getWorldQuaternion(new THREE.Quaternion());
+      setHandle(a, name, new THREE.Vector3(px, own[s].y, pz), 1);
+      B.quaternion.copy(B.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq));
+      h.root.updateMatrixWorld(true);
+    }
+  }
+
+  /**
+   * The first moments of a stance after another action: rather than sliding across the ground while the bodies blend,
+   * the feet step from where they stood to where the stance has them — one after the other, lifted — and land.
+   */
+  private stepIn(rt: ActorRt, sa: StageActor, b: Block, A: Anchor, i: number, local: number, t: number): void {
+    const from = rt.pins?.[i];
+    if (!from) return;
+    const a = rt.a, h = a.h;
+    h.root.updateMatrixWorld(true);
+    // where the stance itself has the feet now (posed apart, then the blended body is put back)
+    const keep = h.snapshot();
+    this.basePose(rt, sa, b, A, local, t);
+    h.root.updateMatrixWorld(true);
+    const to = { L: h.wpos("foot.L", new THREE.Vector3()), R: h.wpos("foot.R", new THREE.Vector3()) };
+    h.blendTo(keep, 1);
+    h.root.updateMatrixWorld(true);
+    const blend = b.blend ?? 0.3;
+    const dist = (s: "L" | "R") => Math.hypot(to[s].x - from[s][0], to[s].z - from[s][1]);
+    const order: ("L" | "R")[] = dist("L") >= dist("R") ? ["L", "R"] : ["R", "L"];
+    let bits = 0;
+    order.forEach((s, k) => {
+      const D = dist(s), B = h.B[`foot.${s}`];
+      if (!B || !B.parent || D < 0.04) return;
+      const u = clamp((local - k * 0.2) / 0.24, 0, 1);
+      if (u >= 1 && local >= blend) return; // landed, and the stance has it
+      const e = smooth(0, 1, u), lift = u > 0 && u < 1 ? Math.sin(Math.PI * u) * Math.min(0.09, 0.03 + 0.3 * D) : 0;
+      const p = new THREE.Vector3(from[s][0] + (to[s].x - from[s][0]) * e, to[s].y + lift, from[s][1] + (to[s].z - from[s][1]) * e);
+      if (u > 0 && u < 1) bits |= s === "L" ? 1 : 2;
+      const wq = B.getWorldQuaternion(new THREE.Quaternion());
+      setHandle(a, `foot.${s}`, p, 1);
+      B.quaternion.copy(B.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq));
+      h.root.updateMatrixWorld(true);
+    });
+    rt.stepping = bits;
+    rt.stepAt = t;
   }
 
   /** The previous block's last pose, re-expressed where block i starts (for the crossfade). */
@@ -659,6 +791,10 @@ export class StageRuntime {
     const b = i >= 0 ? bl[i]! : null;
     const A = i >= 0 ? anchors[i]! : { x: sa.at.pos[0], y: sa.at.pos[1], z: sa.at.pos[2], yaw: sa.at.yaw * D2R, cut: true };
     const local = b ? t - b.t : t;
+    rt.stepping = 0;
+    const steps = !!b && b.kind === "stance" && i > 0 && !A.cut && local < STEP_IN;
+    // where the feet stood when the stance began is measured before this frame is posed (measuring poses the body)
+    if (steps) this.idlePins(rt, sa, i);
     this.basePose(rt, sa, b, A, local, t);
     // crossfade from the block before
     const blend = b ? (b.blend ?? 0.3) : 0;
@@ -668,7 +804,13 @@ export class StageRuntime {
       // prevSnap posed the body to measure; pose this block again, then blend
       this.basePose(rt, sa, b, A, local, t);
       if (snap) h.blendTo(snap, 1 - smooth(0, blend, local));
+      // the crossfade into an idle must not drag the feet: they stay on their spots
+      if (b.kind === "idle" && i > 0) {
+        const pins = this.idlePins(rt, sa, i);
+        if (pins) this.pinFeet(rt, pins, false);
+      }
     }
+    if (steps && b) this.stepIn(rt, sa, b, A, i, local, t);
     const isClip = !!b && (b.kind === "clip" || b.kind === "go");
     if (b && b.kind === "stance" && b.guard === "fists") {
       h.fingers("L", 1, 0.9);
@@ -773,7 +915,9 @@ export class StageRuntime {
       else if (pn === "wrist.L") a.grip("L");
     }
     // feet stay out of the ground; standing bodies rest on it
-    mo.groundFix(this.ground(a.root.position.x, a.root.position.z) + A.y, !b || b.kind === "idle");
+    // (an idle after a captured clip settles over its crossfade: a clip can float a little, and dropping it in one frame pops)
+    const settle = b && b.kind === "idle" && i > 0 && !A.cut && local < (b.blend ?? 0.3) ? smooth(0, b.blend ?? 0.3, local) : 1;
+    mo.groundFix(this.ground(a.root.position.x, a.root.position.z) + A.y, !b || b.kind === "idle", settle);
 
     // face: mood, overlays, speech
     let open = 0;
@@ -1290,6 +1434,9 @@ export class StageRuntime {
     const m = this.motionAt0(sa, t);
     if (!m) return null;
     let free = 0;
+    // a foot in the air while stepping into a stance is not planted
+    const rt = this.actors.get(sa.id);
+    if (rt?.stepping && rt.stepAt === t) free |= rt.stepping;
     for (const ov of sa.overlays) {
       if (t < ov.t0 - 1e-6 || t > ov.t1 + 1e-6) continue;
       if (ov.kind === "strike" && ov.limb.startsWith("foot")) free |= ov.limb.endsWith(".L") ? 1 : 2;
