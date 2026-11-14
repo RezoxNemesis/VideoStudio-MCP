@@ -160,6 +160,19 @@ export function rgb(v: string | Rgb | undefined): Rgb | undefined {
 }
 
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+/** Endings of detail names that are each other's opposite. */
+const DETAIL_TWINS: [string, string][] = [["-incr", "-decr"], ["-up", "-down"], ["-in", "-out"], ["-forward", "-backward"], ["-convex", "-concave"], ["-compress", "-uncompress"]];
+
+const GARMENT_KINDS = ["tunic", "trousers", "boots", "cuirass", "vambrace", "greave", "wraps", "skirt"] as const;
+/** A character's own garments, as given to stage.actor: a list of pieces, each of a kind the factory can cut. */
+export function garmentsOf(v: unknown): Garment[] {
+  if (!Array.isArray(v)) throw new Error(`garments should be a list of pieces like [{"kind": "tunic", "flare": 1.3, "bag": 0.2}, …].`);
+  return v.map((g) => {
+    const kind = (g as { kind?: unknown } | null)?.kind;
+    if (typeof kind !== "string" || !(GARMENT_KINDS as readonly string[]).includes(kind)) throw new Error(`Each garment needs a kind: ${GARMENT_KINDS.join(", ")}${typeof kind === "string" ? ` (not "${kind}")` : ""}.`);
+    return clone(g) as Garment;
+  });
+}
 
 /** Build a character spec (and the kit name, if the preset has one). */
 export function makeChar(r: CharRequest): { char: CharSpec; kit?: string } {
@@ -225,7 +238,16 @@ export function makeChar(r: CharRequest): { char: CharSpec; kit?: string } {
   if (r.muscle !== undefined) char.macro.muscle = r.muscle;
   if (r.weight !== undefined) char.macro.weight = r.weight;
   if (r.proportions !== undefined) char.macro.proportions = r.proportions;
-  if (r.detail) char.detail = { ...(char.detail ?? {}), ...r.detail };
+  if (r.detail) {
+    // A detail is a sculpted shape, weighted 0…1. A negative weight is not the opposite shape: it pushes this one
+    // backwards through the head (the lining of a mouth comes out through the jaw). The opposite has a name of its own.
+    for (const [k, w] of Object.entries(r.detail)) {
+      if (!(w < 0)) continue;
+      const twin = DETAIL_TWINS.map(([a, b]) => (k.endsWith(a) ? k.slice(0, -a.length) + b : k.endsWith(b) ? k.slice(0, -b.length) + a : "")).find((x) => x);
+      throw new Error(twin ? `Detail "${k}" cannot be negative. The other way is "${twin}": ${-w} (and "${k}": 0 takes a preset's own away).` : `Detail "${k}" cannot be negative: a weight is 0 to 1 (0 takes a preset's own away).`);
+    }
+    char.detail = { ...(char.detail ?? {}), ...r.detail };
+  }
   for (const [k, v] of Object.entries(r.colors ?? {})) {
     const c = rgb(v)!;
     if (k === "skin" || k === "hair" || k === "eye" || k === "lip" || k === "trim" || k === "sash") look[k] = c;

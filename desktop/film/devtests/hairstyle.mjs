@@ -63,6 +63,9 @@ const pts = (c) => c.pts;
     const turns = P.slice(1, -1).map((p, i) => { const a = [p[0] - P[i][0], p[1] - P[i][1], p[2] - P[i][2]], b = [P[i + 2][0] - p[0], P[i + 2][1] - p[1], P[i + 2][2] - p[2]]; return Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (Math.hypot(...a) * Math.hypot(...b) || 1)))) / D; });
     ok(Math.max(...turns) < 40, 'in one sweep, without a kink', Math.max(...turns));
     ok(Math.abs(lock.w - 0.034) < 1e-6 && lock.len > 0.1, 'as wide as it is designed, as long as its way over the head', [lock.w, lock.len]);
+    // it begins as a stroke begins: from a point (a blunt root would stand on the hairline like a step)
+    const m = hairMeshes(H, B, 1 / 24, 0, null)[0], ci = H.clumps.indexOf(lock), wAt = (i) => { const o = (ci * 9 + i) * 12; return Math.hypot(m.pos[o] - m.pos[o + 6], m.pos[o + 1] - m.pos[o + 7], m.pos[o + 2] - m.pos[o + 8]); }, ws = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(wAt);
+    ok(ws[0] < 0.25 * Math.max(...ws) && Math.abs(Math.max(...ws) - 0.034) < 0.004, 'it begins from a point and is as wide as designed where it is fullest', [ws[0], Math.max(...ws)]);
   }
 }
 
@@ -151,6 +154,46 @@ const pts = (c) => c.pts;
     ok(far < seg * 1.15, 'the band lies at the tie itself, within the first span of the tail', far / seg);
     ok(wide < 0.085 * 0.62, 'drawn tight round the gathered hair (narrower than the tail at its fullest)', wide / 0.085);
   } else ok(false, 'a sheaf tail tied with a cord has its band', !!band);
+}
+
+// ---- 6c. a tail tied high leaves its tie in a curve, not as a rod with a knee in it
+{
+  const H = makeHair(B, { cut: 'tied', tail: { len: 0.72, w: 0.085, at: [180, 46], up: 0.45, tie: true, locks: 8 } }, 3);
+  for (let f = 0; f < 60; f++) hairMeshes(H, B, 1 / 24, f / 24, null);
+  const P = H.tail.st.map((q) => q.p), bends = [];
+  for (let i = 1; i < P.length - 1; i++) { const a = [P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1], P[i][2] - P[i - 1][2]], b = [P[i + 1][0] - P[i][0], P[i + 1][1] - P[i][1], P[i + 1][2] - P[i][2]]; bends.push(Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (Math.hypot(...a) * Math.hypot(...b))))) / D); }
+  ok(Math.max(...bends) < 42, 'hanging at rest, no two spans of the tail meet at a knee (the sharpest bend is gentle)', bends.map(Math.round));
+  ok(P[1][1] > P[0][1] + 0.01 && P[P.length - 1][1] < P[0][1] - 0.4, 'it still rises from the tie before it falls, and hangs its length', [P[1][1] - P[0][1], P[0][1] - P[P.length - 1][1]]);
+  // it lies on the back of the head, never in it
+  if (HS) { const inside = P.slice(1).map((q) => dist(q, HS.c) - HS.r(Math.atan2(q[0] - HS.c[0], q[2] - HS.c[2]), Math.asin(Math.max(-1, Math.min(1, (q[1] - HS.c[1]) / dist(q, HS.c)))))).filter((d, i) => P[i + 1][1] > HS.c[1] - 0.09); ok(Math.min(...inside) > -0.003, 'and passes round the back of the head, not through it', Math.min(...inside)); }
+  // the same at any number of pictures a second
+  const H60 = makeHair(B, { cut: 'tied', tail: { len: 0.72, w: 0.085, at: [180, 46], up: 0.45, tie: true, locks: 8 } }, 3);
+  for (let f = 0; f < 150; f++) hairMeshes(H60, B, 1 / 60, f / 60, null);
+  const P60 = H60.tail.st.map((q) => q.p), apart = Math.max(...P.map((q, i) => dist(q, P60[i])));
+  ok(apart < 0.03, 'drawn at 24 or at 60 pictures a second it comes to rest in the same place', apart);
+}
+
+// ---- 6d. walking, the tail trails down the back: it sways, it does not fly up, and it never passes through the back
+{
+  // a body to walk with: the same head on a spine, and a back (a slab of cloth 11 cm behind the middle of the body)
+  const slab = []; for (let y = 0.9; y <= 1.6; y += 0.05) for (let x = -0.2; x <= 0.2; x += 0.05) slab.push(x, y, -0.11);
+  const SP = Float32Array.from(slab);
+  const W = { parts: [...B.parts, { name: 'tunic', material: 'cloth', pos: SP, rest0: SP, n: SP.length / 3 }], landmarks: { ...L, hipY: 0.957 }, bi: { head: 0, spine01: 1 },
+    head: Float32Array.from([0, 1.641, 0.052, 0, 1.318, -0.055]), R: Float32Array.from([1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1]), T: new Float32Array(6) };
+  const H = makeHair(W, { cut: 'tied', tail: { len: 0.72, w: 0.085, at: [180, 46], up: 0.45, tie: true, locks: 8 } }, 3);
+  let lowest = 1e9, deepest = 1e9, high = -1e9;
+  for (let f = 0; f < 120; f++) {
+    const t = f / 24, z = 1.3 * t, y = 0.02 * Math.sin(2 * Math.PI * 1.9 * t);
+    W.T.set([0, y, z, 0, y, z]);
+    hairMeshes(H, W, 1 / 24, t, null);
+    if (f < 30) continue; // (he starts from standing in one step: the swing of that start is let die away)
+    const P = H.tail.st.map((q) => q.p), tie = P[0], tip = P[P.length - 1];
+    lowest = Math.min(lowest, (tie[1] - tip[1]) / 0.72);
+    for (const q of P.slice(3)) { if (q[1] - y < 1.58 && q[1] - y > 0.95) deepest = Math.min(deepest, (-0.11) - (q[2] - z)); high = Math.max(high, q[1] - tie[1]); }
+  }
+  ok(lowest > 0.6, 'at a walk the tail hangs down the back all the way (its tip stays more than 0.6 of its length below the tie)', lowest);
+  ok(high < 0.05, 'none of it flies up over the tie', high);
+  ok(deepest > 0.0, 'and it stays behind the back, never in it', deepest);
 }
 
 // ---- 7. every lock knows which way is across it

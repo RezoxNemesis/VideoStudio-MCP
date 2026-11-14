@@ -181,6 +181,25 @@ export function makeHair(B, spec, seed = 1) {
 }
 
 /**
+ * The back of a body as a tail of hair meets it: a row of large balls from the nape down to the hips, each touching the
+ * back's surface from inside and riding on the spine or neck bone of its height: [{ bone, c (rest), r }].
+ */
+function backOf(B) {
+  if (B.backBalls) return B.backBalls;
+  const L = B.landmarks ?? {}, out = []; if (!B.head || !L.nape) return (B.backBalls = out);
+  const spine = ['neck03', 'neck02', 'neck01', 'spine01', 'spine02', 'spine03', 'spine04', 'spine05'].map((n) => B.bi[n]).filter((b) => b !== undefined);
+  if (!spine.length) return (B.backBalls = out);
+  const R = 0.22, y1 = L.nape[1] - 0.02, y0 = (L.hipY ?? y1 - 0.65) - 0.05;
+  for (let y = y1; y > y0; y -= 0.07) {
+    let z = 1e9; for (const p of B.parts) { if (p.material === 'hair' || p.name === 'haircap') continue; const P = p.rest0 ?? p.pos; for (let v = 0; v < P.length; v += 3) if (P[v] < 0.07 && P[v] > -0.07 && P[v + 1] > y - 0.035 && P[v + 1] < y + 0.035 && P[v + 2] < z) z = P[v + 2]; }
+    if (z > 1e8) continue;
+    let bone = spine[spine.length - 1], best = 1e9; for (const b of spine) { const d = y - B.head[b * 3 + 1]; if (d >= -0.02 && d < best) { best = d; bone = b; } } // the bone this height hangs on
+    out.push({ bone, c: [0, y, z + R], r: R });
+  }
+  return (B.backBalls = out);
+}
+
+/**
  * The hair now: world triangles for the painter. Call after poseBody. dt: seconds since the last call (the clumps lag
  * and swing); wind: (p, t) → m/s or null. Returns [{ pos, idx }] (clumps as one mesh; the tail as another).
  */
@@ -201,9 +220,9 @@ export function hairMeshes(H, B, dt, t, wind = null) {
       const sw = u * u * flex, flut = wind ? Math.sin(t * 5.1 + c.ph + u * 3) * 0.004 * u * clamp(Math.hypot(wv[0], wv[2]) / 3) : 0;
       const p = [p0[0] + lag[0] * sw + wd[0] * flut, p0[1] + lag[1] * sw, p0[2] + lag[2] * sw + wd[2] * flut];
       // a leaf-shaped section: widest a third of the way along, a point at the end; thick enough to take light and shadow
-      // (hair drawn back begins as a stroke begins — from a point, thin and flat — and is full a little way along)
-      const rootK = c.back ? clamp(0.12 + u / 0.26) : 1;
-      const wv2 = c.w * 0.5 * (c.back ? rootK * (u < 0.3 ? 1 : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) : u < 0.3 ? 0.72 + 0.28 * (u / 0.3) : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) + 0.0006, th = c.th * (1 - 0.75 * u) * rootK + 0.0005, o = (ci * S + i) * 12;
+      // (hair drawn back, and a designed lock, begin as a stroke begins — from a point, thin and flat — and are full a little way along)
+      const rootK = c.back || c.lock ? clamp(0.12 + u / 0.26) : 1;
+      const wv2 = c.w * 0.5 * (c.back || c.lock ? rootK * (u < 0.3 ? 1 : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) : u < 0.3 ? 0.72 + 0.28 * (u / 0.3) : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) + 0.0006, th = c.th * (1 - 0.75 * u) * rootK + 0.0005, o = (ci * S + i) * 12;
       pos[o] = p[0] - wd[0] * wv2; pos[o + 1] = p[1] - wd[1] * wv2; pos[o + 2] = p[2] - wd[2] * wv2;
       pos[o + 3] = p[0] + nn[0] * th; pos[o + 4] = p[1] + nn[1] * th; pos[o + 5] = p[2] + nn[2] * th;
       pos[o + 6] = p[0] + wd[0] * wv2; pos[o + 7] = p[1] + wd[1] * wv2; pos[o + 8] = p[2] + wd[2] * wv2;
@@ -214,17 +233,47 @@ export function hairMeshes(H, B, dt, t, wind = null) {
   });
   out.push({ pos, idx: Uint32Array.from(idx), u: across });
   if (H.tail) {
-    const T = H.tail, n = 9, base = onBone(B, 'head', T.at), d0 = dirOnBone(B, 'head', norm(T.dir)), seg = T.len / (n - 1);
-    if (!T.st || Math.hypot(T.st[0][0] - base[0], T.st[0][1] - base[1], T.st[0][2] - base[2]) > 0.6) {
-      // where it starts (a new shot): leaving the tie the way it is bound, then hanging by its own weight — not out like a rod
+    const T = H.tail, n = T.locks > 0 ? 13 : 9, base = onBone(B, 'head', T.at), d0 = norm(dirOnBone(B, 'head', norm(T.dir))), seg = T.len / (n - 1);
+    // what a tail cannot pass through: the head itself (as hair meets it), and the back — a row of large balls that touch it from inside
+    const HSt = B.landmarks?.crown && B.landmarks?.nape && B.landmarks?.eyeL ? headSurface(B) : null, balls = backOf(B), rad = T.w * 0.3 + 0.004;
+    const hb = B.bi.head, ho = hb * 9, Rh = B.R, Th = B.T, s2 = Rh[ho] * Rh[ho] + Rh[ho + 3] * Rh[ho + 3] + Rh[ho + 6] * Rh[ho + 6] || 1, sc = Math.sqrt(s2);
+    const clear = (p) => {
+      if (HSt) { const x = p[0] - Th[hb * 3], y = p[1] - Th[hb * 3 + 1], z = p[2] - Th[hb * 3 + 2], lp = [(Rh[ho] * x + Rh[ho + 3] * y + Rh[ho + 6] * z) / s2, (Rh[ho + 1] * x + Rh[ho + 4] * y + Rh[ho + 7] * z) / s2, (Rh[ho + 2] * x + Rh[ho + 5] * y + Rh[ho + 8] * z) / s2], lo = HSt.out(lp, rad / sc); if (lo !== lp) p = onBone(B, 'head', lo); }
+      for (const b of balls) { const c = onBone(B, b.bone, b.c), d = sub(p, c), l = len(d), need = (b.r + rad) * sc; if (l < need && l > 1e-6) p = add(c, mul(d, need / l)); }
+      return p;
+    };
+    // a hanging thread, in small steps of time (so it comes to rest the same at any number of pictures a second): each
+    // point keeps its speed, falls, is blown, stays a span away from the one before and clear of head and back. Off the
+    // tie it leaves the way it is bound (stiffly), bends over within a few spans, and hangs freely from there.
+    const DOWN = [0, -1, 0], lead = [d0, ...[0.18, 0.38, 0.58, 0.78].map((k) => norm(add(mul(d0, 1 - k), mul(DOWN, k))))], hold = [0.6, 0.45, 0.3, 0.18, 0.08];
+    const step = (hs, damp, wind2) => {
+      for (let i = 1; i < n; i++) {
+        const q = N2[i]; if (!q.q) q.q = [...q.p];
+        const p = [q.p[0] + (q.p[0] - q.q[0]) * damp + wind2[0] * hs * hs, q.p[1] + (q.p[1] - q.q[1]) * damp - 9.81 * 0.9 * hs * hs, q.p[2] + (q.p[2] - q.q[2]) * damp + wind2[2] * hs * hs];
+        q.q = [...q.p];
+        if (i <= lead.length) { const a = N2[i - 1].p, k = hold[i - 1], d = lead[i - 1]; for (let c = 0; c < 3; c++) p[c] += (a[c] + d[c] * seg - p[c]) * k; }
+        q.p = p;
+      }
+      // (what head or back pushes aside is carried along, not thrown: the push is no speed of its own)
+      for (let it = 0; it < 8; it++) {
+        // spans keep their length: both ends give way alike (the tie does not)
+        for (let i = 1; i < n; i++) { const a = N2[i - 1].p, b = N2[i].p, d = sub(b, a), l = len(d) || 1, k = (l - seg) / l, wa = i === 1 ? 0 : 0.5, wb = 1 - wa; for (let c = 0; c < 3; c++) { a[c] += d[c] * k * wa; b[c] -= d[c] * k * wb; } }
+        for (let i = 1; i < n; i++) { const f = N2[i].p, c = clear(f); if (c !== f) { const q = N2[i].q; q[0] += c[0] - f[0]; q[1] += c[1] - f[1]; q[2] += c[2] - f[2]; N2[i].p = c; } }
+      }
+    };
+    let N2 = T.st;
+    if (!N2 || N2.length !== n || Math.hypot(N2[0].p[0] - base[0], N2[0].p[1] - base[1], N2[0].p[2] - base[2]) > 0.6) {
+      // where it starts (a new shot): leaving the tie the way it is bound, then hanging by its own weight — and already at rest
       const pts = [[base[0], base[1], base[2]]]; let dir = [d0[0], d0[1], d0[2]];
       for (let i = 1; i < n; i++) { const pull = i < 2 ? 0.25 : 0.62; dir = norm([dir[0] * (1 - pull), dir[1] * (1 - pull) - pull, dir[2] * (1 - pull)]); const a = pts[i - 1]; pts.push([a[0] + dir[0] * seg, a[1] + dir[1] * seg, a[2] + dir[2] * seg]); }
-      T.st = pts.map((p) => ({ p, q: null }));
+      N2 = T.st = pts.map((p) => ({ p, q: null }));
+      for (let k = 0; k < 240; k++) { step(1 / 120, 0.9, [0, 0, 0]); if (k % 40 === 39) for (const q of N2) q.q = [...q.p]; }
+      for (const q of N2) q.q = [...q.p];
     }
-    const N2 = T.st; N2[0].p = base; N2[0][0] = base[0]; N2[0][1] = base[1]; N2[0][2] = base[2];
-    // a hanging thread: each point keeps its speed, falls, is blown, and stays a segment away from the one before
-    for (let i = 1; i < n; i++) { const q = N2[i]; if (!q.q) q.q = [...q.p]; const vx = (q.p[0] - q.q[0]) * 0.94, vy = (q.p[1] - q.q[1]) * 0.94, vz = (q.p[2] - q.q[2]) * 0.94; q.q = [...q.p]; const st2 = i < 3 ? 0.35 : 0.06; q.p = [q.p[0] + vx + wv[0] * 0.02 * h * 60 * h + (base[0] + d0[0] * seg * i - q.p[0]) * st2, q.p[1] + vy - 9.81 * h * h * 0.9 + (base[1] + d0[1] * seg * i - q.p[1]) * st2 * 0.5, q.p[2] + vz + wv[2] * 0.02 * h * 60 * h + (base[2] + d0[2] * seg * i - q.p[2]) * st2]; }
-    for (let it = 0; it < 4; it++) for (let i = 1; i < n; i++) { const a = N2[i - 1].p, b = N2[i].p, d = sub(b, a), l = len(d) || 1; N2[i].p = add(a, mul(d, seg / l)); }
+    // the tie moves with the head through the picture's time, a small step at a time (moved all at once, it would crack the tail like a whip)
+    { const from = N2[0].p, ns = Math.max(1, Math.min(8, Math.round(h * 120))), hs = h / ns, damp = Math.pow(0.2, hs), w2 = [wv[0] * 1.2, 0, wv[2] * 1.2];
+      for (let k = 0; k < ns && h > 0; k++) { const u = (k + 1) / ns; N2[0].p = [from[0] + (base[0] - from[0]) * u, from[1] + (base[1] - from[1]) * u, from[2] + (base[2] - from[2]) * u]; step(hs, damp, w2); } }
+    N2[0].p = base;
     const frameAt = (i) => { const a = N2[Math.max(0, i - 1)].p, b = N2[Math.min(n - 1, i + 1)].p, ax = norm(sub(b, a)); let e1 = cross(ax, [0, 1, 0]); e1 = len(e1) < 0.05 ? [1, 0, 0] : norm(e1); return { ax, e1, e2: cross(ax, e1) }; };
     if (T.locks > 0) {
       // a sheaf of locks: gathered at the tie, fullest a little below it, each running out to a tip of its own

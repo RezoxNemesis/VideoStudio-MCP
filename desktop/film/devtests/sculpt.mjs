@@ -28,13 +28,12 @@ function packFile() {
   throw new Error('human.pack not found: set VS_STAGE_ASSETS_DIR to the app\'s stage-assets folder');
 }
 
+const [dir, name, actorId, reqJson] = args;
+const base = dir && name ? path.join(dir, '.vs/bake', name) : '', bin = `${base}.bin`, js = `${base}.json`;
+if (args.includes('--restore')) { fs.copyFileSync(`${bin}.app`, bin); if (fs.existsSync(`${js}.app`)) fs.copyFileSync(`${js}.app`, js); console.log('restored the app\'s bake'); process.exit(0); }
 const S = await stage();
 const pk = fs.readFileSync(packFile()), factory = new S.HumanFactory(new S.Pack(pk.buffer.slice(pk.byteOffset, pk.byteOffset + pk.byteLength)));
 if (args.includes('--list')) { console.log(factory.targets(String(flag('list', '') === true ? '' : flag('list', ''))).join('\n')); process.exit(0); }
-
-const [dir, name, actorId, reqJson] = args;
-const base = path.join(dir, '.vs/bake', name), bin = `${base}.bin`, js = `${base}.json`;
-if (args.includes('--restore')) { fs.copyFileSync(`${bin}.app`, bin); if (fs.existsSync(`${js}.app`)) fs.copyFileSync(`${js}.app`, js); console.log('restored the app\'s bake'); process.exit(0); }
 if (!fs.existsSync(`${bin}.app`)) fs.copyFileSync(bin, `${bin}.app`);
 if (!fs.existsSync(`${js}.app`)) fs.copyFileSync(js, `${js}.app`);
 const meta = JSON.parse(fs.readFileSync(js, 'utf8')), A = meta.actors.find((x) => x.id === actorId);

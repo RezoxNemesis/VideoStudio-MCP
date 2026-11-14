@@ -134,7 +134,8 @@ freely for `hang` metres past its end (a curtain of fringe from the parting to t
 ear). `flow: 'tie'` draws the hair of the whole scalp back to where the tail is tied, each clump beginning from a point
 (`lift`, `vol` for fullness). The tail: `tail: { len, w, at: [180, 46] (a place on the head) | 'high' | 'low' | 'top', up:
 0.45 (it rises before it falls), locks: 8 (a sheaf of locks with tips of their own), tie: { ends: 2, len: 0.24 } (a cord
-with two hanging ends) }`. Painted with a brush: `hair: { strands: 0…1 }` lays darker strands and a lighter streak along
+with two hanging ends) }`. A tail hangs as hair does: off the tie in a curve, round the back of the head and down the
+back (never through them), swaying with the walk. Painted with a brush: `hair: { strands: 0…1 }` lays darker strands and a lighter streak along
 every lock, `hair.sheen: 0…1` makes the band of light across the hair zigzag from lock to lock, `hair.shine` its colour.
 
 **A top cut like a robe.** `design.body.collar: { style: 'cross' | 'v', depth: 0.13, w: 0.026, inner: '#ece6da', trim:

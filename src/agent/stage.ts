@@ -17,7 +17,7 @@ import { ENV_PRESETS, TIMES } from "../stage/env";
 import { loadStage, preloadStage, runtimeOf, stageError } from "../stage/draw";
 import { ensureModels, modelCatalogue, modelSize } from "../stage/models";
 import { motions } from "../stage/motion/library";
-import { BEARDS, BODIES, CAST, HAIRS, ORIGINS, OUTFITS, makeChar, type CharRequest } from "../stage/presets";
+import { BEARDS, BODIES, CAST, HAIRS, ORIGINS, OUTFITS, garmentsOf, makeChar, type CharRequest } from "../stage/presets";
 import { FACE_SLIDERS, MOODS, StageRuntime, getFilm, pickGait, stageAssets } from "../stage/runtime";
 import { findActor, newStage, sid, sortBlocks, stageDuration, type Block, type BodyMask, type KeyTrack, type Overlay, type Shot, type ShotKind, type StageActor, type StageFx, type StageSpec, type TargetRef, type Vec3 } from "../stage/spec";
 import { SW } from "../stage/engine/fight.js";
@@ -283,7 +283,7 @@ export function registerStageCommands(): void {
 
   registerCommand(
     "stage.actor",
-    `{sceneId, id, preset?: ${Object.keys(CAST).join("|")}, body?: ${Object.keys(BODIES).join("|")}, origin?: ${Object.keys(ORIGINS).join("|")}, outfit?: ${Object.keys(OUTFITS).join("|")}, hair?: ${Object.keys(HAIRS).join("|")}, beard?: none|${Object.keys(BEARDS).join("|")}, height? (m), age? (years), gender? (0 female..1 male), muscle?, weight? (0..1), proportions?, detail?: {"nose/nose-hump-incr": 0.3, …} (stage.targets lists them), colors?: {skin, hair, eye, lip, tunic, trousers, skirt, coat, shoes, boots, trim, sash…: "#hex"}, look?: {age, blush, scar, beard (stubble shading 0..1), grey, pale, dirt, worn, eyeGlow…}, kit?: orez|soldier|garrick|… (ready props + cape + hair tail), props?: [{kind: sword|staff|spear|shield|bucket, hold?: R|L|hip}], at?: [x, z], yaw? (deg), mood?: ${Object.keys(MOODS).join("|")} or {slider: 0..1}, scale?} Add a character, or reshape one that exists (same id keeps its performance). Bodies are sculpted live from age, build, height and face details.`,
+    `{sceneId, id, preset?: ${Object.keys(CAST).join("|")}, body?: ${Object.keys(BODIES).join("|")}, origin?: ${Object.keys(ORIGINS).join("|")}, outfit?: ${Object.keys(OUTFITS).join("|")}, hair?: ${Object.keys(HAIRS).join("|")}, beard?: none|${Object.keys(BEARDS).join("|")}, height? (m), age? (years), gender? (0 female..1 male), muscle?, weight? (0..1), proportions?, detail?: {"nose/nose-hump-incr": 0.3, …} (stage.targets lists them), garments?: [{kind: tunic|trousers|boots|skirt|wraps|cuirass|vambrace|greave, name?, …its measures}] (a cut of its own in place of an outfit: a tunic's flare, bag, droop, sleeve: long|short|none; trousers' wide0, wide1; a skirt's length, flare; boots' shaft), colors?: {skin, hair, eye, lip, tunic, trousers, skirt, coat, shoes, boots, trim, sash…: "#hex"}, look?: {age, blush, scar, beard (stubble shading 0..1), grey, pale, dirt, worn, eyeGlow…}, kit?: orez|soldier|garrick|… (ready props + cape + hair tail), props?: [{kind: sword|staff|spear|shield|bucket, hold?: R|L|hip}], at?: [x, z], yaw? (deg), mood?: ${Object.keys(MOODS).join("|")} or {slider: 0..1}, scale?} Add a character, or reshape one that exists (same id keeps its performance). Bodies are sculpted live from age, build, height and face details.`,
     async (s, a) => {
       await stageAssets.load();
       return s.mutate("stage actor", (p) => {
@@ -297,18 +297,20 @@ export function registerStageCommands(): void {
         if (a.any("detail")) req.detail = a.obj("detail") as Record<string, number>;
         if (a.any("colors")) req.colors = a.obj("colors") as CharRequest["colors"];
         if (a.any("look")) req.look = a.obj("look");
+        if (a.any("garments") !== undefined) req.garments = garmentsOf(a.any("garments"));
         const reshape = Object.keys(req).length > 0;
         let made: ReturnType<typeof makeChar> | null = null;
         if (!existing || reshape) {
           if (existing && !req.preset && !req.body) {
             // tweak the existing body rather than starting over
             const cur = existing.char;
-            made = makeChar({ ...req, garments: req.outfit ? undefined : cur.garments, body: undefined });
+            made = makeChar({ ...req, garments: req.garments ?? (req.outfit ? undefined : cur.garments), body: undefined });
             const merged = JSON.parse(JSON.stringify(cur)) as StageActor["char"];
             if (req.outfit) {
               merged.garments = made.char.garments;
               merged.look = { ...merged.look, colors: (made.char.look as { colors?: unknown } | undefined)?.colors, trim: made.char.look?.trim, sash: made.char.look?.sash };
             }
+            if (req.garments) merged.garments = made.char.garments;
             if (req.hair) merged.hair = { ...made.char.hair, beard: merged.hair?.beard };
             if (req.beard) merged.hair = { ...(merged.hair ?? {}), beard: made.char.hair?.beard };
             if (req.origin) {
