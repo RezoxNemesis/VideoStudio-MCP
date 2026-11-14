@@ -170,6 +170,28 @@ for (const s of ['L', 'R']) for (const name of ['relax', 'grip']) {
   ok(px(0.035, 1.0, 0.05) > 180, 'not on the blade that crosses in front of the hand', px(0.035, 1.0, 0.05));
   ok(px(-0.04, 0.97) > 180, 'a stroke 4 cm behind the surface does not show through it', px(-0.04, 0.97));
 }
+// a hand is a small form: its outline is drawn finer than the body's, or fingers a few pixels wide turn into blots of ink
+{
+  const { CelPainter } = await import('../engine/body.js');
+  const { makeCam } = await import('../engine/camera.js');
+  const quad = (x0, x1, y0, y1) => ({ pos: Float32Array.from([x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y1, 0]), idx: Uint32Array.from([0, 1, 2, 0, 2, 3]) });
+  const inkAcross = (paint) => { const cam = makeCam({ pos: [0, 1, 1], target: [0, 1, 0], fov: 20 }, 200, 200), cp = new CelPainter(cam, { ss: 2, light: [0, 0.3, 1], lw: 6, lwIn: 2, shadows: false }); const q = quad(-0.05, 0.05, 0.95, 1.05); cp.add(q.pos, q.idx, { fill: [230, 180, 150], shade: [190, 130, 110], thr: -0.5, two: true, ...paint });
+    const r = cp.finish(), g = r.canvas.getContext('2d'), e = cam.project([0.05, 1, 0]); let n = 0; for (let i = -12; i <= 12; i++) { const px = g.getImageData(Math.round(e[0] - r.x) + i, Math.round(e[1] - r.y), 1, 1).data; if (px[3] > 128 && px[0] < 120) n++; } return n; }; // inked pixels across the part's edge
+  const body = inkAcross({}), fine = inkAcross({ ow: 0.5 });
+  ok(body >= 5 && fine >= 2 && fine <= body * 0.65, 'a part can ask for a finer outline (paint.ow): a hand\'s is about half the body\'s', [body, fine]);
+  const { handLineWeight } = await import('../engine/hand3.js').catch(() => ({}));
+  ok(typeof handLineWeight === 'function' && within(handLineWeight(60), 0.95, 1) && within(handLineWeight(8), 0.45, 0.6) && handLineWeight(20) < handLineWeight(40), 'a hand\'s outline: full weight when the hand is large in the picture, about half when its fingers are a few pixels wide', typeof handLineWeight === 'function' ? [handLineWeight(60), handLineWeight(20), handLineWeight(8)].map((v) => +v.toFixed(2)) : null);
+}
+// the hand is told from the arm (its lines are drawn finer): wrist, the bones inside the palm, the ball of the thumb
+{
+  const { splitFingers, handBone } = await import('../engine/body.js');
+  const hb = typeof handBone === 'function' ? ['wrist.L', 'metacarpal2.R', 'finger1-1.L', 'lowerarm02.L', 'finger2-1.L', 'upperarm01.R'].map(handBone) : null;
+  ok(hb && hb.join() === 'true,true,true,false,false,false', 'which bones are the hand itself (not its fingers, not the arm)', hb);
+  // bones: 0 = forearm, 1 = wrist, 2 = an index finger bone; corners 0…2 hang on the forearm, 3…5 on the wrist, 6…8 on the finger
+  const si = Uint16Array.from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0]), sw = Float32Array.from([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+  const parts = splitFingers(Uint32Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 2, 3, 4]), si, sw, [0, 0, 2], [false, true, false]);
+  ok(parts.hand && Array.from(parts.rest).join() === '0,1,2' && Array.from(parts.hand).join() === '3,4,5,2,3,4' && Array.from(parts.fingers[1]).join() === '6,7,8', 'splitFingers, told which bones are the hand: arm, hand and fingers apart (a triangle is the hand\'s when most of it hangs on the hand)', parts.hand ? [Array.from(parts.rest), Array.from(parts.hand), Array.from(parts.fingers[1])] : null);
+}
 // both hands are the same hand, mirrored
 { const l = measure('relax', 'L'), r = measure('relax', 'R'); ok(Math.abs(l.fan - r.fan) < 1.5 && Math.abs(l.thumbYaw - r.thumbYaw) < 1.5, 'left and right hands mirror each other (within 1.5°)', [l.fan - r.fan, l.thumbYaw - r.thumbYaw].map(r1)); }
 

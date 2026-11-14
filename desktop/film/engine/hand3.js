@@ -32,3 +32,10 @@ export function knuckleMarks(B, s, eye) {
   }
   return out;
 }
+
+/**
+ * How heavy a hand's outline is against the body's (0…1), for a finger `fingerPx` picture pixels wide. The body's
+ * outline is as wide as a third of a finger when the figure stands a few metres off: drawn at full weight, the fingers
+ * close up into blots. A hand that fills the picture keeps the full line.
+ */
+export function handLineWeight(fingerPx) { return 0.45 + 0.55 * clamp01((fingerPx - 6) / 44); }

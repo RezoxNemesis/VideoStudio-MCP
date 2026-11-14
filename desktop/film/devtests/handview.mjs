@@ -25,7 +25,7 @@ names.forEach((name, r) => {
     const c0 = makeCam({ pos, target: tg, fov: 30 }, S, S), dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     const cam = makeCam({ pos, target: tg, fov: 30, roll: Math.atan2(-dot(up, c0.R), dot(up, c0.U)) * 180 / Math.PI }, S, S); // the hand upright in the picture: fingers down
     const cp = new CelPainter(cam, { ss: 2, light: norm(add(mul(v, 0.8), add(mul(up, 0.5), mul(i === 1 ? pm : ac, 0.35)))), lw: 2.2, lwIn: 1.2 });
-    for (const p of B.parts) { if (p.material !== 'skin') continue; cp.add(p.out, p.idxLimb, PAINT(p)); } // the arm and hand alone, so the palm can be seen
+    for (const p of B.parts) { if (p.material !== 'skin') continue; const pt = { ...PAINT(p), group: 'skin' }; cp.add(p.out, p.idxLimb, pt); if (p.idxHand?.length) cp.add(p.out, p.idxHand, pt); p.idxFingers?.forEach((fi, f) => { if (fi.length) cp.add(p.out, fi, { ...pt, group: `finger${f + 1}`, joins: 'skin' }); }); } // the arm and hand alone, so the palm can be seen
     if (hilt) { // an oval handle across the palm: 85 mm along the hand from the wrist, 30 mm in front of the palm
       const kk = B.height / 1.8, wp = onBone(B, w, [B.head[B.bi[w] * 3], B.head[B.bi[w] * 3 + 1], B.head[B.bi[w] * 3 + 2]]), dt = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
       const ul = norm(ac.map((x, k) => x - al[k] * dt(ac, al))), c0 = add(add(wp, mul(al, 0.085 * kk)), mul(pm, 0.03 * kk)), N = 14, ps = [], ix = [];

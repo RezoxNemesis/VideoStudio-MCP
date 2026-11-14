@@ -32,16 +32,19 @@ export function fingerOfBone(name) { const f = FINGER.exec(name); return !f || (
  * A hand's triangles told apart: { rest (palm, arm and all else), fingers: [thumb … little finger] } — a triangle is a
  * finger's when most of its three corners hang on that finger's bones. boneFinger[b]: 0, or 1…5 for a finger's bone.
  * (Fingers that lie side by side are drawn as five only if the painter knows one from the next.)
+ * With boneHand[b] (true for the bones of the hand itself) the hand is told from the arm as well: { rest, hand, fingers }.
  */
-export function splitFingers(tris, si, sw, boneFinger) {
-  const rest = [], fingers = [[], [], [], [], []], w = [0, 0, 0, 0, 0, 0];
+export function splitFingers(tris, si, sw, boneFinger, boneHand = null) {
+  const rest = [], hand = [], fingers = [[], [], [], [], []], w = [0, 0, 0, 0, 0, 0];
   for (let t = 0; t + 2 < tris.length; t += 3) {
-    w.fill(0); for (let c = 0; c < 3; c++) { const v = tris[t + c]; for (let k = 0; k < 4; k++) { const f = boneFinger[si[v * 4 + k]] ?? 0; if (f) w[f] += sw[v * 4 + k]; } }
+    w.fill(0); let wh = 0; for (let c = 0; c < 3; c++) { const v = tris[t + c]; for (let k = 0; k < 4; k++) { const b = si[v * 4 + k], f = boneFinger[b] ?? 0; if (f) w[f] += sw[v * 4 + k]; else if (boneHand?.[b]) wh += sw[v * 4 + k]; } }
     let best = 0; for (let f = 1; f <= 5; f++) if (w[f] > w[best]) best = f; // (w[0] stays 0: no finger)
-    (best && w[best] > 1.5 ? fingers[best - 1] : rest).push(tris[t], tris[t + 1], tris[t + 2]);
+    (best && w[best] > 1.5 ? fingers[best - 1] : wh > 1.5 ? hand : rest).push(tris[t], tris[t + 1], tris[t + 2]);
   }
-  return { rest: Uint32Array.from(rest), fingers: fingers.map((f) => Uint32Array.from(f)) };
+  return { rest: Uint32Array.from(rest), fingers: fingers.map((f) => Uint32Array.from(f)), ...(boneHand ? { hand: Uint32Array.from(hand) } : {}) };
 }
+/** Is this bone the hand itself: the wrist, the bones inside the palm, the ball of the thumb (not a finger, not the arm)? */
+export function handBone(name) { return /^(wrist|metacarpal[1-5]|finger1-1)\.(L|R)$/.test(name); }
 
 /** The body of a baked actor, ready to pose: null when the performance was solved without bodies. */
 export function bodyOf(bake, id) {
@@ -51,7 +54,7 @@ export function bodyOf(bake, id) {
   const m = a.bodyMeta, ab = a.ab, nb = m.bones.length;
   const head = new Float32Array(nb * 3), tail = new Float32Array(nb * 3), parent = new Int16Array(nb), bi = {};
   m.bones.forEach((b, i) => { head.set(b.head, i * 3); tail.set(b.tail, i * 3); parent[i] = b.parent; bi[b.name] = i; });
-  const boneFinger = m.bones.map((b) => fingerOfBone(b.name));
+  const boneFinger = m.bones.map((b) => fingerOfBone(b.name)); const boneHand = m.bones.map((b) => handBone(b.name));
   const headish = m.bones.map((b) => HEADISH.test(b.name)), armish = m.bones.map((b) => /^(upperarm|lowerarm|wrist|finger|metacarpal)/.test(b.name));
   const parts = m.parts.map((p) => {
     const n = p.vcount, pos = new Float32Array(ab, p.pos[0], n * 3), idx0 = new Uint32Array(ab, p.idx[0], p.idx[1] / 4), si = new Uint16Array(ab, p.skinIndex[0], n * 4), sw = new Float32Array(ab, p.skinWeight[0], n * 4);
@@ -91,8 +94,8 @@ export function bodyOf(bake, id) {
       let inside = false; if (mo && p.material === 'skin') { inside = true; for (const v of [a0, b0, c0]) { const dx = pos[v * 3] - mo[0], dy = pos[v * 3 + 1] - mo[1], dz = pos[v * 3 + 2] - mo[2]; if (!(Math.abs(dx) < 0.03 && Math.abs(dy) < 0.022 && dz < -0.016 && dz > -0.07)) inside = false; } }
       (inside ? mouthT : headT).push(a0, b0, c0); }
     // the skin of the hands: each finger apart from the palm, so that fingers held together are still drawn as fingers
-    const fsplit = p.material === 'skin' ? splitFingers(limb, si, sw, boneFinger) : null;
-    return { idxLimb: fsplit ? fsplit.rest : Uint32Array.from(limb), idxFingers: fsplit ? fsplit.fingers : null, idxCore: Uint32Array.from(core), idxHead: Uint32Array.from(headT), idxMouth: Uint32Array.from(mouthT), u, morphs, base: morphs ? Float32Array.from(rest) : null, rest0: pos,
+    const fsplit = p.material === 'skin' ? splitFingers(limb, si, sw, boneFinger, boneHand) : null;
+    return { idxLimb: fsplit ? fsplit.rest : Uint32Array.from(limb), idxHand: fsplit ? fsplit.hand : null, idxFingers: fsplit ? fsplit.fingers : null, idxCore: Uint32Array.from(core), idxHead: Uint32Array.from(headT), idxMouth: Uint32Array.from(mouthT), u, morphs, base: morphs ? Float32Array.from(rest) : null, rest0: pos,
       name: p.name, material: p.material, params: p.params ?? {}, n, pos: morphs ? Float32Array.from(rest) : rest, idx: idx0, idxNoHead: Uint32Array.from(keep), si, sw, out: new Float32Array(n * 3), nrm: new Float32Array(n * 3) };
   });
   const rig = { fps: a.rigMeta.fps, frames: a.rigMeta.frames, data: new Float32Array(ab, a.rigMeta.data[0], a.rigMeta.frames * nb * 7) };
@@ -326,6 +329,7 @@ export function normalsOf(pos, idx, nrm) {
  *            shadow, −1…1, default 0.08), line? (false: this part draws no inner line against its neighbours),
  *            group? (no line between parts of one group), joins? (a group this part grows out of: no line there,
  *            but a line against its neighbours — fingers on a palm),
+ *            ow? (the weight of this part's outline against the figure's, 0…1: a small form — a hand — is drawn finer),
  *            two? (true: seen from both sides — cloth), flat? (no shadow tone), castHair? / recvHair? (hair, and the
  *            skin its shadow falls on: a fringe on the brow) }
  * o: { ss (fineness, default 2), light: unit vector towards the light (world), ink: [r,g,b], lw (outline, picture px),
@@ -418,7 +422,7 @@ export class CelPainter {
         const q2 = d ? q + w : q + 1, b = ib[q2];
         if (a === b) { if (!a) continue; const za = 1 / zb[q], z2 = 1 / zb[q2], dz = Math.abs(za - z2); if (dz > zk * (P[a].edge ?? 1) * (1 + 0.6 * Math.max(za, z2) * 0.15)) { // not a slope: the surface beyond does not continue at the same rate
           const q0 = d ? q - w : q - 1, q3 = d ? q2 + w : q2 + 1; const s0 = q0 >= 0 && ib[q0] === a ? Math.abs(1 / zb[q0] - za) : 0, s1 = q3 < N && ib[q3] === a ? Math.abs(1 / zb[q3] - z2) : 0; if (dz > 3 * Math.max(s0, s1) + zk * 0.5 * (P[a].edge ?? 1)) stamp(x, y, inR); } continue; }
-        if (!a || !b) { stamp(d ? x : (a ? x : x + 1), d ? (a ? y : y + 1) : y, outR); continue; }
+        if (!a || !b) { stamp(d ? x : (a ? x : x + 1), d ? (a ? y : y + 1) : y, outR * (P[a || b].ow ?? 1)); continue; }
         if (P[a].line === false && P[b].line === false) continue;
         if (P[a].group && P[a].group === P[b].group) continue;
         if (P[a].joins && P[a].joins === P[b].group || P[b].joins && P[b].joins === P[a].group) { // a part that grows out of another (a finger out of the palm): no line where they join —
