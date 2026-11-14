@@ -7,6 +7,8 @@ import type { Studio } from "../../src/app/studio";
 import { runBatch, type Command } from "../../src/agent/api";
 import { kvGet, kvSet } from "../../src/core/storage";
 import { setRelayBase } from "../../src/agent/remote";
+import { vsd } from "./bridge";
+import { linkConfigFrom } from "./linkenv";
 
 export const DEFAULT_WORKER = "https://videostudio-desktop.prakasharuntandon634.workers.dev";
 
@@ -45,6 +47,7 @@ export class DesktopLink {
   private abort: AbortController | null = null;
   private lastInfo = 0;
   private lastPoll = 0;
+  private fixed = false;
   appInfo: () => Record<string, unknown> = () => ({});
 
   constructor(private readonly studio: Studio) {
@@ -73,6 +76,14 @@ export class DesktopLink {
   async load(): Promise<void> {
     const c = await kvGet<LinkConfig>("desktopLink").catch(() => undefined);
     if (c) this.config = { ...this.config, ...c };
+    // a relay named in the environment (a machine without a screen) is used as it is and never stored
+    const env = linkConfigFrom(this.config, vsd?.linkEnv);
+    if (env.fixed) {
+      this.config = env.config;
+      this.fixed = true;
+      this.start();
+      return;
+    }
     if (!this.config.key) {
       this.config.key = newKey();
       await this.save();
@@ -81,7 +92,7 @@ export class DesktopLink {
   }
 
   private save() {
-    return kvSet("desktopLink", this.config);
+    return this.fixed ? Promise.resolve() : kvSet("desktopLink", this.config);
   }
 
   start(): void {

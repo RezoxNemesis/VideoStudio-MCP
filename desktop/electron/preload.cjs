@@ -9,6 +9,8 @@ async function call(name, ...args) {
 
 contextBridge.exposeInMainWorld("vsd", {
   desktop: true,
+  // a relay of this machine's own for the Claude link (a machine without a screen): see src/linkenv.ts
+  linkEnv: { worker: process.env.VSD_LINK_WORKER || "", key: process.env.VSD_LINK_KEY || "" },
   pathOf: (file) => {
     try {
       return webUtils.getPathForFile(file) || "";

@@ -55,6 +55,8 @@ export interface AudioReport {
 
 export interface Vsd {
   desktop: true;
+  /** A relay for the Claude link named in the environment (VSD_LINK_WORKER, VSD_LINK_KEY); empty strings when not set. */
+  linkEnv?: { worker: string; key: string };
   pathOf(file: File): string;
   info(): Promise<DesktopInfo>;
   list(dir: string, o?: { kinds?: string[]; hidden?: boolean; sort?: "name" | "modified"; limit?: number }): Promise<{ dir: string; parent: string | null; entries: FsEntry[]; total: number }>;
