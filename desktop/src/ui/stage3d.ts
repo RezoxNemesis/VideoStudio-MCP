@@ -14,6 +14,7 @@ import { CAST } from "../../../src/stage/presets";
 import { MOODS, type StageRuntime, type StageView } from "../../../src/stage/runtime";
 import { stageDuration, type StageActor, type StageSpec, type Vec3 } from "../../../src/stage/spec";
 import { TONES } from "../../../src/voice/engine/open";
+import { LEARNED } from "../../../src/voice/engine/learned";
 import { b, field, h, modal, selectEl } from "./kit";
 import "../styles/studio2.css";
 
@@ -41,7 +42,7 @@ const KITS = ["", "orez", "teen", "boy", "sena", "ruon", "elder", "garrick", "ve
 const GAITS = ["walk", "stroll", "march", "jog", "run", "sneak"];
 const SHOTS = ["wide", "full", "medium", "close", "extreme", "low", "high", "top", "ots", "two", "follow"];
 const MOVES = ["", "push", "pull", "orbit", "truck", "crane", "handheld", "whip"];
-const VOICES: [string, string][] = [["hf_alpha", "Hindi woman (Alpha)"], ["hf_beta", "Hindi woman (Beta)"], ["hm_omega", "Hindi man (Omega)"], ["hm_psi", "Hindi man (Psi)"], ["af_heart", "English woman (Heart)"], ["af_bella", "English woman (Bella)"], ["am_michael", "English man (Michael)"], ["am_fenrir", "English man (Fenrir)"], ["bf_emma", "British woman (Emma)"], ["bm_george", "British man (George)"]];
+const VOICES: [string, string][] = [...LEARNED.map((v): [string, string] => [v.id, `${v.name} · ${v.tone.split(" · ")[0]}`]), ["hf_alpha", "Hindi woman (Alpha)"], ["hf_beta", "Hindi woman (Beta)"], ["hm_omega", "Hindi man (Omega)"], ["hm_psi", "Hindi man (Psi)"], ["af_heart", "English woman (Heart)"], ["af_bella", "English woman (Bella)"], ["am_michael", "English man (Michael)"], ["am_fenrir", "English man (Fenrir)"], ["bf_emma", "British woman (Emma)"], ["bm_george", "British man (George)"]];
 const FX = ["impact", "sparks", "dust", "shockwave", "fire", "smoke", "embers", "flash"];
 const D2R = Math.PI / 180;
 const r2 = (n: number) => Math.round(n * 100) / 100;

@@ -80,6 +80,10 @@ export interface Tone {
   drift?: number;
   /** Which wandering (set by the natural reading). */
   seed?: number;
+  /** An emotion the model itself acts (learned.ts): happy, sad, crying, angry, scared, loving, surprised… */
+  mood?: string;
+  /** How strongly the mood is acted, 0…2 (1 = full). */
+  moodAmount?: number;
 }
 
 /** Named tones. `tone: "sad"` in a speak request picks one; fields given beside it override. */
@@ -99,7 +103,42 @@ export const TONES: Record<string, Tone> = {
   commanding: { pitch: -1, range: 1.2, rate: 0.95, energy: 0.8, ending: "fall" },
   playful: { pitch: 2, range: 1.5, rate: 1.04, energy: 0.2 },
   indian: { even: 0.6, range: 1.15 },
+  // learned emotions (the model acts them; see learned.ts and moodTone)
+  crying: { pitch: 0.5, range: 0.7, rate: 0.8, energy: -0.4, ending: "fall", pauses: 1.45, shake: 0.4 },
+  scared: { pitch: 2.5, range: 1.2, rate: 1.14, energy: -0.1, shake: 0.7 },
+  loving: { pitch: -0.5, range: 1.05, rate: 0.92, energy: -0.3 },
+  surprised: { pitch: 2.5, range: 1.6, rate: 1, energy: 0.4, ending: "rise" },
+  serious: { pitch: -1, range: 0.8, rate: 0.95, energy: 0.2, ending: "fall" },
+  pleading: { pitch: 2, range: 1.25, rate: 0.9, energy: -0.2, ending: "level" },
 };
+
+/** The learned mood (learned.ts) a named tone stands for, and how strongly. */
+export const TONE_MOODS: Record<string, [string, number]> = {
+  happy: ["happy", 1], excited: ["excited", 1], sad: ["sad", 1], crying: ["crying", 1], angry: ["angry", 1], stern: ["serious", 1],
+  serious: ["serious", 1], commanding: ["serious", 0.6], calm: ["loving", 0.5], warm: ["loving", 0.6], loving: ["loving", 1],
+  afraid: ["scared", 1], scared: ["scared", 1], tired: ["tired", 1], surprised: ["surprised", 1], pleading: ["pleading", 1], playful: ["happy", 0.7],
+};
+
+/**
+ * A tone with its learned mood worked out. When the model acts a mood itself, the curve reshaping that imitates the
+ * same emotion is kept at half strength (endings, trembling and pauses stay whole), so the two do not double up.
+ */
+export function moodTone(tone: Tone | string | undefined): Tone {
+  const name = typeof tone === "string" ? tone.toLowerCase() : undefined;
+  // a tone object that already names its mood is used as given
+  if (!name) return { ...((tone as Tone | undefined) ?? {}) };
+  const t: Tone = { ...(TONES[name] ?? {}) };
+  const m = TONE_MOODS[name];
+  if (!m) return t;
+  t.mood = m[0];
+  t.moodAmount = t.moodAmount ?? m[1];
+  const half = (v: number | undefined, base: number) => (v === undefined ? v : base + (v - base) * 0.5);
+  t.pitch = half(t.pitch, 0);
+  t.range = half(t.range, 1);
+  t.rate = half(t.rate, 1);
+  t.energy = half(t.energy, 0);
+  return t;
+}
 
 const VOWELS = new Set([..."aeiouɑɐɒæɔəɚɛɜɪʊʌɨøœɯɤyAIOWYᵻᵊ"]);
 const PAUSE = new Set([..." ,.;:!?—…"]);

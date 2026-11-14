@@ -45,3 +45,16 @@ describe("Hinglish (Hindi typed in English letters)", () => {
     expect(indianEnglish("dˈeɪ", "day")).toContain("ɖ");
   });
 });
+
+describe("Hinglish dialogue words", () => {
+  it("reads family words, pasand, seeti and the verb bacha the Hindi way, and leaves English lines alone", () => {
+    expect(transliterateHinglish("Papa...")).toBe("पापा...");
+    expect(transliterateHinglish("Aapko laal rang pasand hai na?")).toBe("आपको लाल रंग पसंद है ना?");
+    expect(transliterateHinglish("Main tujhe bacha nahi paaya.")).toBe("मैं तुझे बचा नहीं पाया.");
+    expect(transliterateHinglish("Ek chhota bacha khel raha tha.")).toBe("एक छोटा बच्चा खेल रहा था.");
+    expect(transliterateHinglish("Jab bhi train ki seeti bajegi na")).toBe("जब भी train की सीटी बजेगी ना");
+    expect(transliterateHinglish("My papa is here.")).toBe("My papa is here.");
+    expect(transliterateHinglish("Hi, how are you?")).toBe("Hi, how are you?");
+    expect(transliterateHinglish("ab sirf yaadon mein sunai deti hai")).toBe("अब सिर्फ़ यादों में सुनाई देती है");
+  });
+});

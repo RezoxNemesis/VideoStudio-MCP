@@ -8,9 +8,10 @@ import type { Asset } from "../core/model";
 import * as ops from "../core/ops";
 import { registerCommand } from "./api";
 import { SAMPLE_RATE, mouthEnvelope } from "../voice/engine/audio";
-import { TONES, type Tone } from "../voice/engine/open";
+import { TONES, type Tone, moodTone } from "../voice/engine/open";
 import { hinglishShare, transliterateHinglish } from "../voice/engine/hinglish";
 import { openVoice } from "../voice/open_client";
+import { isMood } from "../voice/engine/learned";
 
 function wavBlob(pcm: Float32Array): Blob {
   const n = pcm.length;
@@ -37,14 +38,18 @@ function wavBlob(pcm: Float32Array): Blob {
 export function readTone(v: unknown): Tone | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   if (typeof v === "string") {
-    const t = TONES[v.toLowerCase()];
-    if (!t) throw new ops.OpError(`Unknown tone "${v}". Tones: ${Object.keys(TONES).join(", ")}; or give {pitch, range, rate, energy, ending, even, shake, pauses}.`);
-    return t;
+    if (!TONES[v.toLowerCase()]) throw new ops.OpError(`Unknown tone "${v}". Tones: ${Object.keys(TONES).join(", ")}; or give {pitch, range, rate, energy, ending, even, shake, pauses, mood}.`);
+    // tones that are emotions are acted by the model itself (learned moods), the curve shaping adds to it
+    return moodTone(v);
   }
   if (typeof v === "object") {
     const o = v as Record<string, unknown>;
-    const base = typeof o.like === "string" ? (TONES[o.like.toLowerCase()] ?? {}) : {};
+    const base = typeof o.like === "string" ? moodTone(o.like) : {};
     const t: Tone = { ...base };
+    if (typeof o.mood === "string" && isMood(o.mood)) {
+      t.mood = o.mood;
+      t.moodAmount = typeof o.moodAmount === "number" ? Math.max(0, Math.min(2, o.moodAmount)) : 1;
+    }
     for (const k of ["pitch", "range", "rate", "energy", "even", "shake", "pauses", "natural", "breath", "drift"] as const) if (typeof o[k] === "number") t[k] = o[k] as number;
     if (o.ending === "rise" || o.ending === "fall" || o.ending === "level") t.ending = o.ending;
     return t;

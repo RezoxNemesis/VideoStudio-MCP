@@ -177,7 +177,7 @@ export class SpeechEngine {
     const jobs: Job[] = [];
     for (let index = first; index < segments.length; index++) {
       const s = segments[index]!;
-      jobs.push({ index, text: s.text, voice: s.voice, speed: s.speed, lang: s.lang, pitch: s.pitch, gain: s.gain, soft: s.soft, edge: s.edge });
+      jobs.push({ index, text: s.text, voice: s.voice, speed: s.speed, lang: s.lang, pitch: s.pitch, gain: s.gain, soft: s.soft, edge: s.edge, mood: (s as { mood?: string }).mood, moodAmount: (s as { moodAmount?: number }).moodAmount });
     }
     if (jobs.length === 0) {
       this.active = null;

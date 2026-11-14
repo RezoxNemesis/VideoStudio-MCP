@@ -7,7 +7,7 @@ import { phonemize } from "phonemizer";
 import espeakWasm from "espeak-ng/dist/espeak-ng.wasm?url";
 import { espeakIpa, setEspeakWasm } from "./espeak";
 import { pitchShift, polish } from "./audio";
-import { OpenModel, TONES, emphasisRanges, sayOpen, type Tone } from "./open";
+import { OpenModel, emphasisRanges, moodTone, sayOpen, type Tone } from "./open";
 import { voiceForText } from "./plan";
 import { lineSyllables, sing, type SingOptions, type SungNote } from "./sing";
 import { VOICES_URL, phonemesFor, worldLang } from "./synth";
@@ -71,12 +71,13 @@ self.onmessage = async (ev: MessageEvent<OpenRequest>) => {
     const m = await load();
     if (msg.type === "say") {
       const voice = msg.lang && !/^(en|hi)\b/i.test(msg.lang) ? msg.voice : voiceForText(msg.voice, msg.text);
-      const base: Tone = { ...(typeof msg.tone === "string" ? (TONES[msg.tone] ?? {}) : (msg.tone ?? {})) };
+      // a named tone that is also a learned emotion is acted by the model itself (moodTone)
+      const base: Tone = moodTone(msg.tone);
       if (msg.pace && msg.pace !== 1) base.rate = (base.rate ?? 1) * msg.pace;
       const world = worldLang(msg.text, voice, msg.lang);
       // a voice that never learnt an evenly timed language keeps its own stress rhythm unless it is evened out
       if (world?.even && langOfVoice(voice)?.code !== world.code && base.even === undefined) base.even = 0.35;
-      const table = await tables.table(voice);
+      const table = await tables.table(voice, base.mood, base.moodAmount ?? 1);
       const emphasis = (msg.emphasis ?? []).map((e) => e.toLowerCase());
       const one = async (text: string, tone: Tone): Promise<Float32Array> => {
         const ph = await phonemesFor(text, voice, speak as never, msg.lang);

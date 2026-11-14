@@ -61,12 +61,13 @@ export function fillVoiceSelect(select: HTMLSelectElement, selected: string, cus
   };
   group("My voices", customs.map((v) => [v.id, `${v.name} · ${v.tone}`]));
   group("Characters", PRESETS.map((v) => [v.id, `${v.name} · ${v.tone.replace(/^Character · |^Narration · /, "")}`]));
+  group("Learned voices · Hindi & Hinglish", VOICES.filter((x) => x.learned).map((v) => [v.id, `${v.name} · ${v.tone}`]));
   const LANG_NAME = { en: "English", hi: "Hindi · हिन्दी", es: "Spanish · Español", fr: "French · Français", it: "Italian · Italiano", pt: "Portuguese · Português" } as const;
   for (const lang of ["en", "hi", "es", "fr", "it", "pt"] as const) {
     for (const gender of ["Female", "Male"] as const) {
       group(
         `${LANG_NAME[lang]} · ${gender}`,
-        VOICES.filter((x) => x.lang === lang && x.gender === gender).map((v) => [v.id, `${v.name} · ${v.accent} · ${v.tone}`]),
+        VOICES.filter((x) => x.lang === lang && x.gender === gender && !x.learned).map((v) => [v.id, `${v.name} · ${v.accent} · ${v.tone}`]),
       );
     }
   }

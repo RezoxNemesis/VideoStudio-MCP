@@ -1,3 +1,5 @@
+import { LEARNED } from "./learned";
+
 export interface Voice {
   id: string;
   name: string;
@@ -7,6 +9,8 @@ export interface Voice {
   gender: "Female" | "Male";
   /** One-line character description shown in the picker. */
   tone: string;
+  /** A voice learned from real performances (learned.ts). */
+  learned?: boolean;
 }
 
 /** Curated Kokoro-82M voices. Lower-graded voices from the upstream set are left out on purpose. */
@@ -45,7 +49,8 @@ export const VOICES: readonly Voice[] = [
   { id: "pf_dora", name: "Dora (Brasil)", accent: "Brazil", lang: "pt", gender: "Female", tone: "Português · Clear, friendly" },
   { id: "pm_alex", name: "Alex (Brasil)", accent: "Brazil", lang: "pt", gender: "Male", tone: "Português · Warm, relaxed" },
   { id: "pm_santa", name: "Santa (Brasil)", accent: "Brazil", lang: "pt", gender: "Male", tone: "Português · Deep, jolly" },
-] as const;
+  ...LEARNED.map((v) => ({ id: v.id, name: v.name, accent: "India" as const, lang: "hi" as const, gender: v.gender, tone: v.tone, learned: true })),
+];
 
 export const DEFAULT_VOICE = "af_heart";
 

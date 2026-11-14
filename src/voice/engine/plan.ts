@@ -6,6 +6,7 @@ import { hindiVoiceFor, isHindiVoice } from "./voices";
 import { NEUTRAL } from "./delivery";
 import { PRESETS, resolveVoice, type CustomVoice } from "./voicebank";
 import { langOf } from "./world";
+import { phrasePause } from "./learned";
 
 export interface PlanItem {
   text: string;
@@ -27,6 +28,9 @@ export interface PlanItem {
   speaker?: string;
   /** Which speaker turn (or 0 for plain narration) the item belongs to. */
   turn: number;
+  /** Acted emotion (learned.ts) and its strength. */
+  mood?: string;
+  moodAmount?: number;
 }
 
 export interface PlanOptions {
@@ -106,12 +110,13 @@ function itemsFor(
       continue;
     }
     const d = seg.delivery ?? NEUTRAL;
-    const chunks = seg.sound ? [{ text: seg.text, pauseMs: 160 }] : toChunks(seg.text, undefined, !!world);
+    const chunks = seg.sound ? [{ text: seg.text, pauseMs: 160 }] : toChunks(seg.text, undefined, !!world, { commas: v.phrasing?.breakCommas, lines: v.phrasing?.lines });
     chunks.forEach((c, i) => {
       const last = i === chunks.length - 1;
       out.push({
         text: c.text,
-        pauseMs: Math.round(c.pauseMs * d.pause) + (last ? seg.pauseAfterMs ?? 0 : 0),
+        // A learned voice pauses the way it was recorded to (learned.ts); stock voices keep the defaults.
+        pauseMs: Math.round((v.phrasing && !seg.sound ? phrasePause(c.text, c.pauseMs, v.phrasing) : c.pauseMs) * d.pause) + (last ? seg.pauseAfterMs ?? 0 : 0),
         voice: world ? v.mix : voiceForText(v.mix, c.text),
         lang: world ?? (o.lang && /^(en|hi)\b/i.test(o.lang) ? o.lang.slice(0, 2).toLowerCase() : undefined),
         speed: r2(Math.min(1.6, Math.max(0.55, o.speed * v.speed * (extra.speed ?? 1) * d.speed))),
@@ -120,6 +125,8 @@ function itemsFor(
         soft: r2(d.soft),
         edge: r2(d.edge),
         tags: d.tags.length ? [...d.tags] : undefined,
+        mood: d.mood,
+        moodAmount: d.mood ? r2(d.moodAmount ?? 1) : undefined,
         speaker: meta.speaker,
         turn: meta.turn,
       });
@@ -137,6 +144,10 @@ function compact(it: PlanItem): PlanItem {
   if (!o.edge) delete o.edge;
   if (!o.tags) delete o.tags;
   if (!o.lang) delete o.lang;
+  if (!o.mood) {
+    delete o.mood;
+    delete o.moodAmount;
+  }
   if (o.speaker === undefined) delete o.speaker;
   return o;
 }

@@ -9,7 +9,11 @@ import { isEnglishWord } from "./english_words";
 
 /** Everyday Hindi in its common Latin spellings → Devanagari. "a|b=x" lists spelling variants. */
 const LEX_SRC = `
-main|mai=मैं hum|ham=हम tum=तुम aap=आप tu=तू yeh|ye=यह woh|wo|vo|voh=वह ve=वे mera=मेरा meri=मेरी mere=मेरे hamara|humara=हमारा hamari|humari=हमारी hamare|humare=हमारे
+si_h=सी
+yaadon|yadon=यादों sunai|sunaai=सुनाई dikhai|dikhaai=दिखाई
+pasand|pasandh=पसंद napasand|naapasand=नापसंद seeti|siti|seetee=सीटी gale=गले laga=लगा lagaa=लगा
+yahin|yaheen|yahi_n=यहीं wahin|waheen|vahin=वहीं kahin|kaheen=कहीं gulab|gulaab=गुलाब aansoo|aanson|ansu=आँसू intezar=इंतज़ार platform_e=प्लेटफ़ॉर्म bitiya=बिटिया gudiya=गुड़िया laadli|ladli=लाडली
+main|mai=मैं hum|ham=हम tum=तुम aap=आप tu=तू yeh|ye=ये woh|wo|vo|voh=वो ve=वे mera=मेरा meri=मेरी mere=मेरे hamara|humara=हमारा hamari|humari=हमारी hamare|humare=हमारे
 tumhara|tumhaara=तुम्हारा tumhari=तुम्हारी tumhare=तुम्हारे aapka|apka=आपका aapki|apki=आपकी aapke|apke=आपके tera=तेरा teri=तेरी tere=तेरे uska=उसका uski=उसकी uske=उसके iska=इसका iski=इसकी iske=इसके
 unka=उनका unki=उनकी unke=उनके inka=इनका inki=इनकी inke=इनके mujhe|mujhay=मुझे mujhko=मुझको mujhse=मुझसे mujh=मुझ tumhe|tumhein|tumhen=तुम्हें tumko=तुमको tumse=तुमसे tujhe=तुझे tujhko=तुझको tujhse=तुझसे tujh=तुझ
 hume|humein|hamein|hamen=हमें humko|hamko=हमको humse|hamse=हमसे use|usse_k=उसे usko=उसको usse=उससे ise=इसे isko=इसको isse=इससे unhe|unhein|unhen=उन्हें unko=उनको unse=उनसे inhe|inhein=इन्हें inko=इनको inse=इनसे
@@ -121,7 +125,8 @@ export function spellDevanagari(word: string): string {
     w = w.replace(/(ein|en)$/, "");
     tail = "ें";
   }
-  if (tail) return spellDevanagari(w + "q").slice(0, -2) + tail;
+  // (the stand-in final letter is dropped together with the virama before it)
+  if (tail) return spellDevanagari(w + "q").slice(0, -2).replace(/्$/, "") + tail;
   let out = "";
   let i = 0;
   let prevCons = false;
@@ -225,11 +230,18 @@ export function romanToDevanagari(word: string, hindiLine: boolean): string | nu
   return null;
 }
 
+const FAMILY = new Set(["papa", "mummy", "mumma", "maa", "beta", "beti", "didi", "bhaiya", "gudiya", "dadi", "nani", "chacha", "bitiya"]);
+
 /** Rewrite the Hindi words of a Latin-script line in Devanagari; English words are left as they are. */
 export function transliterateHinglish(text: string, force = false): string {
-  const hindiLine = force || hinglishShare(text) >= 0.34;
+  // A line with no English word in it ("Papa...", "Beta!") is Hindi when it holds a family word.
+  const words = text.match(/[A-Za-z][A-Za-z']*/g) ?? [];
+  const onlyHindi = words.length > 0 && words.every((w) => wordKind(w) !== "english" || FAMILY.has(w.toLowerCase())) && words.some((w) => FAMILY.has(w.toLowerCase()));
+  const hindiLine = force || onlyHindi || hinglishShare(text) >= 0.34;
   if (!hindiLine && hinglishShare(text) < 0.12) return text;
-  return text.replace(/[A-Za-z][A-Za-z']*/g, (w) => romanToDevanagari(w, hindiLine) ?? w);
+  // "bacha" is बच्चा (a child) except as a verb: "bacha nahi paaya", "bacha liya" → बचा (saved)
+  const t = hindiLine ? text.replace(/\bbach(?:a|aa)\b(?=\s+(?:nahi|nahin|na|liya|li|lo|le|lena|paaya|paya|payi|paayi|sakta|sakti|sakte|sake|diya|dena|lunga|lungi|lenge))/gi, "बचा") : text;
+  return t.replace(/[A-Za-z][A-Za-z']*/g, (w) => romanToDevanagari(w, hindiLine) ?? w);
 }
 
 /** Words whose "a" is the long aa of "father" in Indian (and British) English, though American English says them as in "cat". */

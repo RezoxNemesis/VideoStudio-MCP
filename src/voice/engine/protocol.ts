@@ -15,6 +15,9 @@ export interface Job {
   gain?: number;
   soft?: number;
   edge?: number;
+  /** An acted emotion performed by the model (learned.ts), and how strongly (0…2). */
+  mood?: string;
+  moodAmount?: number;
 }
 
 export type ToWorker =
