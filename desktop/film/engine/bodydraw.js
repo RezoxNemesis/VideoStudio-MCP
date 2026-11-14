@@ -3,11 +3,12 @@
 // arm, a hand or a blade passes in front of the face.
 import { createCanvas } from '@napi-rs/canvas';
 import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
-import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes } from './body.js';
+import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn } from './body.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes } from './hair.js';
 import { look } from './look.js';
 import { faceMarksOf, faceDecals, decalPaints, noseLine } from './face3.js';
+import { knuckleMarks } from './hand3.js';
 
 const SKIP = new Set(['eyes', 'teeth', 'tongue', 'lashes', 'haircap', 'hair', 'beard']);
 const LAYER = { skin: 0, trousers: 1, boots: 2, shoes: 2, tunic: 3, wraps: 4, skirt: 4, coat: 5, cuirass: 6, vambrace: 6, greave: 6 };
@@ -237,7 +238,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const ss = hpx > 900 ? 2 : hpx > 240 ? 2 : 3;
   const pm = look()?.paint?.mode === 'paint';
   const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * (pm ? 2.1 : 1.75), lwIn: lwB * (pm ? 1.05 : 0.95) });
-  const limbIds = new Set(), eyeIds = new Set(), faceIds = new Set(); // faceIds: the skin of the face itself (with the tones drawn on it)
+  const limbIds = new Set(), eyeIds = new Set(), faceIds = new Set(), handIds = new Set(); // faceIds: the skin of the face itself (with the tones drawn on it); handIds: the bare skin of arms and hands
   const rgbOf = (c) => hex(lit(c)), fd = d.face ?? {}, lmk = B.landmarks, eyeY = lmk.eyeL?.[1] ?? 0, eyeZ = lmk.eyeL?.[2] ?? 0;
   // the middle of the head: anime shading treats a face and its hair as one round form, so their normals lean out from
   // here (a clean terminator, no patches where a low-poly surface turns), blended with the surface's own normal
@@ -278,9 +279,9 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;
     const paint = paintOf(ch, B, p, lit), nr = normalsOf(p.out, p.idx, p.nrm);
     if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
-    if (p.idxLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); }
+    if (p.idxLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); if (p.material === 'skin') handIds.add(id); }
     // fingers: each its own part of the skin, so two that lie side by side have a line between them (none where they leave the palm)
-    if (p.idxFingers) p.idxFingers.forEach((fi, f) => { if (fi.length) limbIds.add(cp.add(p.out, fi, { ...paint, bands: undefined, group: `finger${f + 1}`, ...(f ? { joins: paint.group ?? p.name } : {}) }, nr)); }); // (the thumb is outlined against the hand it lies on)
+    if (p.idxFingers) p.idxFingers.forEach((fi, f) => { if (fi.length) { const id = cp.add(p.out, fi, { ...paint, bands: undefined, group: `finger${f + 1}`, joins: paint.group ?? p.name }, nr); limbIds.add(id); if (p.material === 'skin') handIds.add(id); } }); // (a line only where a finger or the thumb lies over the hand, none where it grows out of it)
     if (real && p.material === 'skin' && p.idxHead.length) {
       // the face: lit almost everywhere (a drawn face keeps its shadows to the jaw and the far cheek); brows ride on the skin
       const xy = p.faceXY ?? (p.faceXY = (() => { const a = new Float32Array(p.n * 2), base = p.base ?? p.pos; for (let v = 0; v < p.n; v++) { const front = base[v * 3 + 2] > eyeZ - 0.045; a[v * 2] = front ? base[v * 3] : 9; a[v * 2 + 1] = base[v * 3 + 1] - eyeY; } return a; })());
@@ -341,6 +342,11 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const drawTails = () => { for (const tf of longBack) ch.drawTuft(g, tf, C(d.hair.color), S(d.hair.color, d.hair.shade), ink, lw); };
   if (longBack.length && !tailFront && !real) drawTails();
   if (spr) g.drawImage(spr.canvas, spr.x, spr.y);
+  // the knuckles of a closed hand, inked on its own skin (never over a sleeve or a blade in front of it)
+  if (real && spr && handIds.size && B.fingers) for (const s of ['L', 'R']) {
+    const wj = pose.j[`wrist.${s}`]; if (!wj) continue; const px = 0.0068 * (pose.height / 1.8) * cam.ppm(cam.project(wj)[2]); if (px < 1.6) continue; // too small in the picture to be drawn
+    inkOn(g, spr, cam, knuckleMarks(B, s, cam.pos).map((m) => ({ pts: m.pts, alpha: m.alpha * clamp((px - 1.6) / 1.4), lw: lwB * 0.95 })), handIds, { ink });
+  }
   // ---- the head: painted, then cut away wherever an arm, a hand or what it holds is nearer than the face
   const light = o.light ?? [-0.6, -0.8];
   const hc = cam.project(H.c), hr = H.R * cam.ppm(hc[2]);

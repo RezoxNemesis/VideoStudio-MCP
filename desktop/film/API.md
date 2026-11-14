@@ -113,6 +113,9 @@ can be a blend `['open', 'fist', 0.5]` or its own shape: `{ curl: [[thumb ×3], 
 the thumb's is added to how it rests); `spread` 0 = side by side, 1 = spread wide, below 0 = pressed together;
 `thumbOut` 0 = beside the index finger, 1 = held out; `thumbIn` 0 = by the flat of the hand, 1 = in front of the palm.
 `import { HANDS } from '../vs.js'` has the named ones to start from: `{ ...HANDS.open, spread: 1 }`.
+Seen from the back, a closed hand shows its knuckles (a short arc over each, as far as it is bent — a flat hand has
+none); neighbouring fingers have a line between them, and a finger or the thumb is outlined where it lies over the
+hand, never where it grows out of it.
 
 **Costume on a real body.** `design.body` colours the body's own garments (`tunic`, `coat`, `trousers`, `boots`,
 `wraps` …), `body.sleeves` gives the top's sleeves a colour of their own (a dark vest over a white robe), and

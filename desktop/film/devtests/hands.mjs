@@ -119,6 +119,57 @@ for (const s of ['L', 'R']) for (const name of ['relax', 'grip']) {
   ok(at(-0.03, 1.0) > 200 && at(0.03, 1.0) > 200, 'where a finger joins the palm: no line', [at(-0.03, 1.0), at(0.03, 1.0)]);
   ok(at(-0.03, 0.95) > 200, 'the finger itself is skin', at(-0.03, 0.95));
 }
+// the back of a closed hand has knuckles: a short arc over each, on the wrist's side — seen from the back only, and not on a flat hand
+{
+  const h3 = await import('../engine/hand3.js').catch(() => ({})), knuckleMarks = h3.knuckleMarks;
+  const view = (name, s, sideOfHand) => { const B = hands(); poseBody(B, 0, null, { L: name, R: name }); const F = B.fingers[s], w = B.bi[`wrist.${s}`], palm = qrot(B.Q, w, F.palm), along = qrot(B.Q, w, F.along), wr = [B.P[w * 3], B.P[w * 3 + 1], B.P[w * 3 + 2]];
+    const eye = add(add(wr, mul(along, 0.08)), mul(palm, 0.4 * sideOfHand)); return { B, F, palm, along, marks: typeof knuckleMarks === 'function' ? knuckleMarks(B, s, eye) : [] }; };
+  for (const s of ['L', 'R']) {
+    const fist = view('fist', s, -1), K = (B, F, f) => { const b = F.chains[f][0]; return [B.P[b * 3], B.P[b * 3 + 1], B.P[b * 3 + 2]]; };
+    ok(fist.marks.length === 4 && fist.marks.every((m) => m.alpha >= 0.7), `${s} fist from the back: a mark on each of the four knuckles`, fist.marks.map((m) => r1(m.alpha * 100)));
+    const far = fist.marks.map((m) => Math.max(...m.pts.map((q) => len(sub(q, K(fist.B, fist.F, m.f)))))), side = fist.marks.map((m) => Math.max(...m.pts.map((q) => dot(sub(q, K(fist.B, fist.F, m.f)), fist.palm))));
+    ok(fist.marks.length === 4 && far.every((d) => d < 0.016) && side.every((d) => d < -0.002), `${s} fist: each mark lies on its own knuckle, on the back of the hand (within 16 mm, back side)`, [far.map((d) => r1(d * 1000)), side.map((d) => r1(d * 1000))]);
+    const mid = fist.marks.map((m) => { const c = m.pts.reduce((a, q) => add(a, q), [0, 0, 0]).map((v) => v / m.pts.length); return dot(sub(c, K(fist.B, fist.F, m.f)), fist.along); });
+    ok(fist.marks.length === 4 && mid.every((d) => d < -0.001), `${s} fist: each arc bends round the knuckle on the wrist's side`, mid.map((d) => r1(d * 1000)));
+    const wide = fist.marks.map((m) => len(sub(m.pts[0], m.pts[m.pts.length - 1])));
+    ok(fist.marks.length === 4 && wide.every((d) => within(d, 0.007, 0.02)), `${s} fist: an arc is about as wide as its finger (7–20 mm)`, wide.map((d) => r1(d * 1000)));
+    const grip = view('grip', s, -1); ok(grip.marks.length === 4 && grip.marks.every((m) => m.alpha >= 0.7), `${s} hand closed round a hilt, from the back: four knuckles`, grip.marks.map((m) => r1(m.alpha * 100)));
+    const palmSide = view('fist', s, 1); ok(typeof knuckleMarks === 'function' && palmSide.marks.every((m) => m.alpha < 0.02), `${s} fist from the palm's side: no knuckles to see`, palmSide.marks.map((m) => r1(m.alpha * 100)));
+    const open = view('open', s, -1); ok(typeof knuckleMarks === 'function' && open.marks.every((m) => m.alpha < 0.02), `${s} flat open hand from the back: no knuckle marks`, open.marks.map((m) => r1(m.alpha * 100)));
+    const relax = view('relax', s, -1); ok(typeof knuckleMarks === 'function' && relax.marks.every((m) => m.alpha <= 0.45), `${s} relaxed hand from the back: knuckles faint at most`, relax.marks.map((m) => r1(m.alpha * 100)));
+  }
+}
+// a part that grows out of another has no line where it joins it — but one where it lies over it (a thumb across the fist, a fingertip on the palm)
+{
+  const { CelPainter } = await import('../engine/body.js');
+  const { makeCam } = await import('../engine/camera.js');
+  const quad = (x0, x1, y0, y1, z = 0) => ({ pos: Float32Array.from([x0, y0, z, x1, y0, z, x1, y1, z, x0, y1, z]), idx: Uint32Array.from([0, 1, 2, 0, 2, 3]) });
+  const cam = makeCam({ pos: [0, 1, 1], target: [0, 1, 0], fov: 20 }, 200, 200), cp = new CelPainter(cam, { ss: 2, light: [0, 0.3, 1], lw: 2, lwIn: 2, shadows: false });
+  const skin = { fill: [230, 180, 150], shade: [190, 130, 110], thr: -0.5, two: true };
+  const palm = quad(-0.06, 0.06, 0.94, 1.1), grown = quad(-0.06, -0.02, 0.86, 0.94), over = quad(0.0, 0.03, 0.98, 1.06, 0.012);
+  cp.add(palm.pos, palm.idx, { ...skin, group: 'skin' }); cp.add(grown.pos, grown.idx, { ...skin, group: 'finger2', joins: 'skin' }); cp.add(over.pos, over.idx, { ...skin, group: 'finger1', joins: 'skin' });
+  const r = cp.finish(), at = (wx, wy, wz = 0) => { const q = cam.project([wx, wy, wz]), d = r.canvas.getContext('2d').getImageData(Math.round(q[0] - r.x), Math.round(q[1] - r.y), 1, 1).data; return d[0]; };
+  const dark = (wx, wy, wz) => Math.min(...[-2, -1, 0, 1, 2].flatMap((i) => [-2, -1, 0, 1, 2].map((j) => { const q = cam.project([wx, wy, wz]), d = r.canvas.getContext('2d').getImageData(Math.round(q[0] - r.x) + i, Math.round(q[1] - r.y) + j, 1, 1).data; return d[0]; })));
+  ok(at(-0.04, 0.94) > 200, 'a finger growing out of the palm: no line where it joins', at(-0.04, 0.94));
+  ok(dark(0.0, 1.02, 0.012) < 150 && dark(0.03, 1.02, 0.012) < 150, 'a thumb lying over the palm (12 mm above it): a line along its edges', [dark(0.0, 1.02, 0.012), dark(0.03, 1.02, 0.012)]);
+  ok(at(0.015, 1.02, 0.012) > 200, 'the thumb itself is skin', at(0.015, 1.02, 0.012));
+}
+// ink drawn onto a surface afterwards (a knuckle) stays on that surface: not on what lies in front of it, not through from behind
+{
+  const { CelPainter, inkOn } = await import('../engine/body.js');
+  const { makeCam } = await import('../engine/camera.js');
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const quad = (x0, x1, y0, y1, z = 0) => ({ pos: Float32Array.from([x0, y0, z, x1, y0, z, x1, y1, z, x0, y1, z]), idx: Uint32Array.from([0, 1, 2, 0, 2, 3]) });
+  const cam = makeCam({ pos: [0, 1, 1], target: [0, 1, 0], fov: 20 }, 200, 200), cp = new CelPainter(cam, { ss: 2, light: [0, 0.3, 1], lw: 2, lwIn: 2, shadows: false });
+  const hand = quad(-0.08, 0.08, 0.94, 1.06), blade = quad(0.02, 0.05, 0.9, 1.1, 0.05);
+  const idHand = cp.add(hand.pos, hand.idx, { fill: [230, 180, 150], shade: [190, 130, 110], thr: -0.5, two: true, group: 'skin' }); cp.add(blade.pos, blade.idx, { fill: [220, 225, 235], shade: [150, 160, 170], thr: -0.5, two: true, group: 'blade' });
+  const r = cp.finish(), cv = createCanvas(200, 200), g = cv.getContext('2d'); g.drawImage(r.canvas, r.x, r.y);
+  const px = (wx, wy, wz = 0) => { const q = cam.project([wx, wy, wz]); return g.getImageData(Math.round(q[0]), Math.round(q[1]), 1, 1).data[0]; };
+  if (typeof inkOn === 'function') inkOn(g, r, cam, [{ pts: [[-0.07, 1.0, 0.001], [0.07, 1.0, 0.001]], alpha: 1, lw: 3 }, { pts: [[-0.07, 0.97, -0.04], [-0.01, 0.97, -0.04]], alpha: 1, lw: 3 }], new Set([idHand]), { ink: '#101010' });
+  ok(px(-0.04, 1.0) < 90 && px(0.065, 1.0) < 90, 'a stroke on the hand is inked on the hand', [px(-0.04, 1.0), px(0.065, 1.0)]);
+  ok(px(0.035, 1.0, 0.05) > 180, 'not on the blade that crosses in front of the hand', px(0.035, 1.0, 0.05));
+  ok(px(-0.04, 0.97) > 180, 'a stroke 4 cm behind the surface does not show through it', px(-0.04, 0.97));
+}
 // both hands are the same hand, mirrored
 { const l = measure('relax', 'L'), r = measure('relax', 'R'); ok(Math.abs(l.fan - r.fan) < 1.5 && Math.abs(l.thumbYaw - r.thumbYaw) < 1.5, 'left and right hands mirror each other (within 1.5°)', [l.fan - r.fan, l.thumbYaw - r.thumbYaw].map(r1)); }
 

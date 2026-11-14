@@ -421,7 +421,8 @@ export class CelPainter {
         if (!a || !b) { stamp(d ? x : (a ? x : x + 1), d ? (a ? y : y + 1) : y, outR); continue; }
         if (P[a].line === false && P[b].line === false) continue;
         if (P[a].group && P[a].group === P[b].group) continue;
-        if (P[a].joins && P[a].joins === P[b].group || P[b].joins && P[b].joins === P[a].group) continue; // a part that grows out of another (a finger out of the palm): no line where they join
+        if (P[a].joins && P[a].joins === P[b].group || P[b].joins && P[b].joins === P[a].group) { // a part that grows out of another (a finger out of the palm): no line where they join —
+          const za = 1 / zb[q], z2 = 1 / zb[q2]; if (Math.abs(za - z2) < (o.joinEdge ?? 0.005)) continue; }                                 //   only where it lies over it (a thumb across the fist, a fingertip on the palm)
         // faces of one material that only differ by a shade (a model's colour atlas) are one surface: no line between them
         if (P[a].soft && P[b].soft) { const fa = P[a].fill, fb = P[b].fill; if (Math.abs(fa[0] - fb[0]) + Math.abs(fa[1] - fb[1]) + Math.abs(fa[2] - fb[2]) < 70) continue; }
         stamp(x, y, inR, inkI);
@@ -584,6 +585,43 @@ export function faceShapes(f) {
   const nose = anger * 0.45 * (0.4 + 0.6 * down) + (f.sneer ?? 0) * 0.7; w['nose-left-elevation'] = nose; w['nose-right-elevation'] = nose;
   w['nose-left-dilatation'] = anger * 0.4; w['nose-right-dilatation'] = anger * 0.4;
   return { w, jaw: openAmt * 0.11 };
+}
+/**
+ * Ink drawn onto a surface after the painter has made its picture: strokes in the world (a knuckle, a crease) that
+ * belong to one surface. They show only where the picture shows that surface (its paint ids) at the stroke's own
+ * depth — never on a sleeve, a blade or another hand in front of it, and never through from behind.
+ * g: the picture the painter's sprite was drawn into; spr: what CelPainter.finish gave;
+ * strokes: [{ pts: [[x, y, z]…], alpha, lw (picture pixels) }] — a stroke is finest at its two ends;
+ * o: { ink: a css colour ('#1a1a22'), tol: how far from the surface a stroke may lie, metres (0.012) }
+ */
+let _inkCv = null;
+export function inkOn(g, spr, cam, strokes, ids, o = {}) {
+  if (!spr || !strokes?.length) return;
+  const SS = spr.ss, tol = o.tol ?? 0.012, c = hex(o.ink ?? '#1a1a22');
+  for (const st of strokes) {
+    if (!(st.alpha > 0.02) || st.pts.length < 2) continue;
+    const Q = st.pts.map((q) => cam.project(q)); if (Q.some((q) => !(q[2] > 0.05))) continue;
+    const lw = st.lw ?? 1.5, pad = Math.ceil(lw) + 2; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const q of Q) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }
+    x0 = Math.floor(x0 - pad); y0 = Math.floor(y0 - pad); x1 = Math.ceil(x1 + pad); y1 = Math.ceil(y1 + pad); const w = x1 - x0, h = y1 - y0; if (w <= 0 || h <= 0 || w * h > 4e6) continue;
+    // is this point of the picture the surface the stroke belongs to, at the stroke's depth?
+    const own = (x, y, z) => { const X = Math.floor((x - spr.x) * SS), Y = Math.floor((y - spr.y) * SS); if (X < 0 || Y < 0 || X >= spr.sw || Y >= spr.sh) return false; const q = Y * spr.sw + X; return ids.has(spr.ib[q]) && spr.zb[q] > 0 && (z === null || Math.abs(1 / spr.zb[q] - z) <= tol); };
+    let total = 0; const seg = []; for (let i = 0; i < Q.length - 1; i++) { const l = Math.hypot(Q[i + 1][0] - Q[i][0], Q[i + 1][1] - Q[i][1]); seg.push(l); total += l; } if (total < 1) continue;
+    const mask = new Float32Array(w * h); let run = 0;
+    for (let i = 0; i < Q.length - 1; i++) {
+      const n = Math.max(1, Math.ceil(seg[i] / 0.5));
+      for (let j = 0; j <= n; j++) {
+        const u = j / n, x = Q[i][0] + (Q[i + 1][0] - Q[i][0]) * u, y = Q[i][1] + (Q[i + 1][1] - Q[i][1]) * u, z = Q[i][2] + (Q[i + 1][2] - Q[i][2]) * u; if (!own(x, y, z)) continue;
+        const v = (run + seg[i] * u) / total, r = lw * 0.5 * (0.45 + 0.55 * Math.min(1, Math.min(v, 1 - v) * 4)), R2 = Math.ceil(r + 0.5), cx = x - x0, cy = y - y0;
+        for (let b = -R2; b <= R2; b++) { const yy = Math.floor(cy) + b; if (yy < 0 || yy >= h) continue; for (let a = -R2; a <= R2; a++) { const xx = Math.floor(cx) + a; if (xx < 0 || xx >= w) continue; const cov = r + 0.5 - Math.hypot(xx + 0.5 - cx, yy + 0.5 - cy); if (cov <= 0) continue; const m = yy * w + xx; if (mask[m] < cov) mask[m] = cov > 1 ? 1 : cov; } }
+      }
+      run += seg[i];
+    }
+    const img = new Uint8ClampedArray(w * h * 4); let any = false;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const m = mask[y * w + x]; if (m <= 0 || !own(x0 + x + 0.5, y0 + y + 0.5, null)) continue; const o4 = (y * w + x) * 4; img[o4] = c[0]; img[o4 + 1] = c[1]; img[o4 + 2] = c[2]; img[o4 + 3] = Math.round(255 * m * Math.min(1, st.alpha)); any = true; }
+    if (!any) continue;
+    if (!_inkCv || _inkCv.width < w || _inkCv.height < h) _inkCv = createCanvas(Math.max(w, _inkCv?.width ?? 0, 64), Math.max(h, _inkCv?.height ?? 0, 64));
+    const sg = _inkCv.getContext('2d'); sg.clearRect(0, 0, w, h); sg.putImageData(new ImageData(img, w, h), 0, 0); g.drawImage(_inkCv, 0, 0, w, h, x0, y0, w, h);
+  }
 }
 /** Where a point that rides on a bone is now (after poseBody): rest position → world. */
 export function onBone(B, bone, p) {
