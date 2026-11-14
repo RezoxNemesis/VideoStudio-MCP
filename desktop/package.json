@@ -126,13 +126,7 @@
         "to": "voice",
         "filter": [
           "worker.mjs",
-          "package.json",
-          "node_modules/**/*",
-          "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
-          "!node_modules/onnxruntime-node/bin/napi-v6/win32/**",
-          "!node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/**",
-          "!**/libonnxruntime_providers_cuda.so",
-          "!**/libonnxruntime_providers_tensorrt.so"
+          "package.json"
         ]
       },
       {

@@ -6,6 +6,7 @@ import { VoiceView } from "../../../src/ui/voice";
 import { runCommand } from "../../../src/agent/api";
 import { deleteProject } from "../../../src/core/storage";
 import { toast } from "../../../src/ui/dom";
+import { installStudio, setVoiceEngine, studioStatus } from "../../../src/voice/studio_client";
 import { setShellHooks } from "../commands";
 import type { DesktopLink } from "../link";
 import { fmtSize, vsd } from "../bridge";
@@ -569,6 +570,7 @@ export class Shell {
     return [
       { label: "Keyboard shortcuts", key: "?", run: () => this.shortcuts() },
       { label: "Check for updates…", run: () => void this.checkUpdate(true) },
+      { label: "Studio voices…", run: () => void this.studioVoices() },
       { label: "About VideoStudio 2", run: async () => {
         const i = await vsd?.info();
         modal(
@@ -578,6 +580,47 @@ export class Shell {
         );
       } },
     ];
+  }
+
+  /** VolTune Studio voices: install the model once, then switch between studio and standard voices. */
+  async studioVoices(): Promise<void> {
+    const s = await studioStatus().catch((e: Error) => {
+      toast(`Studio voices: ${e.message}`, "error", 8000);
+      return null;
+    });
+    if (!s) return;
+    if (!s.available) {
+      toast("Studio voices are not part of this installation.", "error");
+      return;
+    }
+    const about = "Natural, acted delivery for every English and Hindi VolTune voice: real rhythm, breaths and pauses, clearer Hindi, and emotions from plain directions such as (emotional hoke). It runs Chatterbox Multilingual (Resemble AI, MIT licence) on this PC and is slower than the standard voice.";
+    if (!s.installed) {
+      const line = h("p", { class: "hint" }, `It downloads once, about ${Math.round((s.downloadBytes || 1.555e9) / 1e6)} MB, into the app's data folder.`);
+      const m = modal("Studio voices", h("div", { class: "col" }, h("p", {}, about), line), [
+        b("Later", null, () => m.close()),
+        b("Install", "download", async () => {
+          line.textContent = "Downloading… 0%";
+          try {
+            await installStudio((d, what) => (line.textContent = `${what}… ${Math.round(d * 100)}%`));
+            setVoiceEngine("studio");
+            m.close();
+            toast("Studio voices are installed and on. The first line in each voice and mood takes a little longer while the voice is prepared.", "ok", 10000);
+          } catch (e) {
+            line.textContent = `Download stopped: ${(e as Error).message} Press Install to continue.`;
+          }
+        }, "pri"),
+      ]);
+      return;
+    }
+    const on = s.engine === "studio";
+    const m = modal("Studio voices", h("div", { class: "col" }, h("p", {}, about), h("p", { class: "hint" }, on ? "Installed and on: voice lines, Stage dialogue and code films use the studio voices." : "Installed, but switched off: the standard voices are used.")), [
+      b("Close", null, () => m.close()),
+      b(on ? "Use standard voices" : "Use studio voices", null, () => {
+        setVoiceEngine(on ? "standard" : "studio");
+        m.close();
+        toast(on ? "Standard voices on." : "Studio voices on.", "ok");
+      }, "pri"),
+    ]);
   }
 
   async checkUpdate(manual = false): Promise<void> {
