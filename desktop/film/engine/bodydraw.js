@@ -190,6 +190,31 @@ function paintOf(ch, B, part, lit) {
   return withBands(mk(pick, part.name === 'tunic' || part.name === 'coat' ? d.top?.shade : part.name === 'trousers' || part.name === 'skirt' ? d.bottom?.shade : undefined, part.name === 'coat' ? { group: bd.coatLine ? undefined : 'top' } : part.name === 'tunic' ? { group: 'top' } : {}));
 }
 
+/**
+ * A robe's skirts as a mesh for the painter: { pos, idx, u (0 at the waist … 1 at the hem), paint } — the robe's colour
+ * outside, its lining inside, its trim as a band along the hem. null when the character wears none.
+ */
+export function robeMesh(ch, lit = (c) => c) {
+  const R = ch.d.robe, cl = ch.robe; if (!R || !cl) return null;
+  const m = sheet(cl), rows = (cl.rows - 1) * 3 + 1, u = new Float32Array(m.pos.length / 3); for (let v = 0; v < u.length; v++) u[v] = (v % rows) / (rows - 1);
+  const c = R.color ?? '#23242c', li = R.lining ?? shadeHex(c, -0.25), rgb = (x) => hex(lit(x)), tw = R.trimW ?? 0.06;
+  const paint = { fill: rgb(c), shade: rgb(R.shade ?? shadeHex(c, -0.3)), two: true, thr: 0.0, group: 'robe', back: { fill: rgb(li), shade: rgb(shadeHex(li, -0.3)) },
+    ...(R.trim ? { bands: [[1 - tw, 1.01, { fill: rgb(R.trim), shade: rgb(shadeHex(R.trim, -0.3)) }]] } : {}) };
+  // the sheet is wound so that its inside faces the lens first: turned round, the outside is the robe's own colour
+  const idx = new Uint32Array(m.idx.length); for (let t = 0; t < idx.length; t += 3) { idx[t] = m.idx[t]; idx[t + 1] = m.idx[t + 2]; idx[t + 2] = m.idx[t + 1]; }
+  return { pos: m.pos, idx, u, paint };
+}
+
+/**
+ * The paint of a garment's arms (its triangles on the arms are painted apart from its body): design.body.sleeves gives
+ * the top's sleeves a colour of their own — a dark vest over a white robe — with a line where sleeve meets vest.
+ */
+export function limbPaint(paint, partName, d, rgbOf) {
+  const c = partName === 'tunic' ? d.body?.sleeves : null; if (!c) return paint;
+  const f = rgbOf(c), sh = rgbOf(d.body?.sleevesShade ?? shadeHex(c, -0.22));
+  return { ...paint, fill: f, shade: sh, group: 'sleeve', bands: undefined, bandIds: undefined };
+}
+
 /** The hands of a figure: what the film asks for, hand by hand; a hand it leaves out is held as autoHands would hold it. */
 export function handsFor(pose, asked) { return asked ? { ...autoHands(pose), ...asked } : autoHands(pose); }
 
@@ -253,7 +278,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;
     const paint = paintOf(ch, B, p, lit), nr = normalsOf(p.out, p.idx, p.nrm);
     if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
-    if (p.idxLimb.length) { const pl = { ...paint, group: paint.group ?? p.name }; const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); }
+    if (p.idxLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); }
     if (real && p.material === 'skin' && p.idxHead.length) {
       // the face: lit almost everywhere (a drawn face keeps its shadows to the jaw and the far cheek); brows ride on the skin
       const xy = p.faceXY ?? (p.faceXY = (() => { const a = new Float32Array(p.n * 2), base = p.base ?? p.pos; for (let v = 0; v < p.n; v++) { const front = base[v * 3 + 2] > eyeZ - 0.045; a[v * 2] = front ? base[v * 3] : 9; a[v * 2 + 1] = base[v * 3 + 1] - eyeY; } return a; })());
@@ -287,7 +312,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
       const hc = d.hair.color, hp = { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi: rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), hiAt: 0.9, thr: 0.1, group: 'hair', hairy: true, bias: 0.002, edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 };
-      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, { ...hp, noAO: true, recv: false, castHair: true }, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82)));
+      const tieC = d.hair.tie ?? '#9c1f26', tieP = { fill: rgbOf(tieC), shade: rgbOf(shadeHex(tieC, -0.32)), thr: 0.05, group: 'tie', bias: 0.003, noAO: true, recv: false };
+      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(m.tie ? cp.add(m.pos, m.idx, tieP) : cp.add(m.pos, m.idx, { ...hp, noAO: true, recv: false, castHair: true }, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82)));
       ch.hairT = ch.t;
     }
   }
@@ -297,6 +323,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   if (real && d.headgear?.type === 'crown' && lmk.crown && lmk.nape) for (const m of crownMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.38)), hi: rgbOf(shadeHex(m.c, 0.5)), hiAt: 0.8, thr: 0.0, two: true, group: 'hair', bias: 0.005, edge: 1.4, noAO: true, recv: false } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.3)), flat: true, two: true, group: 'hair', bias: 0.006, line: false }));
   if (real && d.headgear?.type === 'helmet' && lmk.crown && lmk.nape) for (const m of helmetMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.42)), hi: rgbOf(shadeHex(m.c, 0.55)), hiAt: 0.8, thr: 0.0, group: 'hair', bias: 0.004, edge: 1.6 } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.35)), thr: 0.05, two: true, group: 'hair', bias: 0.004, edge: 1.4 }));
   for (const m of carried(ch, pose, lit, pose.height / 1.8)) { const id = cp.add(m.pos, m.idx, m.paint); limbIds.add(id); }
+  { const rb = robeMesh(ch, lit); if (rb) cp.add(rb.pos, rb.idx, rb.paint, null, rb.u); }
   if (ch.cape && d.cape) { const m = sheet(ch.cape), c = d.cape.color, li = d.cape.lining ?? shadeHex(c, -0.25); cp.add(m.pos, m.idx, { fill: hex(lit(c)), shade: hex(lit(shadeHex(c, -0.3))), two: true, back: { fill: hex(lit(li)), shade: hex(lit(shadeHex(li, -0.3))) }, thr: 0.0 }); }
   const spr = cp.finish();
   const C = (c) => lit(c), S = (c, s) => lit(s ?? shadeHex(c, -0.26));

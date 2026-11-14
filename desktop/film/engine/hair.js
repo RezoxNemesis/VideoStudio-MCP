@@ -15,7 +15,7 @@ export const HAIRCUTS = {
   shaggy: { top: 0.085, bangs: 0.1, sides: 0.11, back: 0.14, spike: 0.2, mess: 0.55, n: 62, w: 0.036 },
   bob: { top: 0.09, bangs: 0.085, sides: 0.2, back: 0.2, spike: 0.02, mess: 0.15, n: 60, w: 0.04 },
   long: { top: 0.1, bangs: 0.09, sides: 0.42, back: 0.5, spike: 0.02, mess: 0.2, n: 64, w: 0.04 },
-  tied: { top: 0.07, bangs: 0.08, sides: 0.06, back: 0.05, spike: 0.08, mess: 0.3, n: 54, w: 0.036, tail: { len: 0.42, w: 0.06, at: 'high' } },
+  tied: { top: 0.07, bangs: 0.08, sides: 0.06, back: 0.05, spike: 0.08, mess: 0.3, n: 54, w: 0.036, tail: { len: 0.42, w: 0.06, at: 'high' } }, // tail.tie: true binds it with a cord (design.hair.tie: its colour)
   topknot: { top: 0.05, bangs: 0.03, sides: 0.04, back: 0.04, spike: 0.02, mess: 0.15, n: 48, w: 0.036, tail: { len: 0.16, w: 0.05, at: 'top' } },
 };
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -85,7 +85,7 @@ export function makeHair(B, spec, seed = 1) {
   }
   // a tail gathered at the back or on top (a strand that swings as one)
   let tail = null;
-  if (cut.tail) { const at = cut.tail.at === 'top' ? [0, L.crown[1] + 0.012, L.crown[2] + 0.005] : cut.tail.at === 'low' ? [0, L.nape[1] + 0.03, L.nape[2] - 0.03] : [0, (L.crown[1] + L.nape[1]) / 2 + 0.035, L.nape[2] - 0.035]; tail = { at, len: cut.tail.len, w: cut.tail.w ?? 0.05, dir: cut.tail.at === 'top' ? [0, 1, -0.25] : [0, -0.15, -1], st: null }; }
+  if (cut.tail) { const at = cut.tail.at === 'top' ? [0, L.crown[1] + 0.012, L.crown[2] + 0.005] : cut.tail.at === 'low' ? [0, L.nape[1] + 0.03, L.nape[2] - 0.03] : [0, (L.crown[1] + L.nape[1]) / 2 + 0.035, L.nape[2] - 0.035]; tail = { at, len: cut.tail.len, w: cut.tail.w ?? 0.05, dir: cut.tail.at === 'top' ? [0, 1, -0.25] : [0, -0.15, -1], tie: !!cut.tail.tie, st: null }; }
   return { clumps, tail, cut };
 }
 
@@ -121,7 +121,12 @@ export function hairMeshes(H, B, dt, t, wind = null) {
   out.push({ pos, idx: Uint32Array.from(idx) });
   if (H.tail) {
     const T = H.tail, n = 9, base = onBone(B, 'head', T.at), d0 = dirOnBone(B, 'head', norm(T.dir)), seg = T.len / (n - 1);
-    if (!T.st || Math.hypot(T.st[0][0] - base[0], T.st[0][1] - base[1], T.st[0][2] - base[2]) > 0.6) T.st = Array.from({ length: n }, (_, i) => ({ p: [base[0] + d0[0] * seg * i, base[1] + d0[1] * seg * i - 0.02 * i * i * seg, base[2] + d0[2] * seg * i], q: null }));
+    if (!T.st || Math.hypot(T.st[0][0] - base[0], T.st[0][1] - base[1], T.st[0][2] - base[2]) > 0.6) {
+      // where it starts (a new shot): leaving the tie the way it is bound, then hanging by its own weight — not out like a rod
+      const pts = [[base[0], base[1], base[2]]]; let dir = [d0[0], d0[1], d0[2]];
+      for (let i = 1; i < n; i++) { const pull = i < 2 ? 0.25 : 0.62; dir = norm([dir[0] * (1 - pull), dir[1] * (1 - pull) - pull, dir[2] * (1 - pull)]); const a = pts[i - 1]; pts.push([a[0] + dir[0] * seg, a[1] + dir[1] * seg, a[2] + dir[2] * seg]); }
+      T.st = pts.map((p) => ({ p, q: null }));
+    }
     const N2 = T.st; N2[0].p = base; N2[0][0] = base[0]; N2[0][1] = base[1]; N2[0][2] = base[2];
     // a hanging thread: each point keeps its speed, falls, is blown, and stays a segment away from the one before
     for (let i = 1; i < n; i++) { const q = N2[i]; if (!q.q) q.q = [...q.p]; const vx = (q.p[0] - q.q[0]) * 0.94, vy = (q.p[1] - q.q[1]) * 0.94, vz = (q.p[2] - q.q[2]) * 0.94; q.q = [...q.p]; const st2 = i < 3 ? 0.35 : 0.06; q.p = [q.p[0] + vx + wv[0] * 0.02 * h * 60 * h + (base[0] + d0[0] * seg * i - q.p[0]) * st2, q.p[1] + vy - 9.81 * h * h * 0.9 + (base[1] + d0[1] * seg * i - q.p[1]) * st2 * 0.5, q.p[2] + vz + wv[2] * 0.02 * h * 60 * h + (base[2] + d0[2] * seg * i - q.p[2]) * st2]; }
@@ -133,6 +138,16 @@ export function hairMeshes(H, B, dt, t, wind = null) {
       if (i < n - 1) for (let k = 0; k < 6; k++) { const a2 = i * 6 + k, b2 = i * 6 + (k + 1) % 6, c2 = a2 + 6, d2 = b2 + 6; ti.push(a2, c2, b2, b2, c2, d2); }
     }
     out.push({ pos: tp, idx: Uint32Array.from(ti) });
+    if (T.tie) {
+      // the cord that binds it: a band round the tail just off the head, a little proud of the hair
+      const K = 8, bp = new Float32Array(2 * K * 3), bi = [];
+      for (let e = 0; e < 2; e++) {
+        const i = e ? 2 : 1, p = N2[i].p, a = N2[i - 1].p, b = N2[i + 1].p, ax = norm(sub(b, a)); let e1 = cross(ax, [0, 1, 0]); e1 = len(e1) < 0.05 ? [1, 0, 0] : norm(e1); const e2 = cross(ax, e1), u = i / (n - 1), r = (T.w * 0.5 * (u < 0.15 ? 0.55 + 3 * u : Math.pow(1 - (u - 0.15) / 0.85, 0.6)) + 0.001) * 1.12 + 0.004, q = e ? [p[0] - ax[0] * seg * 0.45, p[1] - ax[1] * seg * 0.45, p[2] - ax[2] * seg * 0.45] : p;
+        for (let k = 0; k < K; k++) { const an = (k / K) * Math.PI * 2, o = (e * K + k) * 3; bp[o] = q[0] + (e1[0] * Math.cos(an) + e2[0] * Math.sin(an) * 0.75) * r; bp[o + 1] = q[1] + (e1[1] * Math.cos(an) + e2[1] * Math.sin(an) * 0.75) * r; bp[o + 2] = q[2] + (e1[2] * Math.cos(an) + e2[2] * Math.sin(an) * 0.75) * r; }
+      }
+      for (let k = 0; k < K; k++) { const a2 = k, b2 = (k + 1) % K, c2 = a2 + K, d2 = b2 + K; bi.push(a2, c2, b2, b2, c2, d2); }
+      out.push({ pos: bp, idx: Uint32Array.from(bi), tie: true });
+    }
   }
   return out;
 }

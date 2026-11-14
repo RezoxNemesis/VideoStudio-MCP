@@ -22,7 +22,7 @@ export function makeDesign(o) {
     top: { type: 'tunic', color: '#3a3f4c', sleeve: 'long', hem: 0.12, collar: 'v', ...(o.top ?? {}) },
     bottom: { type: 'pants', color: '#2c2f38', ...(o.bottom ?? {}) },
     shoes: o.shoes === null ? null : { color: '#2a2422', boot: 0, ...(o.shoes ?? {}) },
-    sash: o.sash ?? null, cape: o.cape ?? null, armor: o.armor ?? null,
+    sash: o.sash ?? null, cape: o.cape ?? null, robe: o.robe ?? null, armor: o.armor ?? null,
     sword: { blade: '#dfe6ee', guard: '#b08a3c', grip: '#2a1f24', ...(o.sword ?? {}) },
     spear: o.spear ?? null, staff: o.staff ?? null, shield: o.shield ?? null,
     // the real body's own words (kept as given): its haircut, clothes colours and bands, the painted head instead of the real one
@@ -41,7 +41,7 @@ export class Character {
     this.d = design.build ? design : makeDesign(design);
     this.hd = makeHead(this.d);
     this.front = { armL: null, armR: null, foreL: null, foreR: null, cape: null, tail: null };
-    this.cape = null; this.skirt = null; this.strands = null; this.sleeve = { L: null, R: null }; this.lockState = null;
+    this.cape = null; this.skirt = null; this.robe = null; this.strands = null; this.sleeve = { L: null, R: null }; this.lockState = null;
     this.t = 0;
   }
 
@@ -86,6 +86,16 @@ export class Character {
       }
       const rest = (c, r) => { const seg = this.cape.len[c] / (this.cape.rows - 1); return V.add(V.add(pins[c], [0, -seg * r, 0]), V.mul(F.fC, -0.06 * r * seg * 4)); };
       this.cape.step(pins, dt, t, { caps, wind: env.wind, ground: env.ground ?? 0, rest, flare: d.cape.flare ?? 0.9 });
+    }
+    // ---- a robe's skirts (design.robe: { color, lining, len, open, flare, trim … }): an open coat over the trousers — threads
+    // from the waist, from one side of the front round the back to the other, parted in front; they swing and trail
+    if (d.robe) {
+      const Rb = d.robe, n = Rb.cols ?? 13, rows = Rb.rows ?? 7, len = (Rb.len ?? 0.46) * pose.height, open = Math.max(0, Math.min(0.6, Rb.open ?? 0.16));
+      if (!this.robe) this.robe = new Cloth({ cols: n, rows, length: len, damp: 0.98, drag: Rb.drag ?? 1.6, stiff: Rb.stiff ?? 0.012, pad: 0.03 }); // light cloth: it holds little shape of its own and the air takes it
+      const c0 = V.add(F.pel, V.mul(F.up, (Rb.rise ?? 0.075) * k)), a = F.hipHalf + 0.1 * k * d.build.hip, bb = 0.14 * k, pins = [], dirs = [];
+      for (let i = 0; i < n; i++) { const ph = Math.PI * (open + (i / (n - 1)) * (2 - 2 * open)), dir = V.add(V.mul(F.sP, Math.sin(ph)), V.mul(F.fP, Math.cos(ph))); dirs.push(dir); pins.push(V.add(c0, V.add(V.mul(F.sP, Math.sin(ph) * a), V.mul(F.fP, Math.cos(ph) * bb)))); }
+      const fl = Rb.flare ?? 0.5, rest = (c, r) => { const u = r / (rows - 1); return V.add(V.add(pins[c], [0, -len * u * 0.97, 0]), V.mul(dirs[c], len * u * fl * 0.42)); };
+      this.robe.step(pins, dt, t, { caps: caps.filter((c) => c[4] === 'leg'), wind: env.wind, ground: env.ground ?? 0, rest, flare: fl * 1.6 });
     }
     // ---- skirt / robe: a ring of threads from the waist
     if (d.bottom.type === 'skirt' || d.bottom.type === 'robe') {

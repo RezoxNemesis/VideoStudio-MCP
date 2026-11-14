@@ -106,6 +106,7 @@ jobs:
           set -e
           node devtests/hands.mjs                  # real bodies: hands close towards the palm, fingers side by side, the thumb where a thumb rests
           node devtests/face.mjs                   # real heads: the features are found and drawn (nose, lips, lids), hair shades the brow
+          node devtests/costume.mjs                # costume: a robe's skirts hang, part in front and stream behind; tied hair hangs from its cord
           node library2d/build.mjs library2d/out   # the 2D library: 587 assets drawn by code (backgrounds, cut-out rigs, effects, props, faces, hands, pixel, stickman)
           node -e "const i=require('./library2d/out/index.json'); if (i.count < 500) { console.error('library too small', i.count); process.exit(1) } console.log('2D library', i.count, JSON.stringify(i.cats))"
           node runner/worker.mjs people '{}' | head -c 300
@@ -144,6 +145,8 @@ jobs:
         run: |
           tag="desktop-v${VERSION}"
           notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ). Installs over VideoStudio 2.0 (and replaces VideoStudio Desktop 1.0.x); projects and the Claude link are kept.
+
+          New: costume for real bodies in code films. A robe with long skirts that hang from the waist over the trousers, open in front with the lining showing and a trim along the hem, swinging and streaming behind a moving figure; sleeves of their own colour (a dark vest over a white robe); hair tied in a tail now hangs from its tie from the first frame of a shot and is bound with a cord of its own colour.
 
           New: real hands and faces for code films. Hands: fingers now close towards the palm on both hands (the right hand used to bend backwards), lie side by side instead of fanning out, the thumb rests beside the index finger, a fist is a fist with the thumb laid over the fingers, and a sword, spear or staff is held with the fingers wrapped round it; a hand the film does not pose is held naturally by itself. Faces: every real head now has a drawn nose (its shadow side follows the light, a shadow under the tip, nostrils, and the line of the nose when the head turns), lips with the line where they meet, the shadow under the lower lip, the crease of the eyelids, and the hair throws its shadow on the brow; a closed mouth no longer shows teeth. The 3D page closes the right hand the right way too. Films drawn before are drawn again with the new hands and faces the next time they are built.
 

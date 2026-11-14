@@ -114,6 +114,14 @@ the thumb's is added to how it rests); `spread` 0 = side by side, 1 = spread wid
 `thumbOut` 0 = beside the index finger, 1 = held out; `thumbIn` 0 = by the flat of the hand, 1 = in front of the palm.
 `import { HANDS } from '../vs.js'` has the named ones to start from: `{ ...HANDS.open, spread: 1 }`.
 
+**Costume on a real body.** `design.body` colours the body's own garments (`tunic`, `coat`, `trousers`, `boots`,
+`wraps` …), `body.sleeves` gives the top's sleeves a colour of their own (a dark vest over a white robe), and
+`body.bands: { tunic: [[from, to, colour]] }` lays stripes across a garment by height (fractions of the body's height:
+a collar, a sash). `design.robe: { color, lining, len: 0.43, open: 0.2, flare: 0.5, trim, trimW }` hangs a robe's
+skirts from the waist over the trousers — open in front, the lining showing inside, a trim along the hem; they swing
+and stream behind a moving figure. Hair tied in a tail takes a cord: `hair3: { cut: 'tied', tail: { len, w, at: 'high',
+tie: true } }` with `hair: { tie: '#a3222a' }`; finer hair is more, narrower clumps (`n: 150, w: 0.021`).
+
 **Faces.** A real head's face is drawn with form: the shadow side of the nose (it follows the light) and the shadow
 under its tip, nostrils, the line of a turned head's nose, the lips and the line where they meet, the shadow under the
 lower lip, the crease of the lids, and the hair's own shadow on the brow. On the design: `face: { lips: 0…1 }` how full
