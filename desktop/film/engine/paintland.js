@@ -222,7 +222,8 @@ export function ridgePaint(o) {
       for (let cx = 0; cx < P.w + 2; cx++) {
         const vx = (cx - 0.5) * res - cam.cx, az = Math.atan2(F[0] * f + R[0] * vx, F[2] * f + R[2] * vx), ca = Math.cos(az), sa = Math.sin(az), ca1 = Math.cos(az - 0.02), sa1 = Math.sin(az - 0.02), ca2 = Math.cos(az + 0.02), sa2 = Math.sin(az + 0.02);
         let da = az - sunAz; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
-        const sg = Math.sign(da || 1); AZ[cx] = az;
+        // (which flank is turned to the sun changes over smoothly where a ridge stands before the sun or straight opposite it)
+        const sg = Math.sin(da); AZ[cx] = az;
         for (let i = 0; i < nF; i++) {
           const q = Fs[i].q;
           EL[cx * nF + i] = Math.atan((q.h * crest(q, ca, sa, az)) / q.dist);
@@ -235,7 +236,7 @@ export function ridgePaint(o) {
         const vx = (px + 0.5) * res - cam.cx, az = AZ[px + 1], ca = Math.cos(az), sa = Math.sin(az);
         let da = az - sunAz; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
         // 0 where the ridge stands before the sun (seen against the light), 1 where the sun shines full on it
-        const sg = Math.sign(da || 1), front = S ? 0.5 - 0.5 * Math.cos(da) : 0.5, against = (1 - front) * (1 - front);
+        const sg = Math.sin(da), front = S ? 0.5 - 0.5 * Math.cos(da) : 0.5, against = (1 - front) * (1 - front);
         const hz = [haze[0] + (glow[0] - haze[0]) * 0.4 * against, haze[1] + (glow[1] - haze[1]) * 0.4 * against, haze[2] + (glow[2] - haze[2]) * 0.4 * against];
         for (let i = 0; i < nF; i++) {
           col[i].el = EL[(px + 1) * nF + i]; col[i].lit = LIT[(px + 1) * nF + i];

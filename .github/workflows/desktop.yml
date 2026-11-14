@@ -115,6 +115,7 @@ jobs:
           node devtests/paintland.mjs              # painted land and sky: light from where the sun stands, ground that holds to the world, ridges that pale into the air
           node devtests/legion.mjs                 # an army of drawn figures: every man at his place and size, near men cover far ones, thousands from a few drawings
           node devtests/bend.mjs                   # a film's own bends of a performed body: what hangs on a bone goes with it, nothing else moves
+          node devtests/takes.mjs                  # another take of a spoken line: asked for per language in script.json
           node library2d/build.mjs library2d/out   # the 2D library: 587 assets drawn by code (backgrounds, cut-out rigs, effects, props, faces, hands, pixel, stickman)
           node -e "const i=require('./library2d/out/index.json'); if (i.count < 500) { console.error('library too small', i.count); process.exit(1) } console.log('2D library', i.count, JSON.stringify(i.cats))"
           node runner/worker.mjs people '{}' | head -c 300

@@ -102,6 +102,16 @@ const diff = (a, b) => { let s = 0; for (let i = 0; i < a.d.length; i += 4) s +=
   ok(mid > side + 25 && mid > column(one, W / 2).top + 20, 'a gap cuts the ridge down where it is asked for', [mid, side, column(one, W / 2).top]);
 }
 
+// ---- 4b. the light on a ridge has no seam where the ridge stands straight opposite the sun
+{
+  // (SUN is over −z: straight away from it is +z, the middle column of this picture)
+  const s2 = shot(ridgePaint({ sun: { dir: SUN, color: '#ffd0a0' }, layers: [{ dist: 2500, h: 900, color: '#30364a', seed: 9, peaks: 7, folds: 3 }] }), { pos: [0, 1.6, 0], target: [0, 40, 600], fov: 30 });
+  const jump = (x) => { let sum = 0, n = 0; for (let y = 40; y < H - 20; y += 2) { const a = s2.px(x, y), b = s2.px(x + 1, y); if (a[3] > 250 && b[3] > 250) { sum += Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]); n++; } } return n > 10 ? sum / n : 0; };
+  const all = []; for (let x = 4; x < W - 5; x++) all.push(jump(x));
+  const usual = [...all].sort((a, b) => a - b)[Math.floor(all.length * 0.9)], mid = Math.max(jump(W / 2 - 2), jump(W / 2 - 1), jump(W / 2), jump(W / 2 + 1));
+  ok(mid <= usual * 1.6 + 2, 'the light goes round a ridge without a jump (no line down it opposite the sun)', [mid, usual]);
+}
+
 // ---- 5. mist lying along the horizon
 {
   const B = { color: '#d9c9c4', h: 1.6, amt: 0.9 }, camO = { pos: [0, 1.6, 0], target: [40, 5, 0], fov: 50 };
