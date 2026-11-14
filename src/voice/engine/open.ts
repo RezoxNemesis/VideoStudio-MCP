@@ -10,6 +10,7 @@
  */
 import { MAX_TOKENS, tokenize } from "./phonemes";
 import { styleRow } from "./voicebank";
+import { combine, readDirection } from "./delivery";
 
 /** The part of onnxruntime (web or node) this needs. */
 export interface OrtLike {
@@ -127,6 +128,7 @@ export function moodTone(tone: Tone | string | undefined): Tone {
   const name = typeof tone === "string" ? tone.toLowerCase() : undefined;
   // a tone object that already names its mood is used as given
   if (!name) return { ...((tone as Tone | undefined) ?? {}) };
+  if (!TONES[name] && !TONE_MOODS[name]) return freeTone(name);
   const t: Tone = { ...(TONES[name] ?? {}) };
   const m = TONE_MOODS[name];
   if (!m) return t;
@@ -138,6 +140,26 @@ export function moodTone(tone: Tone | string | undefined): Tone {
   t.rate = half(t.rate, 1);
   t.energy = half(t.energy, 0);
   return t;
+}
+
+/**
+ * A tone written in plain words: "emotional hoke", "bahut udaas", "thoda gusse mein", "very excited".
+ * Spelling slips are forgiven (delivery.ts findStyles). Returns {} when no mood is named.
+ */
+export function freeTone(text: string): Tone {
+  const styles = readDirection(text).flatMap((d) => (d.kind === "style" ? [d.delivery] : []));
+  if (!styles.length) return {};
+  const d = combine(styles);
+  if (!d.mood) return { rate: d.speed !== 1 ? d.speed : undefined, energy: d.gain < 1 ? -0.4 : d.gain > 1 ? 0.4 : undefined };
+  const t = moodTone(d.mood);
+  t.moodAmount = Math.max(0, Math.min(2, d.moodAmount ?? 1));
+  return t;
+}
+
+/** True when a tone given by name can be performed (a named tone, or plain words that name a mood). */
+export function knowsTone(text: string): boolean {
+  const n = text.toLowerCase();
+  return !!TONES[n] || !!TONE_MOODS[n] || readDirection(n).some((d) => d.kind === "style");
 }
 
 const VOWELS = new Set([..."aeiouɑɐɒæɔəɚɛɜɪʊʌɨøœɯɤyAIOWYᵻᵊ"]);

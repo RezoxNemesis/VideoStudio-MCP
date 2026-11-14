@@ -5,7 +5,7 @@
  */
 import { Studio } from "../../../src/app/studio";
 import { runQuiet, type Command, type CommandResult } from "../../../src/agent/api";
-import { readTone } from "../../../src/agent/voiceopen";
+import { directLine, readTone } from "../../../src/agent/voiceopen";
 import { openVoice } from "../../../src/voice/open_client";
 import { SAMPLE_RATE } from "../../../src/voice/engine/audio";
 import { getBlob, deleteBlob } from "../../../src/core/storage";
@@ -55,7 +55,8 @@ function wavBytes(pcm: Float32Array, rate: number): Uint8Array {
 const failed = (rs: CommandResult[]) => rs.filter((r) => !r.ok).map((r) => `${r.op}: ${r.error}`);
 
 async function speak(dir: string, v: VoiceNeed): Promise<void> {
-  const { pcm, voice } = await openVoice.say(v.text ?? "", v.voice ?? "af_heart", readTone(v.tone), v.emphasis?.length ? v.emphasis : undefined, v.lang);
+  const line = directLine(v.text ?? "", readTone(v.tone));
+  const { pcm, voice } = await openVoice.say(line.text, v.voice ?? "af_heart", line.tone, v.emphasis?.length ? v.emphasis : undefined, v.lang);
   if (!pcm.length) throw new Error(`The voice returned no sound for line ${v.id} (${v.lang}).`);
   let peak = 0;
   for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));

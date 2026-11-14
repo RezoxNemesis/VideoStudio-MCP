@@ -8,7 +8,8 @@ import type { Asset } from "../core/model";
 import * as ops from "../core/ops";
 import { registerCommand } from "./api";
 import { SAMPLE_RATE, mouthEnvelope } from "../voice/engine/audio";
-import { TONES, type Tone, moodTone } from "../voice/engine/open";
+import { TONES, type Tone, knowsTone, moodTone } from "../voice/engine/open";
+import { readInstruction } from "../voice/engine/instruct";
 import { hinglishShare, transliterateHinglish } from "../voice/engine/hinglish";
 import { openVoice } from "../voice/open_client";
 import { isMood } from "../voice/engine/learned";
@@ -38,7 +39,7 @@ function wavBlob(pcm: Float32Array): Blob {
 export function readTone(v: unknown): Tone | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   if (typeof v === "string") {
-    if (!TONES[v.toLowerCase()]) throw new ops.OpError(`Unknown tone "${v}". Tones: ${Object.keys(TONES).join(", ")}; or give {pitch, range, rate, energy, ending, even, shake, pauses, mood}.`);
+    if (!knowsTone(v)) throw new ops.OpError(`Unknown tone "${v}". Tones: ${Object.keys(TONES).join(", ")}; plain words such as "emotional hoke" or "bahut udaas" also work; or give {pitch, range, rate, energy, ending, even, shake, pauses, mood}.`);
     // tones that are emotions are acted by the model itself (learned moods), the curve shaping adds to it
     return moodTone(v);
   }
@@ -57,8 +58,19 @@ export function readTone(v: unknown): Tone | undefined {
   return undefined;
 }
 
+/**
+ * A line written with a plain-language instruction ("is dialogue ko emotional hoke bolna hai: Kaash …")
+ * becomes the words to say plus the tone it asks for; a tone given separately wins.
+ */
+export function directLine(text: string, tone?: Tone): { text: string; tone?: Tone } {
+  const ins = readInstruction(text);
+  if (!ins || !ins.spoken) return { text, tone };
+  return { text: ins.spoken, tone: tone ?? moodTone(ins.mark) };
+}
+
 /** Say one line with the open voice and add it to the media pool (with its mouth movement for lip sync). */
-export async function sayToAsset(s: Studio, text: string, voice: string, tone?: Tone, emphasis?: string[], lang?: string): Promise<{ asset: Asset; seconds: number; voice: string }> {
+export async function sayToAsset(s: Studio, line: string, voice: string, toneIn?: Tone, emphasis?: string[], lang?: string): Promise<{ asset: Asset; seconds: number; voice: string }> {
+  const { text, tone } = directLine(line, toneIn);
   s.setStatus("Speaking…");
   openVoice.onProgress = (d, what) => s.setStatus(`${what}… ${Math.round(d * 100)}%`);
   try {

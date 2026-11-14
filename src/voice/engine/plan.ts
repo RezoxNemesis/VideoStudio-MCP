@@ -4,6 +4,7 @@ import { splitLong, toChunks } from "./text";
 import { devanagariShare } from "./hindi";
 import { hindiVoiceFor, isHindiVoice } from "./voices";
 import { NEUTRAL } from "./delivery";
+import { rewriteInstructions } from "./instruct";
 import { PRESETS, resolveVoice, type CustomVoice } from "./voicebank";
 import { langOf } from "./world";
 import { phrasePause } from "./learned";
@@ -153,6 +154,8 @@ function compact(it: PlanItem): PlanItem {
 }
 
 export function buildPlan(input: string, o: PlanOptions): { items: PlanItem[]; cast: Record<string, string> } {
+  // "is dialogue ko emotional hoke bolna hai: …" → "(emotional) …" (instruct.ts).
+  input = rewriteInstructions(input);
   let items: PlanItem[] = [];
   let cast = o.cast;
   const customs = o.customs ?? [];
