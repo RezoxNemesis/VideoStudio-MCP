@@ -16,6 +16,7 @@ export * as post from '../engine/post.js';
 export * as crowd from '../engine/crowd.js';
 export * from '../engine/crowd.js';
 export { ENV } from '../engine/env.js';
+export { HANDS } from '../engine/body.js'; // the named hands of real bodies, to start a hand of the film's own from
 export { LOOKS, resolveLook } from '../engine/look.js';
 export * from './seq.js';
 export * from './acting.js';

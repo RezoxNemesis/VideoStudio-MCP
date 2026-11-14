@@ -92,11 +92,11 @@ export class Human {
     const H = this.hand[side];
     for (let f = 2; f <= 5; f++) for (let j = 1; j <= 3; j++) {
       const n = `finger${f}-${j}.${side}`; const r = this.rest[n]; if (!r) continue; const dir = _v.copy(r.tail).sub(r.head).normalize();
-      const axis = _v2.crossVectors(dir, H.back).normalize(); if (side === 'R') axis.negate();
+      const axis = _v2.crossVectors(dir, H.back).normalize(); // the same on both hands: `back` is each hand's own back, so this always closes towards the palm
       const amt = curl * [1.25, 1.55, 1.15][j - 1] * (1 + (f - 3.5) * 0.05); this.B[n].quaternion.setFromAxisAngle(axis, -amt);
       if (j === 1 && spread) this.B[n].quaternion.premultiply(_q.setFromAxisAngle(H.back, (f - 3.5) * spread * 0.12 * (side === 'L' ? 1 : -1)));
     }
-    for (let j = 1; j <= 3; j++) { const n = `finger1-${j}.${side}`; const r = this.rest[n]; if (!r) continue; const dir = _v.copy(r.tail).sub(r.head).normalize(); const axis = _v2.crossVectors(dir, H.across).normalize(); this.B[n].quaternion.setFromAxisAngle(axis, (side === 'L' ? 1 : -1) * thumb * [0.5, 0.6, 0.8][j - 1]); }
+    for (let j = 1; j <= 3; j++) { const n = `finger1-${j}.${side}`; const r = this.rest[n]; if (!r) continue; const dir = _v.copy(r.tail).sub(r.head).normalize(); const axis = _v2.crossVectors(dir, H.across).normalize(); this.B[n].quaternion.setFromAxisAngle(axis, thumb * [0.5, 0.6, 0.8][j - 1]); } // folds across the palm, towards the little finger, on either hand
     return this;
   }
 

@@ -75,15 +75,34 @@ export function bodyOf(bake, id) {
       name: p.name, material: p.material, params: p.params ?? {}, n, pos: morphs ? Float32Array.from(rest) : rest, idx: idx0, idxNoHead: Uint32Array.from(keep), si, sw, out: new Float32Array(n * 3), nrm: new Float32Array(n * 3) };
   });
   const rig = { fps: a.rigMeta.fps, frames: a.rigMeta.frames, data: new Float32Array(ab, a.rigMeta.data[0], a.rigMeta.frames * nb * 7) };
-  // fingers: the axis each one bends about (in the rest frame), from the knuckle line and the finger's own direction
+  // fingers: the rest pose is made for skinning, not for acting — its fingers fan out and its thumb stands off to the side.
+  // So each finger is known by how it lies in that pose (its turn about the palm's normal, away from the hand's own
+  // direction) and by its own bend axis: across itself, flat on the palm, the way round that closes it towards the palm.
   const fingers = {};
   for (const s of ['L', 'R']) {
     const h = (n) => { const i = bi[n]; return i === undefined ? null : [head[i * 3], head[i * 3 + 1], head[i * 3 + 2]]; };
+    const tl = (n) => { const i = bi[n]; return i === undefined ? null : [tail[i * 3], tail[i * 3 + 1], tail[i * 3 + 2]]; };
     const k2 = h(`finger2-1.${s}`), k5 = h(`finger5-1.${s}`), wr = h(`wrist.${s}`);
     if (!k2 || !k5 || !wr) continue;
     const across = norm(sub(k5, k2)), along = norm(sub(mid(k2, k5), wr));
     let palm = norm(cross(sub(k2, wr), sub(k5, wr))); if (s === 'L') palm = mul(palm, -1); // out of the palm
-    fingers[s] = { across, along, palm, chains: [1, 2, 3, 4, 5].map((f) => [1, 2, 3].map((j) => bi[`finger${f}-${j}.${s}`])) };
+    const flat = (v) => { const k = v[0] * palm[0] + v[1] * palm[1] + v[2] * palm[2]; return norm([v[0] - palm[0] * k, v[1] - palm[1] * k, v[2] - palm[2] * k]); };
+    const yawOf = (v) => { const c = cross(along, v); return Math.atan2(c[0] * palm[0] + c[1] * palm[1] + c[2] * palm[2], along[0] * v[0] + along[1] * v[1] + along[2] * v[2]); };
+    const chains = [1, 2, 3, 4, 5].map((f) => [1, 2, 3].map((j) => bi[`finger${f}-${j}.${s}`]));
+    const yaw = [0, 0, 0, 0, 0], axis = [across, across, across, across, across], flex = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    for (let f = 1; f < 5; f++) {
+      const ds = [1, 2, 3].map((j) => { const a = h(`finger${f + 1}-${j}.${s}`), b = tl(`finger${f + 1}-${j}.${s}`); return a && b ? norm(sub(b, a)) : null; });
+      if (ds.some((d) => !d)) continue;
+      const d = flat(ds[0]), ax = norm(cross(d, palm)); yaw[f] = yawOf(d); axis[f] = ax;
+      // how far each joint is already bent in the rest pose (so that a curl of 0 is a straight finger, on any body)
+      ds.forEach((dj, j) => { const pv = j ? ds[j - 1] : d, c = cross(pv, dj); flex[f][j] = Math.atan2(c[0] * ax[0] + c[1] * ax[1] + c[2] * ax[2], pv[0] * dj[0] + pv[1] * dj[1] + pv[2] * dj[2]); });
+    }
+    const fan = Math.sign(yaw[4] - yaw[1]) || 1; // the way round (about the palm's normal) that leads from the index to the little finger
+    // the thumb: where it points in the rest pose (root to tip), the side of the hand it is on, and the axis that folds it across the palm
+    const t0 = h(`finger1-1.${s}`), t3 = tl(`finger1-3.${s}`), ulnar = norm(sub(across, mul(along, across[0] * along[0] + across[1] * along[1] + across[2] * along[2])));
+    let thumb = null;
+    if (t0 && t3) { const dir = norm(sub(t3, t0)), to = norm([ulnar[0] + palm[0] * 0.35, ulnar[1] + palm[1] * 0.35, ulnar[2] + palm[2] * 0.35]); thumb = { dir, radial: mul(ulnar, -1), axis: norm(cross(dir, to)) }; }
+    fingers[s] = { across, along, palm, chains, yaw, axis, flex, fan, thumb };
   }
   // bones that hang from the jaw (they swing with it when the mouth opens)
   const jawKids = []; if (bi.jaw !== undefined) for (let b = 0; b < nb; b++) { for (let q = b; q >= 0; q = parent[q]) if (q === bi.jaw) { jawKids.push(b); break; } }
@@ -98,45 +117,60 @@ const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] 
 const qmulTo = (o, oi, ax, ay, az, aw, bx, by, bz, bw) => { o[oi] = aw * bx + ax * bw + ay * bz - az * by; o[oi + 1] = aw * by - ax * bz + ay * bw + az * bx; o[oi + 2] = aw * bz + ax * by - ay * bx + az * bw; o[oi + 3] = aw * bw - ax * bx - ay * by - az * bz; };
 const qrotv = (q, qi, v) => { const x = q[qi], y = q[qi + 1], z = q[qi + 2], w = q[qi + 3], tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]); return [v[0] + w * tx + y * tz - z * ty, v[1] + w * ty + z * tx - x * tz, v[2] + w * tz + x * ty - y * tx]; };
 
-/** How the fingers of a hand are held: curl of each joint in degrees (finger 1 = thumb … 5 = little finger). */
+/**
+ * How a hand is held. curl: the bend of each joint in degrees, towards the palm (finger 1 = thumb … 5 = little finger;
+ * for the four fingers 0 is a straight finger, the thumb's is added to how it rests). spread: 0 = fingers side by side
+ * with their slight natural fan, 1 = spread wide, below 0 = pressed together. thumbOut: 0 = the thumb rests beside the
+ * index finger, 1 = held out to the side. thumbIn: 0 = the thumb lies near the flat of the hand, 1 = swung well in front
+ * of the palm (from 0.6 a closed hand's thumb is laid over its fingers).
+ */
 export const HANDS = {
-  relax: { curl: [[8, 12, 10], [16, 22, 14], [20, 28, 18], [26, 34, 22], [32, 38, 26]], spread: 0, thumbIn: 0.15 },
-  open: { curl: [[0, 4, 4], [2, 4, 3], [2, 4, 3], [3, 5, 4], [4, 6, 5]], spread: 0.6, thumbIn: 0 },
-  fist: { curl: [[28, 34, 62], [86, 96, 70], [88, 98, 72], [88, 98, 72], [86, 96, 70]], spread: -0.2, thumbIn: 1 },
-  grip: { curl: [[20, 30, 52], [66, 84, 58], [70, 88, 60], [72, 90, 62], [72, 90, 64]], spread: -0.1, thumbIn: 0.9 },
-  point: { curl: [[26, 34, 60], [2, 4, 3], [86, 96, 70], [88, 98, 72], [86, 96, 70]], spread: 0, thumbIn: 1 },
-  claw: { curl: [[14, 24, 30], [30, 52, 42], [30, 54, 44], [32, 54, 44], [34, 52, 42]], spread: 0.5, thumbIn: 0.3 },
+  relax: { curl: [[2, 6, 8], [16, 26, 14], [20, 32, 18], [26, 38, 22], [32, 42, 26]], spread: 0, thumbIn: -0.1, thumbOut: 0.05 },
+  open: { curl: [[0, 2, 4], [5, 8, 6], [5, 9, 6], [7, 10, 7], [9, 12, 8]], spread: 0.3, thumbIn: -0.15, thumbOut: 0.3 },
+  fist: { curl: [[14, 26, 44], [78, 92, 40], [80, 94, 42], [82, 94, 42], [82, 92, 40]], spread: -0.3, thumbIn: 1, thumbOut: 0 },
+  grip: { curl: [[10, 22, 38], [88, 42, 50], [86, 42, 54], [82, 42, 62], [76, 40, 74]], spread: -0.2, thumbIn: 0.9, thumbOut: 0 },
+  point: { curl: [[14, 26, 44], [3, 5, 4], [80, 94, 42], [82, 94, 42], [82, 92, 40]], spread: -0.2, thumbIn: 1, thumbOut: 0 },
+  claw: { curl: [[8, 20, 28], [30, 58, 46], [32, 60, 48], [34, 60, 48], [36, 58, 46]], spread: 0.7, thumbIn: 0.2, thumbOut: 0.5 },
 };
-const mixHand = (a, b, u) => ({ curl: a.curl.map((f, i) => f.map((v, j) => v + (b.curl[i][j] - v) * u)), spread: a.spread + (b.spread - a.spread) * u, thumbIn: a.thumbIn + (b.thumbIn - a.thumbIn) * u });
+// radians: between neighbouring fingers at rest, and what spread 1 adds; the thumb off the hand's own direction at rest (flat on the palm), and what thumbOut 1 adds; its lift in front of the palm, and what thumbIn 1 adds
+const FAN = 0.05, SPREAD = 0.12, THUMB_REST = 0.55, THUMB_OUT = 0.8, THUMB_LIFT = 0.36, THUMB_IN = 0.6;
+const mixHand = (a, b, u) => ({ curl: a.curl.map((f, i) => f.map((v, j) => v + (b.curl[i][j] - v) * u)), spread: a.spread + (b.spread - a.spread) * u, thumbIn: a.thumbIn + (b.thumbIn - a.thumbIn) * u, thumbOut: (a.thumbOut ?? 0) + ((b.thumbOut ?? 0) - (a.thumbOut ?? 0)) * u });
 
 /**
- * The thumb of a closed hand brought onto the outside of the curled fingers: a few rounds of cyclic coordinate descent
- * (each joint in turn turns the tip towards the place), with small steps so the thumb keeps a natural bend.
+ * The thumb of a closed hand, laid over the fingers as in a real fist or grip: its last joint comes to rest on the back
+ * of the first curled finger's middle phalanx, its tip on the next finger's, and its knuckle stands out to the side of
+ * the hand. Solved exactly (two bones to a point, then the tip aimed), so it never hovers off the fingers.
  */
-function thumbOver(B, F, s) {
-  const { P, Q, head, tail } = B, T = F.chains[0], I = F.chains[1], M = F.chains[2], K = F.chains[4];
-  if ([...T, ...I, ...M].some((b) => b === undefined)) return;
-  const pos = (b) => [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]];
-  const tipOf = (b) => { const r = qrotv(Q, b * 4, [tail[b * 3] - head[b * 3], tail[b * 3 + 1] - head[b * 3 + 1], tail[b * 3 + 2] - head[b * 3 + 2]]); return [P[b * 3] + r[0], P[b * 3 + 1] + r[1], P[b * 3 + 2] + r[2]]; };
-  // the backs of the middle phalanges of index and middle finger, a finger's thickness out from them
-  const m1 = mid(pos(I[1]), pos(I[2])), m2 = mid(pos(M[1]), pos(M[2]));
-  const width = K && K[0] !== undefined ? Math.hypot(...sub(pos(I[0]), pos(K[0]))) : 0.07;
-  const wrist = B.parent[T[0]], palmOut = qrotv(Q, wrist * 4, F.palm);
-  const tgt = [0, 1, 2].map((k) => m1[k] * 0.6 + m2[k] * 0.4 + palmOut[k] * width * 0.26);
-  for (let it = 0; it < 10; it++) {
-    for (let j = 2; j >= 0; j--) {
-      const pv = pos(T[j]), cur = tipOf(T[2]), v1 = sub(cur, pv), v2 = sub(tgt, pv);
-      const ax = cross(v1, v2), sl = Math.hypot(...ax), ang = Math.min(j === 0 ? 0.12 : 0.22, Math.atan2(sl, v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]));
-      if (sl < 1e-9 || ang < 1e-4) continue;
-      const sn = Math.sin(ang / 2), d = [ax[0] / sl * sn, ax[1] / sl * sn, ax[2] / sl * sn, Math.cos(ang / 2)], o = [0, 0, 0, 0];
-      for (let k = j; k < 3; k++) {
-        const b = T[k];
-        qmulTo(o, 0, d[0], d[1], d[2], d[3], Q[b * 4], Q[b * 4 + 1], Q[b * 4 + 2], Q[b * 4 + 3]); Q[b * 4] = o[0]; Q[b * 4 + 1] = o[1]; Q[b * 4 + 2] = o[2]; Q[b * 4 + 3] = o[3];
-        if (k > j) { const r = qrotv(d, 0, sub(pos(b), pv)); P[b * 3] = pv[0] + r[0]; P[b * 3 + 1] = pv[1] + r[1]; P[b * 3 + 2] = pv[2] + r[2]; }
-      }
-    }
-    const e = sub(tipOf(T[2]), tgt); if (Math.hypot(...e) < width * 0.04) break;
-  }
+function thumbOver(B, F, s, hd) {
+  const { P, Q, head, tail } = B, T = F.chains[0], K = F.chains[4];
+  const curled = [1, 2, 3].filter((f) => F.chains[f].every((b) => b !== undefined) && hd.curl[f][0] + hd.curl[f][1] > 90);
+  if (T.some((b) => b === undefined) || !curled.length) return;
+  const A = F.chains[curled[0]], C = F.chains[curled[1] ?? curled[0]];
+  const pos = (b) => [P[b * 3], P[b * 3 + 1], P[b * 3 + 2]], lenOf = (b) => Math.hypot(tail[b * 3] - head[b * 3], tail[b * 3 + 1] - head[b * 3 + 1], tail[b * 3 + 2] - head[b * 3 + 2]);
+  const dirOf = (b) => norm(qrotv(Q, b * 4, [tail[b * 3] - head[b * 3], tail[b * 3 + 1] - head[b * 3 + 1], tail[b * 3 + 2] - head[b * 3 + 2]]));
+  const along3 = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+  const I0 = F.chains[1][0], width = K && K[0] !== undefined && I0 !== undefined ? Math.hypot(...sub(pos(I0), pos(K[0]))) : 0.07;
+  const wrist = B.parent[T[0]], out = qrotv(Q, wrist * 4, F.palm), radial = qrotv(Q, wrist * 4, F.thumb.radial), lift = width * 0.25; // a finger's and the thumb's own thickness
+  // where on a curled finger the thumb comes to lie: on whichever of its middle and last phalanx stands further out in front of the palm
+  // (the middle one in a fist, where the fingertips are tucked away; the last one when the fingers are closed round a handle)
+  const tipOf = (b) => { const d = dirOf(b), l = lenOf(b); return [P[b * 3] + d[0] * l, P[b * 3 + 1] + d[1] * l, P[b * 3 + 2] + d[2] * l]; };
+  const front = (p) => p[0] * out[0] + p[1] * out[1] + p[2] * out[2];
+  const rest = (X, u) => { const m = along3(pos(X[1]), pos(X[2]), u), e = along3(pos(X[2]), tipOf(X[2]), 0.5); return front(e) > front(m) ? [e, lift * 0.72] : [m, lift]; };
+  const [pa, la] = rest(A, 0.35), [pc, lc] = rest(C, 0.45);
+  const ipT = pa.map((v, k) => v + out[k] * la + radial[k] * width * (curled[1] ? 0.1 : 0.2));
+  const tipT = pc.map((v, k) => v + out[k] * lc - (curled[1] ? 0 : radial[k] * width * 0.25));
+  // two bones from the thumb's root to its last joint: the knuckle between them stands out towards the thumb's side
+  const c = pos(T[0]), L0 = lenOf(T[0]), L1 = lenOf(T[1]), dv = sub(ipT, c), D = Math.min(Math.hypot(...dv), (L0 + L1) * 0.999), dn = norm(dv);
+  const a = (L0 * L0 - L1 * L1 + D * D) / (2 * D), hgt = Math.sqrt(Math.max(0, L0 * L0 - a * a));
+  let pole = [radial[0] + out[0] * 0.25, radial[1] + out[1] * 0.25, radial[2] + out[2] * 0.25]; const pk = pole[0] * dn[0] + pole[1] * dn[1] + pole[2] * dn[2]; pole = norm([pole[0] - dn[0] * pk, pole[1] - dn[1] * pk, pole[2] - dn[2] * pk]);
+  const mcp = [c[0] + dn[0] * a + pole[0] * hgt, c[1] + dn[1] * a + pole[1] * hgt, c[2] + dn[2] * a + pole[2] * hgt], ip = [c[0] + dn[0] * D, c[1] + dn[1] * D, c[2] + dn[2] * D];
+  const aim = (b, to) => { // turn a bone the short way so that it points along `to`
+    const u = dirOf(b), ax = cross(u, to), sl = Math.hypot(...ax), ang = Math.atan2(sl, u[0] * to[0] + u[1] * to[1] + u[2] * to[2]); if (sl < 1e-9 || ang < 1e-5) return;
+    const sn = Math.sin(ang / 2), o = [0, 0, 0, 0]; qmulTo(o, 0, ax[0] / sl * sn, ax[1] / sl * sn, ax[2] / sl * sn, Math.cos(ang / 2), Q[b * 4], Q[b * 4 + 1], Q[b * 4 + 2], Q[b * 4 + 3]); Q[b * 4] = o[0]; Q[b * 4 + 1] = o[1]; Q[b * 4 + 2] = o[2]; Q[b * 4 + 3] = o[3];
+  };
+  aim(T[0], norm(sub(mcp, c))); P[T[1] * 3] = mcp[0]; P[T[1] * 3 + 1] = mcp[1]; P[T[1] * 3 + 2] = mcp[2];
+  aim(T[1], norm(sub(ip, mcp))); P[T[2] * 3] = ip[0]; P[T[2] * 3 + 1] = ip[1]; P[T[2] * 3 + 2] = ip[2];
+  aim(T[2], norm(sub(tipT, ip)));
 }
 
 /**
@@ -158,24 +192,25 @@ export function poseBody(B, t, xf = null, hands = null, face = null, after = nul
     const F = B.fingers[s]; let hd = hands[s]; if (!F || !hd) continue;
     if (Array.isArray(hd)) hd = mixHand(HANDS[hd[0]], HANDS[hd[1]], hd[2]); else if (typeof hd === 'string') hd = HANDS[hd];
     if (!hd) continue;
+    const turn = (q, ax, ang) => { const o = [0, 0, 0, 0], c = Math.cos(ang / 2), sn = Math.sin(ang / 2); qmulTo(o, 0, q[0], q[1], q[2], q[3], ax[0] * sn, ax[1] * sn, ax[2] * sn, c); q[0] = o[0]; q[1] = o[1]; q[2] = o[2]; q[3] = o[3]; };
     F.chains.forEach((ch, fi) => {
       if (ch.some((b) => b === undefined)) return;
-      // the bend axis: across the knuckles for the fingers; for the thumb, turned so that it closes over the palm
-      let ax = fi === 0 ? norm([F.along[0] * 0.75 - F.palm[0] * 0.25 + F.across[0] * 0.3, F.along[1] * 0.75 - F.palm[1] * 0.25 + F.across[1] * 0.3, F.along[2] * 0.75 - F.palm[2] * 0.25 + F.across[2] * 0.3]) : F.across;
-      const sgn = s === 'L' ? -1 : 1; // which way round closes the hand
+      if (fi === 0 && !F.thumb) return;
+      // the bend axis: each finger's own (it closes straight towards the palm wherever the finger points); the thumb's folds it across the palm
+      const ax = fi === 0 ? F.thumb.axis : F.axis[fi];
+      // each joint starts from the bone it hangs on, in its rest pose: whatever finger bends came with the performance are
+      // left out (the Stage closes a sword hand in its own way; here the hand is the film's own, the same on every body)
       let par = B.parent[ch[0]], pq = [Q[par * 4], Q[par * 4 + 1], Q[par * 4 + 2], Q[par * 4 + 3]];
-      // rest-relative local rotations of the three joints (parent⁻¹ · own), read before anything is changed
-      const loc = ch.map((b) => { const p = B.parent[b], o = [0, 0, 0, 0]; qmulTo(o, 0, -Q[p * 4], -Q[p * 4 + 1], -Q[p * 4 + 2], Q[p * 4 + 3], Q[b * 4], Q[b * 4 + 1], Q[b * 4 + 2], Q[b * 4 + 3]); return o; });
       let pp = [P[par * 3], P[par * 3 + 1], P[par * 3 + 2]], ph = [head[par * 3], head[par * 3 + 1], head[par * 3 + 2]];
       ch.forEach((b, j) => {
-        let ang = hd.curl[fi][j] * Math.PI / 180 * sgn; const tmp = [0, 0, 0, 0], q = [0, 0, 0, 0];
-        qmulTo(tmp, 0, pq[0], pq[1], pq[2], pq[3], loc[j][0], loc[j][1], loc[j][2], loc[j][3]);
-        let rx = ax; if (j === 0 && fi > 0 && hd.spread) { const sp = hd.spread * (fi - 2.5) * 0.11; const sa = F.palm, c = Math.cos(sp / 2), sn = Math.sin(sp / 2); qmulTo(q, 0, tmp[0], tmp[1], tmp[2], tmp[3], sa[0] * sn, sa[1] * sn, sa[2] * sn, c); tmp[0] = q[0]; tmp[1] = q[1]; tmp[2] = q[2]; tmp[3] = q[3]; }
-        if (fi === 0 && j === 0) { // the thumb's root also swings in towards the palm
-          const sw = hd.thumbIn * 0.7 * sgn, c = Math.cos(sw / 2), sn = Math.sin(sw / 2); qmulTo(q, 0, tmp[0], tmp[1], tmp[2], tmp[3], F.along[0] * sn, F.along[1] * sn, F.along[2] * sn, c); tmp[0] = q[0]; tmp[1] = q[1]; tmp[2] = q[2]; tmp[3] = q[3];
+        const q = [pq[0], pq[1], pq[2], pq[3]];
+        if (j === 0 && fi > 0) turn(q, F.palm, F.fan * (fi - 2.5) * (FAN + (hd.spread ?? 0) * SPREAD) - F.yaw[fi]); // out of the rest pose's fan into the hand's own: side by side, or as spread as the film asks
+        if (j === 0 && fi === 0) { // the thumb's root: turned the short way from where it rests to where the hand holds it — beside the index finger or out, near the flat of the hand or in front of the palm
+          const yw = THUMB_REST + (hd.thumbOut ?? 0) * THUMB_OUT, lf = THUMB_LIFT + (hd.thumbIn ?? 0) * THUMB_IN, cl = Math.cos(lf), sl = Math.sin(lf), cyw = Math.cos(yw), syw = Math.sin(yw), T = F.thumb;
+          const u = [0, 1, 2].map((k) => cl * (cyw * F.along[k] + syw * T.radial[k]) + sl * F.palm[k]), c = cross(T.dir, u), sn = Math.hypot(c[0], c[1], c[2]);
+          if (sn > 1e-6) turn(q, [c[0] / sn, c[1] / sn, c[2] / sn], Math.atan2(sn, T.dir[0] * u[0] + T.dir[1] * u[1] + T.dir[2] * u[2]));
         }
-        const c = Math.cos(ang / 2), sn = Math.sin(ang / 2);
-        qmulTo(q, 0, tmp[0], tmp[1], tmp[2], tmp[3], rx[0] * sn, rx[1] * sn, rx[2] * sn, c);
+        turn(q, ax, hd.curl[fi][j] * Math.PI / 180 - (fi > 0 ? F.flex[fi][j] : 0));
         const off = qrotv(pq, 0, [head[b * 3] - ph[0], head[b * 3 + 1] - ph[1], head[b * 3 + 2] - ph[2]]);
         const np = [pp[0] + off[0], pp[1] + off[1], pp[2] + off[2]];
         P[b * 3] = np[0]; P[b * 3 + 1] = np[1]; P[b * 3 + 2] = np[2]; Q[b * 4] = q[0]; Q[b * 4 + 1] = q[1]; Q[b * 4 + 2] = q[2]; Q[b * 4 + 3] = q[3];
@@ -183,7 +218,7 @@ export function poseBody(B, t, xf = null, hands = null, face = null, after = nul
       });
     });
     // a closed hand: the thumb lies across the backs of the curled index and middle fingers, as in a real fist or grip
-    if (hd.thumbIn >= 0.6) thumbOver(B, F, s);
+    if (hd.thumbIn >= 0.6 && F.thumb) thumbOver(B, F, s, hd);
   }
   // the face: expression shapes move the skin of the head before the bones carry it; the jaw swings open with the mouth
   const W = face ? faceShapes(face) : null;
@@ -268,7 +303,8 @@ export function normalsOf(pos, idx, nrm) {
  * them: { canvas, x, y } to draw at (x, y), and depthAt(px, py) (metres from the lens; Infinity where empty).
  *   paint: { fill: [r,g,b], shade: [r,g,b], hi?: [r,g,b] (a highlight tone: metal, hair), thr? (where light turns to
  *            shadow, −1…1, default 0.08), line? (false: this part draws no inner line against its neighbours),
- *            two? (true: seen from both sides — cloth), flat? (no shadow tone) }
+ *            two? (true: seen from both sides — cloth), flat? (no shadow tone), castHair? / recvHair? (hair, and the
+ *            skin its shadow falls on: a fringe on the brow) }
  * o: { ss (fineness, default 2), light: unit vector towards the light (world), ink: [r,g,b], lw (outline, picture px),
  *      lwIn (inner lines), pad }
  */
@@ -390,7 +426,39 @@ export class CelPainter {
         sm = { md, mw, mh, u0, v0, tex, ax, bx };
       }
     }
-    const shBias = o.shadowBias ?? 0.028;
+    // ---- the hair's own shadow on the face: a fringe lies a finger's breadth off the brow, too near for the coarse
+    // picture above (and a face takes no shadow from that one: its own nose and cheeks would spot it). So a second,
+    // finer picture from the light holds only what is marked castHair (hair, a helmet's rim), and only skin marked
+    // recvHair is looked up in it.
+    let smH = null;
+    if (o.shadows !== false && sm && this.paints.some((p) => p && p.recvHair)) {
+      const hm = this.meshes.filter((m) => m.lu && this.paints[m.id].castHair);
+      if (hm.length) {
+        let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+        for (const m of hm) for (let v = 0; v < m.lu.length; v++) { const U = m.lu[v], Vv = m.lv[v]; if (U < u0) u0 = U; if (U > u1) u1 = U; if (Vv < v0) v0 = Vv; if (Vv > v1) v1 = Vv; }
+        const tex = Math.max(0.0012, Math.max(u1 - u0, v1 - v0) / 520), mw = Math.ceil((u1 - u0) / tex) + 3, mh = Math.ceil((v1 - v0) / tex) + 3, md = new Float32Array(mw * mh).fill(-1e9);
+        for (const m of hm) {
+          const { lu, lv, ld, idx } = m;
+          for (let t = 0; t < idx.length; t += 3) {
+            const a = idx[t], b = idx[t + 1], c = idx[t + 2], ax2 = (lu[a] - u0) / tex + 1, ay2 = (lv[a] - v0) / tex + 1, bx2 = (lu[b] - u0) / tex + 1, by2 = (lv[b] - v0) / tex + 1, cx3 = (lu[c] - u0) / tex + 1, cy3 = (lv[c] - v0) / tex + 1;
+            const area = (bx2 - ax2) * (cy3 - ay2) - (cx3 - ax2) * (by2 - ay2); if (area > -1e-9 && area < 1e-9) continue;
+            const mnx = Math.max(0, Math.floor(Math.min(ax2, bx2, cx3))), mxx = Math.min(mw - 1, Math.ceil(Math.max(ax2, bx2, cx3))), mny = Math.max(0, Math.floor(Math.min(ay2, by2, cy3))), mxy2 = Math.min(mh - 1, Math.ceil(Math.max(ay2, by2, cy3)));
+            const ia = 1 / area, e0x = (by2 - cy3) * ia, e0y = (cx3 - bx2) * ia, e0c = (bx2 * cy3 - cx3 * by2) * ia, e1x = (cy3 - ay2) * ia, e1y = (ax2 - cx3) * ia, e1c = (cx3 * ay2 - ax2 * cy3) * ia, da = ld[a], db = ld[b], dc = ld[c];
+            for (let y = mny; y <= mxy2; y++) { let w0 = e0x * (mnx + 0.5) + e0y * (y + 0.5) + e0c, w1 = e1x * (mnx + 0.5) + e1y * (y + 0.5) + e1c, q = y * mw + mnx; for (let x = mnx; x <= mxx; x++, w0 += e0x, w1 += e1x, q++) { const w2 = 1 - w0 - w1; if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) continue; const dd = w0 * da + w1 * db + w2 * dc; if (dd > md[q]) md[q] = dd; } }
+          }
+        }
+        smH = { md, mw, mh, u0, v0, tex, ax: sm.ax, bx: sm.bx };
+      }
+    }
+    const shBias = o.shadowBias ?? 0.028, hairBias = o.hairShadowBias ?? 0.0045;
+    const inHairShadow = (q, X, Y) => {
+      const z = 1 / zb[q] + (this.paints[ib[q]].bias ?? 0), px = (x0 + (X + 0.5) / SS - cx) / fl * z, py = -(y0 + (Y + 0.5) / SS - cy) / fl * z;
+      const wx = cp[0] + cr[0] * px + cu[0] * py + cf[0] * z, wy = cp[1] + cr[1] * px + cu[1] * py + cf[1] * z, wz = cp[2] + cr[2] * px + cu[2] * py + cf[2] * z;
+      const U = (wx * smH.ax[0] + wy * smH.ax[1] + wz * smH.ax[2] - smH.u0) / smH.tex + 1, Vv = (wx * smH.bx[0] + wy * smH.bx[1] + wz * smH.bx[2] - smH.v0) / smH.tex + 1, d = wx * L[0] + wy * L[1] + wz * L[2] + hairBias;
+      const iu = Math.floor(U - 0.5), iv = Math.floor(Vv - 0.5); if (iu < 0 || iv < 0 || iu >= smH.mw - 1 || iv >= smH.mh - 1) return false;
+      const fu = U - 0.5 - iu, fv = Vv - 0.5 - iv, q2 = iv * smH.mw + iu, md = smH.md;
+      return (md[q2] > d ? (1 - fu) * (1 - fv) : 0) + (md[q2 + 1] > d ? fu * (1 - fv) : 0) + (md[q2 + smH.mw] > d ? (1 - fu) * fv : 0) + (md[q2 + smH.mw + 1] > d ? fu * fv : 0) > 0.5;
+    };
     // world position of a pixel of the fine picture, from its depth
     const inShadow = (q, X, Y) => {
       const z = 1 / zb[q] + (this.paints[ib[q]].bias ?? 0), px = (x0 + (X + 0.5) / SS - cx) / fl * z, py = -(y0 + (Y + 0.5) / SS - cy) / fl * z;
@@ -423,7 +491,7 @@ export class CelPainter {
       for (let j = 0; j < SS; j++) for (let i = 0; i < SS; i++) {
         const q = (y * SS + j) * w + x * SS + i, id = ib[q], ia = ink[q];
         if (!id) { if (ia > 0) { r += ik[0] * ia; g += ik[1] * ia; b += ik[2] * ia; al += ia; } continue; }
-        const p = P[id], l = lb[q], v = vb[q]; let c = p.flat || (l > (p.thr ?? 0.08) && !(sm && p.recv !== false && l > (p.thr ?? 0.08) + 0.1 && inShadow(q, x * SS + i, y * SS + j))) ? p.fill : p.shade;
+        const p = P[id], l = lb[q], v = vb[q]; let c = p.flat || (l > (p.thr ?? 0.08) && !(sm && p.recv !== false && l > (p.thr ?? 0.08) + 0.1 && inShadow(q, x * SS + i, y * SS + j)) && !(smH && p.recvHair && inHairShadow(q, x * SS + i, y * SS + j))) ? p.fill : p.shade;
         if (mode !== 'cel' && !p.flat) {
           const th = p.thr ?? 0.08, lit = c === p.fill;
           if (mode === 'smooth') {

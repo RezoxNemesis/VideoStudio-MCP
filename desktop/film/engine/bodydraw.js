@@ -3,10 +3,11 @@
 // arm, a hand or a blade passes in front of the face.
 import { createCanvas } from '@napi-rs/canvas';
 import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
-import { poseBody, normalsOf, CelPainter, onBone, dirOnBone } from './body.js';
+import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes } from './body.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes } from './hair.js';
 import { look } from './look.js';
+import { faceMarksOf, faceDecals, decalPaints, noseLine } from './face3.js';
 
 const SKIP = new Set(['eyes', 'teeth', 'tongue', 'lashes', 'haircap', 'hair', 'beard']);
 const LAYER = { skin: 0, trousers: 1, boots: 2, shoes: 2, tunic: 3, wraps: 4, skirt: 4, coat: 5, cuirass: 6, vambrace: 6, greave: 6 };
@@ -189,6 +190,9 @@ function paintOf(ch, B, part, lit) {
   return withBands(mk(pick, part.name === 'tunic' || part.name === 'coat' ? d.top?.shade : part.name === 'trousers' || part.name === 'skirt' ? d.bottom?.shade : undefined, part.name === 'coat' ? { group: bd.coatLine ? undefined : 'top' } : part.name === 'tunic' ? { group: 'top' } : {}));
 }
 
+/** The hands of a figure: what the film asks for, hand by hand; a hand it leaves out is held as autoHands would hold it. */
+export function handsFor(pose, asked) { return asked ? { ...autoHands(pose), ...asked } : autoHands(pose); }
+
 /**
  * Draw a character whose pose carries its real body (pose.body = { B, t, xf, hands }). Same arguments as Character.draw;
  * o.sun: the light's direction in the world. Returns false when the body cannot be drawn (the caller falls back).
@@ -200,7 +204,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const real = d.realHead !== false && B.bi.head !== undefined && !!B.landmarks.eyeL; // the body's own head (face, eyes, teeth) instead of the painted one
   // the eyes and brows of a real head are drawn (large, clear, the way drawn faces have them) unless the sheet asks for the sculpted ones
   const drawn = real && (d.face?.eyes3 ?? 'drawn') === 'drawn';
-  poseBody(B, pb.t, pb.xf, pb.hands ?? autoHands(pose), real ? (drawn ? { ...(face ?? {}), eyeOpen: 1, blink: 0, eyeSmile: 0, browTilt: 0, browL: 0, browR: 0 } : (face ?? {})) : null, Array.isArray(pb.after) ? pb.after : null);
+  poseBody(B, pb.t, pb.xf, handsFor(pose, pb.hands), real ? (drawn ? { ...(face ?? {}), eyeOpen: 1, blink: 0, eyeSmile: 0, browTilt: 0, browL: 0, browR: 0 } : (face ?? {})) : null, Array.isArray(pb.after) ? pb.after : null);
   if (typeof pb.after === 'function') pb.after(B); // a film's own change to the posed body (moves and turns of kit/combat.js are applied by poseBody)
   const sun = V.norm(o.sun ?? [-0.45, 0.7, 0.5]);
   // the light a cel is drawn under leans towards the lens, so a face-on figure is never all shadow
@@ -208,7 +212,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const ss = hpx > 900 ? 2 : hpx > 240 ? 2 : 3;
   const pm = look()?.paint?.mode === 'paint';
   const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * (pm ? 2.1 : 1.75), lwIn: lwB * (pm ? 1.05 : 0.95) });
-  const limbIds = new Set(), eyeIds = new Set();
+  const limbIds = new Set(), eyeIds = new Set(), faceIds = new Set(); // faceIds: the skin of the face itself (with the tones drawn on it)
   const rgbOf = (c) => hex(lit(c)), fd = d.face ?? {}, lmk = B.landmarks, eyeY = lmk.eyeL?.[1] ?? 0, eyeZ = lmk.eyeL?.[2] ?? 0;
   // the middle of the head: anime shading treats a face and its hair as one round form, so their normals lean out from
   // here (a clean terminator, no patches where a low-poly surface turns), blended with the surface's own normal
@@ -223,6 +227,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     }
     return out;
   };
+  const mouthShut = !face || (faceShapes(face).w['mouth-open'] ?? 0) < 0.06;
   for (const p of B.parts) {
     if (real && (p.name === 'eyes' || p.name === 'teeth' || p.name === 'tongue' || p.name === 'lashes')) {
       const nr = normalsOf(p.out, p.idx, p.nrm);
@@ -236,12 +241,13 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
         const id = cp.add(p.out, p.idx, { fill: [250, 250, 252], shade: [212, 216, 230], thr: -0.2, line: false, group: 'eye', bias: 0.0006,
           bands: [[0, pu, { fill: [16, 12, 16], shade: [16, 12, 16], flat: true }], [pu, ir * 0.82, { fill: rgbOf(ic), shade: rgbOf(shadeHex(ic, -0.35)), thr: 0.15 }], [ir * 0.82, ir, { fill: rgbOf(shadeHex(ic, -0.55)), shade: rgbOf(shadeHex(ic, -0.6)), flat: true }]] }, nr, u);
         eyeIds.add(id);
-      } else if (p.name === 'teeth') cp.add(p.out, p.idx, { fill: [244, 240, 232], shade: [200, 190, 190], line: false, group: 'mouth', thr: -0.3 }, nr);
+      } else if ((p.name === 'teeth' || p.name === 'tongue') && mouthShut) { /* lips that only touch show no teeth between them: a closed mouth is a line */ }
+      else if (p.name === 'teeth') cp.add(p.out, p.idx, { fill: [244, 240, 232], shade: [200, 190, 190], line: false, group: 'mouth', thr: -0.3 }, nr);
       else if (p.name === 'tongue') cp.add(p.out, p.idx, { fill: rgbOf('#b0565a'), shade: rgbOf('#7a3238'), line: false, group: 'mouth' }, nr);
       else cp.add(p.out, p.idx, { fill: hex(ink), shade: hex(ink), flat: true, two: true, bias: 0.002, line: false, group: 'eye' }, nr);
       continue;
     }
-    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
+    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard' }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
     // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it
     if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;
@@ -253,9 +259,26 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       const xy = p.faceXY ?? (p.faceXY = (() => { const a = new Float32Array(p.n * 2), base = p.base ?? p.pos; for (let v = 0; v < p.n; v++) { const front = base[v * 3 + 2] > eyeZ - 0.045; a[v * 2] = front ? base[v * 3] : 9; a[v * 2 + 1] = base[v * 3 + 1] - eyeY; } return a; })());
       const br = fd.brow3 ?? {}, by = br.y ?? 0.0235, th = br.thick ?? 0.0036, x0 = br.x0 ?? 0.011, x1 = br.x1 ?? 0.058, arch = br.arch ?? 0.0055, tilt = br.tilt ?? 0.0;
       const bc = d.hair?.color ?? '#1c1a22';
-      const map = (x, y) => { const ax = x < 0 ? -x : x; if (ax < x0 || ax > x1) return -1; const u = (ax - x0) / (x1 - x0), yc = by + arch * Math.sin(Math.PI * Math.min(1, u * 1.15)) - tilt * (1 - u) - 0.004 * u * u, h = th * (1 - 0.62 * u) * (u < 0.08 ? 0.5 + u * 6.25 : 1); return Math.abs(y - yc) < h ? 0 : -1; };
+      const brow = (x, y) => { const ax = x < 0 ? -x : x; if (ax < x0 || ax > x1) return -1; const u = (ax - x0) / (x1 - x0), yc = by + arch * Math.sin(Math.PI * Math.min(1, u * 1.15)) - tilt * (1 - u) - 0.004 * u * u, h = th * (1 - 0.62 * u) * (u < 0.08 ? 0.5 + u * 6.25 : 1); return Math.abs(y - yc) < h ? 0 : -1; };
+      // the features of this head (found once from its own shape) and the drawn tones that give the face form: the nose's
+      // shadow side (away from the light) and the shadow under it, the lips, the crease of the lids — they ride on the skin
+      let dec = null, decP = [];
+      if (fd.detail !== false) {
+        const M = B.faceMarks ?? (B.faceMarks = (() => {
+          const base = p.base ?? p.pos, hv = new Set(p.idxHead), jaw = new Set(B.jawKids), lower = new Float32Array(p.n);
+          for (const v of hv) { let w = 0; for (let k = 0; k < 4; k++) if (jaw.has(p.si[v * 4 + k])) w += p.sw[v * 4 + k]; lower[v] = w; } // how much of each bit of skin hangs from the jaw: the lower lip does, the upper does not
+          return faceMarksOf(base, p.idxHead, lmk, jaw.size ? lower : null);
+        })());
+        const ey = fd.eye ?? {}, e3 = fd.eye3 ?? {}, ehw = e3.w ?? 0.0215, ehh = e3.h ?? ehw * ((ey.h ?? 0.15) / (ey.w ?? 0.2)) * 1.05;
+        dec = faceDecals(M, { shadeSide: V.dot(L, dirOnBone(B, 'head', [1, 0, 0])) > 0 ? -1 : 1, lips: fd.lips ?? 0.45, nostrils: fd.nostrils, eye: drawn ? { cx: M.eyeX + (e3.dx ?? 0.003), cy: e3.dy ?? 0.003, hw: ehw, hh: ehh } : { cx: M.eyeX, cy: 0.001, hw: 0.017, hh: 0.0085 } });
+        decP = decalPaints(dec, paint.fill, paint.shade, { lips: fd.lips ?? 0.45, lip: fd.lipColor ? rgbOf(fd.lipColor) : undefined });
+      }
+      const browP = { fill: rgbOf(bc), shade: rgbOf(bc), flat: true, line: false };
+      const maps = drawn ? decP : [browP, ...decP];
+      const map = drawn ? (dec ? dec.map : null) : (x, y) => { if (brow(x, y) === 0) return 0; const k = dec ? dec.map(x, y) : -1; return k < 0 ? -1 : k + 1; };
       const nrF = rounded(p.out, nr, 0.55, 0.13);
-      eyeIds.add(cp.add(p.out, p.idxHead, drawn ? { ...paint, thr: -0.32, group: 'skin', edge: 2.4, recv: false, noAO: true } : { ...paint, thr: -0.32, group: 'skin', recv: false, noAO: true, map, maps: [{ fill: rgbOf(bc), shade: rgbOf(bc), flat: true, line: false }] }, nrF, null, drawn ? null : xy));
+      const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: true, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
+      eyeIds.add(fid); faceIds.add(fid); for (const k of fp.mapIds ?? []) faceIds.add(k);
       if (p.idxMouth.length) cp.add(p.out, p.idxMouth, { fill: rgbOf('#4a1c22'), shade: rgbOf('#2a0e12'), line: false, group: 'mouth', flat: true }, nr);
     }
   }
@@ -264,7 +287,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
       const hc = d.hair.color, hp = { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi: rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), hiAt: 0.9, thr: 0.1, group: 'hair', hairy: true, bias: 0.002, edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 };
-      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, { ...hp, noAO: true, recv: false }, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82)));
+      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) eyeIds.add(cp.add(m.pos, m.idx, { ...hp, noAO: true, recv: false, castHair: true }, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82)));
       ch.hairT = ch.t;
     }
   }
@@ -292,6 +315,44 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   // ---- the head: painted, then cut away wherever an arm, a hand or what it holds is nearer than the face
   const light = o.light ?? [-0.6, -0.8];
   const hc = cam.project(H.c), hr = H.R * cam.ppm(hc[2]);
+  if (real && spr && hc[2] > 0.1 && hr > 14 && B.faceMarks && faceIds.size) {
+    // a head turned from the lens shows the line of its nose: the ridge, from as high as the head is turned, over the tip and
+    // in under it — inked on the face only (never over hair, a hand or a blade in front of it). Facing the lens the nose
+    // has no line (its shadows say where it is); in profile the outline is that line already.
+    const M = B.faceMarks, hx = V.norm(dirOnBone(B, 'head', [1, 0, 0])), hz = V.norm(dirOnBone(B, 'head', [0, 0, 1])), toLens = V.norm(V.sub(cam.pos, onBone(B, 'head', [0, eyeY + M.tip, eyeZ + 0.03])));
+    const sideways = V.dot(toLens, hx), turn = Math.atan2(Math.abs(sideways), Math.max(1e-3, V.dot(toLens, hz))), far = sideways > 0 ? -1 : 1;
+    const pts = noseLine(M, turn, far).map((q) => cam.project(onBone(B, 'head', q)));
+    // the line is the nose against the far cheek: it goes as the cheek goes behind the nose (in profile the outline is that line already)
+    let alpha = clamp((turn - 0.14) / 0.14);
+    if (alpha > 0 && pts.length > 2) {
+      const R = M.relief, hy = eyeY + M.tip + 0.008, cx = Math.min(R.NC - 1, Math.round((M.alar + 0.016) / R.cell)), cz = R.G[Math.round((R.top - (M.tip + 0.008)) / R.cell) * R.NC + cx];
+      if (cz > -1e8) {
+        const ck = cam.project(onBone(B, 'head', [far * cx * R.cell, hy, cz])), nt = pts.reduce((a, q) => (Math.abs(q[1] - ck[1]) < Math.abs(a[1] - ck[1]) ? q : a), pts[0]);
+        const out = Math.sign(cam.project(onBone(B, 'head', [far * 0.02, hy, cz]))[0] - cam.project(onBone(B, 'head', [0, hy, cz]))[0]) || 1; // which way the far side lies in the picture
+        alpha *= clamp(((ck[0] - nt[0]) * out) / (0.006 * cam.ppm(ck[2])));
+      }
+    }
+    if (pts.length > 2 && alpha > 0.02 && pts.every((q) => q[2] > 0.1)) {
+      const W = cam.W, Hh = cam.H; if (!scratch || scratch.width !== W || scratch.height !== Hh) scratch = createCanvas(W, Hh);
+      const sg = scratch.getContext('2d'), pad = lwB * 3 + 2; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const q of pts) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); }
+      x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad)); x1 = Math.min(W, Math.ceil(x1 + pad)); y1 = Math.min(Hh, Math.ceil(y1 + pad));
+      if (x1 > x0 && y1 > y0) {
+        sg.setTransform(1, 0, 0, 1, 0, 0); sg.clearRect(x0, y0, x1 - x0, y1 - y0); sg.save(); sg.beginPath(); sg.rect(x0, y0, x1 - x0, y1 - y0); sg.clip();
+        sg.strokeStyle = ink; sg.lineCap = 'round'; sg.lineJoin = 'round';
+        // a drawn line: fine where it starts near the brow, full at the tip
+        for (let i = 0; i < pts.length - 1; i++) { const u = i / (pts.length - 2 || 1); sg.lineWidth = lwB * (0.45 + 0.75 * Math.min(1, u * 1.6)); sg.beginPath(); sg.moveTo(pts[i][0], pts[i][1]); sg.lineTo(pts[i + 1][0], pts[i + 1][1]); sg.stroke(); }
+        sg.restore();
+        const im = sg.getImageData(x0, y0, x1 - x0, y1 - y0), px = im.data, w = x1 - x0, SS = spr.ss;
+        for (let y = 0; y < y1 - y0; y++) for (let x = 0; x < w; x++) {
+          const o4 = (y * w + x) * 4; if (!px[o4 + 3]) continue;
+          const X = Math.floor((x0 + x + 0.5 - spr.x) * SS), Y = Math.floor((y0 + y + 0.5 - spr.y) * SS);
+          if (X < 0 || Y < 0 || X >= spr.sw || Y >= spr.sh || !faceIds.has(spr.ib[Y * spr.sw + X])) px[o4 + 3] = 0; else px[o4 + 3] *= alpha;
+        }
+        sg.putImageData(im, x0, y0);
+        g.drawImage(scratch, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+      }
+    }
+  }
   if (drawn && spr && hc[2] > 0.1) {
     // drawn eyes and brows ride on the face: frames from the eye sockets, turned and foreshortened with the head, and
     // kept to where the face (or the hair over it) is what the lens sees — never over a hand or a blade

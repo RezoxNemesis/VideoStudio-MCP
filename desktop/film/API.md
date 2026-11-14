@@ -105,6 +105,21 @@ a real head whose jaw opens on the lines, drawn anime eyes and brows that act (`
 layers, cast shadows. Swords, spears, staffs and shields are real objects held by the fingers. Figures smaller than about
 40 px are drawn the old, simpler way. `actor: { id: { mesh: false } }` draws one the old way on purpose.
 
+**Hands.** Fingers close towards the palm and lie side by side; the thumb rests beside the index finger, and in a fist
+or a grip it is laid over the fingers. A hand the film leaves out is held by the engine (closed round a sword, spear or
+staff it carries, relaxed otherwise), so `hands: () => ({ L: 'open' })` poses the left hand only. Besides a name, a hand
+can be a blend `['open', 'fist', 0.5]` or its own shape: `{ curl: [[thumb ×3], [index ×3], [middle ×3], [ring ×3],
+[little ×3]], spread, thumbIn, thumbOut }` — `curl` in degrees towards the palm, joint by joint (0 = a straight finger;
+the thumb's is added to how it rests); `spread` 0 = side by side, 1 = spread wide, below 0 = pressed together;
+`thumbOut` 0 = beside the index finger, 1 = held out; `thumbIn` 0 = by the flat of the hand, 1 = in front of the palm.
+`import { HANDS } from '../vs.js'` has the named ones to start from: `{ ...HANDS.open, spread: 1 }`.
+
+**Faces.** A real head's face is drawn with form: the shadow side of the nose (it follows the light) and the shadow
+under its tip, nostrils, the line of a turned head's nose, the lips and the line where they meet, the shadow under the
+lower lip, the crease of the lids, and the hair's own shadow on the brow. On the design: `face: { lips: 0…1 }` how full
+the lips are drawn (default 0.45; about 0.9 for a woman's painted mouth), `face.lipColor`, `face.nostrils: false`,
+`face.detail: false` for the plain face of earlier versions.
+
 ## Action
 
 ```js
