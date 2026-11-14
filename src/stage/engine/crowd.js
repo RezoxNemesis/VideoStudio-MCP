@@ -5,16 +5,56 @@ import { makeActor, relax } from './actors.js';
 import { patch, GU } from './mat.js';
 const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 
-/** orient a held prop so its +Y axis points along a world direction, by turning the wrist */
-export function pointProp(a, side, dirWorld, edgeWorld = null) {
-  const h = a.h, b = h.B[`wrist.${side}`]; h.root.updateMatrixWorld(true); const H = h.hand[side];
-  const y0 = H.across.clone().negate(), z0 = H.fwd.clone();   // prop axes in the wrist's rest frame
-  const y1 = dirWorld.clone().normalize(); let z1 = (edgeWorld || V3(0, 0, 1)).clone(); z1.addScaledVector(y1, -z1.dot(y1)); if (z1.lengthSq() < 1e-6) z1.set(1, 0, 0).addScaledVector(y1, -y1.x); z1.normalize();
-  const m0 = new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(y0, z0).normalize(), y0, z0), m1 = new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(y1, z1).normalize(), y1, z1);
-  const want = _q.setFromRotationMatrix(m1).multiply(_q2.setFromRotationMatrix(m0).invert());   // world rotation of the wrist
-  b.parent.getWorldQuaternion(_q2); b.quaternion.copy(_q2.invert().multiply(want)); h.root.updateMatrixWorld(true);
+/**
+ * Hold a prop along a world direction, the way a hand can. A hand is turned by three things, each with its own reach,
+ * and this turns it by those three and nothing else:
+ *  - the forearm rolls: the thumb goes round the forearm's own line, up to most of a quarter turn either way from where
+ *    the elbow's hinge leaves it (unturned, the thumb lies in the arm's own plane on the side the elbow folds to — a handshake);
+ *  - the wrist tips: towards the little finger (the prop leaning on along the arm, up to 35°) or the thumb (up to 20°);
+ *  - what is still missing, the prop lies askew in the grip, as a sword does in a thrust.
+ * So the hand always lies along its forearm, the palm turned the way an arm turns it. Nothing here hangs on a small
+ * number: a prop lying along the forearm says nothing about the roll, and the forearm is then simply left unturned;
+ * a direction no hand could hold (out through the little finger's side) eases back to the unturned hand rather than
+ * jumping between the two nearest it could reach. The forearm's last bone takes most of the roll (it is the forearm that
+ * turns a hand over, not the wrist). The prop held in that hand (actor.held) keeps exactly the direction asked for, its
+ * edge (+Z) towards the knuckles. edgeWorld is kept for callers; the arm decides the edge.
+ * o: { maxRoll (radians, 1.4), ulnar (0.61), radial (0.35), share (0.6: how much of the tip the wrist takes before its end), prop: null = turn the hand only }
+ */
+export function pointProp(a, side, dirWorld, edgeWorld = null, o = {}) {
+  const h = a.h, b = h.B[`wrist.${side}`], H = h.hand[side], l2 = h.B[`lowerarm02.${side}`]; if (l2 && l2 === b.parent) l2.quaternion.identity();
+  h.root.updateMatrixWorld(true);
+  // the hand's own frame in the rest pose, squared up: z the way the fingers run from the wrist, y across the palm towards the thumb
+  const z0 = H.fwd.clone().normalize(), y0 = H.across.clone().negate(); y0.addScaledVector(z0, -y0.dot(z0)).normalize(); const x0 = new THREE.Vector3().crossVectors(y0, z0);
+  const y1 = dirWorld.clone().normalize(), wr = h.wpos(`wrist.${side}`, new THREE.Vector3()), el = h.wpos(`lowerarm01.${side}`, new THREE.Vector3()), sh = h.wpos(`upperarm01.${side}`, new THREE.Vector3());
+  const f = wr.sub(el).normalize(), u = el.sub(sh).normalize();
+  // the unturned thumb: square to the forearm, in the plane of the arm, on the side the elbow folds to
+  const c = u.clone().negate().addScaledVector(f, u.dot(f));
+  if (c.lengthSq() < 1e-8) { b.parent.getWorldQuaternion(_q2); c.copy(y0).applyQuaternion(_q2).addScaledVector(f, -c.dot(f)); if (c.lengthSq() < 1e-8) c.set(0, 1, 0).addScaledVector(f, -f.y); }
+  c.normalize(); const s = new THREE.Vector3().crossVectors(f, c);
+  // the roll: the thumb turned towards the part of the prop that stands off the forearm — the less of it there is, the less it says
+  const p = y1.clone().addScaledVector(f, -y1.dot(f)), pl = p.length(), v = p.addScaledVector(c, (1 - pl) * (1 - pl)), M = o.maxRoll ?? 1.4;
+  const raw = v.lengthSq() < 1e-10 ? 0 : Math.atan2(v.dot(s), v.dot(c)), ar = Math.abs(raw);
+  const roll = Math.sign(raw) * Math.min(ar, M) * Math.min(1, (Math.PI - ar) / (Math.PI / 4));
+  const yr = c.clone().multiplyScalar(Math.cos(roll)).addScaledVector(s, Math.sin(roll));
+  // the tip: within the hand's own plane, how far the prop leans on along the arm (+) or back towards the elbow (−)
+  const al = y1.dot(f), th = y1.dot(yr), tau = Math.atan2(al, th), at = Math.abs(tau), sharing = o.share ?? 0.6;
+  let tip = tau > 0 ? Math.min(tau * sharing, o.ulnar ?? 0.61) : Math.max(tau * sharing, -(o.radial ?? 0.35));
+  tip *= Math.min(1, (Math.PI - at) / (Math.PI / 4)) * Math.min(1, Math.hypot(al, th) / 0.3);
+  const yh = yr.clone().multiplyScalar(Math.cos(tip)).addScaledVector(f, Math.sin(tip)), z1 = f.clone().multiplyScalar(Math.cos(tip)).addScaledVector(yr, -Math.sin(tip)), xh = new THREE.Vector3().crossVectors(yh, z1);
+  const want = _q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xh, yh, z1)).multiply(_q2.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x0, y0, z0)).invert()).clone(); // world rotation of the wrist
+  b.parent.getWorldQuaternion(_q2); b.quaternion.copy(_q2.invert().multiply(want));
+  // the turn about the forearm's line goes mostly into the forearm
+  if (l2 && l2 === b.parent) {
+    const ax = _v.copy(h.rest[`wrist.${side}`].head).sub(h.rest[`lowerarm02.${side}`].head).normalize(), q = b.quaternion, d = q.x * ax.x + q.y * ax.y + q.z * ax.z, n = Math.hypot(d, q.w);
+    if (n > 1e-6) { let ang = 2 * Math.atan2(d, q.w); if (ang > Math.PI) ang -= 2 * Math.PI; if (ang < -Math.PI) ang += 2 * Math.PI; const tk = new THREE.Quaternion().setFromAxisAngle(ax, ang * 0.75); l2.quaternion.copy(tk); b.quaternion.premultiply(tk.invert()); }
+  }
+  h.root.updateMatrixWorld(true);
+  // the prop itself: exactly along the direction, its edge the way the knuckles face
+  const obj = o.prop === undefined ? a.held?.[side] : o.prop;
+  if (obj && obj.parent === b) { const e1 = z1.clone().addScaledVector(y1, -z1.dot(y1)); if (e1.lengthSq() < 1e-8) e1.copy(xh).addScaledVector(y1, -xh.dot(y1)); e1.normalize(); const pw = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(y1, e1), y1, e1)); obj.quaternion.copy(b.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(pw)); obj.updateMatrixWorld(true); }
 }
-/** soldier at attention with spear upright and shield forward (applied on top of a mocap pose) */
+/** where a hand's grip is now (the middle of what it holds), in the world */
+export function gripPoint(a, side, out = new THREE.Vector3()) { const h = a.h, H = h.hand[side], k = h.height / 1.8; return h.B[`wrist.${side}`].localToWorld(out.copy(H.fwd).multiplyScalar(0.085 * k).addScaledVector(H.back, -0.03 * k)); }
 export function spearCarry(a) { const h = a.h; h.aim('upperarm01.R', V3(-0.16, -1, 0.1), 'lowerarm01.R').aim('lowerarm01.R', V3(-0.05, -0.35, 1), 'wrist.R'); a.grip('R'); pointProp(a, 'R', V3(0.03, 1, 0.1));
   h.aim('upperarm01.L', V3(0.22, -1, 0.15), 'lowerarm01.L').aim('lowerarm01.L', V3(-0.55, 0.05, 0.8), 'wrist.L'); h.fingers('L', 0.8, 0.6); }
 /** spear levelled for the charge */

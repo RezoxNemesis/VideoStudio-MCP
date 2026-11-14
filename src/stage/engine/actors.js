@@ -26,7 +26,7 @@ export class Actor {
   place(x, y, z, yaw = 0, scale = 1) { this.h.root.position.set(x, y, z); this.h.root.rotation.set(0, yaw, 0); this.h.root.scale.setScalar(scale); return this; }
   resetSims() { for (const s of this.sims) s.built = false, s.v.cons.length = 0; }
   /** hold a prop in a hand: fingers curl around it */
-  hold(obj, side = 'R', o = {}) { const g = gripOf(this.h, side); attachRest(this.h, obj, `wrist.${side}`, g.pos, o.flip ? g.y.clone().negate() : g.y, g.z); if (o.tilt) obj.rotateZ(o.tilt); if (o.pitch) obj.rotateX(o.pitch); if (o.shift) obj.translateY(o.shift); return obj; }
+  hold(obj, side = 'R', o = {}) { (this.held ??= {})[side] = obj; const g = gripOf(this.h, side); attachRest(this.h, obj, `wrist.${side}`, g.pos, o.flip ? g.y.clone().negate() : g.y, g.z); if (o.tilt) obj.rotateZ(o.tilt); if (o.pitch) obj.rotateX(o.pitch); if (o.shift) obj.translateY(o.shift); return obj; }
   grip(side = 'R', amt = 0.97) { this.h.fingers(side, amt, 0.8); }
   /** blade tip / base in world space */
   blade(prop = 'sword') { const s = this.props[prop]; s.updateWorldMatrix(true, false); return { tip: s.localToWorld(s.userData.tip.clone()), base: s.localToWorld(s.userData.base.clone()) }; }
