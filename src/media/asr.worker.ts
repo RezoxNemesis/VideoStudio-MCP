@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 /** Lyrics / speech transcription on the phone with Whisper (ONNX, runs locally; the model downloads once). */
 import { env, pipeline } from "@huggingface/transformers";
+import { gpuPlan } from "./asr_gpu";
 
 env.allowLocalModels = false;
 env.backends.onnx.wasm!.wasmPaths = `${self.location.origin}/ort/`;
@@ -19,7 +20,13 @@ self.onmessage = async (e: MessageEvent<{ id: number; audio: Float32Array; model
   if (gpu) {
     try {
       const ad = await (self.navigator as Navigator & { gpu: { requestAdapter(o?: unknown): Promise<{ features: Set<string> } | null> } }).gpu.requestAdapter({ powerPreference: "high-performance" });
-      f16 = !!ad?.features.has("shader-f16");
+      const plan = gpuPlan(ad);
+      if (!plan.use) {
+        // no GPU here: say so at once, so the caller goes to the CPU (it used to wait minutes for nothing)
+        (self as unknown as Worker).postMessage({ id, type: "error", error: "This machine has no GPU for the speech model." });
+        return;
+      }
+      f16 = plan.f16;
     } catch {
       f16 = false;
     }

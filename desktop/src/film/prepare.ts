@@ -64,7 +64,7 @@ async function speak(dir: string, v: VoiceNeed): Promise<void> {
   for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));
   const g = peak > 0 ? Math.min(3, 0.85 / peak) : 1;
   if (g !== 1) for (let i = 0; i < pcm.length; i++) pcm[i] = pcm[i]! * g;
-  await film().putVoice(dir, v.lang, v.id, wavBytes(pcm, SAMPLE_RATE), { key: v.key, seconds: Math.round((pcm.length / SAMPLE_RATE) * 1000) / 1000, voice, who: v.who, text: v.text, show: v.show });
+  await film().putVoice(dir, v.lang, v.id, wavBytes(pcm, SAMPLE_RATE), { key: v.key, seconds: Math.round((pcm.length / SAMPLE_RATE) * 1000) / 1000, voice, who: v.who, text: v.text, show: v.show, ...(studio ? { pace: studio.pace } : {}) });
 }
 
 /** Solve one sequence's performance on a stage of its own and keep the joint tracks with the film. */

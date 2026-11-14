@@ -70,6 +70,8 @@ export interface Tone {
   stress?: [number, number][];
   /** Lengthen the pauses at commas and stops. */
   pauses?: number;
+  /** Another take of the same line by the studio voice (1, 2, …): acted afresh when the first lost a word. */
+  take?: number;
   /**
    * Natural reading (./natural.ts): 1 (default) reads sentence by sentence, each a little different, and lets the
    * writing shape the delivery ("!", "…", "?!"); 0 says the line exactly as the voice model gives it.

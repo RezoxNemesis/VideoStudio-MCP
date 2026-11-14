@@ -14,6 +14,7 @@
  * conditional_decoder, tokenizer.json). The language model graph is the same file with three extra outputs
  * (the q/k/v projections of the layers whose attention follows the text), made by exposeAlignment below.
  */
+import { cleanPass, tailOver } from "./studio_pass";
 
 export const STUDIO_SR = 24000;
 export const STUDIO_REPO = "onnx-community/chatterbox-multilingual-ONNX";
@@ -83,7 +84,9 @@ export function puncNorm(text: string): string {
   const swaps: Array<[string, string]> = [["...", ", "], ["…", ", "], [":", ","], [" - ", ", "], [";", ", "], ["—", "-"], ["–", "-"], [" ,", ","], ["“", '"'], ["”", '"'], ["‘", "'"], ["’", "'"]];
   for (const [a, b] of swaps) t = t.split(a).join(b);
   t = t.replace(/ +$/, "");
-  if (![".", "!", "?", "-", ",", "、", "，", "。", "？", "！"].some((p) => t.endsWith(p))) t += ".";
+  // (a Hindi sentence ends with its own stop: Chatterbox's list does not know it and would put a second one after it,
+  //  and after "।." the model babbles on)
+  if (![".", "!", "?", "-", ",", "、", "，", "。", "？", "！", "।", "॥"].some((p) => t.endsWith(p))) t += ".";
   return t;
 }
 
@@ -239,15 +242,21 @@ export interface SayOptions {
   seed?: number;
   /** Called with the number of speech tokens made so far (25 per second of speech). */
   onToken?: (n: number) => void;
+  /** Keep a trace of the alignment (SayResult.trace), to study a take. */
+  trace?: boolean;
 }
 
 export interface SayResult {
   pcm: Float32Array;
-  /** How the take went, for retries: false when the alignment never reached the end of the text. */
+  /** How the take went, for retries: false when the speech never went cleanly through the line to its end. */
   complete: boolean;
   /** Why generation stopped: the model's own end, or one of the alignment checks. */
   reason: "end" | "long_tail" | "repetition" | "token_repetition" | "cap";
   tokens: number;
+  /** The frames of the one clean pass through the line that was kept (studio_pass.ts), when there was one. */
+  pass?: { from: number; end: number; dirt: number };
+  /** With SayOptions.trace: per frame, the text position attended, the strongest attention on the first four text tokens and on the last two. */
+  trace?: { cur: number[]; first: number[]; tail: number[]; S: number };
 }
 
 /** Chatterbox's AlignmentStreamAnalyzer, fed from attention we compute from the exposed projections. */
@@ -262,6 +271,9 @@ class Aligner {
   private tailSums: Float64Array;
   private repSum = 0;
   private lastTok: number[] = [];
+  trace: { cur: number[]; first: number[]; tail: number[]; S: number } | null = null;
+  /** The text position attended at every frame: the path the speech took through the line (studio_pass.ts). */
+  readonly curs: number[] = [];
   constructor(readonly i: number, readonly j: number) {
     this.S = j - i;
     this.tailSums = new Float64Array(3);
@@ -283,6 +295,12 @@ class Aligner {
     }
     const last = rows[rows.length - 1]!;
     for (let c = 1; c < S; c++) if (last[c]! > last[cur]!) cur = c;
+    this.curs.push(cur);
+    if (this.trace) {
+      let f4 = 0, t2 = 0;
+      for (const r of rows) { for (let c = 0; c < Math.min(4, S); c++) f4 = Math.max(f4, r[c]!); for (let c = Math.max(0, S - 2); c < S; c++) t2 = Math.max(t2, r[c]!); }
+      this.trace.cur.push(cur); this.trace.first.push(Math.round(f4 * 100) / 100); this.trace.tail.push(Math.round(t2 * 100) / 100);
+    }
     if (cur - this.pos > -4 && cur - this.pos < 7) this.pos = cur;
     if (this.endAt < 0 && this.pos >= S - 2) this.endAt = this.rows;
     if (!this.complete && this.pos >= S - 3) {
@@ -354,6 +372,7 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   }
   const textIdx = ids.map((id, k) => (id < START ? k : -1)).filter((k) => k >= 0);
   const al = new Aligner(L0 + textIdx[0]!, L0 + textIdx[textIdx.length - 1]! + 1);
+  if (o.trace) al.trace = { cur: [], first: [], tail: [], S: al.S };
   const nText = textIdx.length;
   const cap = 40 + nText * 6;
 
@@ -385,7 +404,13 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
       for (const m of maps) for (let c = 0; c < al.S; c++) row[c] = row[c]! + m[r * total + al.i + c]! / maps.length;
       return row;
     });
-    const why = al.step(A, l, gen[gen.length - 1]!);
+    let why = al.step(A, l, gen[gen.length - 1]!);
+    // the line was said through and nothing has begun again: stop here (the model's own end often does not come, in Hindi above all)
+    if (!why && tailOver(al.curs, al.S)) {
+      l.fill(-1e9);
+      l[STOP] = 1e9;
+      why = "long_tail";
+    }
 
     // repetition penalty, temperature, min-p, sample
     for (const t of new Set(gen)) l[t] = l[t]! < 0 ? l[t]! * rep : l[t]! / rep;
@@ -440,8 +465,12 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   }
 
   let toks = gen.slice(1).filter((t) => t < START);
-  // A long tail is babble after the last word: keep a short release after the text ended.
-  if (al.endAt >= 0 && toks.length > al.endAt + 12) toks = toks.slice(0, al.endAt + 10);
+  // The line is the one clean pass of the speech through its words: babble before it and after it is left out,
+  // with a short release after the last word. (A line of a word or two is too short to follow: the model's own
+  // alignment check decides there.)
+  const pass = cleanPass(al.curs, al.S);
+  if (pass) toks = toks.slice(Math.max(0, pass.from - 1), pass.end + 11);
+  else if (al.endAt >= 0 && toks.length > al.endAt + 12) toks = toks.slice(0, al.endAt + 10);
   const speech = new BigInt64Array(spk.promptToken.length + toks.length);
   speech.set(spk.promptToken);
   speech.set(BigInt64Array.from(toks, BigInt), spk.promptToken.length);
@@ -451,7 +480,7 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
     speaker_features: T("float32", spk.promptFeat, [1, spk.featLen, 80]),
   });
   const wav = Float32Array.from(Object.values(dec)[0]!.data as Float32Array);
-  return { pcm: trimSilence(wav), complete: al.complete, reason, tokens: toks.length };
+  return { pcm: trimSilence(wav), complete: al.S >= 6 ? !!pass && pass.dirt === 0 : al.complete, reason, tokens: toks.length, ...(al.trace ? { trace: al.trace } : {}), ...(pass ? { pass } : {}) };
 
   /** Mean-free attention maps (rows × total) of the aligned heads, batch row 0. */
   function headAttention(out: Record<string, OrtTensor>, rows: number[], total: number, seq: number): Float32Array[] {
@@ -625,4 +654,12 @@ export function seedFor(...parts: string[]): number {
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
+}
+
+/**
+ * The seed of one attempt at a line. A line may be asked for again as another take (script.json take: 1, 2, …)
+ * when the first lost a word; the first take keeps the seed it always had.
+ */
+export function takeSeed(key: string, text: string, attempt: number, take = 0): number {
+  return take > 0 ? seedFor(key, text, String(attempt), `take ${Math.round(take)}`) : seedFor(key, text, String(attempt));
 }

@@ -10,20 +10,24 @@
 import { lookupVoiceRef } from "./engine/plan";
 import { mixLang, parseMix, resolveVoice } from "./engine/voicebank";
 import { hinglishShare, transliterateHinglish } from "./engine/hinglish";
-import { moodTone, type Tone } from "./engine/open";
-import { seedFor } from "./engine/studio";
+import type { Tone } from "./engine/open";
 import { referenceLine } from "./engine/studio_refs";
 import { devanagariLoanwords } from "./engine/studio_loanwords";
+import { phrases, studioDelivery, pacing } from "./engine/studio_pace";
+import { studioSpeaker } from "./engine/studio_speaker";
 import { loadCustoms } from "./voicelab";
 import { openVoice } from "./open_client";
 
 interface StudioBridge {
   status(): Promise<{ available: boolean; installed?: boolean; downloadBytes?: number; totalBytes?: number }>;
   install(): Promise<unknown>;
-  say(p: { key: string; text: string; lang: string; mood?: string; moodAmount?: number }): Promise<{ pcm?: Float32Array; needRef?: boolean }>;
+  say(p: { key: string; text: string; lang: string; mood?: string; moodAmount?: number; cfg?: number; take?: number }): Promise<{ pcm?: Float32Array; needRef?: boolean }>;
   speaker(p: { key: string; pcm: Float32Array }): Promise<boolean>;
   onProgress(fn: (m: { done: number; total?: number; what: string }) => void): () => void;
 }
+
+/** How a studio line was spoken: its words, the seconds of speech the model gave, the stretch its pace asked for and the one it got. */
+export interface StudioPace { words: number; spoken: number; asked: number; factor: number }
 
 const bridge = (): StudioBridge | null => ((globalThis as { vsd?: { studio?: StudioBridge } }).vsd?.studio ?? null);
 const KEY = "vs.voiceEngine";
@@ -73,13 +77,14 @@ export async function installStudio(onProgress?: (done: number, what: string) =>
  * Say one line with the studio engine, or return null when it is not available here (not the desktop app,
  * not installed, switched off, or a language it cannot read) so the caller uses the standard voice.
  */
-export async function studioSay(text: string, voice: string, tone?: Tone, lang?: string, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string } | null> {
+export async function studioSay(text: string, voice: string, tone?: Tone, lang?: string, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string; pace: StudioPace } | null> {
   const b = bridge();
   if (!b || voiceEngine() !== "studio") return null;
   if (installed === null) await studioStatus().catch(() => (installed = false));
   if (!installed) return null;
   const customs = loadCustoms();
-  const mix = resolveVoice(lookupVoiceRef(voice, customs), customs).mix;
+  const own = resolveVoice(lookupVoiceRef(voice, customs), customs);
+  const mix = own.mix;
   const vlang = mixLang(parseMix(mix));
   let code = (lang ?? "").toLowerCase().split(/[-_]/)[0] ?? "";
   let words = text;
@@ -93,17 +98,34 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
   if (!LANGS.has(code)) return null;
   const mood = tone?.mood;
   const female = /^[a-z]f_/.test(parseMix(mix)[0]?.[0] ?? mix);
-  const key = `v1-${seedFor(mix, mood ?? "neutral").toString(36)}`;
+  // a character voice has a pitch of its own, a line may add to it: each is a speaker of its own (studio_speaker.ts)
+  const spk = studioSpeaker({ mix, pitch: own.pitch }, mood, tone);
+  const key = spk.key;
   const off = b.onProgress((m) => onProgress?.(m.total ? m.done / m.total : 0, m.what));
   try {
-    let r = await b.say({ key, text: words, lang: code, mood, moodAmount: tone?.moodAmount });
+    // The line keeps its pace: it is spoken a sentence at a time (the model runs short sentences together and
+    // hurries a long line), joined with the silences its marks ask for, and brought to the tone's rate.
+    const pace = { rate: (tone?.rate ?? 1) * (own.speed || 1), pauses: tone?.pauses };
+    const list = phrases(words);
+    const deliver = studioDelivery(pace);
+    const sayOne = (t: string) => b.say({ key, text: t, lang: code, mood, moodAmount: tone?.moodAmount, ...(deliver.cfg < 0.5 ? { cfg: deliver.cfg } : {}), ...(tone?.take ? { take: tone.take } : {}) });
+    let r = await sayOne(list[0] ?? words);
     if (r.needRef) {
       onProgress?.(0, "Preparing the voice");
-      const ref = await openVoice.say(referenceLine(vlang, mood, female), mix, mood ? moodTone(mood) : undefined);
+      // the reference is spoken by the voice itself (a character voice brings its own pitch and pace)
+      const ref = await openVoice.say(referenceLine(vlang, mood, female), voice, Object.keys(spk.tone).length ? spk.tone : undefined);
       await b.speaker({ key, pcm: ref.pcm });
-      r = await b.say({ key, text: words, lang: code, mood, moodAmount: tone?.moodAmount });
+      r = await sayOne(list[0] ?? words);
     }
-    return r.pcm?.length ? { pcm: r.pcm, voice: mix } : null;
+    if (!r.pcm?.length) return null;
+    const parts = [r.pcm];
+    for (const t of list.slice(1)) {
+      const x = await sayOne(t);
+      if (!x.pcm?.length) return null;
+      parts.push(x.pcm);
+    }
+    const { pcm, ...how } = pacing(parts, list, pace);
+    return { pcm, voice: mix, pace: how };
   } finally {
     off();
   }

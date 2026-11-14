@@ -10,6 +10,11 @@ describe("studio text", () => {
     expect(prepareText("Main yahin hoon", "hi")).toBe("[hi]main[SPACE]yahin[SPACE]hoon.");
     // Devanagari nukta letters are decomposed (NFKD), as the model was trained
     expect(prepareText("ज़रा", "hi")).toBe("[hi]ज़रा.");
+    // a Hindi sentence ends with its own full stop: no second one is put after it (the model babbles on after "।.")
+    expect(puncNorm("और आख़िरी भी।")).toBe("और आख़िरी भी।");
+    expect(puncNorm("सुनो॥")).toBe("सुनो॥");
+    expect(prepareText("वादा करता हूँ।", "hi").endsWith("ँ।")).toBe(true);
+    expect(puncNorm("Main yahin hoon")).toBe("Main yahin hoon."); // (a line with no stop still gets one)
   });
 
   it("tokenizes with added tokens and BPE merges", () => {

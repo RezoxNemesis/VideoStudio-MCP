@@ -10,7 +10,7 @@ import { registerCommand } from "./api";
 import { SAMPLE_RATE, mouthEnvelope } from "../voice/engine/audio";
 import { TONES, type Tone, knowsTone, moodTone } from "../voice/engine/open";
 import { readInstruction } from "../voice/engine/instruct";
-import { installStudio, setVoiceEngine, studioSay, studioStatus } from "../voice/studio_client";
+import { installStudio, setVoiceEngine, studioSay, studioStatus, type StudioPace } from "../voice/studio_client";
 import { hinglishShare, transliterateHinglish } from "../voice/engine/hinglish";
 import { openVoice } from "../voice/open_client";
 import { isMood } from "../voice/engine/learned";
@@ -54,6 +54,7 @@ export function readTone(v: unknown): Tone | undefined {
     }
     for (const k of ["pitch", "range", "rate", "energy", "even", "shake", "pauses", "natural", "breath", "drift"] as const) if (typeof o[k] === "number") t[k] = o[k] as number;
     if (o.ending === "rise" || o.ending === "fall" || o.ending === "level") t.ending = o.ending;
+    if (typeof o.take === "number" && Number.isInteger(o.take) && o.take > 0) t.take = o.take;
     return t;
   }
   return undefined;
@@ -70,7 +71,7 @@ export function directLine(text: string, tone?: Tone): { text: string; tone?: To
 }
 
 /** Say one line with the open voice and add it to the media pool (with its mouth movement for lip sync). */
-export async function sayToAsset(s: Studio, line: string, voice: string, toneIn?: Tone, emphasis?: string[], lang?: string): Promise<{ asset: Asset; seconds: number; voice: string }> {
+export async function sayToAsset(s: Studio, line: string, voice: string, toneIn?: Tone, emphasis?: string[], lang?: string): Promise<{ asset: Asset; seconds: number; voice: string; pace?: StudioPace }> {
   const { text, tone } = directLine(line, toneIn);
   s.setStatus("Speaking…");
   openVoice.onProgress = (d, what) => s.setStatus(`${what}… ${Math.round(d * 100)}%`);
@@ -84,7 +85,7 @@ export async function sayToAsset(s: Studio, line: string, voice: string, toneIn?
     if (peak > 0) for (let i = 0; i < pcm.length; i++) pcm[i] = pcm[i]! * Math.min(3, 0.85 / peak);
     const label = text.trim().split(/\s+/).slice(0, 5).join(" ");
     const asset = await s.addBlobAsset(wavBlob(pcm), `Voice – ${label}.wav`, "voice", { mouth: mouthEnvelope(pcm, 30) });
-    return { asset, seconds: pcm.length / SAMPLE_RATE, voice: used };
+    return { asset, seconds: pcm.length / SAMPLE_RATE, voice: used, ...(studio ? { pace: studio.pace } : {}) };
   } finally {
     s.setStatus("");
   }
@@ -103,7 +104,7 @@ export function registerOpenVoiceCommands(): void {
       const text = a.str("text").trim();
       if (!text) throw new ops.OpError("There is no text to say.");
       const em = a.any("emphasis");
-      const { asset, seconds, voice } = await sayToAsset(s, text, a.str("voice", a.optStr("lang") ? (langOf(a.optStr("lang"))?.voice ?? "hf_alpha") : "hf_alpha"), readTone(a.any("tone")), Array.isArray(em) ? em.map(String) : undefined, a.optStr("lang"));
+      const { asset, seconds, voice, pace } = await sayToAsset(s, text, a.str("voice", a.optStr("lang") ? (langOf(a.optStr("lang"))?.voice ?? "hf_alpha") : "hf_alpha"), readTone(a.any("tone")), Array.isArray(em) ? em.map(String) : undefined, a.optStr("lang"));
       let clipId: string | undefined;
       if (a.bool("toTimeline", true))
         clipId = s.mutate("place voice", (p) => {
@@ -111,7 +112,7 @@ export function registerOpenVoiceCommands(): void {
           if (a.optNum("volume") !== undefined) ops.patchClip(p, c.id, { volume: a.num("volume") });
           return c.id;
         });
-      return { assetId: asset.id, clipId, seconds: Math.round(seconds * 100) / 100, voice, readAs: !langOf(a.optStr("lang")) && hinglishShare(text) >= 0.12 ? transliterateHinglish(text) : undefined };
+      return { assetId: asset.id, clipId, seconds: Math.round(seconds * 100) / 100, voice, pace, readAs: !langOf(a.optStr("lang")) && hinglishShare(text) >= 0.12 ? transliterateHinglish(text) : undefined };
     },
   );
 

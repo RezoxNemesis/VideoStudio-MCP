@@ -18,6 +18,7 @@ import {
   packSpeaker,
   say,
   seedFor,
+  takeSeed,
   STUDIO_FILES,
   STUDIO_REPO,
   STUDIO_REVISION,
@@ -144,17 +145,24 @@ async function handle(m: Msg): Promise<unknown> {
       const mdl = await load();
       const mood = typeof p.mood === "string" ? p.mood : undefined;
       const act = acting(mood, typeof p.moodAmount === "number" ? p.moodAmount : 1);
+      // a slow line asks for a more deliberate delivery than its mood alone would give
+      if (typeof p.cfg === "number") act.cfg = Math.min(act.cfg, Math.max(0.1, p.cfg));
       const text = String(p.text);
       let first: Float32Array | null = null;
+      let firstScore = Infinity;
       for (let attempt = 0; attempt < 3; attempt++) {
         const r = await say(mdl, text, spk, {
           lang: String(p.lang ?? "en"),
           ...act,
-          seed: seedFor(key, text, String(attempt)),
+          seed: takeSeed(key, text, attempt, typeof p.take === "number" ? p.take : 0),
+          trace: p.trace === true,
           onToken: (n) => n % 25 === 0 && send({ id: m.id, event: "progress", done: n, what: "Acting the line" }),
         });
+        if (p.trace) return { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, attempt };
         if (r.complete) return { pcm: r.pcm };
-        first ??= r.pcm;
+        // none clean so far: a take that said the line with a leap is still better than one that never got through it
+        const score = r.pass ? r.pass.dirt : 1e6;
+        if (!first || score < firstScore) { first = r.pcm; firstScore = score; }
       }
       return { pcm: first };
     }

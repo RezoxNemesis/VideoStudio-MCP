@@ -9,6 +9,74 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import * as ort from "onnxruntime-node";
 
+// src/voice/engine/studio_pass.ts
+function settle(cur) {
+  const out = [];
+  for (let i = 0; i < cur.length; i++) {
+    const w = cur.slice(Math.max(0, i - 2), i + 3).sort((a, b) => a - b);
+    out.push(w[w.length - 1 >> 1]);
+  }
+  return out;
+}
+function passes(cur, S) {
+  if (S < 6 || !cur.length) return [];
+  const low = Math.max(3, Math.round(S * 0.12)), sm = settle(cur), out = [];
+  let p = null;
+  let off = 0;
+  for (let f = 0; f < sm.length; f++) {
+    const c = sm[f];
+    if (!p) {
+      if (c <= low) {
+        p = { from: f, end: -1, dirt: 0, pos: c, last: f };
+        off = 0;
+      }
+      continue;
+    }
+    const d = c - p.pos;
+    if (d > -4 && d < 7) {
+      if (c > p.pos) p.last = f;
+      p.pos = c;
+      off = 0;
+      if (p.end < 0 && p.pos >= S - 2) p.end = f;
+      continue;
+    }
+    if (c <= low && p.pos > low + 3) {
+      out.push(p);
+      p = { from: f, end: -1, dirt: 0, pos: c, last: f };
+      off = 0;
+      continue;
+    }
+    if (p.end >= 0) continue;
+    p.dirt++;
+    if (++off >= 3) {
+      p.dirt += 5;
+      p.pos = c;
+      p.last = f;
+      off = 0;
+      if (p.end < 0 && p.pos >= S - 2) p.end = f;
+    }
+  }
+  if (p) out.push(p);
+  return out;
+}
+function cleanPass(cur, S) {
+  let best = null;
+  for (const p of passes(cur, S)) {
+    if (p.end < 0) continue;
+    if (!best || p.dirt < best.dirt || p.dirt === best.dirt && p.end - p.from > best.end - best.from) best = p;
+  }
+  return best ? { from: best.from, end: best.end, dirt: best.dirt } : null;
+}
+function tailOver(cur, S, wait = 16) {
+  const all = passes(cur, S), low = Math.max(3, Math.round(S * 0.12));
+  let best = null;
+  for (const p of all) if (p.end >= 0 && p.dirt === 0 && (!best || p.end - p.from > best.end - best.from)) best = p;
+  if (!best || cur.length - best.end <= wait) return false;
+  const lastP = all[all.length - 1];
+  if (lastP !== best && lastP.from > best.end && lastP.end < 0 && lastP.pos > low + 3 && cur.length - lastP.last <= 12) return false;
+  return true;
+}
+
 // src/voice/engine/studio.ts
 var STUDIO_SR = 24e3;
 var STUDIO_REPO = "onnx-community/chatterbox-multilingual-ONNX";
@@ -42,7 +110,7 @@ function puncNorm(text) {
   const swaps = [["...", ", "], ["\u2026", ", "], [":", ","], [" - ", ", "], [";", ", "], ["\u2014", "-"], ["\u2013", "-"], [" ,", ","], ["\u201C", '"'], ["\u201D", '"'], ["\u2018", "'"], ["\u2019", "'"]];
   for (const [a, b] of swaps) t = t.split(a).join(b);
   t = t.replace(/ +$/, "");
-  if (![".", "!", "?", "-", ",", "\u3001", "\uFF0C", "\u3002", "\uFF1F", "\uFF01"].some((p) => t.endsWith(p))) t += ".";
+  if (![".", "!", "?", "-", ",", "\u3001", "\uFF0C", "\u3002", "\uFF1F", "\uFF01", "\u0964", "\u0965"].some((p) => t.endsWith(p))) t += ".";
   return t;
 }
 function prepareText(text, lang) {
@@ -171,6 +239,9 @@ var Aligner = class {
   tailSums;
   repSum = 0;
   lastTok = [];
+  trace = null;
+  /** The text position attended at every frame: the path the speech took through the line (studio_pass.ts). */
+  curs = [];
   /** One frame of attention over the text (S values per row); may force or forbid the end in `logits`. */
   step(rows, logits, lastToken) {
     const S = this.S;
@@ -187,6 +258,17 @@ var Aligner = class {
     }
     const last = rows[rows.length - 1];
     for (let c = 1; c < S; c++) if (last[c] > last[cur]) cur = c;
+    this.curs.push(cur);
+    if (this.trace) {
+      let f4 = 0, t2 = 0;
+      for (const r of rows) {
+        for (let c = 0; c < Math.min(4, S); c++) f4 = Math.max(f4, r[c]);
+        for (let c = Math.max(0, S - 2); c < S; c++) t2 = Math.max(t2, r[c]);
+      }
+      this.trace.cur.push(cur);
+      this.trace.first.push(Math.round(f4 * 100) / 100);
+      this.trace.tail.push(Math.round(t2 * 100) / 100);
+    }
     if (cur - this.pos > -4 && cur - this.pos < 7) this.pos = cur;
     if (this.endAt < 0 && this.pos >= S - 2) this.endAt = this.rows;
     if (!this.complete && this.pos >= S - 3) {
@@ -254,6 +336,7 @@ async function say(models2, text, spk, o) {
   }
   const textIdx = ids.map((id, k) => id < START ? k : -1).filter((k) => k >= 0);
   const al = new Aligner(L0 + textIdx[0], L0 + textIdx[textIdx.length - 1] + 1);
+  if (o.trace) al.trace = { cur: [], first: [], tail: [], S: al.S };
   const nText = textIdx.length;
   const cap = 40 + nText * 6;
   let feeds = { inputs_embeds: T("float32", x, [B, seq0, D]) };
@@ -282,7 +365,12 @@ async function say(models2, text, spk, o) {
       for (const m of maps) for (let c = 0; c < al.S; c++) row[c] = row[c] + m[r * total + al.i + c] / maps.length;
       return row;
     });
-    const why = al.step(A, l, gen[gen.length - 1]);
+    let why = al.step(A, l, gen[gen.length - 1]);
+    if (!why && tailOver(al.curs, al.S)) {
+      l.fill(-1e9);
+      l[STOP] = 1e9;
+      why = "long_tail";
+    }
     for (const t of new Set(gen)) l[t] = l[t] < 0 ? l[t] * rep : l[t] / rep;
     let next;
     if (temp > 0) {
@@ -334,7 +422,9 @@ async function say(models2, text, spk, o) {
     total++;
   }
   let toks = gen.slice(1).filter((t) => t < START);
-  if (al.endAt >= 0 && toks.length > al.endAt + 12) toks = toks.slice(0, al.endAt + 10);
+  const pass = cleanPass(al.curs, al.S);
+  if (pass) toks = toks.slice(Math.max(0, pass.from - 1), pass.end + 11);
+  else if (al.endAt >= 0 && toks.length > al.endAt + 12) toks = toks.slice(0, al.endAt + 10);
   const speech = new BigInt64Array(spk.promptToken.length + toks.length);
   speech.set(spk.promptToken);
   speech.set(BigInt64Array.from(toks, BigInt), spk.promptToken.length);
@@ -344,7 +434,7 @@ async function say(models2, text, spk, o) {
     speaker_features: T("float32", spk.promptFeat, [1, spk.featLen, 80])
   });
   const wav = Float32Array.from(Object.values(dec)[0].data);
-  return { pcm: trimSilence(wav), complete: al.complete, reason, tokens: toks.length };
+  return { pcm: trimSilence(wav), complete: al.S >= 6 ? !!pass && pass.dirt === 0 : al.complete, reason, tokens: toks.length, ...al.trace ? { trace: al.trace } : {}, ...pass ? { pass } : {} };
   function headAttention(out, rows, total2, seq) {
     return ALIGNED.map(([layer, h]) => {
       const qkv = out[`/model/layers.${layer}/attn/qkv_proj/MatMul/output_0`].data;
@@ -492,6 +582,9 @@ function seedFor(...parts) {
   }
   return h >>> 0;
 }
+function takeSeed(key, text, attempt, take = 0) {
+  return take > 0 ? seedFor(key, text, String(attempt), `take ${Math.round(take)}`) : seedFor(key, text, String(attempt));
+}
 
 // desktop/voice/src/worker.ts
 var send = (m) => process.send?.(m);
@@ -600,17 +693,25 @@ async function handle(m) {
       const mdl = await load();
       const mood = typeof p.mood === "string" ? p.mood : void 0;
       const act = acting(mood, typeof p.moodAmount === "number" ? p.moodAmount : 1);
+      if (typeof p.cfg === "number") act.cfg = Math.min(act.cfg, Math.max(0.1, p.cfg));
       const text = String(p.text);
       let first = null;
+      let firstScore = Infinity;
       for (let attempt = 0; attempt < 3; attempt++) {
         const r = await say(mdl, text, spk, {
           lang: String(p.lang ?? "en"),
           ...act,
-          seed: seedFor(key, text, String(attempt)),
+          seed: takeSeed(key, text, attempt, typeof p.take === "number" ? p.take : 0),
+          trace: p.trace === true,
           onToken: (n) => n % 25 === 0 && send({ id: m.id, event: "progress", done: n, what: "Acting the line" })
         });
+        if (p.trace) return { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, attempt };
         if (r.complete) return { pcm: r.pcm };
-        first ??= r.pcm;
+        const score = r.pass ? r.pass.dirt : 1e6;
+        if (!first || score < firstScore) {
+          first = r.pcm;
+          firstScore = score;
+        }
       }
       return { pcm: first };
     }

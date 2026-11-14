@@ -119,6 +119,9 @@ export function voiceSpec(script, ln, lang) {
     }
   }
   tone.rate = +((tone.rate ?? 1) * (script.pace?.[lang] ?? 1)).toFixed(3);
+  // another take of the line in this language (when the first lost a word): it is acted afresh, the other languages keep theirs
+  const take = ln[`take_${lang}`] ?? ln.take;
+  if (Number.isInteger(take) && take > 0) tone.take = take; else delete tone.take;
   const text = ln[`${lang}_say`] ?? ln[lang] ?? ln.en ?? '', emphasis = ln[`em_${lang}`] ?? [];
   return { id: ln.id, lang, who: ln.who, text, show: ln[lang] ?? ln.en ?? text, voice, tone, emphasis, key: md5(JSON.stringify(ordered([text, voice, tone, emphasis]))).slice(0, 12) };
 }
