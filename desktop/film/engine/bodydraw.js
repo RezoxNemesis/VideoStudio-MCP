@@ -279,6 +279,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     const paint = paintOf(ch, B, p, lit), nr = normalsOf(p.out, p.idx, p.nrm);
     if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
     if (p.idxLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); }
+    // fingers: each its own part of the skin, so two that lie side by side have a line between them (none where they leave the palm)
+    if (p.idxFingers) p.idxFingers.forEach((fi, f) => { if (fi.length) limbIds.add(cp.add(p.out, fi, { ...paint, bands: undefined, group: `finger${f + 1}`, ...(f ? { joins: paint.group ?? p.name } : {}) }, nr)); }); // (the thumb is outlined against the hand it lies on)
     if (real && p.material === 'skin' && p.idxHead.length) {
       // the face: lit almost everywhere (a drawn face keeps its shadows to the jaw and the far cheek); brows ride on the skin
       const xy = p.faceXY ?? (p.faceXY = (() => { const a = new Float32Array(p.n * 2), base = p.base ?? p.pos; for (let v = 0; v < p.n; v++) { const front = base[v * 3 + 2] > eyeZ - 0.045; a[v * 2] = front ? base[v * 3] : 9; a[v * 2 + 1] = base[v * 3 + 1] - eyeY; } return a; })());

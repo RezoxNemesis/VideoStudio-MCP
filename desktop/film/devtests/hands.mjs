@@ -97,6 +97,28 @@ for (const s of ['L', 'R']) for (const name of ['relax', 'grip']) {
   const none = typeof handsFor === 'function' ? handsFor({ ...pose, props: {} }, undefined) : null;
   ok(none && none.L === 'relax' && none.R === 'relax', 'a film that poses no hand: both hang relaxed', none);
 }
+// fingers that lie side by side are still five fingers: the painter draws a line between neighbours (and none where a finger joins the palm)
+{
+  const { CelPainter, splitFingers } = await import('../engine/body.js');
+  const { makeCam } = await import('../engine/camera.js');
+  // which triangles are which finger: by the bones their corners hang on
+  const boneFinger = [0, 0, 2, 2, 3], si = Uint16Array.from([0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 2, 1, 0, 0]), sw = Float32Array.from([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0.6, 0.4, 0, 0]);
+  const parts = typeof splitFingers === 'function' ? splitFingers(Uint32Array.from([0, 1, 5, 2, 3, 5, 4, 4, 4, 0, 1, 4]), si, sw, boneFinger) : null;
+  ok(parts && Array.from(parts.rest).join() === '0,1,5,0,1,4' && Array.from(parts.fingers[1]).join() === '2,3,5' && Array.from(parts.fingers[2]).join() === '4,4,4' && parts.fingers[0].length === 0, 'splitFingers tells a hand\'s triangles apart: palm and arm, and each finger by the bones it hangs on', parts && [Array.from(parts.rest), parts.fingers.map((f) => Array.from(f))]);
+  // the thumb's first bone lies inside the hand (the ball of the thumb is palm); the free thumb is the finger
+  const { fingerOfBone } = await import('../engine/body.js');
+  const fb = typeof fingerOfBone === 'function' ? ['finger1-1.L', 'finger1-2.L', 'finger1-3.R', 'finger2-1.L', 'finger5-3.R', 'wrist.L', 'metacarpal2.R'].map(fingerOfBone) : null;
+  ok(fb && fb.join() === '0,1,1,2,5,0,0', 'which finger a bone belongs to: the thumb from its second bone on, the other four whole, nothing else', fb);
+  const quad = (x0, x1, y0, y1) => ({ pos: Float32Array.from([x0, y0, 0, x1, y0, 0, x1, y1, 0, x0, y1, 0]), idx: Uint32Array.from([0, 1, 2, 0, 2, 3]) });
+  const cam = makeCam({ pos: [0, 1, 1], target: [0, 1, 0], fov: 20 }, 200, 200), cp = new CelPainter(cam, { ss: 2, light: [0, 0.3, 1], lw: 2, lwIn: 2, shadows: false });
+  const skin = { fill: [230, 180, 150], shade: [190, 130, 110], thr: -0.5, two: true };
+  const palm = quad(-0.06, 0.06, 1.0, 1.1), f2 = quad(-0.06, 0, 0.9, 1.0), f3 = quad(0, 0.06, 0.9, 1.0);
+  cp.add(palm.pos, palm.idx, { ...skin, group: 'skin' }); cp.add(f2.pos, f2.idx, { ...skin, group: 'finger2', joins: 'skin' }); cp.add(f3.pos, f3.idx, { ...skin, group: 'finger3', joins: 'skin' });
+  const r = cp.finish(), at = (wx, wy) => { const q = cam.project([wx, wy, 0]), d = r.canvas.getContext('2d').getImageData(Math.round(q[0] - r.x), Math.round(q[1] - r.y), 1, 1).data; return d[0]; };
+  ok(at(0, 0.95) < 150, 'two fingers side by side: a line between them', at(0, 0.95));
+  ok(at(-0.03, 1.0) > 200 && at(0.03, 1.0) > 200, 'where a finger joins the palm: no line', [at(-0.03, 1.0), at(0.03, 1.0)]);
+  ok(at(-0.03, 0.95) > 200, 'the finger itself is skin', at(-0.03, 0.95));
+}
 // both hands are the same hand, mirrored
 { const l = measure('relax', 'L'), r = measure('relax', 'R'); ok(Math.abs(l.fan - r.fan) < 1.5 && Math.abs(l.thumbYaw - r.thumbYaw) < 1.5, 'left and right hands mirror each other (within 1.5°)', [l.fan - r.fan, l.thumbYaw - r.thumbYaw].map(r1)); }
 

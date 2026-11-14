@@ -25,6 +25,24 @@ function smoothEdge(pos, idx, iters = 10) {
 const HEADISH = /^(head|jaw|eye\.|special|levator|oculi|orbicularis|oris|temporalis|risorius|tongue)/;
 const FINGER = /^finger([1-5])-([1-3])\.(L|R)$/;
 
+/** Which finger a bone belongs to (1 = thumb … 5 = little finger; 0 = none). The thumb's first bone lies inside the hand — the ball of the thumb is palm — so the thumb counts from its second bone. */
+export function fingerOfBone(name) { const f = FINGER.exec(name); return !f || (f[1] === '1' && f[2] === '1') ? 0 : +f[1]; }
+
+/**
+ * A hand's triangles told apart: { rest (palm, arm and all else), fingers: [thumb … little finger] } — a triangle is a
+ * finger's when most of its three corners hang on that finger's bones. boneFinger[b]: 0, or 1…5 for a finger's bone.
+ * (Fingers that lie side by side are drawn as five only if the painter knows one from the next.)
+ */
+export function splitFingers(tris, si, sw, boneFinger) {
+  const rest = [], fingers = [[], [], [], [], []], w = [0, 0, 0, 0, 0, 0];
+  for (let t = 0; t + 2 < tris.length; t += 3) {
+    w.fill(0); for (let c = 0; c < 3; c++) { const v = tris[t + c]; for (let k = 0; k < 4; k++) { const f = boneFinger[si[v * 4 + k]] ?? 0; if (f) w[f] += sw[v * 4 + k]; } }
+    let best = 0; for (let f = 1; f <= 5; f++) if (w[f] > w[best]) best = f; // (w[0] stays 0: no finger)
+    (best && w[best] > 1.5 ? fingers[best - 1] : rest).push(tris[t], tris[t + 1], tris[t + 2]);
+  }
+  return { rest: Uint32Array.from(rest), fingers: fingers.map((f) => Uint32Array.from(f)) };
+}
+
 /** The body of a baked actor, ready to pose: null when the performance was solved without bodies. */
 export function bodyOf(bake, id) {
   const a = bake.actors[id];
@@ -33,6 +51,7 @@ export function bodyOf(bake, id) {
   const m = a.bodyMeta, ab = a.ab, nb = m.bones.length;
   const head = new Float32Array(nb * 3), tail = new Float32Array(nb * 3), parent = new Int16Array(nb), bi = {};
   m.bones.forEach((b, i) => { head.set(b.head, i * 3); tail.set(b.tail, i * 3); parent[i] = b.parent; bi[b.name] = i; });
+  const boneFinger = m.bones.map((b) => fingerOfBone(b.name));
   const headish = m.bones.map((b) => HEADISH.test(b.name)), armish = m.bones.map((b) => /^(upperarm|lowerarm|wrist|finger|metacarpal)/.test(b.name));
   const parts = m.parts.map((p) => {
     const n = p.vcount, pos = new Float32Array(ab, p.pos[0], n * 3), idx0 = new Uint32Array(ab, p.idx[0], p.idx[1] / 4), si = new Uint16Array(ab, p.skinIndex[0], n * 4), sw = new Float32Array(ab, p.skinWeight[0], n * 4);
@@ -71,7 +90,9 @@ export function bodyOf(bake, id) {
     for (let t = 0; t < idx0.length; t += 3) { const a0 = idx0[t], b0 = idx0[t + 1], c0 = idx0[t + 2]; if (hw[a0] + hw[b0] + hw[c0] < 2.2) continue;
       let inside = false; if (mo && p.material === 'skin') { inside = true; for (const v of [a0, b0, c0]) { const dx = pos[v * 3] - mo[0], dy = pos[v * 3 + 1] - mo[1], dz = pos[v * 3 + 2] - mo[2]; if (!(Math.abs(dx) < 0.03 && Math.abs(dy) < 0.022 && dz < -0.016 && dz > -0.07)) inside = false; } }
       (inside ? mouthT : headT).push(a0, b0, c0); }
-    return { idxLimb: Uint32Array.from(limb), idxCore: Uint32Array.from(core), idxHead: Uint32Array.from(headT), idxMouth: Uint32Array.from(mouthT), u, morphs, base: morphs ? Float32Array.from(rest) : null, rest0: pos,
+    // the skin of the hands: each finger apart from the palm, so that fingers held together are still drawn as fingers
+    const fsplit = p.material === 'skin' ? splitFingers(limb, si, sw, boneFinger) : null;
+    return { idxLimb: fsplit ? fsplit.rest : Uint32Array.from(limb), idxFingers: fsplit ? fsplit.fingers : null, idxCore: Uint32Array.from(core), idxHead: Uint32Array.from(headT), idxMouth: Uint32Array.from(mouthT), u, morphs, base: morphs ? Float32Array.from(rest) : null, rest0: pos,
       name: p.name, material: p.material, params: p.params ?? {}, n, pos: morphs ? Float32Array.from(rest) : rest, idx: idx0, idxNoHead: Uint32Array.from(keep), si, sw, out: new Float32Array(n * 3), nrm: new Float32Array(n * 3) };
   });
   const rig = { fps: a.rigMeta.fps, frames: a.rigMeta.frames, data: new Float32Array(ab, a.rigMeta.data[0], a.rigMeta.frames * nb * 7) };
@@ -303,6 +324,8 @@ export function normalsOf(pos, idx, nrm) {
  * them: { canvas, x, y } to draw at (x, y), and depthAt(px, py) (metres from the lens; Infinity where empty).
  *   paint: { fill: [r,g,b], shade: [r,g,b], hi?: [r,g,b] (a highlight tone: metal, hair), thr? (where light turns to
  *            shadow, −1…1, default 0.08), line? (false: this part draws no inner line against its neighbours),
+ *            group? (no line between parts of one group), joins? (a group this part grows out of: no line there,
+ *            but a line against its neighbours — fingers on a palm),
  *            two? (true: seen from both sides — cloth), flat? (no shadow tone), castHair? / recvHair? (hair, and the
  *            skin its shadow falls on: a fringe on the brow) }
  * o: { ss (fineness, default 2), light: unit vector towards the light (world), ink: [r,g,b], lw (outline, picture px),
@@ -398,6 +421,7 @@ export class CelPainter {
         if (!a || !b) { stamp(d ? x : (a ? x : x + 1), d ? (a ? y : y + 1) : y, outR); continue; }
         if (P[a].line === false && P[b].line === false) continue;
         if (P[a].group && P[a].group === P[b].group) continue;
+        if (P[a].joins && P[a].joins === P[b].group || P[b].joins && P[b].joins === P[a].group) continue; // a part that grows out of another (a finger out of the palm): no line where they join
         // faces of one material that only differ by a shade (a model's colour atlas) are one surface: no line between them
         if (P[a].soft && P[b].soft) { const fa = P[a].fill, fb = P[b].fill; if (Math.abs(fa[0] - fb[0]) + Math.abs(fa[1] - fb[1]) + Math.abs(fa[2] - fb[2]) < 70) continue; }
         stamp(x, y, inR, inkI);
