@@ -42,6 +42,8 @@ jobs:
         run: |
           npm ci
           npm ci --prefix film || npm install --prefix film   # the film engine of Code Studio (its canvas library)
+          npm ci --prefix voice || npm install --prefix voice # VolTune Studio voices (onnxruntime-node)
+          node voice/build.mjs                                # bundle the studio voice worker
           npx tsc --noEmit -p tsconfig.json
           npm version --no-git-tag-version --allow-same-version "$VERSION"
 

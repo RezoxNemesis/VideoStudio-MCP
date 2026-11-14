@@ -68,6 +68,14 @@ contextBridge.exposeInMainWorld("vsd", {
     ollamaPull: (model) => call("sensei.ollamaPull", model),
     onOllama: (fn) => { const l = (_e, m) => fn(m); ipcRenderer.on("sensei:ollama", l); return () => ipcRenderer.removeListener("sensei:ollama", l); },
   },
+  /** VolTune Studio voices (electron/voice-studio.cjs): natural acting, model downloaded once. */
+  studio: {
+    status: () => call("studio.status"),
+    install: () => call("studio.install"),
+    say: (p) => call("studio.say", p),
+    speaker: (p) => call("studio.speaker", p),
+    onProgress: (fn) => { const l = (_e, m) => fn(m); ipcRenderer.on("studio:progress", l); return () => ipcRenderer.removeListener("studio:progress", l); },
+  },
   /** Code Studio: films written as code (see electron/film.cjs). */
   film: {
     info: () => call("film.info"),

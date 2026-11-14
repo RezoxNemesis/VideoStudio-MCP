@@ -10,6 +10,7 @@ import { registerCommand } from "./api";
 import { SAMPLE_RATE, mouthEnvelope } from "../voice/engine/audio";
 import { TONES, type Tone, knowsTone, moodTone } from "../voice/engine/open";
 import { readInstruction } from "../voice/engine/instruct";
+import { installStudio, setVoiceEngine, studioSay, studioStatus } from "../voice/studio_client";
 import { hinglishShare, transliterateHinglish } from "../voice/engine/hinglish";
 import { openVoice } from "../voice/open_client";
 import { isMood } from "../voice/engine/learned";
@@ -74,7 +75,9 @@ export async function sayToAsset(s: Studio, line: string, voice: string, toneIn?
   s.setStatus("Speaking…");
   openVoice.onProgress = (d, what) => s.setStatus(`${what}… ${Math.round(d * 100)}%`);
   try {
-    const { pcm, voice: used } = await openVoice.say(text, voice, tone, emphasis, lang);
+    // VolTune Studio (desktop): natural acting; the standard voice when it is not installed or switched off.
+    const studio = await studioSay(text, voice, tone, lang, (d, what) => s.setStatus(`${what}… ${Math.round(d * 100)}%`));
+    const { pcm, voice: used } = studio ?? (await openVoice.say(text, voice, tone, emphasis, lang));
     if (!pcm.length) throw new ops.OpError("The voice returned no sound for this line.");
     let peak = 0;
     for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));
@@ -109,6 +112,19 @@ export function registerOpenVoiceCommands(): void {
           return c.id;
         });
       return { assetId: asset.id, clipId, seconds: Math.round(seconds * 100) / 100, voice, readAs: !langOf(a.optStr("lang")) && hinglishShare(text) >= 0.12 ? transliterateHinglish(text) : undefined };
+    },
+  );
+
+  registerCommand(
+    "voice.studio",
+    `{install?: true, engine?: "studio"|"standard"} VolTune Studio voices (desktop app): natural, acted delivery for every VolTune voice (Chatterbox Multilingual, run on this PC). The model is downloaded once (about 1.5 GB) with install:true. engine picks what voice.say, the Stage and films use; "studio" falls back to the standard voice until it is installed. Returns {available, installed, downloadBytes, engine}.`,
+    async (s, a) => {
+      if (a.optStr("engine")) setVoiceEngine(a.str("engine") === "standard" ? "standard" : "studio");
+      if (a.bool("install", false)) {
+        await installStudio((d, what) => s.setStatus(`${what}… ${Math.round(d * 100)}%`));
+        s.setStatus("");
+      }
+      return studioStatus();
     },
   );
 

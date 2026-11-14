@@ -51,12 +51,12 @@
       ],
       "category": "AudioVideo",
       "icon": "build/icon.png",
-      "synopsis": "Pro video editor, animation studio and voices \u2014 with Claude",
+      "synopsis": "Pro video editor, animation studio and voices — with Claude",
       "maintainer": "RezoxNemesis <vikastandon4510c@gmail.com>",
       "desktop": {
         "entry": {
           "Name": "VideoStudio",
-          "Comment": "Edit, animate and render \u2014 with Claude",
+          "Comment": "Edit, animate and render — with Claude",
           "Categories": "AudioVideo;Video;AudioVideoEditing;Graphics;",
           "StartupWMClass": "VideoStudio"
         }
@@ -119,6 +119,20 @@
           "!devtests/**",
           "!**/.vs/**",
           "!**/vs.js"
+        ]
+      },
+      {
+        "from": "voice",
+        "to": "voice",
+        "filter": [
+          "worker.mjs",
+          "package.json",
+          "node_modules/**/*",
+          "!node_modules/onnxruntime-node/bin/napi-v6/darwin/**",
+          "!node_modules/onnxruntime-node/bin/napi-v6/win32/**",
+          "!node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/**",
+          "!**/libonnxruntime_providers_cuda.so",
+          "!**/libonnxruntime_providers_tensorrt.so"
         ]
       },
       {
