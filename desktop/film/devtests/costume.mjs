@@ -116,5 +116,37 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a
   ok(!plainTail.some((m) => m.tie), 'hair tied without a cord shows none', plainTail.length);
 }
 
+// ---- 3. armour of small plates
+{
+  const { platePaint } = await import('../engine/bodydraw.js');
+  const rgbOf = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)], base = { fill: [60, 62, 70], shade: [30, 31, 36], metal: true, bias: 0.002 };
+  const P = platePaint(base, { h: 0.05, w: 0.04, color: '#3c3e46', lace: '#8f1d23' }, rgbOf);
+  ok(!!P && typeof P.map === 'function' && Array.isArray(P.maps), 'platePaint(base, plates): armour is painted by a map of its plates', !!P);
+  if (P?.map) {
+    const tone = (x, y) => { const k = P.map(x, y); return k < 0 ? 'plate' : P.maps[k].name; };
+    const y0 = 1.2; // the lower edge of a row
+    ok(tone(0.02, y0 + 0.025) === 'plate', 'the middle of a plate is the plate itself', tone(0.02, y0 + 0.025));
+    ok(tone(0.02, y0 + 0.004) === 'lip', 'its lower edge catches the light', tone(0.02, y0 + 0.004));
+    ok(tone(0.02, y0 + 0.046) === 'under', 'its top lies in the shadow of the row above (the rows lap over one another)', tone(0.02, y0 + 0.046));
+    const gaps = (y) => { const out = []; let was = false; for (let x = -0.1; x < 0.1; x += 0.0005) { const g = tone(x, y) === 'gap'; if (g && !was) out.push(x); was = g; } return out; };
+    const g0 = gaps(y0 + 0.025), g1 = gaps(y0 + 0.075);
+    ok(g0.length >= 4 && g0.length <= 6 && Math.abs((g0[1] - g0[0]) - 0.04) < 0.002, 'the plates of a row are as wide as asked, with a line between them', g0.map((v) => +v.toFixed(3)));
+    ok(g1.length >= 4 && Math.abs(Math.abs(((g1[0] - g0[0]) % 0.04 + 0.04) % 0.04) - 0.02) < 0.003, 'the next row is set half a plate over, like bricks', [g0[0], g1[0]]);
+    let plate = 0, lace = 0, n = 0; for (let y = 1.0; y < 1.4; y += 0.0017) for (let x = -0.15; x < 0.15; x += 0.0013) { const t = tone(x, y); n++; if (t === 'plate') plate++; if (t === 'lace') lace++; }
+    ok(plate / n > 0.5, 'most of it is plate', plate / n);
+    ok(lace / n > 0.01 && lace / n < 0.12, 'every plate is laced with a little of the cord\'s colour', lace / n);
+    ok(P.maps.find((m) => m.name === 'lace').fill[0] > 120 && P.maps.find((m) => m.name === 'lace').fill[2] < 60, 'in the colour asked for', P.maps.find((m) => m.name === 'lace').fill);
+    const lum = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11, M = (nm) => P.maps.find((m) => m.name === nm);
+    ok(lum(M('lip').fill) > lum(base.fill) + 15 && lum(M('under').fill) < lum(base.fill) - 12 && lum(M('gap').fill) < lum(base.fill) - 12, 'the lip is lighter than the plate, the lap and the lines between plates darker', [lum(M('lip').fill), lum(base.fill), lum(M('under').fill)]);
+    ok(tone(0.02, y0 + 0.025 + 10) === 'plate' && tone(0.02, y0 + 0.004 + 10) === 'lip', 'the plates go round the back', [tone(0.02, y0 + 0.025 + 10)]);
+    const part = platePaint(base, { h: 0.05, w: 0.04, from: 1.1, to: 1.3 }, rgbOf);
+    const pt = (x, y) => { const k = part.map(x, y); return k < 0 ? 'plate' : part.maps[k].name; };
+    let outside = 0; for (let y = 0.8; y < 1.09; y += 0.003) for (let x = -0.1; x < 0.1; x += 0.007) if (pt(x, y) !== 'plate') outside++;
+    for (let y = 1.31; y < 1.6; y += 0.003) for (let x = -0.1; x < 0.1; x += 0.007) if (pt(x, y) !== 'plate') outside++;
+    ok(outside === 0 && pt(0.02, 1.2 + 0.004) === 'lip', 'plates can be kept to a part of a garment\'s height (a skirt of plates under plain cloth)', outside);
+    ok(!part.maps.some((m) => m.name === 'lace') || (() => { let l = 0; for (let y = 1.1; y < 1.3; y += 0.002) for (let x = -0.1; x < 0.1; x += 0.002) if (pt(x, y) === 'lace') l++; return l === 0; })(), 'no cord shows where none is asked for', part.maps.map((m) => m.name));
+  }
+}
+
 if (fails.length) { console.error(`costume: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`costume: ${checks} rules hold`);

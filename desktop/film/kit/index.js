@@ -6,6 +6,7 @@
 // World: y up, metres; yaw 0 faces +Z. A sequence = one place and one solved performance, cut into shots (cameras).
 export * from '../engine/core.js';
 export * from '../engine/scene.js';
+export * from '../engine/paintland.js';
 export { post as pole } from '../engine/scene.js'; // a thin upright (the kit's own `post` is the picture finishing)
 export * from '../engine/fx.js';
 export * from '../engine/sim.js';
@@ -23,6 +24,7 @@ export * from './acting.js';
 export * from './titles.js';
 export * from './arrows.js';
 export * from './riders.js';
+export * from './legions.js';
 export * from './fights.js';
 export * from './sets.js';
 export * from './design.js';

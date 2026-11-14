@@ -197,6 +197,28 @@ function thumbOver(B, F, s, hd) {
   aim(T[2], norm(sub(tipT, ip)));
 }
 
+/** A body's own axes as it is posed: { side (towards its left), up, fwd (the way it faces) }, from where its hips are. */
+export function bodyAxes(B) {
+  const P = B.P, l = B.bi['upperleg01.L'], r = B.bi['upperleg01.R'];
+  let sx = P[l * 3] - P[r * 3], sz = P[l * 3 + 2] - P[r * 3 + 2]; const n = Math.hypot(sx, sz) || 1; sx /= n; sz /= n;
+  return { side: [sx, 0, sz], up: [0, 1, 0], fwd: [-sz, 0, sx] };
+}
+/**
+ * Turn a bone of the posed body about its own joint (axis: a unit vector, ang: radians): everything that hangs on the
+ * bone goes with it, nothing else moves. A film's own change to a performance: a rider's thighs laid along the horse,
+ * a forearm raised to carry a spear upright.
+ */
+export function bendBone(B, name, axis, ang) {
+  const b0 = B.bi[name]; if (b0 === undefined || !ang) return;
+  const kids = (B.under ??= {})[name] ?? (B.under[name] = (() => { const out = [b0]; for (let b = 0; b < B.nb; b++) { let p = B.parent[b]; while (p >= 0 && p !== b0) p = B.parent[p]; if (p === b0) out.push(b); } return out; })());
+  const { P, Q } = B, sn = Math.sin(ang / 2), rq = [axis[0] * sn, axis[1] * sn, axis[2] * sn, Math.cos(ang / 2)], px = P[b0 * 3], py = P[b0 * 3 + 1], pz = P[b0 * 3 + 2], o = [0, 0, 0, 0];
+  for (const b of kids) {
+    const r = qrotv(rq, 0, [P[b * 3] - px, P[b * 3 + 1] - py, P[b * 3 + 2] - pz]);
+    P[b * 3] = px + r[0]; P[b * 3 + 1] = py + r[1]; P[b * 3 + 2] = pz + r[2];
+    qmulTo(o, 0, rq[0], rq[1], rq[2], rq[3], Q[b * 4], Q[b * 4 + 1], Q[b * 4 + 2], Q[b * 4 + 3]); Q[b * 4] = o[0]; Q[b * 4 + 1] = o[1]; Q[b * 4 + 2] = o[2]; Q[b * 4 + 3] = o[3];
+  }
+}
+
 /**
  * Pose the body at a moment of the baked performance (seconds) and place it in the film's world (xf: { pos, yaw, scale }).
  * hands: { L, R } each a name of HANDS, a [name, name, mix] blend, or a hand object. Fills every part's `out` (positions).
@@ -243,6 +265,13 @@ export function poseBody(B, t, xf = null, hands = null, face = null, after = nul
     });
     // a closed hand: the thumb lies across the backs of the curled index and middle fingers, as in a real fist or grip
     if (hd.thumbIn >= 0.6 && F.thumb) thumbOver(B, F, s, hd);
+  }
+  // a film's own bends of the performance (after: [{ bend: { bone, about: 'side' | 'fwd' | 'up' | [x, y, z], deg } }]), in the
+  // body's own axes: about `side` a positive turn swings what hangs on the bone backwards (a knee bends; a thigh lifts
+  // forward with a negative one), about `fwd` out to the body's left
+  if (Array.isArray(after) && after.some((op) => op.bend)) {
+    const A = bodyAxes(B);
+    for (const op of after) if (op.bend) bendBone(B, op.bend.bone, Array.isArray(op.bend.about) ? op.bend.about : A[op.bend.about ?? 'side'], ((op.bend.deg ?? 0) * Math.PI) / 180);
   }
   // the face: expression shapes move the skin of the head before the bones carry it; the jaw swings open with the mouth
   const W = face ? faceShapes(face) : null;

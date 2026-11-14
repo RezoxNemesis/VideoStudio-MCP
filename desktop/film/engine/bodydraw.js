@@ -247,6 +247,42 @@ export function topPaint(base, d, G, rgbOf) {
   return { ...base, map, maps };
 }
 /**
+ * Armour of small plates (lamellar): design.body.plates: { <part>: { h: 0.05, w: 0.04 (m, a plate), lace (the colour of
+ * the cord it is laced with; none without), from, to (m up from the ground in the rest pose: only that stretch of the
+ * part is plated) } }. Returns `base` with a map of the plates: map(x, y) → a number into `maps` — 'lip' (a plate's lower
+ * edge, where it catches the light), 'under' (its top, in the shadow of the row lapped over it), 'gap' (the line between
+ * two plates of a row), 'lace' — or −1 for the plate's own face. Rows are set half a plate over, like bricks. x runs round
+ * the body, y up from the ground; points of the back are given 10 m higher, as for a top's cut.
+ */
+export function platePaint(base, o, rgbOf) {
+  const h = o.h ?? 0.05, w = o.w ?? 0.04, y0 = o.from ?? -1e9, y1 = o.to ?? 1e9, maps = [];
+  const up = (c, k) => c.map((v) => Math.max(0, Math.min(255, k < 0 ? v * (1 + k) : v + (255 - v) * k)));
+  const tone = (name, fill, shade) => { maps.push({ name, fill, shade, two: base.two, bias: base.bias, metal: base.metal, soft: 0, group: base.group }); return maps.length - 1; };
+  const LIP = tone('lip', up(base.fill, 0.24), up(base.shade, 0.16)), UNDER = tone('under', up(base.fill, -0.42), up(base.shade, -0.3)), GAP = tone('gap', up(base.fill, -0.5), up(base.shade, -0.36));
+  const LACE = o.lace ? tone('lace', rgbOf(o.lace), up(rgbOf(o.lace), -0.35)) : -1;
+  const map = (x, yy) => {
+    const y = yy > 5 ? yy - 10 : yy;
+    if (y < y0 || y > y1) return -1;
+    const r = Math.floor(y / h), v = y / h - r, xo = x / w + (r & 1 ? 0.5 : 0), u = xo - Math.floor(xo);
+    if (v > 0.84) return UNDER;
+    if (u < 0.06 || u > 0.94) return GAP;
+    if (v < 0.15) return LIP;
+    // two stitches of the cord through every plate
+    if (LACE >= 0 && v > 0.5 && v < 0.7 && ((u > 0.26 && u < 0.36) || (u > 0.64 && u < 0.74))) return LACE;
+    return -1;
+  };
+  return { ...base, map, maps };
+}
+/** Where every point of a part lies round the body and up it, for a map of plates: two numbers a vertex (round the body's own middle, in metres along its girth; height). */
+export function girthXY(p) {
+  if (p.girth) return p.girth;
+  const P = p.rest0 ?? p.pos, n = p.n, a = new Float32Array(n * 2);
+  let zc = 0, m = 0; for (const i of p.idxCore) { zc += P[i * 3 + 2]; m++; } zc = m ? zc / m : 0;
+  let rr = 0; for (const i of p.idxCore) rr += Math.hypot(P[i * 3], P[i * 3 + 2] - zc); rr = m ? rr / m : 0.15;
+  for (let v = 0; v < n; v++) { a[v * 2] = Math.atan2(P[v * 3], P[v * 3 + 2] - zc) * rr; a[v * 2 + 1] = P[v * 3 + 1]; }
+  return (p.girth = a);
+}
+/**
  * The measures of a body's top for topPaint, and its triangles sorted by front and back (a map of the cut is laid on
  * each side by itself): { G, xyF, xyB (two numbers a vertex: x, y — the back's 10 m higher), coreF, coreB, limbF, limbB }.
  */
@@ -352,7 +388,10 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       for (const [idx, xy, limb] of [[T.coreF, T.xyF, 0], [T.coreB, T.xyB, 0], [T.limbF, T.xyF, 1], [T.limbB, T.xyB, 1]]) { if (!idx.length) continue; const pp = { ...tp }, id = cp.add(p.out, idx, pp, nr, p.u, xy); if (limb) { limbIds.add(id); for (const b of [...(pp.bandIds ?? []), ...(pp.mapIds ?? [])]) limbIds.add(b); } }
       continue;
     }
-    if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
+    // armour of small plates (design.body.plates): the part's body is painted by a map of its plates, laid round it
+    const pl8 = d.body?.plates?.[p.name];
+    if (pl8 && p.idxCore.length) cp.add(p.out, p.idxCore, platePaint({ ...paint, group: paint.group ?? p.name }, pl8, rgbOf), nr, p.u, girthXY(p));
+    else if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
     if (p.idxLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); if (p.material === 'skin') handIds.add(id); }
     // fingers: each its own part of the skin, so two that lie side by side have a line between them (none where they leave the palm)
     // the hand itself and each finger: parts of the skin of their own, drawn with a finer outline (a hand is a small form);

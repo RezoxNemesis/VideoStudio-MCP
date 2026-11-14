@@ -221,6 +221,11 @@ Lines are read sentence by sentence the way a person reads: "!" "…" "?!" shape
 stern calm afraid tired question whispery commanding playful, or `{ like, pitch, rate, energy, pauses, ending }`.
 `<lang>` is the subtitle, `<lang>_say` what is spoken if different, `em_<lang>` words to lean on. With several
 languages in project.json every line is spoken in each; the picture is timed to fit them all and lips follow each.
+With the studio voice a line keeps its tone's pace: it is spoken a sentence at a time, the silences between the
+sentences follow their marks and `pauses`, and the speech is held to about three words a second times `rate`
+(0.86 is a slow, weighty line of about 2.6). Listen to every line after it is spoken. When one lost or changed a
+word, ask for another take of it: `"take_hi": 1` (then 2, 3 …) acts the line afresh in that language only, `"take"`
+in every language.
 
 ## Scenes in a few lines (the director)
 
@@ -278,6 +283,48 @@ Build your own from `box(at, w, h, d, yaw, { side, top }, { front: DET.planks(0.
 
 Effects for a shot or sequence, `fx: (ctx) => [rain(box), snow(box), petals(box), embers(box), smoke(box)]`,
 `fire({ p, w, h })` as a thing in the place.
+
+## Painted land and sky
+
+A place can be painted pixel by pixel, the way a background painter lays it in (engine/paintland.js). Each is an item
+for a Scene: `sc.add('sky', skyPaint({ zenith, mid, horizon, away, sun: { dir, color, glow, r }, clouds: { cover, scale,
+height, color, far, shade, wind, seed } }))` — a sky lit from where the sun stands (warm round the sun, cool away from
+it), clouds with a lit and a shaded side that drift; `sc.add('far', ridgePaint({ layers: [{ dist, h, color, seed, peaks,
+folds, sharp, snow, gap: { az, w, depth } }], air, sun }))` — ridges round the horizon, crest behind crest, each lost in
+mist at its foot, paler the farther off, with a gap where a gorge cuts them; `sc.add('ground', landPaint({ colors: [the
+colours of what grows], earth, earthAmt, earthCover, patch, relief, cool, sun, wet, mist: { color, dist, amt } }))` — land
+whose colour varies like grown ground, low light lying on its swells, dew shining towards a low sun, mist on far land;
+`mistBand({ color, h, amt })` — mist along the horizon, in banks that drift; `grassPaint({ land, max, h: [a, b] })` — tufts
+of grass near the lens, each at its own place, in the land's colour there, stirring in the wind. Everything holds to the
+world (a spot of ground keeps its colour wherever the camera stands) and nothing boils under a still camera.
+
+## Armies
+
+A legion is an army of real figures (kit/legions.js): a few soldiers are performed like anybody else (a sequence's
+motion, with bodies), and each becomes a figure that is laid down by the thousand — drawn once at the size and from the
+side the lens sees a man, so ten thousand cost little more than the few drawings they are made from.
+
+```js
+import { legion, ranks, performer, strideOf, soldier } from '../vs.js';
+const figs = [0, 1, 2].map((i) => performer({ bake: 's00', as: 'model', design: soldier(i), at: 1 + i, top: 3.1,
+  bends: [{ bone: 'lowerarm01.R', about: 'side', deg: -88, props: ['spear'] }] }));          // the spear carried upright
+for (const it of legion({ men: ranks({ at: [14, 0], yaw: -90, files: 56, ranks: 60, figs: 3 }), yaw: -90, figures: figs }))
+  sc.add('world', it);
+```
+`ranks` sets men in ranks and files (`skip(rank, file)` leaves places empty for actors); `performer({ loop: strideOf('s00',
+'marcher') })` makes a marching figure (one stride, twelve drawings) and `legion({ state: (t) => ({ advance: t * 1.3,
+phase: t / stride }) })` marches them in step. Near men cover far ones, far ones pale into the air and end as marks along
+the horizon; the ground they stand on is darkened away from the sun.
+
+**Bending a performed body.** `bendPose(pose, [{ bone, about: 'side' | 'fwd' | 'up', deg, props?: ['spear'] }])` (in an
+actor's `fit`, or a performer's `bends`) turns a bone about its own joint after the performance, with everything that
+hangs on it: about `side` a positive turn swings what hangs there backwards (a knee bends; a forearm or a thigh lifts
+forward with a negative one), about `fwd` out to the body's left. The real body is bent the same way when it is drawn.
+
+**Armour of small plates.** `design.body.plates: { cuirass: { h: 0.042, w: 0.036, lace: '#a3222a' } }` paints a part as
+rows of small plates laid like bricks: each plate's lower edge catches the light, its top lies in the shadow of the row
+above, a cord's colour is stitched through every plate. `from` / `to` (metres up from the ground) keep the plates to a
+part of a garment's height.
 
 ## The 2D library
 
