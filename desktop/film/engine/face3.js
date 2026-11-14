@@ -140,14 +140,14 @@ export function faceDecals(M, o = {}) {
   return { map, names, lidY };
 }
 
-/** A paint for every drawn tone of faceDecals: its lit tone and its tone in shadow, from the skin's own two tones. */
+/** A paint for every drawn tone of faceDecals: its lit tone and its tone in shadow, from the skin's own two tones. o: { lips, lip, nose (0…1: how strongly the nose's shadows are laid in) } */
 export function decalPaints(D, skin, shade, o = {}) {
   const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k], mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
-  const deep = mul(shade, 0.9), lipC = o.lip ?? [168, 86, 88], k = o.lips ?? 1;
+  const deep = mul(shade, 0.9), lipC = o.lip ?? [168, 86, 88], k = o.lips ?? 1, nk = o.nose ?? 1, nose = (c) => mix(skin, c, nk); // nose: how strongly the nose's shadows are laid in (1 = full; a fine nose is drawn lightly)
   const tones = {
-    noseSide: [mix(skin, shade, 0.92), deep],
-    noseUnder: [mix(shade, deep, 0.45), mul(shade, 0.84)],
-    nostril: [mul(shade, 0.6), mul(shade, 0.52)],
+    noseSide: [nose(mix(skin, shade, 0.92)), nk < 1 ? mix(shade, deep, nk) : deep],
+    noseUnder: [nose(mix(shade, deep, 0.45)), nk < 1 ? mix(shade, mul(shade, 0.84), nk) : mul(shade, 0.84)],
+    nostril: [nose(mul(shade, 0.6)), nk < 1 ? mix(shade, mul(shade, 0.52), nk) : mul(shade, 0.52)],
     lipUp: [mix(mix(skin, shade, 0.55), lipC, 0.34 * k), mix(deep, lipC, 0.3 * k)],
     lipLow: [mix(mix(skin, shade, 0.1), lipC, 0.24 * k), mix(shade, lipC, 0.26 * k)],
     lipUnder: [mix(skin, shade, 0.85), deep],

@@ -126,11 +126,28 @@ skirts from the waist over the trousers — open in front, the lining showing in
 and stream behind a moving figure. Hair tied in a tail takes a cord: `hair3: { cut: 'tied', tail: { len, w, at: 'high',
 tie: true } }` with `hair: { tie: '#a3222a' }`; finer hair is more, narrower clumps (`n: 150, w: 0.021`).
 
+**Hair designed lock by lock.** A cut can be laid out the way a character designer draws one. `hair3.locks: [{ from: [round,
+up], to: [round, up], via?, w: 0.034, lift: 0.012 | [root, middle, tip], hang: 0.16 }]` lays each lock over the real head
+from one place on it to another — degrees round from straight ahead (positive towards the head's own left) and up from
+level; the hairline is about 26° up in front, the eyes about −5°, the temples ±45° round — lifted off the skin, and falling
+freely for `hang` metres past its end (a curtain of fringe from the parting to the temple, a long lock in front of the
+ear). `flow: 'tie'` draws the hair of the whole scalp back to where the tail is tied, each clump beginning from a point
+(`lift`, `vol` for fullness). The tail: `tail: { len, w, at: [180, 46] (a place on the head) | 'high' | 'low' | 'top', up:
+0.45 (it rises before it falls), locks: 8 (a sheaf of locks with tips of their own), tie: { ends: 2, len: 0.24 } (a cord
+with two hanging ends) }`. Painted with a brush: `hair: { strands: 0…1 }` lays darker strands and a lighter streak along
+every lock, `hair.sheen: 0…1` makes the band of light across the hair zigzag from lock to lock, `hair.shine` its colour.
+
+**A top cut like a robe.** `design.body.collar: { style: 'cross' | 'v', depth: 0.13, w: 0.026, inner: '#ece6da', trim:
+'#b08a3c' }` cuts the top's neck: lapels that cross at the chest (the wearer's left over the right, down to the sash) or
+a neck cut to a point, the under-robe showing in the opening, a band along the lapels and round the back of the neck.
+With `body.sleeves` the sleeves are set in at one clean seam from shoulder to armpit.
+
 **Faces.** A real head's face is drawn with form: the shadow side of the nose (it follows the light) and the shadow
 under its tip, nostrils, the line of a turned head's nose, the lips and the line where they meet, the shadow under the
 lower lip, the crease of the lids, and the hair's own shadow on the brow. On the design: `face: { lips: 0…1 }` how full
 the lips are drawn (default 0.45; about 0.9 for a woman's painted mouth), `face.lipColor`, `face.nostrils: false`,
-`face.detail: false` for the plain face of earlier versions.
+`face.detail: false` for the plain face of earlier versions. `face.nose: 0…1` lays the nose's shadows in lightly
+(about 0.35 for a fine nose under the soft brush).
 
 ## Action
 
@@ -148,6 +165,10 @@ pools, staining the ground), `kill`, `kick`, `thud`, `whoosh`. `fightEvents(beat
 
 The same film drawn as another kind of animation: `"look": "paper"` in project.json for the whole film, or
 `look: 'sketch'` on a sequence or a shot (a flashback in pencil, a dream in paper). Or `{ "style": "pixel", "size": 4 }`.
+
+The painted look can be given a brush: `"look": { "style": "anime", "paint": { "soft": 0.85 } }` turns light to shadow
+gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
+other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
 | look | |
 |---|---|

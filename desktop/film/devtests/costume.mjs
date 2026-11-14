@@ -59,6 +59,44 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a
   ok(other && other.fill === base.fill, 'and only the top has sleeves', other && other.fill);
 }
 
+// ---- 1c. a top cut like a robe: lapels that cross at the chest over an under-robe, sleeves set in at a clean seam
+{
+  const BD = await import('../engine/bodydraw.js'), rgb = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const base = { fill: [28, 27, 33], shade: [14, 14, 18], group: 'top' };
+  // the measures of a body's top (metres, rest pose): the neck, where the tunic ends beside it and behind it, the sash, the shoulder joint and the way the arm leaves it
+  const G = { neckY: 1.53, top: 1.6, backTop: 1.61, sashY: 1.1, shoulder: [0.23, 1.42], arm: [0.66, -0.75] };
+  const P = typeof BD.topPaint === 'function' ? BD.topPaint(base, { body: { sleeves: '#ece6da', collar: { style: 'cross', depth: 0.12, w: 0.03, inner: '#ece6da', trim: '#b08a3c' } } }, G, rgb) : null;
+  ok(!!P && typeof P.map === 'function' && Array.isArray(P.maps), 'topPaint(base, design, measures): a top with a collar or sleeves of its own is painted by a map of its cut', P && Object.keys(P));
+  if (P?.map) {
+    const tone = (x, y) => { const k = P.map(x, y); return k < 0 ? 'top' : P.maps[k].name; }, B10 = 10;
+    ok(tone(0.09, 1.3) === 'top' && tone(-0.12, 1.25) === 'top', 'the chest and the ribs are the top\'s own colour', [tone(0.09, 1.3), tone(-0.12, 1.25)]);
+    ok(tone(0, 1.5) === 'inner' && tone(0.01, 1.46) === 'inner', 'in the opening under the throat the under-robe shows', [tone(0, 1.5), tone(0.01, 1.46)]);
+    ok(P.maps.find((m) => m.name === 'inner').fill[0] > 200 && P.maps.find((m) => m.name === 'trim').fill[0] > 150 && P.maps.find((m) => m.name === 'trim').fill[2] < 90, 'in the colours of the design: a pale under-robe, a gold band', P.maps.map((m) => m.fill));
+    // the lapel from the wearer's left lies over the other: its edge runs from the left of the neck down across the chest to the right of the waist
+    const edge1 = (y) => 0.062 - (0.062 / (1.6 - (1.53 - 0.12))) * (1.6 - y);
+    ok([1.55, 1.45, 1.35, 1.25, 1.15].every((y) => tone(edge1(y) + 0.012, y) === 'trim'), 'a band runs along the edge of the upper lapel, from beside the neck down across the chest to the waist', [1.55, 1.45, 1.35, 1.25, 1.15].map((y) => tone(edge1(y) + 0.012, y)));
+    ok(tone(-edge1(1.5) - 0.012, 1.5) === 'trim' && tone(-edge1(1.3) - 0.012, 1.3) === 'top', 'the under lapel shows its band only above where they cross', [tone(-edge1(1.5) - 0.012, 1.5), tone(-edge1(1.3) - 0.012, 1.3)]);
+    ok(tone(-0.05, 1.05) === 'top' && tone(0.0, 1.0) === 'top', 'below the sash there is no collar', [tone(-0.05, 1.05), tone(0, 1)]);
+    ok(tone(0.4, 1.25) === 'sleeve' && tone(-0.4, 1.25) === 'sleeve' && tone(0.3, 1.38) === 'sleeve', 'out along the arm is sleeve, both sides', [tone(0.4, 1.25), tone(-0.4, 1.25), tone(0.3, 1.38)]);
+    ok(tone(0.17, 1.44) !== 'sleeve' && tone(0.15, 1.3) !== 'sleeve', 'the shoulder and the side of the chest are not', [tone(0.17, 1.44), tone(0.15, 1.3)]);
+    // the seam is one straight cut across the arm at the shoulder: walking out along the arm the tone changes once
+    const walk = []; for (let t = -0.1; t <= 0.12; t += 0.005) walk.push(tone(G.shoulder[0] + G.arm[0] * t - G.arm[1] * 0.03, G.shoulder[1] + G.arm[1] * t + G.arm[0] * 0.03) === 'sleeve');
+    ok(walk.filter((v, i) => i && v !== walk[i - 1]).length === 1 && !walk[0] && walk[walk.length - 1], 'the sleeve is set in at one clean seam across the arm', walk.map((v) => (v ? 1 : 0)).join(''));
+    // the back: points of the back are given 10 m up (a top's back has no opening)
+    ok(tone(0, 1.6 + B10) === 'trim' && tone(0, 1.5 + B10) === 'top' && tone(0.02, 1.3 + B10) === 'top', 'behind, the collar is a band round the neck and the back is whole', [tone(0, 1.6 + B10), tone(0, 1.5 + B10), tone(0.02, 1.3 + B10)]);
+    ok(tone(0.4, 1.25 + B10) === 'sleeve', 'and the sleeves are sleeves from behind too', tone(0.4, 1.25 + B10));
+    ok(P.maps.find((m) => m.name === 'sleeve').group !== 'top' && P.maps.find((m) => m.name === 'trim').group !== 'top', 'sleeve and band are forms of their own: a line is drawn where they meet the top', P.maps.map((m) => m.group));
+  }
+  const V = typeof BD.topPaint === 'function' ? BD.topPaint(base, { body: { collar: { style: 'v', depth: 0.1, inner: '#ece6da' } } }, G, rgb) : null;
+  if (V?.map) {
+    const tone = (x, y) => { const k = V.map(x, y); return k < 0 ? 'top' : V.maps[k].name; };
+    ok(tone(0, 1.5) === 'inner' && [[0.05, 1.3], [0.03, 1.2], [0.08, 1.4]].every(([x, y]) => tone(x, y) === tone(-x, y)) && tone(0.02, 1.3) === 'top', 'style: \'v\' is a neck cut to a point: the same both sides, closed below the point', [tone(0, 1.5), tone(0.02, 1.3)]);
+    ok(tone(0.4, 1.25) === 'top', 'without sleeves of their own the arms are the top\'s colour', tone(0.4, 1.25));
+  } else ok(false, 'a v collar is made', !!V);
+  const none = typeof BD.topPaint === 'function' ? BD.topPaint(base, { body: {} }, G, rgb) : null;
+  ok(none === base, 'a design with neither keeps the top\'s plain paint', none === base);
+}
+
 // ---- 2. hair tied high
 {
   // a scalp: the top of a ball, with the landmarks a head has

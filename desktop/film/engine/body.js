@@ -333,7 +333,8 @@ export function normalsOf(pos, idx, nrm) {
  *            two? (true: seen from both sides — cloth), flat? (no shadow tone), castHair? / recvHair? (hair, and the
  *            skin its shadow falls on: a fringe on the brow) }
  * o: { ss (fineness, default 2), light: unit vector towards the light (world), ink: [r,g,b], lw (outline, picture px),
- *      lwIn (inner lines), pad }
+ *      lwIn (inner lines), pad, soft (0…1, the painted look only: how gradually light turns to shadow — the brush of a
+ *      painted figure; a paint's own `soft` scales it, 0 keeps that paint crisp) }
  */
 export class CelPainter {
   constructor(cam, o = {}) {
@@ -344,6 +345,7 @@ export class CelPainter {
     if (lp.inner !== undefined) o = { ...o, lwIn: (o.lwIn ?? 1.5) * lp.inner };
     if (lp.outer !== undefined) o = { ...o, lw: (o.lw ?? 2.6) * lp.outer };
     if (lp.rim && o.rim === undefined) o = { ...o, rim: true };
+    if (lp.soft !== undefined && o.soft === undefined) o = { ...o, soft: lp.soft };
     if (lp.mode === 'flat' && o.shadows === undefined) o = { ...o, shadows: false };
     this.mode = lp.mode ?? 'cel';
     this.cam = cam; this.o = o; this.meshes = []; this.paints = [null];
@@ -480,23 +482,29 @@ export class CelPainter {
       }
     }
     const shBias = o.shadowBias ?? 0.028, hairBias = o.hairShadowBias ?? 0.0045;
-    const inHairShadow = (q, X, Y) => {
+    const inHairShadow = (q, X, Y, wide = false) => { // how much in the hair's shadow: 0 | 1, or with `wide` a part between (a soft edge)
       const z = 1 / zb[q] + (this.paints[ib[q]].bias ?? 0), px = (x0 + (X + 0.5) / SS - cx) / fl * z, py = -(y0 + (Y + 0.5) / SS - cy) / fl * z;
       const wx = cp[0] + cr[0] * px + cu[0] * py + cf[0] * z, wy = cp[1] + cr[1] * px + cu[1] * py + cf[1] * z, wz = cp[2] + cr[2] * px + cu[2] * py + cf[2] * z;
       const U = (wx * smH.ax[0] + wy * smH.ax[1] + wz * smH.ax[2] - smH.u0) / smH.tex + 1, Vv = (wx * smH.bx[0] + wy * smH.bx[1] + wz * smH.bx[2] - smH.v0) / smH.tex + 1, d = wx * L[0] + wy * L[1] + wz * L[2] + hairBias;
-      const iu = Math.floor(U - 0.5), iv = Math.floor(Vv - 0.5); if (iu < 0 || iv < 0 || iu >= smH.mw - 1 || iv >= smH.mh - 1) return false;
+      const iu = Math.floor(U - 0.5), iv = Math.floor(Vv - 0.5), inMap = !(iu < 0 || iv < 0 || iu >= smH.mw - 1 || iv >= smH.mh - 1); if (!inMap && !wide) return 0;
       const fu = U - 0.5 - iu, fv = Vv - 0.5 - iv, q2 = iv * smH.mw + iu, md = smH.md;
-      return (md[q2] > d ? (1 - fu) * (1 - fv) : 0) + (md[q2 + 1] > d ? fu * (1 - fv) : 0) + (md[q2 + smH.mw] > d ? (1 - fu) * fv : 0) + (md[q2 + smH.mw + 1] > d ? fu * fv : 0) > 0.5;
+      const one = !inMap ? 0 : (md[q2] > d ? (1 - fu) * (1 - fv) : 0) + (md[q2 + 1] > d ? fu * (1 - fv) : 0) + (md[q2 + smH.mw] > d ? (1 - fu) * fv : 0) + (md[q2 + smH.mw + 1] > d ? fu * fv : 0);
+      if (!wide) return one > 0.5 ? 1 : 0;
+      // a soft edge: how much of the hair's picture round this place is nearer the light (five by five places)
+      // (beyond the hair's picture there is no hair: those places count as light)
+      let s = 0; for (let dv = -2; dv <= 2; dv++) { const vv = iv + dv; if (vv < 0 || vv >= smH.mh - 1) continue; for (let du = -2; du <= 2; du++) { const uu = iu + du; if (uu < 0 || uu >= smH.mw - 1) continue; const q3 = vv * smH.mw + uu; s += (md[q3] > d ? (1 - fu) * (1 - fv) : 0) + (md[q3 + 1] > d ? fu * (1 - fv) : 0) + (md[q3 + smH.mw] > d ? (1 - fu) * fv : 0) + (md[q3 + smH.mw + 1] > d ? fu * fv : 0); } }
+      return s / 25;
     };
     // world position of a pixel of the fine picture, from its depth
-    const inShadow = (q, X, Y) => {
+    const inShadow = (q, X, Y, wide = false) => { // how much in the shadow of another form: 0 | 1, or with `wide` a part between (a soft edge)
       const z = 1 / zb[q] + (this.paints[ib[q]].bias ?? 0), px = (x0 + (X + 0.5) / SS - cx) / fl * z, py = -(y0 + (Y + 0.5) / SS - cy) / fl * z;
       const wx = cp[0] + cr[0] * px + cu[0] * py + cf[0] * z, wy = cp[1] + cr[1] * px + cu[1] * py + cf[1] * z, wz = cp[2] + cr[2] * px + cu[2] * py + cf[2] * z;
       const U = (wx * sm.ax[0] + wy * sm.ax[1] + wz * sm.ax[2] - sm.u0) / sm.tex + 1, Vv = (wx * sm.bx[0] + wy * sm.bx[1] + wz * sm.bx[2] - sm.v0) / sm.tex + 1, d = wx * L[0] + wy * L[1] + wz * L[2] + shBias;
-      const iu = Math.floor(U - 0.5), iv = Math.floor(Vv - 0.5); if (iu < 0 || iv < 0 || iu >= sm.mw - 1 || iv >= sm.mh - 1) return false;
+      const iu = Math.floor(U - 0.5), iv = Math.floor(Vv - 0.5), inMap = !(iu < 0 || iv < 0 || iu >= sm.mw - 1 || iv >= sm.mh - 1); if (!inMap && !wide) return 0;
       const fu = U - 0.5 - iu, fv = Vv - 0.5 - iv, q2 = iv * sm.mw + iu, md = sm.md;
-      const s = (md[q2] > d ? (1 - fu) * (1 - fv) : 0) + (md[q2 + 1] > d ? fu * (1 - fv) : 0) + (md[q2 + sm.mw] > d ? (1 - fu) * fv : 0) + (md[q2 + sm.mw + 1] > d ? fu * fv : 0);
-      return s > 0.5;
+      if (!wide) return (md[q2] > d ? (1 - fu) * (1 - fv) : 0) + (md[q2 + 1] > d ? fu * (1 - fv) : 0) + (md[q2 + sm.mw] > d ? (1 - fu) * fv : 0) + (md[q2 + sm.mw + 1] > d ? fu * fv : 0) > 0.5 ? 1 : 0;
+      let s = 0; for (let dv = -1; dv <= 1; dv++) { const vv = iv + dv; if (vv < 0 || vv >= sm.mh - 1) continue; for (let du = -1; du <= 1; du++) { const uu = iu + du; if (uu < 0 || uu >= sm.mw - 1) continue; const q3 = vv * sm.mw + uu; s += (md[q3] > d ? (1 - fu) * (1 - fv) : 0) + (md[q3 + 1] > d ? fu * (1 - fv) : 0) + (md[q3 + sm.mw] > d ? (1 - fu) * fv : 0) + (md[q3 + sm.mw + 1] > d ? fu * fv : 0); } }
+      return s / 9;
     };
     // ---- painted mode: where the surface is tucked behind nearer surface (armpits, between fingers, under the chin, the
     // inside of a collar) it gets less light — a deeper shadow tone there gives drawn form
@@ -514,13 +522,19 @@ export class CelPainter {
     const ow = x1 - x0, oh = y1 - y0, img = new Uint8ClampedArray(ow * oh * 4), ik = o.ink ?? [22, 18, 26], inv = 1 / (SS * SS);
     if (o.lines === false) ink.fill(0);
     const rimC = o.rim ?? null, rimDir = o.rimDir ?? null, mode = this.mode, tone = [0, 0, 0];
+    const softAll = mode === 'paint' ? Math.max(0, Math.min(1, o.soft ?? 0)) : 0; // the brush: how gradually light turns to shadow on a rounded form (a paint's own `soft` scales it: hair and metal stay crisp)
     const sstep = (a, b, x) => { const u = x <= a ? 0 : x >= b ? 1 : (x - a) / (b - a); return u * u * (3 - 2 * u); };
     for (let y = 0; y < oh; y++) for (let x = 0; x < ow; x++) {
       let r = 0, g = 0, b = 0, al = 0;
       for (let j = 0; j < SS; j++) for (let i = 0; i < SS; i++) {
         const q = (y * SS + j) * w + x * SS + i, id = ib[q], ia = ink[q];
         if (!id) { if (ia > 0) { r += ik[0] * ia; g += ik[1] * ia; b += ik[2] * ia; al += ia; } continue; }
-        const p = P[id], l = lb[q], v = vb[q]; let c = p.flat || (l > (p.thr ?? 0.08) && !(sm && p.recv !== false && l > (p.thr ?? 0.08) + 0.1 && inShadow(q, x * SS + i, y * SS + j)) && !(smH && p.recvHair && inHairShadow(q, x * SS + i, y * SS + j))) ? p.fill : p.shade;
+        const p = P[id], l = lb[q], v = vb[q], sf = softAll * (p.soft ?? 1);
+        // softly painted, the hair's shadow is not a tone of its own but less light, with a soft edge
+        const hs = smH && p.recvHair && !p.flat ? inHairShadow(q, x * SS + i, y * SS + j, sf > 0) : 0;
+        // (the shadow another form throws: crisp it is the shadow tone; softly painted it is less light, with a soft edge, and runs out where the form itself turns from the light)
+        const cs = sm && p.recv !== false && !p.flat && l > (p.thr ?? 0.08) + (sf > 0 ? -0.25 : 0.1) ? inShadow(q, x * SS + i, y * SS + j, sf > 0) * (sf > 0 ? sstep((p.thr ?? 0.08) - 0.25, (p.thr ?? 0.08) + 0.1, l) : 1) : 0;
+        let c = p.flat || (l > (p.thr ?? 0.08) && !(sf > 0 ? false : cs > 0.5) && !(sf > 0 ? false : hs > 0.5)) ? p.fill : p.shade;
         if (mode !== 'cel' && !p.flat) {
           const th = p.thr ?? 0.08, lit = c === p.fill;
           if (mode === 'smooth') {
@@ -534,15 +548,15 @@ export class CelPainter {
           else if (mode === 'paint') {
             // painted anime: a crisp but anti-aliased terminator, light that grows toward the lamp across the lit side, a
             // deeper tone where the form is tucked away, warm skin at the turn of the light, polished metal, hair with a sheen
-            const shadowed = !lit && l > th; let k = shadowed ? 0 : sstep(th - 0.05, th + 0.07, l);
-            const up = sstep(th + 0.18, 1.05, l) * (p.metal ? 0.05 : 0.17), occ = ao ? ao[q] : 0;
+            const shadowed = !lit && l > th; let k = shadowed ? 0 : sstep(th - 0.05 - 0.36 * sf, th + 0.07 + 0.36 * sf, l); const kForm = k; if (sf > 0) { if (cs > 0) k *= 1 - cs; if (hs > 0) k *= 1 - 0.62 * sf * hs; }
+            const up = sstep(th + 0.18, 1.05, l) * (p.metal ? 0.05 : 0.17), occ = ao ? ao[q] * (1 - 0.8 * sf) : 0; // (softly painted, a tuck in the form is a gentle deepening, not a blot)
             const lt = p._lit ??= [Math.min(255, p.fill[0] + 26), Math.min(255, p.fill[1] + 22), Math.min(255, p.fill[2] + 16)];
             const dp = p._deep ??= [p.shade[0] * 0.66, p.shade[1] * 0.66, p.shade[2] * 0.72 + 6];
             for (let m = 0; m < 3; m++) { const L1 = p.fill[m] + (lt[m] - p.fill[m]) * up, S1 = p.shade[m] + (dp[m] - p.shade[m]) * Math.min(1, occ * 1.15); tone[m] = S1 + (L1 - S1) * k; }
             if (occ > 0.25 && k > 0) for (let m = 0; m < 3; m++) tone[m] += (dp[m] - tone[m]) * (occ - 0.25) * 0.22 * k; // only deep tucks darken the light a little
-            if (p.skin && k > 0 && k < 1) { const band = 4 * k * (1 - k) * 0.85; tone[0] += 26 * band; tone[1] -= 4 * band; tone[2] -= 12 * band; }
+            if (p.skin && kForm > 0 && kForm < 1) { const band = 4 * kForm * (1 - kForm) * 0.85 * (1 - 0.45 * sf) * (k / kForm); /* the warmth where the form itself turns from the light — not along a cast shadow */ tone[0] += 26 * band; tone[1] -= 4 * band; tone[2] -= 12 * band; }
             if (p.metal) { const sp = sstep(0.8, 0.95, l * 0.5 + v * 0.5) * 0.7; const dk = sstep(0.16, 0.3, l) * (1 - sstep(0.3, 0.46, l)); const hi = p.hi ?? [250, 250, 252]; for (let m = 0; m < 3; m++) { tone[m] += (hi[m] - tone[m]) * sp; tone[m] *= 1 - dk * 0.3; } }
-            if (p.hairy && k > 0.5) { const ring = sstep(0.5, 0.58, l) * (1 - sstep(0.62, 0.72, l)) * sstep(0.35, 0.6, v); if (ring > 0) { const hi = p._sheen ??= p.fill.map((f, m) => f + ((p.hi ?? lt)[m] - f) * 0.45); for (let m = 0; m < 3; m++) tone[m] += (hi[m] - tone[m]) * ring * 0.8; } }
+            if (p.hairy && k > 0.5) { const l2 = p.zig && ub ? l + p.zig * (Math.abs(ub[q]) - 0.5) : l, ring = sstep(0.5, 0.58, l2) * (1 - sstep(0.62, 0.72, l2)) * sstep(0.35, 0.6, v); /* zig: the sheen stands higher on the ridge of a lock than at its edges */ if (ring > 0) { const hi = p._sheen ??= p.fill.map((f, m) => f + ((p.hi ?? lt)[m] - f) * 0.45); for (let m = 0; m < 3; m++) tone[m] += (hi[m] - tone[m]) * ring * 0.8; } }
             c = tone;
           }
         }
