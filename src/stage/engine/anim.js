@@ -18,6 +18,41 @@ export class Clip {
   contactAt(t, mirror = false) { if (!this.con) return 0; const c = this.con[Math.round(clamp(t * this.fps, 0, this.n - 1))]; return mirror ? ((c & 1) << 1) | ((c & 2) >> 1) : c; }
   restDir(joint, mirror, out) { const r = this.m.rest[mirror ? SWAP(joint) : joint]; out.set(mirror ? -r[0] : r[0], r[1], r[2]); return out; }
 }
+/**
+ * The stride of a locomotion clip: one whole cycle — a leg coming forward, to the same leg coming forward again — as
+ * { t0, t1, seam } (seam: how far the pose at its two ends differs; 0 = the same pose). A walk or a run loops on this
+ * and on nothing shorter: one step matches the next only in the mirror, and a loop over any other stretch makes the
+ * legs jump at the seam (a run that passes through standing every half second). It is found from the thighs: which of
+ * the two is ahead, along the way the body travels, changes sign twice in a stride.
+ * jid: joint name → index of the clip's joints. o: { from, to } seconds to look in.
+ * null: the clip holds no whole stride (too short, or not a gait at all).
+ */
+export function gaitCycle(clip, jid, o = {}) {
+  const fps = clip.fps, tA = o.from ?? 0, tB = Math.min(o.to ?? clip.dur, clip.dur), i0 = Math.ceil(tA * fps - 1e-6), i1 = Math.floor(tB * fps + 1e-6);
+  if (i1 - i0 < 6 || jid.LeftUpLeg == null || jid.RightUpLeg == null) return null;
+  const ra = new THREE.Vector3(), rb = new THREE.Vector3(), dir = new THREE.Vector3();
+  // the way the body is travelling at a moment (flat; over a third of a second, so a curving path is followed)
+  const going = (t) => { clip.rootAt(Math.max(tA, t - 0.17), ra); clip.rootAt(Math.min(tB, t + 0.17), rb); dir.set(rb.x - ra.x, 0, rb.z - ra.z); const l = dir.length(); if (l > 1e-6) dir.multiplyScalar(1 / l); return l; };
+  clip.rootAt(tA, ra); clip.rootAt(tB, rb); let path = 0; for (let i = i0; i < i1; i++) { const a = clip.rootAt(i / fps, ra), b = clip.rootAt((i + 1) / fps, rb); path += Math.hypot(b.x - a.x, b.z - a.z); } if (path < 0.25) return null;
+  const restL = clip.restDir('LeftLeg', false, new THREE.Vector3()).normalize(), restR = clip.restDir('RightLeg', false, new THREE.Vector3()).normalize(), q = new THREE.Quaternion(), d = new THREE.Vector3();
+  const s = []; let amp = 0;
+  for (let i = i0; i <= i1; i++) { const t = i / fps; if (going(t) < 0.02) { s.push(0); continue; } const l = d.copy(restL).applyQuaternion(clip.quatAt(t, jid.LeftUpLeg, q)).dot(dir), r = d.copy(restR).applyQuaternion(clip.quatAt(t, jid.RightUpLeg, q)).dot(dir); s.push(l - r); amp = Math.max(amp, Math.abs(l - r)); }
+  if (amp < 0.15) return null; // the legs never part: not a gait
+  // the moments one thigh passes the other, each way
+  const up = [], down = [];
+  for (let k = 0; k + 1 < s.length; k++) { const a = s[k], b = s[k + 1]; if (a <= 0 && b > 0) up.push((i0 + k + a / (a - b)) / fps); else if (a >= 0 && b < 0) down.push((i0 + k + a / (a - b)) / fps); }
+  const J = ['LeftUpLeg', 'LeftLeg', 'RightUpLeg', 'RightLeg', 'LeftArm', 'RightArm', 'Spine'].map((n) => jid[n]).filter((j) => j != null), qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), va = new THREE.Vector3(), vb = new THREE.Vector3();
+  // (a body that has turned a little on the way is still in the same pose: the turn of the hips is taken out first)
+  const hips = jid.Hips, ya = new THREE.Quaternion(), yb = new THREE.Quaternion(), fz = new THREE.Vector3();
+  const unturn = (t, out) => { if (hips == null) return out.identity(); fz.set(0, 0, 1).applyQuaternion(clip.quatAt(t, hips, out)); return out.setFromAxisAngle(Yax, -Math.atan2(fz.x, fz.z)); };
+  const seam = (t0, t1) => { let e = 0; unturn(t0, ya); unturn(t1, yb); for (const j of J) { clip.quatAt(t0, j, qa).premultiply(ya); clip.quatAt(t1, j, qb).premultiply(yb); e += 1 - Math.abs(qa.dot(qb)); } return e / J.length + Math.abs(clip.rootAt(t0, va).y - clip.rootAt(t1, vb).y) * 0.02; };
+  let best = null;
+  for (const z of [up, down]) for (let k = 0; k + 1 < z.length; k++) {
+    const t0 = z[k], per = z[k + 1] - z[k]; if (per < 0.4 || per > 2.4) continue;
+    for (let dt = -2; dt <= 2; dt += 0.5) { const t1 = z[k + 1] + dt / fps; if (t1 > clip.dur || t1 - t0 < 0.4) continue; const e = seam(t0, t1); if (!best || e < best.seam - 1e-9) best = { t0, t1, seam: e }; }
+  }
+  return best;
+}
 /** The motion library seen by the engine: index + the subject packs loaded so far (see ../motion/library.ts). */
 export class Mocap {
   constructor(lib) { this.lib = lib; this.idx = lib.index; this.cache = {}; this.jid = Object.fromEntries(lib.index.joints.map((n, i) => [n, i])); }

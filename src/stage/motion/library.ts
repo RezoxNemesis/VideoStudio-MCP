@@ -146,10 +146,54 @@ export class MotionLibrary {
   pick(o: MotionQuery & { want?: number }): string | undefined {
     const r = this.search({ ...o, limit: 400 });
     if (!r.length) return undefined;
-    if (o.want !== undefined) r.sort((a, b) => Math.abs(a.meta.speed - o.want!) - Math.abs(b.meta.speed - o.want!) || b.meta.dur - a.meta.dur);
+    if (o.want !== undefined) {
+      // A gait wants the plain thing at about that speed. A capture that veers, side-steps, leaps or stops on the way
+      // is passed over while a plain one exists, however near its speed (a "Run Right" once became everyone's run).
+      const asked = new Set((o.q ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+      const cost = (m: ClipMeta) => {
+        const more = m.desc.toLowerCase().split(/[^a-z]+/).filter((w) => w && !asked.has(w) && !PLAIN_GAIT_WORDS.has(w)).length;
+        const other = m.tags.filter((t) => !asked.has(t) && !PLAIN_GAIT_WORDS.has(t)).length;
+        return Math.abs(m.speed - o.want!) + Math.abs(m.turn) * 0.02 + more * 0.35 + other * 0.25;
+      };
+      r.sort((a, b) => cost(a.meta) - cost(b.meta) || b.meta.dur - a.meta.dur);
+    }
     return r[0]!.name;
   }
+
+  /**
+   * The locomotion clip for a gait (walk, stroll, march, jog, run, sneak — or any words to look for), at about `speed`
+   * m/s. The plain, straight capture is looked for first; where the library has none long and straight enough (its
+   * marches are two seconds long, its sneaks all curve), a shorter one and then one that bends are taken instead.
+   */
+  pickGait(gait = "walk", speed?: number): string {
+    const g = GAITS[gait], q = g?.q ?? gait, want = speed ?? g?.want ?? 1.3, fast = !!g && g.want > 2;
+    // the captures known to hold a whole, clean stride of this gait (see tests/stagegait.test.ts): the one nearest the speed
+    const known = (g?.clips ?? []).filter((n) => this.index.clips[n]).sort((a, b) => Math.abs(this.index.clips[a]!.speed - want) - Math.abs(this.index.clips[b]!.speed - want))[0];
+    const name =
+      known ??
+      this.pick({ q, straight: true, minDur: fast ? 0.9 : 2.2, maxDur: 14, want }) ??
+      this.pick({ q, straight: true, minDur: fast ? 0.9 : 1.6, maxDur: 14, want }) ??
+      this.search({ q, minDur: 1.6, maxDur: 14, limit: 400 }).filter((x) => x.meta.travel > 0.75 * x.meta.path && x.meta.travel > 1 && Math.abs(x.meta.turn) < 65).sort((a, b) => Math.abs(a.meta.turn) - Math.abs(b.meta.turn))[0]?.name;
+    if (!name) throw new Error(`No "${gait}" motion to travel with in the library. Try gait ${Object.keys(GAITS).join(", ")}, or give a clip.`);
+    return name;
+  }
 }
+
+/**
+ * The gaits a "go" knows: what to look for, the speed it wants (m/s), how long one stride may be (s), and the captures
+ * to use first — measured to hold a whole stride whose two ends are the same pose (a clean loop), plain and straight.
+ */
+export const GAITS: Record<string, { q: string; want: number; pmin: number; pmax: number; clips?: string[] }> = {
+  walk: { q: "walk", want: 1.3, pmin: 0.85, pmax: 1.35, clips: ["35_29", "35_03", "35_33", "39_04", "16_22"] },
+  stroll: { q: "walk", want: 0.9, pmin: 0.95, pmax: 1.5, clips: ["49_01", "35_29"] },
+  march: { q: "march", want: 1.0, pmin: 0.8, pmax: 1.3, clips: ["91_19", "138_05"] },
+  jog: { q: "jog", want: 2.6, pmin: 0.55, pmax: 0.95, clips: ["16_35", "35_18"] },
+  run: { q: "run", want: 3.8, pmin: 0.5, pmax: 0.9, clips: ["09_01", "35_24"] },
+  sneak: { q: "sneak", want: 0.7, pmin: 0.9, pmax: 1.8, clips: ["120_08"] },
+};
+
+/** Words of a capture's description (and tags) that say nothing but the gait itself. */
+const PLAIN_GAIT_WORDS = new Set(["walk", "walking", "run", "running", "jog", "jogging", "march", "marching", "sneak", "sneaking", "forward", "forwards", "straight", "normal", "and", "a", "the", "slow", "fast", "pace", "stride", "cycle"]);
 
 /** One library for the whole app. */
 export const motions = new MotionLibrary();

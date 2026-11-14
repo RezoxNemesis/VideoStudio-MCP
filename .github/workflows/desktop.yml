@@ -100,6 +100,9 @@ jobs:
           done
           du -sh desktop/stage-assets
 
+      - name: Stage — every gait loops on a whole stride (checked on the real motion library)
+        run: VS_STAGE_ASSETS_DIR=desktop/stage-assets npx vitest run tests/stagegait.test.ts
+
       - name: Code Studio — the film engine draws (its canvas library loads, the people library is there)
         working-directory: desktop/film
         run: |
@@ -147,6 +150,8 @@ jobs:
           notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ). Installs over VideoStudio 2.0 (and replaces VideoStudio Desktop 1.0.x); projects and the Claude link are kept.
 
           New: VideoStudio can work on a machine without a screen. Started with VSD_LINK_WORKER (and optionally VSD_LINK_KEY) in its environment, the Claude link polls that relay instead of the stored one and stores nothing of it, so a render box or a workspace can run the whole app (motion solves, voices, sound, film builds) through a relay of its own while this PC is off.
+
+          New: running is running. A run used to loop on a stretch that was no whole stride (and on a capture that veers and stops), so a runner passed through standing upright with both feet together twice a second. Every gait now loops on one whole stride of a plain, straight capture measured to close cleanly (walk, stroll, march, jog, run, sneak); march and sneak, which found no capture at all, work again.
 
           New: a sword is held the way a hand holds it. On the Stage a sword hand now lies along its forearm with the back of the hand and the knuckles outwards (it used to turn the palm out and break the wrist): the forearm rolls, the wrist tips, and the hilt lies a little askew in the grip, each within what an arm can do. The elbow goes where an elbow goes (out to the side under a raised hand, below a thrust, behind a hanging arm) and never flips; an arm near the end of its reach eases out instead of snapping straight; between two sword positions the hand travels round the shoulder in an arc and the point of the blade comes through the front; the chest turns with the sword without a jerk. The high, high-right and overhead positions now sit where an arm can hold them. In code films a closed hand seen from the back shows its knuckles, the thumb is outlined where it lies over the hand instead of along a jagged seam where it joins it, and a hand is drawn with a finer line than the body, so fingers a few pixels wide no longer close up into blots of ink.
 

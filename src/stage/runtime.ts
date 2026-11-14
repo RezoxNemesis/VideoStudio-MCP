@@ -9,7 +9,7 @@ import * as THREE from "three";
 import { Film, V3, clamp, lerp, smooth, wob } from "./engine/core.js";
 import { Stage as EngineStage } from "./engine/stage.js";
 import { makeActor, attachRest as attachRestJs } from "./engine/actors.js";
-import { Mocap } from "./engine/anim.js";
+import { Mocap, gaitCycle } from "./engine/anim.js";
 import { relax } from "./engine/human.js";
 import * as SK from "./engine/shotkit.js";
 import * as P from "./engine/props.js";
@@ -20,7 +20,7 @@ import { IK_HANDLES, applyStance, evalStance, keyValue, setHandle, strikeLimb, s
 import { GU } from "./engine/mat.js";
 import { loadPack } from "./pack";
 import { HumanFactory, type HumanPackMeta } from "./human/factory";
-import { motions } from "./motion/library";
+import { GAITS, motions } from "./motion/library";
 import { applyTime, buildEnv, type EnvRuntime } from "./env";
 import { clipsOf, type Block, type BodyMask, type GoBlock, type Overlay, type Shot, type StageActor, type StageFx, type StageSpec, type TargetRef, type Vec3 } from "./spec";
 
@@ -78,20 +78,9 @@ export function filmProblem(): string | null {
 /* ------------------------------ locomotion ------------------------------ */
 
 /** Default clips by gait: straight, clean cycles from the library (checked by eye). `want` is metres per second. */
-const GAITS: Record<string, { q: string; want: number; pmin: number; pmax: number }> = {
-  walk: { q: "walk", want: 1.3, pmin: 0.85, pmax: 1.35 },
-  stroll: { q: "walk", want: 0.9, pmin: 0.95, pmax: 1.5 },
-  march: { q: "march", want: 1.3, pmin: 0.8, pmax: 1.3 },
-  jog: { q: "jog", want: 2.6, pmin: 0.55, pmax: 0.95 },
-  run: { q: "run", want: 3.8, pmin: 0.5, pmax: 0.9 },
-  sneak: { q: "sneak", want: 0.7, pmin: 0.9, pmax: 1.8 },
-};
 /** The locomotion clip a "go" block should use (stored on the block when it is made, so playback never searches). */
 export function pickGait(gait = "walk", speed?: number): string {
-  const g = GAITS[gait];
-  const name = motions.pick({ q: g?.q ?? gait, straight: true, minDur: g && g.want > 2 ? 0.9 : 2.2, maxDur: 14, want: speed ?? g?.want ?? 1.3 });
-  if (!name) throw new Error(`No straight "${gait}" motion in the library. Try gait walk, run, jog, march or sneak, or give a clip.`);
-  return name;
+  return motions.pickGait(gait, speed);
 }
 
 interface Loco {
@@ -419,7 +408,10 @@ export class StageRuntime {
     const fast = c.m.speed > 2;
     const pmin = fast ? 0.45 : g.pmin, pmax = Math.min(fast ? 0.95 : g.pmax, Math.max(0.5, c.dur * 0.6));
     const tStart = clamp(c.dur * 0.3, 0, Math.max(0, c.dur - pmax - 0.65));
-    const loop = mo.findLoop(clip, tStart, Math.min(pmin, pmax), pmax) as [number, number];
+    // a gait loops on one whole stride (the same leg forward to the same leg forward again); anything else — a
+    // clip that is not a steady gait — on the best-matching stretch of about the right length
+    const stride = gaitCycle(c, mo.mc.jid) as { t0: number; t1: number; seam: number } | null;
+    const loop = stride && stride.seam < 0.03 ? ([stride.t0, stride.t1] as [number, number]) : (mo.findLoop(clip, tStart, Math.min(pmin, pmax), pmax) as [number, number]);
     const r0 = c.rootAt(loop[0], new THREE.Vector3()), r1 = c.rootAt(loop[1], new THREE.Vector3());
     const dist = Math.hypot(r1.x - r0.x, r1.z - r0.z) * (mo.legT / c.m.leg) * (rt.a.root.scale.y || 1);
     L = { clip, loop, v: Math.max(0.2, dist / (loop[1] - loop[0])) };
