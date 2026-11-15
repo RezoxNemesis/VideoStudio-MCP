@@ -26,7 +26,11 @@ export function fmtLeft(sec: number | null | undefined): string {
   return `about ${hh} h ${String(mins % 60).padStart(2, "0")} min left`;
 }
 
-const singular = (unit: string): string => (unit.endsWith("s") ? unit.slice(0, -1) : unit);
+/** "frames" → "frame", "seconds of performance" → "second of performance": the first word is the one counted. */
+const singular = (unit: string): string => {
+  const [first, ...rest] = unit.split(" ");
+  return [first!.endsWith("s") ? first!.slice(0, -1) : first!, ...rest].join(" ");
+};
 /** A speed in the unit's own words: fast work per second ("6.1 frames/s"), slow work per piece ("20 s per line"). */
 export function fmtSpeed(secPerUnit: number, unit: string): string {
   if (!(secPerUnit > 0) || !unit) return "";

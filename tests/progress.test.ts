@@ -73,6 +73,12 @@ describe("a meter over several stages of work", () => {
     expect(v.left).toBe("about 1 min 30 s left");
     expect(v.speed).toBe("20 s per line");
   });
+  it("says a slow speed in good English when the unit is several words", () => {
+    const c = clock(), m = new Meter(c.now);
+    m.plan([{ id: "motion", label: "Solving the performances", units: 100, unit: "seconds of performance", per: 7 }]);
+    m.begin("motion"); c.pass(60); m.set("motion", 20);
+    expect(m.view().speed).toBe("3 s per second of performance");
+  });
   it("gives a fast stage its speed per second", () => {
     const c = clock(), m = new Meter(c.now);
     m.plan(plan);

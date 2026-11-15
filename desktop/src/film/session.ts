@@ -221,10 +221,11 @@ export class CodeSession {
         if (at !== m.phase) { at = m.phase; meter.begin(m.phase, m.what); this.showMeter(meter); }
         meter.set(m.phase, m.done, m.what);
       });
-      await this.refresh();
-      if (this.error) throw new Error(this.error);
+      // (reading the film again can take a while: it is the next step, not the end of the last one)
       meter.begin("check");
       this.showMeter(meter);
+      await this.refresh();
+      if (this.error) throw new Error(this.error);
       off = film().onProgress((e: FilmProgress) => {
         if (e.dir !== dir) return;
         if (e.phase === "render") {

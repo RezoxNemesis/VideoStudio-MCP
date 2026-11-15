@@ -104,9 +104,10 @@ const DEFAULT_VOICE = { en: 'af_heart', hi: 'hf_alpha', es: 'ef_dora', fr: 'ff_s
  * Which solver made a performance. Raise it whenever the Stage solves a performance or builds a body differently in a
  * way films should get (where a sword hangs, how clothes are cut, how an arm reaches): every film's performances are
  * then solved again once, instead of keeping bodies made the old way. 2: Nov 2026 — a sword worn outside the clothes,
- * trousers cut away under a coat, the draw, forearms kept out of the body.
+ * trousers cut away under a coat, the draw, forearms kept out of the body. 3: 15 Nov 2026 — a looping stride no longer
+ * leans on the capture's T-pose at its seam (a runner's arms flew out once a stride): every run and walk is solved again.
  */
-export const SOLVER_REV = 2;
+export const SOLVER_REV = 3;
 /** The key of a solved performance: its description and the solver that made it. */
 export const bakeKey = (spec) => md5(`${JSON.stringify(spec)}|solver ${SOLVER_REV}`);
 const ordered = (v) => (Array.isArray(v) ? v.map(ordered) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v);
