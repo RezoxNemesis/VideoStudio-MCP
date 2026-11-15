@@ -99,7 +99,8 @@ interface Anchor {
   cut: boolean;
 }
 /** The feet's ground spots (world x, z) an idle keeps them on. */
-interface Pins { L: [number, number]; R: [number, number] }
+/** Where the feet stood when an action ended: [x, z] and, measured with them, the ankle's height. */
+interface Pins { L: [number, number, number?]; R: [number, number, number?] }
 
 interface ActorRt {
   a: Any;
@@ -109,6 +110,8 @@ interface ActorRt {
   snaps: (Any | null)[];
   /** Where the feet stood when an idle block began (world x/z per foot), by block index; null = nothing to hold. */
   pins?: (Pins | null)[];
+  /** Per block: how it joins the action before it (on standing feet: the feet step; feet that land through the blend). */
+  joins?: ({ planted: boolean; land: number; before: number } | undefined)[];
   loco: Map<string, Loco>;
   lastSim: number;
   swordHome: string;
@@ -630,6 +633,7 @@ export class StageRuntime {
     rt.anchors = anchors;
     rt.snaps = [];
     rt.pins = [];
+    rt.joins = [];
     rt.chainSig = sig;
     return anchors;
   }
@@ -649,7 +653,7 @@ export class StageRuntime {
     this.basePose(rt, sa, prev, anchors[i - 1]!, Math.max(0, cur.t - prev.t), prev.t);
     h.root.updateMatrixWorld(true);
     const l = h.wpos("foot.L", new THREE.Vector3()), r = h.wpos("foot.R", new THREE.Vector3());
-    const out: Pins = { L: [l.x, l.z], R: [r.x, r.z] };
+    const out: Pins = { L: [l.x, l.z, l.y], R: [r.x, r.z, r.y] };
     pins[i] = out;
     return out;
   }
@@ -729,25 +733,37 @@ export class StageRuntime {
     const to = { L: h.wpos("foot.L", new THREE.Vector3()), R: h.wpos("foot.R", new THREE.Vector3()) };
     h.blendTo(keep, 1);
     h.root.updateMatrixWorld(true);
-    const blend = b.blend ?? 0.3;
+    const blend = b.blend ?? 0.3, min = b.kind === "stance" ? 0.04 : 0.08;
     const dist = (s: "L" | "R") => Math.hypot(to[s].x - from[s][0], to[s].z - from[s][1]);
     const order: ("L" | "R")[] = dist("L") >= dist("R") ? ["L", "R"] : ["R", "L"];
     let bits = 0;
     order.forEach((s, k) => {
-      const D = dist(s), B = h.B[`foot.${s}`];
-      if (!B || !B.parent || D < 0.04) return;
-      const u = clamp((local - k * 0.2) / 0.24, 0, 1);
-      if (u >= 1 && local >= blend) return; // landed, and the stance has it
-      const e = smooth(0, 1, u), lift = u > 0 && u < 1 ? Math.sin(Math.PI * u) * Math.min(0.09, 0.03 + 0.3 * D) : 0;
-      const p = new THREE.Vector3(from[s][0] + (to[s].x - from[s][0]) * e, to[s].y + lift, from[s][1] + (to[s].z - from[s][1]) * e);
-      if (u > 0 && u < 1) bits |= s === "L" ? 1 : 2;
+      const B = h.B[`foot.${s}`];
+      const st = SK.stepFoot(from[s], [to[s].x, to[s].y, to[s].z], local, k, { min }) as { p: [number, number, number]; air: boolean; done: boolean } | null;
+      if (!B || !B.parent || !st) return;
+      if (st.done && local >= blend) return; // landed, and the new action has it
+      if (st.air) bits |= s === "L" ? 1 : 2;
       const wq = B.getWorldQuaternion(new THREE.Quaternion());
-      setHandle(a, `foot.${s}`, p, 1);
+      setHandle(a, `foot.${s}`, new THREE.Vector3(st.p[0], st.p[1], st.p[2]), 1);
       B.quaternion.copy(B.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq));
       h.root.updateMatrixWorld(true);
     });
     rt.stepping = bits;
     rt.stepAt = t;
+  }
+
+  /**
+   * How block i (a captured action) joins the action before it: on standing feet (both on the ground before and after:
+   * the feet then step), and which feet were in the air before and stand after (they are landing through the blend).
+   */
+  private joinOf(rt: ActorRt, sa: StageActor, i: number): { planted: boolean; land: number; before: number } {
+    const J = (rt.joins ??= []);
+    if (J[i]) return J[i]!;
+    J[i] = { planted: false, land: 0, before: 0 }; // (while it is being measured)
+    const cur = sa.blocks[i], prev = sa.blocks[i - 1];
+    if (!cur || !prev || prev.kind === "fall") return J[i]!;
+    const before = this.motionAt0(sa, cur.t - 1 / 60)?.contact ?? 0, after = this.motionAt0(sa, cur.t + 1 / 60)?.contact ?? 0;
+    return (J[i] = { planted: prev.kind !== "go" && (SK.plantedJoin(before, after) as boolean), land: after & ~before & 3, before });
   }
 
   /** The previous block's last pose, re-expressed where block i starts (for the crossfade). */
@@ -784,9 +800,12 @@ export class StageRuntime {
     const A = i >= 0 ? anchors[i]! : { x: sa.at.pos[0], y: sa.at.pos[1], z: sa.at.pos[2], yaw: sa.at.yaw * D2R, cut: true };
     const local = b ? t - b.t : t;
     rt.stepping = 0;
-    const steps = !!b && b.kind === "stance" && i > 0 && !A.cut && local < STEP_IN;
+    // into a stance the feet step; so they do where two captured actions are joined on feet that stand (a pivot from
+    // a pick-up into a start skated a foot 19 cm across the ground while the bodies blended)
+    const steps = !!b && i > 0 && !A.cut && local < STEP_IN && (b.kind === "stance" || (b.kind === "clip" && this.joinOf(rt, sa, i).planted));
     // where the feet stood when the stance began is measured before this frame is posed (measuring poses the body)
-    if (steps) this.idlePins(rt, sa, i);
+    const joins = !!b && b.kind === "clip" && i > 0 && !A.cut && local < (b.blend ?? 0.3);
+    if (steps || joins) this.idlePins(rt, sa, i);
     this.basePose(rt, sa, b, A, local, t);
     // crossfade from the block before
     const blend = b ? (b.blend ?? 0.3) : 0;
@@ -803,6 +822,12 @@ export class StageRuntime {
       }
     }
     if (steps && b) this.stepIn(rt, sa, b, A, i, local, t);
+    // a foot that was in the air when the action before ended comes down through the crossfade: it is landing, not standing
+    if (joins && b) {
+      const J = this.joinOf(rt, sa, i), at = rt.pins?.[i];
+      const land = J.land && at ? (SK.landingFeet(J.before, J.before | J.land, at.L[2] ?? 0, at.R[2] ?? 0) as number) : 0;
+      if (land) { rt.stepping = (rt.stepping ?? 0) | land; rt.stepAt = t; }
+    }
     const isClip = !!b && (b.kind === "clip" || b.kind === "go");
     if (b && b.kind === "stance" && b.guard === "fists") {
       h.fingers("L", 1, 0.9);

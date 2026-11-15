@@ -470,6 +470,16 @@ library are about 4.3 to 5 m/s at 176–198 steps a minute (`16_46`, `127_08`, `
 minute against what is usual for those legs, step length, time in the air, lean, knee lift, arms against legs, how far
 apart the hands go — and what a coach would say is wrong.
 
+## Joining two captured actions (2.5.60)
+
+`actions` chain with a `blend`. What the feet do in that blend: where the action before ends on standing feet and the
+next begins on standing feet, a foot that has more than 8 cm to go takes a STEP (the farther one first, lifted up to
+9 cm, 0.24 s each) instead of sliding; a foot that was still in the air when the first action ended lands through the
+blend. Everything else is a plain crossfade — so **join where the feet agree**: enter the next capture at a moment that
+matches what the body is doing (after a stop, enter a pick-up at a WALKING moment and let it take its steps: 41 cm of
+slide became none), and look at the judge's foot-slide lines for each join (`SHOW=foot-slide node devtests/sensei.mjs
+<film> <seq>`). A new take with `blend: 0` belongs on a cut.
+
 ## The code collection
 
 Every movement that has been worked out is kept ready to use in one place, `kit/moves.js`: for each move its name,

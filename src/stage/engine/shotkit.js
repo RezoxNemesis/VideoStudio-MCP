@@ -62,6 +62,32 @@ export function kneelPose(a, o = {}) { const h = a.h, sit = o.sit ?? 0.6, al = s
 /** How far a body must be lifted for its lowest point to rest on a floor at y: never a negative amount — a body in the air is left there. */
 export const liftToFloor = (low, y) => Math.max(0, y - low);
 /** Keep a falling or lying body out of the floor: lift it (never lower it) so that none of these parts (bone, radius) is under world height y. */
+/** A join of two actions is on standing feet when both feet are on the ground before it and after it (contact bits 3). */
+export const plantedJoin = (before, after) => before === 3 && after === 3;
+/**
+ * The feet that land through a join (bit 1 = left, 2 = right): in the air when the action before ended, on the ground
+ * in the new one — and REALLY in the air: at least `min` (3 cm) higher than the other foot, which stood. The marks alone
+ * are not believed: a foot on the ground that moves is a skate, and must stay one.
+ *   before, after: contact bits each side of the join; yL, yR: the ankles' heights when the action before ended
+ */
+export function landingFeet(before, after, yL, yR, min = 0.03) {
+  const land = after & ~before & 3;
+  if (land === 1 && (before & 2) && yL - yR >= min) return 1;
+  if (land === 2 && (before & 1) && yR - yL >= min) return 2;
+  return 0;
+}
+/**
+ * One foot's step across a join: from where it stood [x, z] to where the new action has it [x, y, z], `local` seconds
+ * into the join; k = 0 for the foot that goes first (the one with further to go), 1 for the second (it waits 0.2 s).
+ * → { p: [x, y, z], air (lifted: not planted), done } or null when the foot has less than `min` (0.04 m) to go: the
+ * blend may have that.
+ */
+export function stepFoot(from, to, local, k = 0, o = {}) {
+  const D = Math.hypot(to[0] - from[0], to[2] - from[1]);
+  if (D < (o.min ?? 0.04)) return null;
+  const u = clamp((local - k * 0.2) / 0.24, 0, 1), e = smooth(0, 1, u), air = u > 0 && u < 1, lift = air ? Math.sin(Math.PI * u) * Math.min(0.09, 0.03 + 0.3 * D) : 0;
+  return { p: [from[0] + (to[0] - from[0]) * e, to[1] + lift, from[1] + (to[2] - from[1]) * e], air, done: u >= 1 };
+}
 export function floorLift(a, y, pts = [['root', 0.11], ['spine03', 0.1], ['spine01', 0.1], ['head', 0.1], ['upperarm01.L', 0.05], ['upperarm01.R', 0.05], ['lowerarm01.L', 0.04], ['lowerarm01.R', 0.04], ['lowerleg01.L', 0.055], ['lowerleg01.R', 0.055], ['foot.L', 0.04], ['foot.R', 0.04]]) { const h = a.h, s = h.root.scale.y; h.root.updateMatrixWorld(true); let low = 1e9; for (const [b, r] of pts) low = Math.min(low, h.wpos(b).y - r * s * h.height / 1.8); const up = liftToFloor(low, y); if (up > 0) { h.B.root.position.y += up / s; h.root.updateMatrixWorld(true); } }
 export function floorFix(a, y, pts = [['lowerleg01.L', 0.055], ['lowerleg01.R', 0.055], ['foot.L', 0.04], ['foot.R', 0.04], ['toe2-1.L', 0.02], ['toe2-1.R', 0.02]]) { const h = a.h, s = h.root.scale.y; h.root.updateMatrixWorld(true); let low = 1e9; for (const [b, r] of pts) low = Math.min(low, h.wpos(b).y - r * s * h.height / 1.8); h.B.root.position.y += (y - low) / s; h.root.updateMatrixWorld(true); }
 /** single close-up: camera `dist` metres from the actor's eyes, on the line towards `toward` swung by `yaw` (rad). o: dist, yaw, lift, dy, side, fov, range, max, shake */
