@@ -115,6 +115,7 @@ contextBridge.exposeInMainWorld("vsd", {
     addSound: (dir, sub, name, from) => call("film.addSound", dir, sub, name, from),
     people: (group) => call("film.people", group),
     sets: () => call("film.sets"),
+    moves: (q) => call("film.moves", q),
     personThumb: (id, size) => call("film.personThumb", id, size),
     history: (dir, file) => call("film.history", dir, file),
     historyRead: (dir, file, at) => call("film.historyRead", dir, file, at),

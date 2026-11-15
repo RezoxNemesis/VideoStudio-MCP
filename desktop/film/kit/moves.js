@@ -1,0 +1,235 @@
+// THE CODE COLLECTION — every movement that has been worked out, kept ready to use.
+// One entry = one move: what it is for, the rules that make it read, the captured clips with their moments, the kit
+// functions / commands / tools it needs, the code to paste, and how to check it (a number or a strip, never an
+// impression). Ask before working a move out again:
+//   in a film:   import { MOVES, findMoves } from '../vs.js'
+//   from Claude: {"op":"code.moves","q":"pick up a bag"}        on the command line: node devtests/moves.mjs pick up a bag
+// Add a move only when it has been built, looked at in motion and measured; devtests/moves.mjs holds every entry to
+// that (its clips exist, its moments are inside them, nothing starts on a capture's T-pose frame, its code uses what it lists).
+
+export const MOVES = [
+  {
+    id: 'run', name: 'A run', tags: ['run', 'jog', 'runner', 'legs', 'arms'],
+    use: 'Someone runs from one place to another at an ordinary running speed (3 to 4 m/s).',
+    rules: [
+      'A run has a moment in the air in every step; the foot lands under the body, not far ahead of it; the trunk leans a little forward from the ankles.',
+      'The arms are bent about a right angle and swing from the shoulder against the legs, hand from hip to chest, elbows close to the ribs: they never open sideways.',
+      'About 180 steps a minute (a step every third of a second); the head stays level.',
+      'A body at speed cannot start or stop in a frame: let the film find him already running, or use brake.',
+    ],
+    clips: [{ clip: '09_05', in: 0.05, out: 0.8, note: 'one whole stride at 3.4 m/s; the Stage loops it' }],
+    needs: ['stage.do', 'swingArms'],
+    code: `{ op: 'stage.do', actor: 'a', actions: [{ t: 0, go: [x, z], gait: 'run', clip: '09_05', speed: 3.6 }] }
+// captured joggers hold their hands high: in actors(), fit: (pose) => swingArms(pose, { amount: 1, deg: 40 }) gives the arms their swing`,
+    check: ['wrists between 0.3 and 0.55 m apart through the whole run (the judge reports arm-flare if they fly out)', 'a strip of two strides at 12 frames a second', 'no foot-slide finding'],
+  },
+  {
+    id: 'sprint', name: 'A sprint', tags: ['run', 'fast', 'sprint', 'dash'],
+    use: 'Someone runs flat out (6 to 7 m/s): a chase, being late, an attack.',
+    rules: [
+      'More lean (15 to 30 degrees), a harder arm drive, a longer stride and a longer moment in the air than a run.',
+      'He covers 6 metres a second: the lens must travel with him (beside and a little ahead) or stand far off; a shot of 2 seconds needs 13 metres of ground.',
+      'Start the shot when he is already at speed, or show the brake: nobody is at 6 m/s one frame after standing.',
+    ],
+    clips: [{ clip: '143_01', in: 0.05, out: 0.78, note: 'captured at 6.7 m/s' }],
+    needs: ['stage.do'],
+    code: `{ op: 'stage.do', actor: 'a', actions: [{ t: 0, go: [x + 60, z], gait: 'run', clip: '143_01', speed: 6.2 }] }   // the shot begins at 0.7 s, when he is at speed
+// camera beside him: cam: (t, ctx) => { const p = at(ctx, 'a', 'hips'); return { pos: [p[0] + 3.4, 1.2, z + 5.4], target: [p[0] + 0.5, 1.0, z], fov: 40 }; }`,
+    check: ['wrists stay under 0.55 m apart', 'the background passes at his speed in a strip of the tracking shot'],
+  },
+  {
+    id: 'brake', name: 'A run to a quick stop', tags: ['stop', 'brake', 'run', 'halt', 'slow'],
+    use: 'A runner stops: before picking something up, before a lord, at a cliff edge.',
+    rules: [
+      'Stopping takes about two seconds and two or three steps: the body sinks, the trunk comes upright and back, the arms go out for balance.',
+      'The capture veers and travels on (about 2.4 m, 0.7 m to one side): solve once, read where he ends, and move the way-point by the measured error.',
+    ],
+    clips: [{ clip: '127_05', in: 0.45, out: 2.35, note: 'Run to Quick Stop: the brake is 0.45 to 2.35 s' }],
+    needs: ['stage.do', 'where.mjs'],
+    code: `{ t: tStop, clip: '127_05', in: 0.45, out: 2.35, blend: 0.2 }    // after a go … gait: 'run'; then node devtests/where.mjs <film> shot@t a:root to see where he stands`,
+    check: ['where.mjs: he stands where the next action needs him', 'no foot-slide MUST in the judge'],
+  },
+  {
+    id: 'pick-up', name: 'Picking something up from the ground', tags: ['pick', 'up', 'take', 'grab', 'lift', 'bag', 'box', 'prop', 'reach'],
+    use: 'Someone walks or runs up to a thing on the ground, bends, takes it and goes on with it in the hand.',
+    rules: [
+      'A thing never jumps into a hand: show the approach, the bend, the hand closing on it and the lift in ONE shot.',
+      'Chain captured performances on the one body (run, brake, pick-up, run on) instead of keying a reach over a run.',
+      'This capture takes the thing with the LEFT hand, lowest 0.59 s after its start here; after 2.05 s it turns back the way it came, so it is cut there.',
+      'Put the thing exactly where the hand comes down: solve, read the wrist at that moment, set the thing there.',
+    ],
+    clips: [{ clip: '143_10', in: 1.0, out: 2.05, note: 'Walk And Pick Up Tool Box: two steps, bend, grab at clip 1.59 s, upright by 2.05' }],
+    needs: ['stage.do', 'carried', 'where.mjs'],
+    code: `{ t: tPick, clip: '143_10', in: 1.0, out: 2.05, blend: 0.3 }, { t: tPick + 1.05, go: [x, z], gait: 'run', clip: '09_05', speed: 3.8, blend: 0.35 }
+const TG = tPick + 0.62;                                              // the hand closes
+const bag = carried({ rest: [bx, 0, bz], by: 'a', hand: 'L', from: TG, hang: 0.2, make: (p, yaw) => new Mesh(box(p, 0.3, 0.22, 0.12, yaw, { side: '#b5382e' })) });
+// dyn: (ts, ctx) => [bag(ts, ctx)]      rest = wrist.L at TG from: node devtests/where.mjs <film> shot@t a:wrist.L`,
+    check: ['the wrist is within 5 cm of the thing at the grab (where.mjs)', 'a strip of the one shot: brake, step, bend, grab, lift'],
+  },
+  {
+    id: 'carry', name: 'A thing carried in a hand', tags: ['carry', 'hold', 'thing', 'prop', 'bag', 'hand', 'set', 'down'],
+    use: 'A bag, a cup, a book: it lies somewhere, a hand takes it, it goes where the hand goes, it is set down.',
+    rules: [
+      'Before the hand closes the thing does not move; after, it hangs from the wrist and swings with it; set down, it stays.',
+      'It is drawn across into the hand in a few frames (take: 0.07 s), never in one.',
+    ],
+    needs: ['carried'],
+    code: `const cup = carried({ rest: [x, 0.8, z], by: 'a', hand: 'R', from: 3.2, to: 7.5, drop: [x2, 0.8, z2], hang: 0.1, make: (p, yaw) => new Mesh(box(p, 0.08, 0.1, 0.08, yaw, { side: '#ddd' })) });
+// dyn: (ts, ctx) => [cup(ts, ctx)]`,
+    check: ['a strip across from and to: the thing is in one place before and after, and at the wrist between'],
+  },
+  {
+    id: 'sit-alive', name: 'Sitting, alive', tags: ['sit', 'seated', 'chair', 'desk', 'class', 'wait', 'idle', 'fidget'],
+    use: 'Someone sits on a chair through a scene (a pupil, a listener) and must not look like a photograph.',
+    rules: [
+      'A held pose is a statue. Play a captured SEATED performance slowed down (rate 0.35 to 0.55): small shifts of weight, hands that move.',
+      'Key the acting over it: the look with eyesLead, a lean, a twist; keep the film\'s life on (breath, blinks).',
+      'The Stage pose "sit" is a seat on the GROUND. This capture sits on a low stool: lift the hips 7 cm for a chair.',
+    ],
+    clips: [{ clip: '13_05', in: 5.0, out: 10.3, note: 'chin on the hands, thinking' }, { clip: '13_05', in: 32.4, out: 36.6, note: 'upright, hands on the knees' }],
+    needs: ['stage.do', 'stage.overlay', 'eyesLead'],
+    code: `{ op: 'stage.do', actor: 'a', actions: [{ t: 0, clip: '13_05', in: 5.0, out: 10.3, rate: 0.42, at: { pos: SEAT, yaw: 180 } }] },
+{ op: 'stage.overlay', actor: 'a', add: [{ t0: 0, t1: END + 1, fade: 0, keys: [{ on: 'hips', keys: [[0, [0, 0.07, 0]], [END + 1, [0, 0.07, 0]]] }] }, ...eyesLead(beats, { end: END }).head] }`,
+    check: ['no statue finding from the judge', 'the hips are at the seat (root y about 0.45 m)'],
+  },
+  {
+    id: 'fall', name: 'Struck down: a fall', tags: ['fall', 'knockout', 'ko', 'struck', 'hit', 'die', 'collapse', 'fight'],
+    use: 'Someone is struck and goes down: the end of a fight, a blow, a shot.',
+    rules: [
+      'A fall is losing balance, going over and landing: about 0.6 s to the ground for a body knocked backwards, more when the knees give first. Never a reversed get-up, never under a third of a second.',
+      'Show it in one shot that began before the blow; slow time from just before the blade lands until the body is down.',
+      'Struck from the front the body goes over backwards (the default); prone: true is the knees giving and a pitch onto the face.',
+    ],
+    clips: [{ clip: '90_18', in: 0.45, out: 2.7, note: 'over backwards onto the back; on the ground at 1.55' }, { clip: '90_16', in: 2.25, out: 5.2, note: 'the knees give, onto the face; on the ground at 4.0' }],
+    needs: ['stage.do', 'stage.fight', 'ramps'],
+    code: `{ op: 'stage.do', actor: 'b', actions: [{ t: tHit + 0.04, fall: {} }] }          // plays 90_18; { fall: { prone: true } } plays 90_16
+// in a stage.fight the last beat { do: 'rising', hit: true, ko: true } writes it. The shot: warp: ramps(dur, [{ at: tHit - 0.15 - t0, slow: 0.35, len: 3.0, rec: 2.6 }])`,
+    check: ['the hips are still above 70 % of standing height a sixth of the way through, and under 0.2 m at the end (never below the floor)', 'a strip at ten frames a second: rocked, off balance, going over, landing'],
+  },
+  {
+    id: 'kneel', name: 'Going down on one knee', tags: ['kneel', 'bow', 'knee', 'report', 'lord'],
+    use: 'A messenger before his lord, a knight, a proposal.',
+    rules: [
+      'The whole way down must be seen: weight onto the front leg, the back knee to the ground, the trunk settles, the head bows last.',
+      'Hold the kneel by slowing the same clip with warp, not with a held pose (a pose slides the feet).',
+    ],
+    clips: [{ clip: '23_03', in: 0.45, out: 2.6, note: 'down between 0.45 and 1.9 s' }],
+    needs: ['stage.do'],
+    code: `{ t: tDown, clip: '23_03', in: 0.45, out: 2.6, blend: 0.35, warp: [[0, 0.45], [1.45, 1.9], [hold, 2.6]] }   // hold: seconds the kneel lasts after he is down`,
+    check: ['foot-slide under 6 cm in the judge', 'a strip of the whole kneel in one shot'],
+  },
+  {
+    id: 'look', name: 'A look: the eyes lead, the head follows', tags: ['look', 'eyes', 'gaze', 'glance', 'head', 'turn', 'blink'],
+    use: 'Someone looks at someone or something; every change of attention in a scene.',
+    rules: [
+      'The eyes go first and fast (a dart of two or three frames); the head sets off about 0.2 s later and moves slower; a big change of gaze takes a blink with it.',
+      'How much head: 0 = the eyes alone (careful, shy, sneaking), 0.4 to 0.5 = guarded, 0.9 = open. Nobody turns eyes and head in one move.',
+      'A head turn travels on an arc with a small dip, never on a straight line; beyond about 60 degrees the shoulders and then the hips join in.',
+    ],
+    needs: ['eyesLead', 'stage.overlay'],
+    code: `const L = eyesLead([{ t: 0, at: [x, y, z], head: 0.9 }, { t: 2.0, at: 'b', head: 0.5 }, { t: 6, at: 'b', head: 0 }], { end: T.dur });
+// actors: { id: 'a', look: L.look, … }        steps: { op: 'stage.overlay', actor: 'a', add: L.head }`,
+    check: ['a strip at 12 frames a second across each change: eyes first, a blink on the big ones, then the head'],
+  },
+  {
+    id: 'caught-looking', name: 'Caught looking: the shy glance away', tags: ['shy', 'glance', 'crush', 'caught', 'blush', 'embarrassed', 'eyes', 'love'],
+    use: 'Someone watches another in secret, is seen, and looks away; then dares to look again.',
+    rules: [
+      'Watching: eyes on her, the head only half turned, hardly a blink (someone who stares forgets to).',
+      'Caught: the eyes go away AT ONCE, the head ducks 0.08 s later with a short fade, the colour comes half a second after.',
+      'The second look is with the eyes alone (head: 0); the head comes up only when he dares.',
+    ],
+    needs: ['eyesLead', 'stage.overlay'],
+    code: `const E = eyesLead([{ t: 0, at: BOOK, head: 0.9 }, { t: LOOK, at: 'girl', head: 0.5 }, { t: CAUGHT, at: BOOK, head: 0.95, lead: 0.08, fade: 0.16 },
+  { t: PEEK, at: 'girl', head: 0 }, { t: RISE, at: 'girl', head: 0.45, fade: 0.7 }], { end: END });
+// emote: [[CAUGHT, { like: 'shock', blush: 0.5 }, 0.12], [CAUGHT + 0.7, { like: 'afraid', blush: 0.95 }, 0.5], [RISE + 0.3, { like: 'happy', blush: 0.8 }, 0.7]]`,
+    check: ['cut to the close-up ON the moment he is caught, so the dart away opens the shot', 'a strip of the close-up at 12 frames a second'],
+  },
+  {
+    id: 'wait', name: 'Standing and waiting, alive', tags: ['stand', 'wait', 'idle', 'soldier', 'guard', 'crowd', 'weight'],
+    use: 'Anyone who only stands in a shot: guards, a crowd, someone listening.',
+    rules: [
+      'Nobody alive holds still: the weight goes from one leg to the other, the head looks about, the chest breathes.',
+      'Give each body a different capture, or the same one from a different moment, so no two move together.',
+    ],
+    clips: [{ clip: '139_02', in: 0.5, note: 'shifting weight' }, { clip: '137_41', in: 2 }, { clip: '40_10', in: 4 }],
+    needs: ['stage.do'],
+    code: `{ op: 'stage.do', actor: 'g1', actions: [{ t: 0, idle: true }, { t: 0.3, idle: true, clip: '139_02', in: 0.5, blend: 0.6 }] }   // others: '137_41' in 2, '40_10' in 4`,
+    check: ['no statue finding from the judge'],
+  },
+  {
+    id: 'duel-ending', name: 'The blow that ends a fight', tags: ['fight', 'duel', 'sword', 'blow', 'final', 'slow', 'motion', 'combat'],
+    use: 'The last exchange of a sword or fist fight: the audience must see exactly how the loser was beaten.',
+    rules: [
+      'One shot from before the feint to the stillness after: wind-up, the cut, the blow landing, the stagger, the fall. No cut between the blow and the fall.',
+      'Side on, both bodies in full, the lens on one side of the line between them.',
+      'Read the solved beat times when they are needed, not when the film file is loaded.',
+    ],
+    needs: ['stage.fight', 'fightBeats', 'ramps', 'combat', 'fightEvents'],
+    code: `let _k = null; const K = () => (_k && _k.FB.beats.length ? _k : (_k = (() => { const FB = fightBeats('duel'); return { FB, FX: combat(fightEvents(FB.beats, () => ['hero', 'foe'])), LAST: FB.beats.at(-1)?.apex ?? 7 }; })()));
+{ id: 'end', t0: CUT, t1: END, warp: ramps(END - CUT, [{ at: K().LAST - 0.15 - CUT, slow: 0.35, len: 3.0, rec: 2.6 }]), cam: … }`,
+    check: ['a strip a tenth of a second apart across the blow: contact, rocked, going over, down'],
+  },
+  {
+    id: 'dance-on-beat', name: 'A dance laid on its music', tags: ['dance', 'beat', 'music', 'rhythm', 'tempo', 'count'],
+    use: 'Someone dances to the film\'s music and the steps must fall on the beats.',
+    rules: [
+      'Poses HIT on the beat and travel between beats; the body drops (knees bend) on the accent; cuts fall on the beat, a shot lasts four or eight beats.',
+      'The weight is always on one leg: the hip goes out over it and the shoulders tilt the other way; arms never mirror each other; hands stay away from the trunk so the outline reads.',
+      'Pick a tempo whose beat is a whole number of frames; measure the dancer\'s pulse before trusting a capture (below 50 % sure it has none: choose another clip or key the poses on the counts).',
+    ],
+    needs: ['beatGrid', 'beatMatch', 'countAt', 'steps.mjs'],
+    code: `const G = beatGrid(120, 30);                       // a beat every 15 frames
+// node devtests/steps.mjs <film> <seq> <actor> 120  →  rate, start and how sure the pulse is
+const M = beatMatch(steps, 120);                    // { rate, in, per, sure }
+// { t: START, clip, in: M.in, rate: M.rate }        shots: cut where countAt(t, 120).accent`,
+    check: ['steps.mjs: the steps are under 40 ms off the beat and the pulse is above 50 % sure'],
+  },
+  {
+    id: 'solar-system', name: 'A solar system', tags: ['space', 'planet', 'orbit', 'sun', 'moon', 'solar', 'star'],
+    use: 'Planets going round a sun; any set of things that orbit.',
+    rules: [
+      'The inner planets race and the outer ones crawl (a round takes distance to the power 1.5): that is what makes it read as a system and not a carousel.',
+      'Every ball is lit from the sun\'s side only: between us and the sun it is a crescent.',
+      'Hang the sun high and put the lens below it looking up, so no horizon is in the picture; one slow move, no cuts.',
+    ],
+    needs: ['solarSystem', 'space'],
+    code: `const S = solarSystem({ sun: [0, 35, -24], year: 9, planets: [{ name: 'earth', ring: 6.9, r: 0.4, color: '#4f8fd6', land: '#5fae6a', moon: true, year: true }, { name: 'saturn', ring: 16, r: 0.95, color: '#e3cf9a', hoop: '#cfc09a' }] });
+// set: () => space({ moon: false })      shot: over: (g, cam, sc, t) => S.draw(g, cam, t)`,
+    check: ['in a strip two seconds apart the inner planets have moved several times as far as the outer ones'],
+  },
+  {
+    id: 'wave', name: 'A wave of the hand', tags: ['wave', 'hello', 'greet', 'hand', 'gesture'],
+    use: 'Someone greets someone they see coming.',
+    rules: [
+      'She sees him first (the eyes, then the head), then the arm goes up; the wave is from the elbow with a loose wrist.',
+      'It settles: the arm comes down slower than it went up.',
+    ],
+    clips: [{ clip: '143_25', in: 0.2, out: 2.6 }],
+    needs: ['stage.do'],
+    code: `{ t: 2.4, clip: '143_25', in: 0.2, out: 2.6, at: { yaw: -90 }, blend: 0.4 }, { t: 4.9, idle: true, blend: 0.5 }`,
+    check: ['a strip of the wave: the hand is above the shoulder and clear of the head'],
+  },
+];
+
+const wordsOf = (s) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+/** The moves that fit some words ("pick up a bag", "shy glance"), the best first; without words, all of them. */
+export function findMoves(q) {
+  if (!q || !String(q).trim()) return [...MOVES];
+  const want = wordsOf(String(q));
+  return MOVES.map((m) => {
+    const id = wordsOf(m.id), tags = m.tags ?? [], name = wordsOf(m.name), use = wordsOf(m.use);
+    let score = 0;
+    for (const w of want) score += (id.includes(w) ? 4 : 0) + (tags.includes(w) ? 3 : 0) + (name.includes(w) ? 2 : 0) + (use.includes(w) ? 1 : 0);
+    return { m, score };
+  }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score).map((x) => x.m);
+}
+/** A move as one page of text. */
+export function moveText(m) {
+  return [
+    `${m.name.toUpperCase()}  (${m.id})`, m.use, '', 'RULES', ...m.rules.map((r) => `  - ${r}`),
+    ...(m.clips?.length ? ['', 'CLIPS', ...m.clips.map((c) => `  ${c.clip}  ${c.in ?? 0}${c.out !== undefined ? ` to ${c.out}` : ' on'} s${c.note ? `  — ${c.note}` : ''}`)] : []),
+    ...(m.needs?.length ? ['', `NEEDS  ${m.needs.join(', ')}`] : []),
+    '', 'CODE', ...m.code.split('\n').map((l) => `  ${l}`), '', 'CHECK', ...m.check.map((c) => `  - ${c}`),
+  ].join('\n');
+}

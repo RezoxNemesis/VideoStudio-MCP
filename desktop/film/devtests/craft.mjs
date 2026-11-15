@@ -10,6 +10,7 @@ import { beatGrid, countAt, stepTimes, beatMatch } from '../kit/dance.js';
 import { dartTo, gazeBlink, eyesLead, gazeOf } from '../kit/acting.js';
 import { carried } from '../kit/things.js';
 import { asList } from '../kit/seq.js';
+import { armFlares } from '../sensei/motion.js';
 import { ball, onRing, keplerTurns, solarSystem } from '../kit/orbs.js';
 
 const fails = []; let checks = 0;
@@ -115,6 +116,26 @@ const near = (a, b, tol, what) => ok(Math.abs(a - b) <= tol, `${what} (want ${b}
   // effects may be given as one system or as a list (fx: FX.fx from combat() is one; fx: (ctx) => [rain(box)] is a list)
   const one = { step() {}, items() { return []; } };
   ok(asList(one).length === 1 && asList(one)[0] === one && asList([one, one]).length === 2 && asList(null).length === 0 && asList(undefined).length === 0, 'a sequence takes its effects as one system or as a list of them', [asList(one).length, asList([one, one]).length]);
+}
+
+/* ---------------------------------------------------------------- THE JUDGE: ARMS THAT FLY OUT */
+{
+  // The fault the user saw in two films: once every stride a runner's arms went out sideways for a fifth of a second
+  // (measured: wrists 0.41 m apart → 1.28 m → back in one frame, every 0.70 s). The judge must find it by itself.
+  const dt = 1 / 30, swing = (t) => 0.41 + 0.09 * Math.sin((2 * Math.PI * t) / 0.7);
+  const bad = Array.from({ length: 120 }, (_, i) => { const t = i * dt, u = (t % 0.7) / 0.7; return u > 0.72 ? swing(t) + (1.28 - 0.41) * ((u - 0.72) / 0.28) : swing(t); });
+  const found = armFlares(bad, dt);
+  ok(found.length >= 4 && found.length <= 6, 'arms that fly out once a stride are found, each time', found.length);
+  ok(found.every((f) => f.peak > 1.0 && f.base < 0.55 && (f.i1 - f.i0 + 1) * dt <= 0.4), 'with how far out they went and what is normal around it', found[0]);
+  const gaps = found.slice(1).map((f, k) => (f.i0 - found[k].i0) * dt);
+  ok(gaps.every((g) => Math.abs(g - 0.7) < 0.07), 'and they are a stride apart: the fault of a loop', gaps);
+  ok(armFlares(Array.from({ length: 120 }, (_, i) => swing(i * dt)), dt).length === 0, 'a runner whose arms stay in their swing is left alone', 0);
+  // arms opened on purpose (a gesture held for a second and a half) are not a fault
+  const gesture = Array.from({ length: 150 }, (_, i) => { const t = i * dt; return t > 1.5 && t < 3.0 ? 1.3 : 0.45; });
+  ok(armFlares(gesture, dt).length === 0, 'arms held out on purpose are a pose, not a flare', armFlares(gesture, dt).length);
+  // a body that is not in the picture for a while breaks nothing
+  const holes = bad.map((v, i) => (i > 40 && i < 60 ? null : v));
+  ok(armFlares(holes, dt).length >= 2, 'a body out of the picture for a while breaks nothing', armFlares(holes, dt).length);
 }
 
 /* ---------------------------------------------------------------- ORBS */

@@ -211,6 +211,7 @@ function setupFilm(o) {
   const thumbs = path.join(o.userData, "film-thumbs");
   h("film.people", (group) => farm().ask("people", { group }));
   h("film.sets", () => farm().ask("sets", {}));
+  h("film.moves", (q) => farm().ask("moves", { q: typeof q === "string" ? q : "" }));
   h("film.personThumb", async (id, size = 320) => {
     const f = path.join(thumbs, `${String(id).replace(/[^\w-]/g, "")}-${size}.jpg`);
     try { return { jpeg: (await fsp.readFile(f)).toString("base64"), cached: true }; } catch { /* not drawn yet */ }

@@ -18,6 +18,7 @@ import { openProject, needs, timeline, fingerprints, readIndex, writeIndex, shot
 import { fitAndLip } from '../kit/lip.js';
 import { mix, srt, kitSounds } from '../kit/sound.js';
 import { PROPS } from '../kit/props.js';
+import { findMoves, moveText } from '../kit/moves.js';
 import { cropRect, jointsOf } from './tools.mjs';
 import { PLACES } from '../kit/places.js';
 import { flashScan } from '../kit/qa.js';
@@ -281,6 +282,8 @@ const methods = {
   async people({ group }) { return { groups: PEOPLE_GROUPS, people: PEOPLE_LIST.filter((p) => !group || p.group === group), cast: Object.keys(KIT_CAST) }; },
   async sounds() { return kitSounds(); },
   async props() { return { props: Object.keys(PROPS) }; },
+  /** The code collection: the moves that fit some words (all of them without), each as a page of text and as data. */
+  async moves({ q } = {}) { const list = findMoves(q); return { count: list.length, moves: list.map((m) => ({ id: m.id, name: m.name, use: m.use })), pages: list.slice(0, q ? 4 : 0).map(moveText) }; },
   async sets() { return { places: Object.keys(PLACES), storySets: ['town', 'village', 'courtyard', 'hall', 'terrace', 'bridge', 'steps'], sets: [...Object.keys(PLACES), 'town', 'village', 'courtyard', 'hall', 'terrace', 'bridge', 'steps'], hours: ['dawn', 'day', 'dusk', 'night'], props: Object.keys(PROPS), sounds: kitSounds() }; },
   /** A picture of a library person (standing, three-quarter view). size: height in pixels. */
   async personThumb({ id, size = 360, design, yaw = 0.5 }) {

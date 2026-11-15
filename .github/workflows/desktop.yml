@@ -121,6 +121,7 @@ jobs:
           node devtests/rider.mjs                  # a performed body is carried to the saddle and seated
           node devtests/life.mjs                   # nobody is a statue: bodies breathe and sway, a speaker's head rides the words
           node devtests/craft.mjs                  # a dance on the beat, eyes that dart and blink, things in hands, balls with a phase, Kepler's rings, the judge finds a body that holds still
+          node devtests/moves.mjs                  # the code collection: every move has rules, code, a check, clips that exist
           node library2d/build.mjs library2d/out   # the 2D library: 587 assets drawn by code (backgrounds, cut-out rigs, effects, props, faces, hands, pixel, stickman)
           node -e "const i=require('./library2d/out/index.json'); if (i.count < 500) { console.error('library too small', i.count); process.exit(1) } console.log('2D library', i.count, JSON.stringify(i.cats))"
           node runner/worker.mjs people '{}' | head -c 300
@@ -159,6 +160,8 @@ jobs:
         run: |
           tag="desktop-v${VERSION}"
           notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ). Installs over VideoStudio 2.0 (and replaces VideoStudio Desktop 1.0.x); projects and the Claude link are kept.
+
+          New: the code collection. Every movement that has been worked out is now kept ready to use inside VideoStudio 2, each as one page: what it is for, the rules that make it read, the captured clips with their exact moments, the functions and tools it needs, the code to paste, and how to check it. Claude asks for a move by name or in plain words (code.moves with q: pick up a bag) before working one out again. It starts with fifteen: run, sprint, brake, pick-up, carry, sit-alive, fall, kneel, look, caught-looking, wait, duel-ending, dance-on-beat, solar-system, wave. And Sensei now finds by itself arms that fly out for a moment (the fault a runner showed once every stride).
 
           Fixed: someone struck down now falls. The loser of a fight used to be on the ground a sixth of a second after the blow, because the knockout played a captured get-up backwards, five seconds of it squeezed into one. It is now a captured fall played forwards at its own speed: the body is rocked, loses its footing, goes over and lands, in a bit more than half a second, and it no longer sinks into the floor when it lies. Fights in existing films are solved again by themselves at the next build.
 

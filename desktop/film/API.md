@@ -457,6 +457,19 @@ shot is drawn again. `paint.parts {shot, t}` says where every part is; `paint.ad
 boy girl teen youngwoman soldier_crimson soldier_azure soldier_jade soldier_onyx captain_* bandit sailor swordsman
 swordswoman king queen — ids like `townswoman_12`. `code.people {group}` lists a group, `code.person {id}` shows one.
 
+## The code collection
+
+Every movement that has been worked out is kept ready to use in one place, `kit/moves.js`: for each move its name,
+what it is for, the rules that make it read, the captured clips with their moments, the kit functions and tools it
+needs, the code to paste, and how to check it. **Ask before working a movement out again:** `{"op":"code.moves",
+"q":"pick up a bag"}` (or `node devtests/moves.mjs pick up a bag`; in a film `findMoves('fall')`). So far: run, sprint,
+brake, pick-up, carry, sit-alive, fall, kneel, look, caught-looking, wait, duel-ending, dance-on-beat, solar-system,
+wave. A move is added only when it has been built, watched in motion and measured — `devtests/moves.mjs` holds every
+entry to that (its clips exist, its moments are inside them, nothing starts on a capture's T-pose frame).
+
+The judge now also reports **arm-flare**: arms that fly out for a fraction of a second and come straight back (a pose
+that belongs to nothing — seen once a stride, it is the seam of a looping clip).
+
 ## Craft: dance, eyes, things in hands, things that go round
 
 Four kinds of scene the practice reel proved, each with the rule that makes it read and the helper that does it.

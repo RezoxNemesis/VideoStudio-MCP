@@ -13,6 +13,35 @@ const HELD = ['sword', 'spear', 'staff', 'axe', 'torch', 'club', 'knife', 'dagge
 const t2 = (x) => Math.round(x * 100) / 100;
 
 /**
+ * Arms that fly out: the moments the distance between a body's wrists jumps far above what it is around that moment
+ * and comes straight back — a pose that belongs to nothing (a loop that leans on a capture's T-pose, a blend through
+ * the rest pose). Arms opened on purpose stay open; these last a fraction of a second.
+ *   dist: metres between the wrists at every sample (null where the body is not there), dt: seconds between samples
+ *   o: { jump: 0.4 (m above the usual), maxLen: 0.45 (s), win: 0.7 (s each side that says what is usual) }
+ * → [{ i0, i1, peak, base }]
+ */
+export function armFlares(dist, dt, o = {}) {
+  const jump = o.jump ?? 0.4, maxLen = Math.round((o.maxLen ?? 0.45) / dt), win = Math.max(2, Math.round((o.win ?? 0.7) / dt)), N = dist.length, base = new Float64Array(N), hot = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    if (dist[i] === null || dist[i] === undefined) continue;
+    // what is usual here: the lower quarter of the samples around it (a flare cannot pull that up)
+    const near = []; for (let k = Math.max(0, i - win); k <= Math.min(N - 1, i + win); k++) if (dist[k] !== null && dist[k] !== undefined) near.push(dist[k]);
+    near.sort((x, y) => x - y); base[i] = near[Math.floor(near.length * 0.25)];
+    if (dist[i] - base[i] > jump) hot[i] = 1;
+  }
+  const out = [];
+  for (let i = 0; i < N; i++) {
+    if (!hot[i]) continue;
+    let k = i; while (k + 1 < N && hot[k + 1]) k++;
+    // a flare leaves the usual and comes straight back to it; arms that open and STAY open are a gesture (its two ends are not flares)
+    const usual = (q) => q < 0 || q >= N || dist[q] === null || dist[q] === undefined || Math.abs(dist[q] - base[i]) < jump / 2;
+    const side = Math.max(1, Math.round(0.3 / dt));   // (a third of a second before and after: the way out may be a ramp)
+    if (k - i + 1 <= maxLen && usual(i - side) && usual(k + side)) { let peak = 0; for (let q = i; q <= k; q++) peak = Math.max(peak, dist[q]); out.push({ i0: i, i1: k, peak, base: base[i] }); }
+    i = k;
+  }
+  return out;
+}
+/**
  * The stretches in which a body is a statue: frames = its joints at every sample (null where it is not there), dt =
  * seconds between samples, o: { win: 2 (seconds a hold must last to count), limit: 0.003 (m: under this its upper body
  * has not moved against its hips) }. → [[first sample, last sample], …]
@@ -159,6 +188,19 @@ export function motionChecks(D, B) {
         push({ sev: seen(D, a, i0, i1, p, 'should'), cat: 'anatomy', kind, actor: a.id, part, t0: t2(D.ts[i0]), t1: t2(D.ts[i1]), at: t2(D.ts[w]), pt: p, where: whereAt(D, w, p), value: Math.round(arr[w]), limit: lim, unit: '°',
           msg: `${a.id}'s ${what} ${Math.round(arr[w])}° away from the ${kind === 'neck-twist' ? 'chest' : 'hips'} (an owl turn; people stop near ${lim}°).`,
           fix: kind === 'neck-twist' ? `Turn the whole body toward what it looks at (a 'face' in the go action, or a turn) and let the head do the last 40°.` : `Turn the feet/hips with the chest (face on the action) instead of twisting the waist.` });
+      }
+    }
+    // ---------- arms that fly out for a moment: a pose that belongs to nothing (seen once a stride, it is a loop's seam)
+    {
+      const d = Array.from({ length: N }, (_, i) => { const J = a.vis[i] ? a.J[i] : null, l = J?.['wrist.L'], r = J?.['wrist.R']; return l && r ? Math.hypot(l[0] - r[0], l[1] - r[1], l[2] - r[2]) : null; });
+      const fl = armFlares(d, dt);
+      if (fl.length) {
+        const f = fl.reduce((x, y) => (y.peak > x.peak ? y : x)), w = Math.round((f.i0 + f.i1) / 2), pt = a.J[w]['wrist.R'];
+        const gaps = fl.slice(1).map((y, q) => (y.i0 - fl[q].i0) * dt), every = gaps.length ? gaps.reduce((x, y) => x + y, 0) / gaps.length : 0;
+        let big = 0; for (const y of fl) for (let i = y.i0; i <= y.i1; i++) big = Math.max(big, a.size[i]);
+        push({ sev: big >= 0.12 ? 'must' : 'should', cat: 'motion', kind: 'arm-flare', actor: a.id, part: 'arms', t0: t2(D.ts[fl[0].i0]), t1: t2(D.ts[fl[fl.length - 1].i1]), at: t2(D.ts[w]), pt, where: whereAt(D, w, pt), value: +f.peak.toFixed(2), limit: +(f.base + 0.4).toFixed(2), unit: 'm',
+          msg: `${a.id}'s arms fly out for a moment${fl.length > 1 ? ` ${fl.length} times${every ? `, about every ${every.toFixed(2)} s` : ''}` : ''}: the wrists are ${f.peak.toFixed(2)} m apart where ${f.base.toFixed(2)} m is usual, for ${t2((f.i1 - f.i0 + 1) * dt)} s. A pose that belongs to nothing.`,
+          fix: `Something blends through a rest pose. Once a stride or once a cycle, it is the seam of a looping clip (solve the performance again with the current VideoStudio: the loop no longer leans on the capture's first frame); once only, it is a blend between two actions that passes through nothing: lengthen that action's blend or start the second clip at a pose nearer the first's.` });
       }
     }
     // ---------- a statue: a body the viewer looks at that does not move at all (as it is drawn: with the life the engine gives it)

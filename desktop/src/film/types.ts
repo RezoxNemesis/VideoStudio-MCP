@@ -181,6 +181,8 @@ export interface FilmApi {
   addSound(dir: string, sub: string, name: string, from: string): Promise<boolean>;
   people(group?: string): Promise<{ groups: { id: string; name: string; count: number }[] | Record<string, unknown>; people: LibraryPerson[]; cast: string[] }>;
   sets(): Promise<{ sets: string[] }>;
+  /** The code collection: moves that fit the words (all without), and the full pages of the best four. */
+  moves(q?: string): Promise<{ count: number; moves: { id: string; name: string; use: string }[]; pages: string[] }>;
   personThumb(id: string, size?: number): Promise<{ jpeg: string }>;
   /** the 2D library: backgrounds in layers, cut-out characters, effects, props, faces, hands, UI, textures, pixel art, stick figures */
   library2d?(): Promise<{ count: number; cats: Record<string, number>; license: string; assets: Asset2D[] }>;

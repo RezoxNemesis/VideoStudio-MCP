@@ -577,6 +577,7 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
     if (a.bool("picture", false) && f.asset2dThumb) out.png = `data:image/png;base64,${(await f.asset2dThumb(x.id)).png}`;
     return out;
   });
+  registerCommand("code.moves", "The code collection: every movement that has been worked out, ready to use — {q?: words like \"pick up a bag\", \"shy glance\", \"fall\"}. Without q: the list. With q: the best matches as full pages (what it is for, the rules that make it read, the captured clips with their moments, the kit functions it needs, the code to paste, how to check it). Ask here BEFORE working a movement out.", async (_s, a) => film().moves(a.optStr("q")));
   registerCommand("code.sets", "The ready-made places a sequence can play in (set: () => town({ time: 'dusk' }) …) — see code.help for their options.", async () => film().sets());
   void s;
   void toast;
