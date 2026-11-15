@@ -128,7 +128,8 @@ export type Overlay = OverlayBase &
     | { kind: "face"; face: Record<string, number> }
     | { kind: "fingers"; side: "L" | "R" | "both"; curl: number; thumb?: number; spread?: number }
     | { kind: "clip"; clip: string; mask: BodyMask; in?: number; rate?: number; mirror?: boolean; weight?: number }
-    | { kind: "sword"; seq: [number, string][]; two?: boolean; twist?: number }
+    | { kind: "sword"; seq: [number, string][]; two?: boolean; twist?: number; left?: boolean }
+    | { kind: "scabbard" }
     | { kind: "struck"; dir?: Vec3; strength?: number }
     | { kind: "lean"; pitch?: number; roll?: number; twist?: number }
     | {

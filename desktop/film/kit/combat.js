@@ -4,6 +4,7 @@
 import { V, clamp, lerp, smooth, hash, rng, qrot, hex, rgba, noise1 } from '../engine/core.js';
 import { Particles, glow } from '../engine/fx.js';
 import { loadBake, poseAt } from '../engine/bake.js';
+import { swordInHand } from '../engine/character.js';
 
 /* ---- bent time ------------------------------------------------------------------------------------------------ */
 /**
@@ -87,7 +88,7 @@ export const arc = (t, t0, t1, lift) => { const u = (t - t0) / (t1 - t0); return
 export function bladeOf(pose, len = 0.78) {
   const sw = pose?.props?.sword; if (!sw || !sw.visible) return null;
   const k = pose.height / 1.8; if (Math.min(V.dist(sw.pos, pose.j['wrist.R']), V.dist(sw.pos, pose.j['wrist.L'])) > 0.3 * k) return null;
-  const sc = pose.props.scabbard; if (sc && sc.visible && V.dist(sw.pos, sc.pos) < 0.09 * k) return null;
+  if (!swordInHand(pose)) return null; // (riding in its scabbard)
   const ax = qrot(sw.q, [0, 1, 0]);
   return { base: V.add(sw.pos, V.mul(ax, 0.14)), tip: V.add(sw.pos, V.mul(ax, 0.135 + len)), ax };
 }

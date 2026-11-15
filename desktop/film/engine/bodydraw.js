@@ -4,6 +4,7 @@
 import { createCanvas } from '@napi-rs/canvas';
 import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
 import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn } from './body.js';
+import { swordInHand } from './character.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes } from './hair.js';
 import { pauldronMeshes } from './armour.js';
@@ -27,7 +28,8 @@ function tube(rings, capA = true, capB = true) {
 const ring = (c, ax, e1, e2, r1, r2, n) => Array.from({ length: n }, (_, i) => { const a = (i / n) * Math.PI * 2, x = Math.cos(a) * r1, y = Math.sin(a) * r2; return [c[0] + e1[0] * x + e2[0] * y, c[1] + e1[1] * x + e2[1] * y, c[2] + e1[2] * x + e2[2] * y]; });
 const along = (p, ax, d) => [p[0] + ax[0] * d, p[1] + ax[1] * d, p[2] + ax[2] * d];
 
-/** What the body carries, as meshes with their paints. */
+/** What a body carries (sword, scabbard, shield, spear…), as meshes with their paints. */
+export function carriedMeshes(ch, pose, lit = (c) => c, k = pose.height / 1.8) { return carried(ch, pose, lit, k); }
 function carried(ch, pose, lit, k) {
   const d = ch.d, out = [], pr = pose.props ?? {}, rgbOf = (c) => hex(lit(c));
   const steel = (c) => ({ fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.38)), hi: rgbOf(shadeHex(c, 0.55)), hiAt: 0.78, thr: 0.0, group: 'blade', recv: false, metal: true });
@@ -47,9 +49,10 @@ function carried(ch, pose, lit, k) {
   }
   const sc = pr.scabbard;
   if (sc && sc.visible && !d.hideSword) {
-    const ax = qrot(sc.q, [0, 1, 0]), wd = qrot(sc.q, [0, 0, 1]), th = qrot(sc.q, [1, 0, 0]), L = ((d.sword.len ?? 0.82) + 0.03) * k, curve = d.sword.curve ?? 0.035, rings = [];
+    // (made to the blade it holds: the blade begins at its mouth and ends inside it)
+    const ax = qrot(sc.q, [0, 1, 0]), wd = qrot(sc.q, [0, 0, 1]), th = qrot(sc.q, [1, 0, 0]), L = ((d.sword.len ?? 0.82) * (d.sword.scale ?? 1) + 0.03) * k, curve = d.sword.curve ?? 0.035, rings = [];
     for (let i = 0; i <= 6; i++) { const u = i / 6; rings.push(ring(along(along(sc.pos, ax, L * u), wd, -curve * L * u * u), ax, wd, th, 0.03 * k * (1 - 0.25 * u), 0.012 * k, 8)); }
-    out.push({ ...tube(rings), paint: flatP(d.sword.scabbard ?? '#201a22', -0.4) });
+    out.push({ ...tube(rings), name: 'scabbard', paint: flatP(d.sword.scabbard ?? '#201a22', -0.4) });
   }
   const sh = pr.shield;
   if (sh && sh.visible) {
@@ -170,7 +173,8 @@ function autoHands(pose) {
     if (pose.fist?.[s]) h[s] = pose.fist[s] >= 1 ? 'fist' : ['relax', 'fist', pose.fist[s]];
   }
   if (pr.shield?.visible) h.L = 'fist';
-  if (pr.sword?.visible && pr.scabbard?.visible && V.dist(pr.sword.pos, pr.scabbard.pos) < 0.09 * k) { for (const s of ['L', 'R']) if (h[s] === 'grip' && !(pr.spear?.visible || pr.staff?.visible)) h[s] = 'relax'; }
+  // (a sword in its scabbard is in no hand — unless a hand is on its hilt, or on the scabbard, for a draw)
+  if (pr.sword?.visible && !swordInHand(pose)) { for (const s of ['L', 'R']) if (h[s] === 'grip' && !(pr.spear?.visible || pr.staff?.visible) && V.dist(pose.j[`wrist.${s}`], pr.sword.pos) > 0.2 * k && V.dist(pose.j[`wrist.${s}`], pr.scabbard.pos) > 0.2 * k) h[s] = 'relax'; }
   return h;
 }
 

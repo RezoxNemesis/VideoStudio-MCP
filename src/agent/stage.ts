@@ -517,7 +517,7 @@ export function registerStageCommands(): void {
 
   registerCommand(
     "stage.overlay",
-    `{sceneId, actor, add: [ {t0, t1, look: <actor id>|{actor, bone?, offset?}|"camera"|[x,y,z], head? (0..1 how much the head turns), eyes?} | {t0, t1, reach: <target>, side: L|R} | {t0, t1, rot: [x,y,z] (deg), bone} | {t0, t1, face: ${Object.keys(MOODS).join("|")} or {slider: 0..1}} | {t0, t1, fingers: 0..1 (curl), side: L|R|both, thumb?, spread?} | {t0, t1, clip, mask: ${MASKS.join("|")}, in?, rate?, mirror?, weight?} | {t0, t1, sword: [[sec, position], …] (see stage.presets swordPositions), two?} | {t0, t1, struck: true, strength?, dir?} | {t0, t1, lean: {pitch?, twist?, roll?} (deg)} | {t0, t1, strike: <target>, limb: hand.L|hand.R|foot.L|foot.R, apex (stage second it lands), hold?, offset?: [right, up, forward], via?: [right, up, forward] (bends the path: a hook swings wide, an uppercut dips)} | {t0, t1, keys: [{on: hand.L|hand.R|foot.L|foot.R (IK handle, metres [right, up, forward] from the actor's feet) | hips (offset) | <bone> (degrees), space?: "world" | {actor, bone?}, keys: [[sec after t0, [a, b, c], ease?: linear|in|out|io|snap|hold], …]}]} ], each with fade? (s)} Layer detail over a character's performance: where they look, what they reach for, a face, a gesture on the upper body while the legs keep walking, sword work, a hit reaction, a lean. Bones: head, neck01, spine01..05, clavicle.L/R, upperarm01.L/R, lowerarm01.L/R, wrist.L/R, upperleg01.L/R, lowerleg01.L/R, foot.L/R, jaw, eye.L/R, finger<1-5>-<1-3>.L/R.`,
+    `{sceneId, actor, add: [ {t0, t1, look: <actor id>|{actor, bone?, offset?}|"camera"|[x,y,z], head? (0..1 how much the head turns), eyes?} | {t0, t1, reach: <target>, side: L|R} | {t0, t1, rot: [x,y,z] (deg), bone} | {t0, t1, face: ${Object.keys(MOODS).join("|")} or {slider: 0..1}} | {t0, t1, fingers: 0..1 (curl), side: L|R|both, thumb?, spread?} | {t0, t1, clip, mask: ${MASKS.join("|")}, in?, rate?, mirror?, weight?} | {t0, t1, sword: [[sec, position], …] (see stage.presets swordPositions; a sequence from "sheath" draws the sword worn at the hip — the right hand takes the hilt, the left the scabbard, the blade slides out to "unsheath" and leaves round the front to whatever position follows; one that ends in "sheath" puts it away), two?, left?: false (keep the left hand off the scabbard)} | {t0, t1, scabbard: true} (the left hand rests on the scabbard of a sword worn at the hip: how a swordsman walks) | {t0, t1, struck: true, strength?, dir?} | {t0, t1, lean: {pitch?, twist?, roll?} (deg)} | {t0, t1, strike: <target>, limb: hand.L|hand.R|foot.L|foot.R, apex (stage second it lands), hold?, offset?: [right, up, forward], via?: [right, up, forward] (bends the path: a hook swings wide, an uppercut dips)} | {t0, t1, keys: [{on: hand.L|hand.R|foot.L|foot.R (IK handle, metres [right, up, forward] from the actor's feet) | hips (offset) | <bone> (degrees), space?: "world" | {actor, bone?}, keys: [[sec after t0, [a, b, c], ease?: linear|in|out|io|snap|hold], …]}]} ], each with fade? (s)} Layer detail over a character's performance: where they look, what they reach for, a face, a gesture on the upper body while the legs keep walking, sword work, a hit reaction, a lean. Bones: head, neck01, spine01..05, clavicle.L/R, upperarm01.L/R, lowerarm01.L/R, wrist.L/R, upperleg01.L/R, lowerleg01.L/R, foot.L/R, jaw, eye.L/R, finger<1-5>-<1-3>.L/R.`,
     (s, a) =>
       s.mutate("stage overlay", (p) => {
         const { sc, spec } = stageLayer(p, a);
@@ -545,7 +545,9 @@ export function registerStageCommands(): void {
             const seq = x.sword as [number, string][];
             if (!Array.isArray(seq) || !seq.length) throw new ops.OpError('sword must be a list like [[0, "guard"], [0.4, "high"], [0.55, "low"]].');
             for (const [, name] of seq) if (!(SW as Record<string, unknown>)[name]) throw new ops.OpError(`Unknown sword position "${name}". Positions: ${Object.keys(SW).join(", ")}.`);
-            ov = { ...base, kind: "sword", seq, two: !!x.two || undefined };
+            ov = { ...base, kind: "sword", seq, two: !!x.two || undefined, left: x.left === false ? false : undefined };
+          } else if (x.scabbard) {
+            ov = { ...base, kind: "scabbard" };
           } else if (x.struck) ov = { ...base, kind: "struck", strength: typeof x.strength === "number" ? x.strength : undefined, dir: x.dir ? vec3(x.dir, "dir") : undefined };
           else if (x.lean) ov = { ...base, kind: "lean", ...(x.lean as { pitch?: number; twist?: number; roll?: number }) };
           else if (x.strike !== undefined) {
@@ -565,7 +567,7 @@ export function registerStageCommands(): void {
               return { on: k.on, space, keys };
             });
             ov = { ...base, kind: "keys", tracks };
-          } else throw new ops.OpError("Each overlay needs one of: look, reach, rot, face, fingers, clip, sword, struck, lean, strike, keys.");
+          } else throw new ops.OpError("Each overlay needs one of: look, reach, rot, face, fingers, clip, sword, scabbard, struck, lean, strike, keys.");
           actor.overlays.push(ov);
           made.push({ id: ov.id, kind: ov.kind });
         }

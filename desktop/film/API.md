@@ -70,9 +70,15 @@ elder, merchant, master, lady, soldier, captain, swordsman, king, warlord. Steps
 ] }
 { op: 'stage.fight', … }                                                        // sword and fist fights: see {"op":"help"} stage.fight
 ```
-A sword at the hip is drawn with the sword overlay: `{ t0, t1, fade: 0.35, sword: [[0, 'sheath'], [1.5, 'sheath'], [1.7,
-'unsheath'], [2.0, 'drawn']] }` — the hand on the hilt, the blade out along the scabbard's own line, the swing (start the
-overlay off screen: the sword is in the hand from its first moment). The ground of a film is flat (y = 0 everywhere), and
+A sword worn at the hip (`props: [{ kind: 'sword', hold: 'hip' }]`, or the swordsman's kit) hangs outside whatever the
+body wears: its scabbard through the sash at the left hip, back, down and a little out, the hilt before the belly.
+It is drawn with the sword overlay: `{ t0, t1, fade: 0.5, sword: [[0, 'sheath'], [1.5, 'sheath'], [1.7, 'unsheath'],
+[2.05, 'loR']] }` — the right hand comes across to the hilt and the left takes the scabbard (`left: false` keeps it
+off), the blade slides out along the scabbard's own line, and from `unsheath` to whatever position follows it leaves
+round the front (out to the left, across in a cut) — never through the body. The sword stays in its scabbard until it
+has slid out, so the overlay can begin in view. A sequence that ends in `sheath` puts it away the same way backwards.
+`{ t0, t1, fade: 0.5, scabbard: true }` rests the left hand on the scabbard (how a swordsman walks: the arm does not
+swing through the sword). The ground of a film is flat (y = 0 everywhere), and
 a performance is solved on a flat floor; `motion: () => ({ env: 'village', … })` asks for one of the Stage's own places.
 Actions chain: each starts where the last left the body. `at: { pos, yaw }` jumps instead. Useful clips: `143_25` wave,
 `113_02` bow. A changed performance is solved again (a few seconds); shots that do not show the change stay as they are.

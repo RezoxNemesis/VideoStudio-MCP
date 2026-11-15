@@ -8,14 +8,15 @@
 import * as THREE from "three";
 import { Film, V3, clamp, lerp, smooth, wob } from "./engine/core.js";
 import { Stage as EngineStage } from "./engine/stage.js";
-import { makeActor, attachRest as attachRestJs } from "./engine/actors.js";
+import { makeActor, attachRest as attachRestJs, wearSword as wearSwordJs } from "./engine/actors.js";
 import { Mocap, gaitCycle } from "./engine/anim.js";
 import { relax } from "./engine/human.js";
 import * as SK from "./engine/shotkit.js";
 import * as P from "./engine/props.js";
 import * as FX from "./engine/fx.js";
 import { Tail } from "./engine/sim.js";
-import { SW, swordAt, applySword, struck as struckEnv, fall as fallDown } from "./engine/fight.js";
+import { SW, playSword as playSwordJs, wearDraw, holdScabbard, applySword, struck as struckEnv, fall as fallDown } from "./engine/fight.js";
+const playSword = playSwordJs as Any;
 import { IK_HANDLES, applyStance, evalStance, keyValue, setHandle, strikeLimb, strikeWeight } from "./rig";
 import { GU } from "./engine/mat.js";
 import { loadPack } from "./pack";
@@ -29,6 +30,7 @@ import { clipsOf, type Block, type BodyMask, type GoBlock, type Overlay, type Sh
 type Any = any;
 
 const attachRest = attachRestJs as Any;
+const wearSword = wearSwordJs as Any;
 const D2R = Math.PI / 180;
 const Yax = new THREE.Vector3(0, 1, 0);
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
@@ -330,11 +332,8 @@ export class StageRuntime {
       const q = (p.params ?? {}) as Any;
       if (p.kind === "sword") {
         const sw = (a.props.sword = P.sword(q));
-        if (p.hold === "hip" || p.hold === "back") {
-          const sc = (a.props.scabbard = P.scabbard());
-          attachRest(h, sc, "root", V3(0.15, lm.hipY + 0.085, 0.04), V3(-0.12, -0.45, -0.88));
-          a.swordAt("hip");
-        } else a.hold(sw, p.hold === "L" ? "L" : "R");
+        if (p.hold === "hip" || p.hold === "back") wearSword(a, sw);
+        else a.hold(sw, p.hold === "L" ? "L" : "R");
       } else if (p.kind === "staff") a.hold((a.props.staff = P.staff(Number(q.length ?? 1.7))), p.hold === "L" ? "L" : "R", { shift: 0.25 });
       else if (p.kind === "spear") a.hold((a.props.spear = P.spear(Number(q.length ?? 2.4))), p.hold === "L" ? "L" : "R", { shift: 0.2 });
       else if (p.kind === "shield") {
@@ -823,6 +822,7 @@ export class StageRuntime {
     // overlays that do not need another actor's position
     const face: Record<string, number> = { ...FACE0, ...(h.look.rest ?? {}), ...(sa.mood ?? {}) };
     let swordActive = false;
+    if (a.props.scabbard) wearDraw(a, null, null);
     for (const ov of sa.overlays) {
       if (t < ov.t0 - 1e-6 || t > ov.t1 + 1e-6) continue;
       const w = env01(ov, t);
@@ -860,12 +860,21 @@ export class StageRuntime {
           case "sword":
             if (a.props.sword) {
               swordActive = true;
-              this.swordInHand(rt, true);
               const before = w < 1 ? h.snapshot() : null;
               // in a stance the blade travels with the hips (lunges carry it forward, ducks take it down)
               const shift = b && b.kind === "stance" ? _v.copy(h.B.root.position).sub(h.rest.root.head).multiplyScalar(a.root.scale.y || 1).applyQuaternion(a.root.quaternion).clone() : null;
               if (shift) shift.y *= 0.8;
-              applySword(a, swordAt(t - ov.t0, ov.seq), { two: !!ov.two, twist: ov.twist, shift });
+              // (a sword in its scabbard is drawn from where the scabbard hangs on this body, and goes home the same way)
+              if (!a.props.scabbard) this.swordInHand(rt, true);
+              playSword(a, t - ov.t0, ov.seq, { two: !!ov.two, twist: ov.twist, shift, left: ov.left, w });
+              if (before) h.blendTo(before, 1 - w);
+            }
+            break;
+          case "scabbard":
+            // the left hand rests on the scabbard at the hip (it steadies the sword as its wearer walks)
+            if (a.props.scabbard) {
+              const before = w < 1 ? h.snapshot() : null;
+              holdScabbard(a);
               if (before) h.blendTo(before, 1 - w);
             }
             break;

@@ -186,5 +186,34 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a
   }
 }
 
+// ---- 5. a sword in its scabbard: home, on its way out along the scabbard, and out
+{
+  const CH = await import('../engine/character.js'), BD = await import('../engine/bodydraw.js');
+  const k = POSE.height / 1.8, ax = [0.239, -0.5, -0.832], n = Math.hypot(...ax), A = ax.map((v) => v / n);
+  // (a rotation taking +Y to the scabbard's line: the Stage hangs both along it)
+  const q = (() => { const c = [A[2], 0, -A[0]], s = Math.hypot(...c), w = 1 + A[1], l = Math.hypot(c[0], c[1], c[2], w); void s; return [c[0] / l, c[1] / l, c[2] / l, w / l]; })();
+  const mouth = [0.2, 1.04, 0.14], at = (d) => [mouth[0] - A[0] * d, mouth[1] - A[1] * d, mouth[2] - A[2] * d];
+  const pose = (swordPos, swordQ = q) => ({ ...poseAt(), props: { scabbard: { pos: mouth, q, visible: true }, sword: { pos: swordPos, q: swordQ, visible: true } } });
+  ok(CH.swordInHand(pose(at(0.124 * k))) === false, 'a sword home in its scabbard (its guard on the mouth) is not out', CH.swordInHand(pose(at(0.124 * k))));
+  ok(CH.swordInHand(pose(at(0.45 * k))) === false, 'half drawn, still in the scabbard\'s line, it still rides the scabbard', CH.swordInHand(pose(at(0.45 * k))));
+  ok(CH.swordInHand(pose([-0.3, 1.2, 0.45])) === true, 'in a hand away from the scabbard it is out', CH.swordInHand(pose([-0.3, 1.2, 0.45])));
+  ok(CH.swordInHand(pose(at(0.3 * k), [0, 0, 0, 1])) === true, 'crossing the scabbard\'s line (not along it) it is out', CH.swordInHand(pose(at(0.3 * k), [0, 0, 0, 1])));
+  // what is drawn: the scabbard takes the whole blade, whatever the design's sword measures
+  ok(typeof BD.carriedMeshes === 'function', 'bodydraw exports carriedMeshes(character, pose): what a body carries, as meshes', typeof BD.carriedMeshes);
+  if (typeof BD.carriedMeshes === 'function') {
+    for (const sword of [{}, { len: 0.62 }, { len: 0.95, width: 0.03 }, { len: 0.8, scale: 1.25 }]) {
+      const ch = new Character(makeDesign({ name: 'armed', sword })), M = BD.carriedMeshes(ch, pose(at(0.124 * k)));
+      const far = (m) => { let best = -Infinity; for (let v = 0; v < m.pos.length; v += 3) best = Math.max(best, (m.pos[v] - mouth[0]) * A[0] + (m.pos[v + 1] - mouth[1]) * A[1] + (m.pos[v + 2] - mouth[2]) * A[2]); return best; };
+      const near = (m) => { let best = Infinity; for (let v = 0; v < m.pos.length; v += 3) best = Math.min(best, (m.pos[v] - mouth[0]) * A[0] + (m.pos[v + 1] - mouth[1]) * A[1] + (m.pos[v + 2] - mouth[2]) * A[2]); return best; };
+      const blade = M.find((m) => m.paint?.group === 'blade'), sc = M.find((m) => m.name === 'scabbard');
+      ok(!!blade && !!sc, `${JSON.stringify(sword)}: a blade and a scabbard are drawn`, M.map((m) => m.name ?? m.paint?.group));
+      if (blade && sc) {
+        ok(far(sc) > far(blade) + 0.01 * k, `${JSON.stringify(sword)}: the scabbard is longer than the blade in it (the point does not stand out of its end)`, far(sc) - far(blade));
+        ok(near(blade) > -0.012 * k && near(blade) < 0.03 * k, `${JSON.stringify(sword)}: the blade begins at the scabbard's mouth (the guard sits on it)`, near(blade));
+      }
+    }
+  }
+}
+
 if (fails.length) { console.error(`costume: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`costume: ${checks} rules hold`);

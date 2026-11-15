@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { Human } from "../src/stage/engine/human.js";
-import { Actor } from "../src/stage/engine/actors.js";
-import { SW, swordAt, applySword } from "../src/stage/engine/fight.js";
+import { Actor, wearSword, scabbardRest } from "../src/stage/engine/actors.js";
+import { SW, swordAt, applySword, scabbardKeys } from "../src/stage/engine/fight.js";
 
 // The rest pose of the standard body (every bone).
 const FX = JSON.parse(readFileSync(new URL("./fixtures/body_bones.json", import.meta.url), "utf8")) as { height: number; bones: { name: string; head: number[]; tail: number[]; parent: number }[] };
@@ -45,9 +45,13 @@ describe("the Stage's sword hand", () => {
   it("sheath: the hand lies on the hilt of the sword at the hip, the blade down the scabbard — a draw begins there", () => {
     expect(ALL.sheath, "a position named sheath").toBeTruthy();
     const P = key("sheath");
-    // (the scabbard of the swordsman's kit hangs at the left hip and points down and back: see actors.js, kit orez)
-    const scabbard = new THREE.Vector3(-0.12, -0.45, -0.88).normalize();
+    // (a scabbard hangs at the left hip, its length back, down and a little out: scabbardRest; the named position is
+    // the standard body's own — where the hand finds the hilt of the sword worn on it)
+    const worn = fighter(); wearSword(worn, worn.props.sword); worn.props.sword.userData.len ??= 0.74;
+    const scabbard = (scabbardRest(worn.h) as { dir: THREE.Vector3 }).dir.clone(), own = scabbardKeys(worn) as { sheath: Key; unsheath: Key };
     expect(P.d.angleTo(scabbard) * DEG, "the blade lies along the scabbard").toBeLessThan(4);
+    expect(P.h.distanceTo(own.sheath.h), "the named position is where the standard body's own scabbard puts the hilt (metres)").toBeLessThan(0.02);
+    expect(key("unsheath").h.distanceTo(own.unsheath.h), "and unsheath where its arm takes the blade").toBeLessThan(0.03);
     expect(P.h.x, "the hand is at the left hip (x is the fighter's left)").toBeGreaterThan(0.1);
     expect(P.h.y, "at the height of the hip").toBeGreaterThan(0.95); expect(P.h.y).toBeLessThan(1.12);
     const a = fighter(); applySword(a, P, {});
@@ -141,6 +145,14 @@ describe("the Stage's sword hand", () => {
     for (let i = 0; i <= 200; i++) { const d = swordAt(i / 200, [[0, "hiR"], [1, "loL"]], (u: number) => u).d; fwd = Math.max(fwd, d.z); if (prev) fastest = Math.max(fastest, prev.angleTo(d) * DEG); prev = d.clone(); }
     expect(fwd, "the point comes forward on the way").toBeGreaterThan(0.75);
     expect(fastest, "the blade's quickest turn in one of 200 steps (an even turn through 150° is 0.75°)").toBeLessThan(2.6);
+  });
+
+  it("the chest turns with the sword: towards the side the hand is on", () => {
+    /** How far the chest is turned about the upright after a sword position (degrees; + is to the fighter's left). */
+    const turn = (n: string) => { const a = fighter(); applySword(a, key(n), {}); a.h.update(); const f = new THREE.Vector3(0, 0, 1).applyQuaternion(a.h.B.spine03.getWorldQuaternion(new THREE.Quaternion())); return Math.atan2(f.x, f.z) * DEG; };
+    expect(turn("outL"), "the hand far out to the left: the chest turns left").toBeGreaterThan(8);
+    expect(turn("backR"), "the hand out to the right: the chest turns right").toBeLessThan(-8);
+    expect(Math.abs(turn("guard")), "the hand before the body: the chest stays square").toBeLessThan(5);
   });
 
   it("the body turns with the sword without a jerk: the chest never jumps", () => {

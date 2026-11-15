@@ -457,6 +457,8 @@ export class HumanFactory {
 
     // ---------- garments (they decide which skin is hidden) ----------
     const hide = new Uint8Array(N);
+    /** What is already on the body, in the order it was put on (a skirt put on later lies over all of it). */
+    const worn: { Pg: Float32Array; ids: Iterable<number> }[] = [];
     const REGS: Record<string, string[]> = { tunic: ["torso", "upperarm", "forearm"], trousers: ["thigh", "shin", "torso"], boots: ["foot", "shin"], cuirass: ["torso", "upperarm"], vambrace: ["forearm"], greave: ["shin"], wraps: ["forearm"] };
     for (const g of spec.garments ?? []) {
       const kind = g.kind;
@@ -515,6 +517,7 @@ export class HumanFactory {
           if (c) hide[i] = 1;
         }
         addPart(g.name ?? kind, g.material ?? "cloth", quads, { pos: Pg, aux: P, params: g as Record<string, unknown> });
+        worn.push({ Pg, ids });
       } else {
         const all = uniqueSorted(sq, N);
         let topY = -Infinity, minY = Infinity, zmean = 0;
@@ -537,6 +540,29 @@ export class HumanFactory {
           const t = (topY - Y(v)) / Math.max(topY - bot, 1e-6);
           Pg[v * 3] = Pg[v * 3]! * (1 + flare * t);
           Pg[v * 3 + 2] = zmean + (Pg[v * 3 + 2]! - zmean) * (1 + flare * t);
+        }
+        // A skirt lies over what was put on before it: where trousers or a tunic stand further out than its own cut
+        // (the seat of wide trousers, a bagged tunic at the waist), it is let out until they are under it — and the
+        // cloth around that place with it, so that it stays one smooth sheet.
+        {
+          const GAP = 0.007, NEAR = 0.045, out = new Map<number, number>();
+          const under: number[] = [];
+          for (const w of worn) for (const u of w.ids) { const y = w.Pg[u * 3 + 1]!; if (y > bot - 0.05 && y < topY + 0.05 && !isReg(u, "upperarm", "forearm", "hand")) under.push(w.Pg[u * 3]!, y, w.Pg[u * 3 + 2]!); }
+          for (const v of ids) {
+            const px = Pg[v * 3]!, py = Pg[v * 3 + 1]!, pz = Pg[v * 3 + 2]!, nx = sn[v * 3]!, ny = sn[v * 3 + 1]!, nz = sn[v * 3 + 2]!;
+            let need = 0;
+            for (let k = 0; k < under.length; k += 3) {
+              const dx = under[k]! - px, dy = under[k + 1]! - py, dz = under[k + 2]! - pz, along = dx * nx + dy * ny + dz * nz;
+              if (along < -GAP || along > 0.12) continue; // (already under it, or not this side of the body at all)
+              const side2 = dx * dx + dy * dy + dz * dz - along * along;
+              if (side2 < NEAR * NEAR) need = Math.max(need, along + GAP);
+            }
+            out.set(v, need);
+          }
+          const nb = new Map<number, Set<number>>();
+          for (let q = 0; q < quads.length; q += 4) for (let c = 0; c < 4; c++) { const a0 = quads[q + c]!, b0 = quads[q + ((c + 1) & 3)]!; (nb.get(a0) ?? nb.set(a0, new Set()).get(a0)!).add(b0); (nb.get(b0) ?? nb.set(b0, new Set()).get(b0)!).add(a0); }
+          for (let pass = 0; pass < 3; pass++) { const was = new Map(out); for (const v of ids) { let m = was.get(v)!; for (const o of nb.get(v) ?? []) m = Math.max(m, was.get(o)! * 0.75); out.set(v, m); } }
+          for (const v of ids) { const k = out.get(v)!; if (k > 0) for (let c = 0; c < 3; c++) Pg[v * 3 + c] = Pg[v * 3 + c]! + sn[v * 3 + c]! * k; }
         }
         addPart(g.name ?? "skirt", g.material ?? "cloth", quads, { pos: Pg, aux: P, params: g as Record<string, unknown> });
         if (length > 0.45) for (let i = 0; i < body; i++) if (isReg(i, "thigh") && Y(i) < hipY - 0.05 && Y(i) > bot + 0.08) hide[i] = 1;

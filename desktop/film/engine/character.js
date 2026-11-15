@@ -615,11 +615,17 @@ export class Character {
   }
 }
 
-/** Is the sword out (in a hand, or loose), or riding in its scabbard? */
+/**
+ * Is the sword out (in a hand, or loose), or riding in its scabbard? It rides the scabbard while it lies in the
+ * scabbard's own line before its mouth — home (the guard on the mouth) or sliding out or in along it.
+ */
 export function swordInHand(pose) {
   const sw = pose.props?.sword, sc = pose.props?.scabbard;
   if (!sw || !sw.visible) return false;
-  if (sc && sc.visible && V.dist(sw.pos, sc.pos) < 0.09 * pose.height / 1.8 && V.dot(qrot(sw.q, [0, 1, 0]), qrot(sc.q, [0, 1, 0])) > 0.96) return false;
+  if (sc && sc.visible) {
+    const k = pose.height / 1.8, ax = qrot(sc.q, [0, 1, 0]), d = V.sub(sw.pos, sc.pos), along = V.dot(d, ax), off = V.len(V.sub(d, V.mul(ax, along)));
+    if (off < 0.03 * k && along < 0.02 * k && along > -1.2 * k && V.dot(qrot(sw.q, [0, 1, 0]), ax) > 0.96) return false;
+  }
   return true;
 }
 /** Which hand holds the sword: 'L', 'R', or null when it is in neither (thrown, dropped, planted). */
