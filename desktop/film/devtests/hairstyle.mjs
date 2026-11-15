@@ -256,5 +256,18 @@ const pts = (c) => c.pts;
   ok(mk({ ends: 2, len: 0.08 }).ms.filter((m) => m.bow).length === 0, 'a tie without a bow has no loops', 0);
 }
 
+// ---- a scalp without sideburns (a little girl, a woman with her hair drawn back): design.hair.sideburns: false
+{
+  const idx = typeof HAIR.capWithoutSideburns === 'function' ? HAIR.capWithoutSideburns(B) : null, all = FX.cap.idx, eyeY = L.eyeL[1], midZ = (L.crown[2] + L.eyeL[2]) / 2;
+  ok(!!idx && idx.length % 3 === 0 && idx.length > all.length * 0.6 && idx.length <= all.length, 'capWithoutSideburns(B) gives the scalp\'s triangles, most of them kept', idx && idx.length);
+  if (idx) {
+    const low = (I) => { let n = 0; for (let t = 0; t + 2 < I.length; t += 3) { const y = (cp[I[t] * 3 + 1] + cp[I[t + 1] * 3 + 1] + cp[I[t + 2] * 3 + 1]) / 3, z = (cp[I[t] * 3 + 2] + cp[I[t + 1] * 3 + 2] + cp[I[t + 2] * 3 + 2]) / 3; if (y < eyeY && z > midZ) n++; } return n; };
+    ok(low(idx) === 0, 'no triangle of it lies below the line of the eyes in front of the ears', low(idx));
+    const keys = new Set(); for (let t = 0; t + 2 < all.length; t += 3) keys.add(`${all[t]},${all[t + 1]},${all[t + 2]}`);
+    let own = true; for (let t = 0; t + 2 < idx.length; t += 3) if (!keys.has(`${idx[t]},${idx[t + 1]},${idx[t + 2]}`)) own = false;
+    ok(own, 'every triangle of it is one of the scalp\'s own', own);
+  }
+}
+
 if (fails.length) { console.error(`hairstyle: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`hairstyle: ${checks} rules hold`);

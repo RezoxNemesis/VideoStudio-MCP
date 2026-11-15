@@ -6,7 +6,7 @@ import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
 import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn } from './body.js';
 import { swordInHand } from './character.js';
 import { drawHead, drawEyesOn } from './head.js';
-import { makeHair, hairMeshes } from './hair.js';
+import { makeHair, hairMeshes, capWithoutSideburns } from './hair.js';
 import { pauldronMeshes } from './armour.js';
 import { look } from './look.js';
 import { faceMarksOf, faceDecals, decalPaints, noseLine, unfoldX, FACE_FRONT } from './face3.js';
@@ -431,7 +431,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       continue;
     }
     if (real && p.name === 'beard' && paintedBeard(d)) continue;
-    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard' }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
+    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.name === 'haircap' && d.hair.sideburns === false ? capWithoutSideburns(B) : p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard' }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
     // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it
     if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;

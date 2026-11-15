@@ -73,6 +73,18 @@ export function headSurface(B) {
 }
 
 /** Build the clumps of a cut on a body's scalp (rest pose). spec: a name of HAIRCUTS or its fields; seed varies the clumps. */
+/**
+ * The scalp's triangles without its sideburns (design.hair.sideburns: false — a little girl, a woman with her hair drawn
+ * back): none that lies below the line of the eyes in front of the ears. Kept on the scalp once made.
+ */
+export function capWithoutSideburns(B) {
+  const cap = B.parts.find((p) => p.name === 'haircap'), L = B.landmarks;
+  if (!cap || !L?.eyeL || !L?.crown) return cap ? cap.idx : null;
+  if (cap.idxNoBurns) return cap.idxNoBurns;
+  const P = cap.rest0 ?? cap.pos, I = cap.idx, eyeY = L.eyeL[1], midZ = (L.crown[2] + L.eyeL[2]) / 2, out = [];
+  for (let t = 0; t + 2 < I.length; t += 3) { const y = (P[I[t] * 3 + 1] + P[I[t + 1] * 3 + 1] + P[I[t + 2] * 3 + 1]) / 3, z = (P[I[t] * 3 + 2] + P[I[t + 1] * 3 + 2] + P[I[t + 2] * 3 + 2]) / 3; if (!(y < eyeY && z > midZ)) out.push(I[t], I[t + 1], I[t + 2]); }
+  return (cap.idxNoBurns = Uint32Array.from(out));
+}
 export function makeHair(B, spec, seed = 1) {
   const cut = typeof spec === 'string' ? HAIRCUTS[spec] : spec && spec.cut ? { ...HAIRCUTS[spec.cut], ...spec } : spec;
   const cap = B.parts.find((p) => p.name === 'haircap'), L = B.landmarks;

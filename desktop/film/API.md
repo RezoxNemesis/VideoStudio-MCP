@@ -161,6 +161,9 @@ tunic garment `below_hip: -0.1`, the trousers `rise: 0.19, offset: 0.013`, a bel
 0.628, '#0e0d10']] }`. Rolled sleeves: the tunic's `sleeve: 'short'` (it ends at the elbow). A child's dress collar is the
 same cut, small: `depth: 0.045, buttons: 0.05`.
 
+**No sideburns.** `hair: { sideburns: false }` leaves the scalp's hair out below the line of the eyes in front of the ears
+(a little girl, a woman with her hair drawn back: the body's short scalp otherwise shows as dark marks by the jaw).
+
 **A ribbon bow.** `hair3.tail.tie: { ends: 2, len: 0.07, bow: 0.15 }` ties the tail with a bow that wide (metres): a loop
 of ribbon to each side of the knot, in the colour `hair.tie`; it turns and tilts with the head.
 
