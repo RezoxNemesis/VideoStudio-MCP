@@ -36,7 +36,7 @@ export const S01 = makeSeq({
       ] },
       { op: 'stage.do', actor: 'mira', actions: [
         { t: 0, idle: true },
-        { t: 2.4, clip: '143_25', in: 0.2, out: 2.6, at: { yaw: -90 }, blend: 0.4 },          // she sees him and waves
+        { t: 2.4, clip: '143_25', in: 0.4, out: 5.2, at: { yaw: -90 }, blend: 0.4 },          // she sees him and waves
         { t: 4.9, idle: true, blend: 0.5 },
         { t: T.e('M2') + 0.3, go: [10, -4.1], gait: 'walk', speed: 1.3, blend: 0.5 },
       ] },

@@ -109,7 +109,7 @@ const DEFAULT_VOICE = { en: 'af_heart', hi: 'hf_alpha', es: 'ef_dora', fr: 'ff_s
  * 4: 15 Nov 2026 — someone struck down falls (a captured fall, forwards, about a second) instead of being on the ground
  * a sixth of a second after the blow.
  */
-export const SOLVER_REV = 4;
+export const SOLVER_REV = 5;
 /** The key of a solved performance: its description and the solver that made it. */
 export const bakeKey = (spec) => md5(`${JSON.stringify(spec)}|solver ${SOLVER_REV}`);
 const ordered = (v) => (Array.isArray(v) ? v.map(ordered) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v);

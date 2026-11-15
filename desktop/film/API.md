@@ -63,8 +63,8 @@ elder, merchant, master, lady, soldier, captain, swordsman, king, warlord. Steps
 { op: 'stage.do', actor: 'tom', actions: [
   { t: 0, idle: true },
   { t: 1, go: [x, z], gait: 'walk' | 'stroll' | 'march' | 'jog' | 'run' | 'sneak', speed: 1.4, face: 90 },
-  { t: 6, clip: '143_25', in: 0.2, out: 2.6, at: { yaw: -90 }, blend: 0.4 },   // a motion-capture clip (stage.motions finds them)
-  { t: 9, pose: 'kneel' | 'sit' (on the GROUND) | 'clip:113_02@1.55' (the pose of a clip at a moment: 'clip:143_18@3.0' is seated on a chair), blend: 0.8 },
+  { t: 6, clip: '143_25', in: 0.4, out: 5.2, at: { yaw: -90 }, blend: 0.4 },   // a motion-capture clip (stage.motions finds them)
+  { t: 9, pose: 'kneel' | 'sit' (on the GROUND) | 'clip:113_02@1.55' (the pose of a clip at a moment: 'clip:143_18@6.0' is seated on a chair), blend: 0.8 },
   { t: 12, fall: { push: 0.6 } },
 ] }
 { op: 'stage.overlay', actor: 'tom', add: [
@@ -373,7 +373,7 @@ the ranks, never in step. The performers are soldiers of the sequence who wait a
 ```js
 // a short stand, then a captured wait: it keeps the feet where they stood (its shuffles become shifts of weight);
 // the hands are kept on spear and shield, so the capture's arms do not wave them about
-{ op: 'stage.do', actor: 'model', actions: [{ t: 0, idle: true }, { t: 0.3, idle: true, clip: '139_02', in: 0.5, blend: 0.6 }] },
+{ op: 'stage.do', actor: 'model', actions: [{ t: 0, idle: true }, { t: 0.3, idle: true, clip: '139_02', in: 1.0, blend: 0.6 }] },
 { op: 'stage.overlay', actor: 'model', add: [{ t0: 0, t1: dur, fade: 0, keys: [
   { on: 'hand.R', keys: [[0, [0.24, 1.0, 0.2]], [dur, [0.24, 1.0, 0.2]]] }, { on: 'hand.L', keys: [[0, [-0.3, 1.1, 0.16]], [dur, [-0.3, 1.1, 0.16]]] }] }] },
 ```
@@ -456,6 +456,19 @@ shot is drawn again. `paint.parts {shot, t}` says where every part is; `paint.ad
 380 ready people in 28 groups: townsman townswoman farmer farmwoman merchant nobleman noblewoman monk elder elderwoman
 boy girl teen youngwoman soldier_crimson soldier_azure soldier_jade soldier_onyx captain_* bandit sailor swordsman
 swordswoman king queen — ids like `townswoman_12`. `code.people {group}` lists a group, `code.person {id}` shows one.
+
+## Captured clips play at their true speed (2.5.59)
+
+The captured library's source says every performance was recorded at 120 frames a second; some performers were
+recorded at 60, so their clips played at DOUBLE speed (found by physics: a runner's hips fell at four times gravity and
+a "run" took 340 steps a minute). The clips of performers **75, 77, 88, 106, 139, 141 and 143** now last twice as long
+and travel half as fast, as they were performed. **Their moments are true seconds now: double any `in`, `out` or
+`clip:…@t` written for them before** (`143_25` the wave is 0.4–5.2, `143_10` the pick-up bends at 3.18 s, `139_02` starts
+at 1.0, `143_18@6.0` is seated). `143_01`, which played as a sprint, is a jog of 3.3 m/s: the fastest honest runs in the
+library are about 4.3 to 5 m/s at 176–198 steps a minute (`16_46`, `127_08`, `78_06`), which is what a real runner does.
+`node devtests/gait.mjs <film> <seq> <actor> [from] [to]` reads any walk or run by numbers (`gaitReport`): steps a
+minute against what is usual for those legs, step length, time in the air, lean, knee lift, arms against legs, how far
+apart the hands go — and what a coach would say is wrong.
 
 ## The code collection
 

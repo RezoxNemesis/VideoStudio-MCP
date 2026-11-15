@@ -31,7 +31,9 @@ for (const m of MOVES) {
 // the captured clips it names exist, and their moments are inside them
 const A = [process.env.VS_STAGE_ASSETS_DIR, '../stage-assets', '/home/claude/ws/squashfs-root/resources/stage-assets'].find((d) => d && fs.existsSync(`${d}/motion/index.json`));
 if (A) {
-  const idx = JSON.parse(fs.readFileSync(`${A}/motion/index.json`, 'utf8')).clips;
+  // (with every clip's true timing: the performers recorded at half the usual rate last twice as long)
+  const { fixTimes } = await import('../../../src/stage/engine/anim.js');
+  const idx = fixTimes(JSON.parse(fs.readFileSync(`${A}/motion/index.json`, 'utf8'))).clips;
   for (const m of MOVES) for (const c of m.clips ?? []) {
     ok(!!idx[c.clip], `${m.id}: the clip ${c.clip} is in the motion library`, c.clip);
     if (idx[c.clip]) ok((c.in ?? 0) >= 0 && (c.out ?? idx[c.clip].dur) <= idx[c.clip].dur + 1e-6 && (c.in ?? 0) < (c.out ?? idx[c.clip].dur), `${m.id}: ${c.clip} from ${c.in} to ${c.out} is inside the clip (${idx[c.clip].dur} s)`, [c.in, c.out]);

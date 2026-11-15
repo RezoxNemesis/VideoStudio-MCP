@@ -4,10 +4,12 @@
  * clips is used. Search by words ("kick", "sit down", "walk turn left") or pick by properties (speed, travel, turn).
  */
 import { loadJson, loadPack, type Pack } from "../pack";
+import { fixTimes } from "../engine/anim.js";
 
 export interface ClipMeta {
-  /** Frames at the library rate (30 fps). */
+  /** Frames at the clip's rate: the library's 30 fps, or `fps` for a performer recorded at half the usual rate. */
   n: number;
+  fps?: number;
   dur: number;
   /** Subject number (which pack holds it). */
   s: number;
@@ -33,6 +35,8 @@ export interface MotionIndex {
   source: string;
   subjects: Record<string, { title: string; leg: number; rest: Record<string, [number, number, number]>; clips: number }>;
   clips: Record<string, ClipMeta>;
+  /** Set once every clip has its true timing (by the packer, or by fixTimes at load). */
+  timefix?: string;
 }
 
 export interface MotionQuery {
@@ -61,7 +65,7 @@ export class MotionLibrary {
   load(): Promise<void> {
     if (!this.ready) {
       this.ready = loadJson<MotionIndex>("motion/index.json").then((ix) => {
-        this.index = ix;
+        this.index = fixTimes(ix) as MotionIndex; // (the performers recorded at half the usual rate get their true timing)
       });
       this.ready.catch(() => (this.ready = null));
     }

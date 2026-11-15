@@ -24,18 +24,21 @@ export const MOVES = [
     check: ['wrists between 0.3 and 0.55 m apart through the whole run (the judge reports arm-flare if they fly out)', 'a strip of two strides at 12 frames a second', 'no foot-slide finding'],
   },
   {
-    id: 'sprint', name: 'A sprint', tags: ['run', 'fast', 'sprint', 'dash'],
-    use: 'Someone runs flat out (6 to 7 m/s): a chase, being late, an attack.',
+    id: 'sprint', name: 'A very fast run', tags: ['run', 'fast', 'sprint', 'dash', 'chase'],
+    use: 'Someone runs as fast as he can (about 5 m/s): a chase, being late, an attack.',
     rules: [
-      'More lean (15 to 30 degrees), a harder arm drive, a longer stride and a longer moment in the air than a run.',
-      'He covers 6 metres a second: the lens must travel with him (beside and a little ahead) or stand far off; a shot of 2 seconds needs 13 metres of ground.',
-      'Start the shot when he is already at speed, or show the brake: nobody is at 6 m/s one frame after standing.',
+      'The fastest HONEST runs in the library are 4.3 to 5 m/s at 176–198 steps a minute, which is what real runners do. Do not ask a clip for much more than it was run at: the legs then spin (above 1.4× it shows).',
+      'More lean, a harder arm drive, a longer stride and a longer moment in the air than a run; the arms still close to the ribs.',
+      'He covers 5 metres a second: the lens must travel with him (beside and a little ahead) or stand far off; a shot of 2 seconds needs 10 metres of ground.',
+      'Start the shot when he is already at speed, or show the brake: nobody is at 5 m/s one frame after standing.',
+      'Check it by numbers (gait.mjs): steps a minute near what is usual for his legs, in the air a third of the time or more, hands under 0.6 m apart.',
     ],
-    clips: [{ clip: '143_01', in: 0.05, out: 0.78, note: 'captured at 6.7 m/s' }],
-    needs: ['stage.do'],
-    code: `{ op: 'stage.do', actor: 'a', actions: [{ t: 0, go: [x + 60, z], gait: 'run', clip: '143_01', speed: 6.2 }] }   // the shot begins at 0.7 s, when he is at speed
-// camera beside him: cam: (t, ctx) => { const p = at(ctx, 'a', 'hips'); return { pos: [p[0] + 3.4, 1.2, z + 5.4], target: [p[0] + 0.5, 1.0, z], fov: 40 }; }`,
-    check: ['wrists stay under 0.55 m apart', 'the background passes at his speed in a strip of the tracking shot'],
+    clips: [{ clip: '16_46', in: 0.26, out: 0.94, note: 'captured at 4.26 m/s, 176 steps a minute: the cleanest fast stride in the library' }, { clip: '127_08', in: 0.17, out: 0.78, note: '4.5 m/s, 198 steps a minute; he speeds up through it' }],
+    needs: ['stage.do', 'gaitReport', 'gait.mjs'],
+    code: `{ op: 'stage.do', actor: 'a', actions: [{ t: 0, go: [x + 60, z], gait: 'run', clip: '16_46', speed: 5.0 }] }   // (or '127_08'); the shot begins at 0.7 s, when he is at speed
+// camera beside him: cam: (t, ctx) => { const p = at(ctx, 'a', 'hips'); return { pos: [p[0] + 3.4, 1.2, z + 5.4], target: [p[0] + 0.5, 1.0, z], fov: 40 }; }
+// node devtests/gait.mjs <film> <seq> a 0.7 2.4      (gaitReport: steps a minute, time in the air, lean, arms against legs)`,
+    check: ['gait.mjs has nothing a coach would remark on', 'the background passes at his speed in a strip of the tracking shot'],
   },
   {
     id: 'brake', name: 'A run to a quick stop', tags: ['stop', 'brake', 'run', 'halt', 'slow'],
@@ -55,13 +58,13 @@ export const MOVES = [
     rules: [
       'A thing never jumps into a hand: show the approach, the bend, the hand closing on it and the lift in ONE shot.',
       'Chain captured performances on the one body (run, brake, pick-up, run on) instead of keying a reach over a run.',
-      'This capture takes the thing with the LEFT hand, lowest 0.59 s after its start here; after 2.05 s it turns back the way it came, so it is cut there.',
+      'This capture takes the thing with the LEFT hand, lowest 1.18 s after its start here; after 4.1 s it turns back the way it came, so it is cut there. A real pick-up takes two seconds: do not hurry it.',
       'Put the thing exactly where the hand comes down: solve, read the wrist at that moment, set the thing there.',
     ],
-    clips: [{ clip: '143_10', in: 1.0, out: 2.05, note: 'Walk And Pick Up Tool Box: two steps, bend, grab at clip 1.59 s, upright by 2.05' }],
+    clips: [{ clip: '143_10', in: 2.0, out: 4.1, note: 'Walk And Pick Up Tool Box: two steps, bend, grab at clip 3.18 s, upright by 4.1' }],
     needs: ['stage.do', 'carried', 'where.mjs'],
-    code: `{ t: tPick, clip: '143_10', in: 1.0, out: 2.05, blend: 0.3 }, { t: tPick + 1.05, go: [x, z], gait: 'run', clip: '09_05', speed: 3.8, blend: 0.35 }
-const TG = tPick + 0.62;                                              // the hand closes
+    code: `{ t: tPick, clip: '143_10', in: 2.0, out: 4.1, blend: 0.3 }, { t: tPick + 2.1, go: [x, z], gait: 'run', clip: '09_05', speed: 3.8, blend: 0.35 }
+const TG = tPick + 1.24;                                              // the hand closes
 const bag = carried({ rest: [bx, 0, bz], by: 'a', hand: 'L', from: TG, hang: 0.2, make: (p, yaw) => new Mesh(box(p, 0.3, 0.22, 0.12, yaw, { side: '#b5382e' })) });
 // dyn: (ts, ctx) => [bag(ts, ctx)]      rest = wrist.L at TG from: node devtests/where.mjs <film> shot@t a:wrist.L`,
     check: ['the wrist is within 5 cm of the thing at the grab (where.mjs)', 'a strip of the one shot: brake, step, bend, grab, lift'],
@@ -152,9 +155,9 @@ const bag = carried({ rest: [bx, 0, bz], by: 'a', hand: 'L', from: TG, hang: 0.2
       'Nobody alive holds still: the weight goes from one leg to the other, the head looks about, the chest breathes.',
       'Give each body a different capture, or the same one from a different moment, so no two move together.',
     ],
-    clips: [{ clip: '139_02', in: 0.5, note: 'shifting weight' }, { clip: '137_41', in: 2 }, { clip: '40_10', in: 4 }],
+    clips: [{ clip: '139_02', in: 1.0, note: 'shifting weight' }, { clip: '137_41', in: 2 }, { clip: '40_10', in: 4 }],
     needs: ['stage.do'],
-    code: `{ op: 'stage.do', actor: 'g1', actions: [{ t: 0, idle: true }, { t: 0.3, idle: true, clip: '139_02', in: 0.5, blend: 0.6 }] }   // others: '137_41' in 2, '40_10' in 4`,
+    code: `{ op: 'stage.do', actor: 'g1', actions: [{ t: 0, idle: true }, { t: 0.3, idle: true, clip: '139_02', in: 1.0, blend: 0.6 }] }   // others: '137_41' in 2, '40_10' in 4`,
     check: ['no statue finding from the judge'],
   },
   {
@@ -226,9 +229,9 @@ const P1 = beatLock([DIVE, ...TWIST], { bpm: BPM, in: DIVE - 4 * BEAT, out: 114.
       'She sees him first (the eyes, then the head), then the arm goes up; the wave is from the elbow with a loose wrist.',
       'It settles: the arm comes down slower than it went up.',
     ],
-    clips: [{ clip: '143_25', in: 0.2, out: 2.6 }],
+    clips: [{ clip: '143_25', in: 0.4, out: 5.2 }],
     needs: ['stage.do'],
-    code: `{ t: 2.4, clip: '143_25', in: 0.2, out: 2.6, at: { yaw: -90 }, blend: 0.4 }, { t: 4.9, idle: true, blend: 0.5 }`,
+    code: `{ t: 2.4, clip: '143_25', in: 0.4, out: 5.2, at: { yaw: -90 }, blend: 0.4 }, { t: 7.2, idle: true, blend: 0.5 }`,
     check: ['a strip of the wave: the hand is above the shoulder and clear of the head'],
   },
 ];

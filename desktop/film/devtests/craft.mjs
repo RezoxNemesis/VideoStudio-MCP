@@ -11,6 +11,7 @@ import { dartTo, gazeBlink, eyesLead, gazeOf } from '../kit/acting.js';
 import { carried } from '../kit/things.js';
 import { asList } from '../kit/seq.js';
 import { armFlares } from '../sensei/motion.js';
+import { gaitReport } from '../kit/gait.js';
 import { ball, onRing, keplerTurns, solarSystem } from '../kit/orbs.js';
 
 const fails = []; let checks = 0;
@@ -178,6 +179,51 @@ const near = (a, b, tol, what) => ok(Math.abs(a - b) <= tol, `${what} (want ${b}
   // a body that is not in the picture for a while breaks nothing
   const holes = bad.map((v, i) => (i > 40 && i < 60 ? null : v));
   ok(armFlares(holes, dt).length >= 2, 'a body out of the picture for a while breaks nothing', armFlares(holes, dt).length);
+}
+
+/* ---------------------------------------------------------------- A RUN BY NUMBERS */
+{
+  // What the real runner in the user's reference does (read frame by frame): about 180 steps a minute, both feet off
+  // the ground between steps, the trunk leaning 8–10° from the ankles, the knee driven up toward the hip, the arms bent
+  // and swinging AGAINST the legs close to the ribs. gaitReport must read those numbers back from any body's joints.
+  const fps = 60, runner = (o = {}) => {
+    const v = o.v ?? 4, T = o.step ?? 1 / 3, stance = o.stance ?? 0.22, lean = ((o.lean ?? 10) * Math.PI) / 180, hip = o.hip ?? 0.9, arms = o.arms ?? 1, N = Math.round((o.secs ?? 4) * fps), out = [];
+    const foot = (t, lag) => {                         // one foot: planted for `stance`, then swung forward two steps
+      const k = Math.floor((t - lag) / (2 * T) + 1e-9), u = Math.max(0, t - lag - k * 2 * T), x0 = v * (k * 2 * T + lag) + 0.15;
+      if (u < stance) return [x0, 0.08, 0];
+      const w = (u - stance) / (2 * T - stance); return [x0 + 2 * T * v * (w * w * (3 - 2 * w)), 0.08 + 0.45 * Math.sin(Math.PI * w), 0];
+    };
+    for (let i = 0; i < N; i++) {
+      const t = i / fps, x = v * t, ph = (Math.PI * t) / T, fL = foot(t, 0), fR = foot(t, T), root = [x, hip + 0.03 * Math.cos(2 * ph), 0];
+      out.push({ root, neck: [x + 0.5 * Math.sin(lean), root[1] + 0.5 * Math.cos(lean), 0], footL: [fL[0], fL[1], 0.1], footR: [fR[0], fR[1], -0.1],
+        kneeL: [x + 0.2 * Math.sin(ph), 0.5 + (o.knee ?? 0.3) * Math.max(0, Math.sin(ph)), 0.1], kneeR: [x - 0.2 * Math.sin(ph), 0.5 + (o.knee ?? 0.3) * Math.max(0, -Math.sin(ph)), -0.1],
+        wristL: [x + arms * (fR[0] - x) * 0.3, 1.0, o.wide ?? 0.21], wristR: [x + arms * (fL[0] - x) * 0.3, 1.0, -(o.wide ?? 0.21)] });
+    }
+    return out;
+  };
+  const R = gaitReport(runner(), fps);
+  ok(R.kind === 'run' && Math.abs(R.speed - 4) < 0.1, 'it is a run at 4 metres a second', [R.kind, R.speed]);
+  ok(Math.abs(R.cadence - 180) < 6, 'it steps 180 times a minute', R.cadence);
+  ok(Math.abs(R.stepLength - 4 / 3) < 0.06, 'each step covers 1.33 m', R.stepLength);
+  ok(Math.abs(R.flight - (1 / 3 - 0.22) / (1 / 3)) < 0.07, 'it is in the air a third of the time (both feet off the ground between steps)', R.flight);
+  ok(Math.abs(R.lean - 10) < 1.5, 'the trunk leans 10° forward', R.lean);
+  ok(Math.abs(R.kneeLift - 0.8 / 0.9) < 0.05, 'the knee comes up to nine tenths of hip height', R.kneeLift);
+  ok(R.armLeg > 0.8, 'the arms swing against the legs (left arm forward with the right leg)', R.armLeg);
+  ok(R.wrists[1] < 0.6 && R.wrists[0] > 0.3, 'the hands stay close: never more than 0.6 m apart', R.wrists);
+  ok(R.notes.length === 0, 'a real runner earns no remark', R.notes);
+  // a small body takes more steps for the same speed: the report says what is usual for its legs
+  ok(gaitReport(runner({ hip: 0.7, step: 0.3 }), fps).notes.length === 0 && gaitReport(runner({ hip: 0.7 }), fps).usual > R.usual, 'short legs: more steps a minute is what is usual', gaitReport(runner({ hip: 0.7 }), fps).usual);
+  // the faults
+  const walk = gaitReport(runner({ v: 1.4, step: 0.52, stance: 0.64, knee: 0.08, lean: 3 }), fps);
+  ok(walk.kind === 'walk' && walk.flight === 0 && walk.notes.length === 0, 'a walk is a walk: a foot always on the ground, and that is no fault', [walk.kind, walk.flight, walk.notes]);
+  const noAir = gaitReport(runner({ stance: 0.36 }), fps);
+  ok(noAir.notes.some((n) => /air/.test(n)), 'at running speed with a foot always on the ground: no moment in the air', noAir.notes);
+  ok(gaitReport(runner({ arms: -1 }), fps).notes.some((n) => /same side|against/.test(n)), 'arms that swing with the leg on their own side are named', gaitReport(runner({ arms: -1 }), fps).notes);
+  ok(gaitReport(runner({ lean: -4 }), fps).notes.some((n) => /lean/.test(n)), 'a runner leaning back is named', gaitReport(runner({ lean: -4 }), fps).notes);
+  ok(gaitReport(runner({ wide: 0.5 }), fps).notes.some((n) => /arms|hands/.test(n)), 'hands a metre apart are named', gaitReport(runner({ wide: 0.5 }), fps).notes);
+  ok(gaitReport(runner({ step: 0.2, stance: 0.12 }), fps).notes.some((n) => /steps a minute/.test(n)), '300 steps a minute at a jog is named', gaitReport(runner({ step: 0.2, stance: 0.12 }), fps).cadence);
+  const still = gaitReport(Array.from({ length: 120 }, () => runner()[0]), fps);
+  ok(still.kind === 'still' && still.cadence === 0, 'a body that goes nowhere has no gait', still.kind);
 }
 
 /* ---------------------------------------------------------------- ORBS */

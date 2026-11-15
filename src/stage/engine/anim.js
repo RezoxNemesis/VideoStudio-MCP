@@ -3,11 +3,33 @@ import { THREE, clamp, lerp } from './core.js';
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), Yax = new THREE.Vector3(0, 1, 0);
 const SWAP = (n) => n.startsWith('Left') ? 'Right' + n.slice(4) : n.startsWith('Right') ? 'Left' + n.slice(5) : n;
 
+/**
+ * The performers recorded at 60 frames a second. The captured library's source files carry no frame rate and its
+ * conversion wrote 120 into every one, so these performers' clips played at DOUBLE speed. Found by physics, not by
+ * eye: a runner's hips fell at four times gravity and a "run" took 340 steps a minute (halved: an ordinary jog of 170).
+ * (77 holds the same data as 139, and 106 the same as 141.)
+ */
+export const HALF_RATE = [75, 77, 88, 106, 139, 141, 143];
+/**
+ * Give every clip of the library its true timing: a half-rate performer's clips last twice as long, travel half as
+ * fast and are sampled at half the library's rate. Done once (and not at all for a library packed with true rates,
+ * which says so with index.timefix).
+ */
+export function fixTimes(index) {
+  if (!index || index.timefix) return index;
+  for (const m of Object.values(index.clips ?? {})) {
+    if (!HALF_RATE.includes(Number(m.s))) continue;
+    m.fps = index.fps / 2; m.dur = Math.round(((m.n - 1) / m.fps) * 1000) / 1000; m.speed = Math.round((m.speed / 2) * 100) / 100;
+  }
+  index.timefix = 'runtime';
+  return index;
+}
+
 /** One motion-capture clip: global joint rotations (int16 quaternions) + root path at the library's frame rate. */
 export class Clip {
   constructor(name, meta, lib, pack) {
     const subj = lib.subjects[String(meta.s)] || {};
-    this.name = name; this.m = { ...meta, leg: meta.leg ?? subj.leg, rest: meta.rest ?? subj.rest }; this.fps = lib.fps; this.J = lib.joints.length; this.n = meta.n; this.dur = (meta.n - 1) / lib.fps;
+    this.name = name; this.m = { ...meta, leg: meta.leg ?? subj.leg, rest: meta.rest ?? subj.rest }; this.fps = meta.fps ?? lib.fps; this.J = lib.joints.length; this.n = meta.n; this.dur = (meta.n - 1) / this.fps;
     this.root = pack.f32('r:' + name); this.quat = pack.i16('q:' + name); this.con = pack.has('c:' + name) ? pack.u8('c:' + name) : null; this.mj = lib.joints.map(n => lib.joints.indexOf(SWAP(n)));
   }
   /** root position (source units) at time t; mirror flips left/right */

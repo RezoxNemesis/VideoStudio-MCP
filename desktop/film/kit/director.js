@@ -84,8 +84,8 @@ export const handTo = (side, t0, t1, from, to, travel = 1.0) => ({ t0, t1, fade:
 export const talk = (T, id, i = 0, o = {}) => ({ t0: T.t(id) - 0.25, t1: T.e(id) + 0.4, fade: 0.45, clip: i % 2 ? '19_08' : '18_08', mask: o.mask ?? 'arms', in: +(1.5 + ((i * 2.7) % 12)).toFixed(2), weight: o.weight ?? 0.8, mirror: !!o.mirror });
 /** Captured gestures by name: [clip, in, out] (stage.motions finds more). */
 export const GESTURES = {
-  wave: ['111_37', 0.2, 2.5], hello: ['141_16', 0.1, 2.3], shrug: ['111_25', 0.1, 2.2], think: ['74_12', 0, 2.4], laugh: ['79_70', 0.4, 4.2], cry: ['79_72', 0.6, 5.2],
-  bow: ['111_02', 0.2, 3.3], lookaround: ['77_04', 0.3, 5.5], angry: ['18_10', 1, 5.5], phone: ['79_36', 0, 4.2], drink: ['14_37', 0, 4.2], sit: ['143_18', 0, 3.1],
+  wave: ['111_37', 0.2, 2.5], hello: ['141_16', 0.2, 4.6], shrug: ['111_25', 0.1, 2.2], think: ['74_12', 0, 2.4], laugh: ['79_70', 0.4, 4.2], cry: ['79_72', 0.6, 5.2],
+  bow: ['111_02', 0.2, 3.3], lookaround: ['77_04', 0.6, 11], angry: ['18_10', 1, 5.5], phone: ['79_36', 0, 4.2], drink: ['14_37', 0, 4.2], sit: ['143_18', 0, 6.2],
   comfort: ['22_07', 0, 2.4], handshake: ['79_06', 0.8, 3.6], pickup: ['26_09', 0.3, 4.2], explain: ['18_09', 0, 1.9],
 };
 const gestureClip = (g) => (Array.isArray(g) ? g : GESTURES[g] ?? [g, 0, 3]);
