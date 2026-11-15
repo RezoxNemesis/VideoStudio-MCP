@@ -24,7 +24,7 @@ const lerp3 = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, 
 
 // the trunk from breast to buttock: [x (forward of the middle), topline, underline, half width, how much the top is narrowed (a spine, not a barrel)]
 const TRUNK = [
-  [0.72, 1.320, 1.050, 0.165, 0.06], [0.66, 1.420, 0.940, 0.235, 0.16], [0.54, 1.510, 0.845, 0.272, 0.30], [0.42, 1.560, 0.790, 0.280, 0.42],
+  [0.72, 1.320, 1.050, 0.195, 0.06], [0.66, 1.420, 0.940, 0.262, 0.14], [0.54, 1.510, 0.845, 0.288, 0.28], [0.42, 1.560, 0.790, 0.290, 0.42],
   [0.28, 1.535, 0.785, 0.290, 0.32], [0.10, 1.485, 0.790, 0.308, 0.20], [-0.08, 1.470, 0.810, 0.312, 0.16], [-0.26, 1.475, 0.850, 0.302, 0.15],
   [-0.42, 1.500, 0.930, 0.290, 0.14], [-0.56, 1.525, 0.985, 0.305, 0.10], [-0.70, 1.510, 0.980, 0.295, 0.10], [-0.82, 1.430, 1.000, 0.235, 0.08], [-0.91, 1.330, 1.070, 0.130, 0.05],
 ];
@@ -78,7 +78,7 @@ export function trunkHalfWidth(x, y) {
 
 // a leg from its joint in the body to the coronet: [where along its joints (fore: 0 shoulder, 1 knee, 2 fetlock, 3 hoof;
 // hind: 0 hip, 1 stifle, 2 hock, 3 fetlock, 4 hoof), half depth fore and aft, half width, shift back]
-const FORE = [[-0.06, 0.135, 0.090, 0], [0.2, 0.122, 0.082, 0.012], [0.5, 0.092, 0.068, 0.004], [0.85, 0.064, 0.055, 0], [1, 0.066, 0.060, -0.004], [1.2, 0.050, 0.043, 0], [1.8, 0.048, 0.041, 0], [2, 0.058, 0.052, 0.004], [2.55, 0.046, 0.045, 0], [2.86, 0.053, 0.051, 0]];
+const FORE = [[-0.06, 0.135, 0.100, 0], [0.2, 0.124, 0.094, 0.012], [0.5, 0.094, 0.078, 0.004], [0.85, 0.066, 0.058, 0], [1, 0.066, 0.060, -0.004], [1.2, 0.050, 0.043, 0], [1.8, 0.048, 0.041, 0], [2, 0.058, 0.052, 0.004], [2.55, 0.046, 0.045, 0], [2.86, 0.053, 0.051, 0]];
 const HIND = [[-0.1, 0.200, 0.120, 0], [0.45, 0.215, 0.128, 0.02], [1, 0.165, 0.108, 0.03], [1.35, 0.120, 0.086, 0.012], [1.75, 0.078, 0.061, 0.004], [2, 0.072, 0.058, 0.014], [2.2, 0.055, 0.046, 0.004], [2.8, 0.050, 0.043, 0], [3, 0.060, 0.053, 0.004], [3.55, 0.048, 0.046, 0], [3.86, 0.055, 0.052, 0]];
 // the head from behind the poll to the lips: [where along poll → muzzle, half depth, half width, shift towards the jaw]
 const HEAD = [[-0.07, 0.055, 0.055, 0], [0, 0.112, 0.090, 0.012], [0.18, 0.160, 0.110, 0.04], [0.38, 0.140, 0.100, 0.034], [0.6, 0.104, 0.076, 0.016], [0.8, 0.084, 0.064, 0.006], [0.95, 0.080, 0.066, 0], [1.04, 0.052, 0.050, 0]];
@@ -162,16 +162,17 @@ export function horseMeshes(horse, lit = (c) => c, q = {}) {
     const onNeck = (u, ang, off) => { const c = neckAt(u), t = V.norm(V.sub(neckAt(u + 0.02), neckAt(u - 0.02))), e2 = V.norm(V.cross(sd, t)), [d, wd] = neckDims(u), sn = Math.sin(ang), cs = Math.cos(ang); return V.add(V.add(c, V.mul(e2, (d + off) * k * sn)), V.mul(sd, (wd * (sn > 0 ? 1 - 0.3 * sn * sn : 1) + off) * k * cs)); };
     const M = 16, a = [], rows = [];
     for (let i = 0; i <= M; i++) {
-      const u = 0.98 - (i / M) * 0.92, fall = 0.16 + 0.1 * Math.sin(i * 0.9) + (i % 2) * 0.07; // how far round the neck this lock reaches
+      // a lock is a hand and a half long (shorter towards the withers), whatever the girth of the neck where it grows
+      const u = 0.98 - (i / M) * 0.92, [d, wd] = neckDims(u), len = (0.2 + 0.035 * Math.sin(i * 0.9) + (i % 2) * 0.03) * Math.min(1, 0.35 + u * 1.6), reach = len / Math.max(0.1, 0.55 * d + 0.45 * wd);
       a.push(onNeck(u, Math.PI / 2, 0.008));
-      rows.push([0, 0.34, 0.68, 1].map((v, r) => onNeck(u, Math.PI / 2 + v * (Math.PI / 2 + fall - 0.5), r === 0 ? 0.008 : 0.03)));
+      rows.push([0, 0.34, 0.68, 1].map((v, r) => onNeck(u, Math.PI / 2 + v * reach, r === 0 ? 0.008 : 0.028)));
     }
     out.push({ name: 'mane', paint: hairP(o.mane), ...sheet(rows) });
     // and the roots of it stand along the crest, seen from either side
     const up2 = a.map((p, i) => { const u = 0.98 - (i / M) * 0.92, t = V.norm(V.sub(neckAt(u + 0.02), neckAt(u - 0.02))), e2 = V.norm(V.cross(sd, t)); return [p, e2]; });
     out.push({ name: 'crest', paint: { ...hairP(o.mane), two: false }, ...tube(up2.map(([p, e2], i) => ring(V.add(p, V.mul(e2, 0.012 * k)), sd, e2, (i === 0 || i === M ? 0.012 : 0.03) * k, (i === 0 || i === M ? 0.01 : 0.034 + 0.008 * (i % 2)) * k, 8))) });
-    const fb = V.add(poll, V.mul(brow, 0.1 * k)), fe = V.add(V.add(poll, V.mul(hAx, 0.2 * hl)), V.mul(brow, 0.155 * k));
-    out.push({ name: 'forelock', paint: hairP(o.mane), ...tube([0, 0.5, 1].map((u) => ring(lerp3(fb, fe, u), sd, brow, (0.045 - 0.02 * u) * k, (0.018 - 0.008 * u) * k, 8))) });
+    const fb = V.add(poll, V.mul(brow, 0.1 * k)), fe = V.add(V.add(poll, V.mul(hAx, 0.15 * hl)), V.mul(brow, 0.15 * k));
+    out.push({ name: 'forelock', paint: hairP(o.mane), ...tube([0, 0.5, 1].map((u) => ring(lerp3(fb, fe, u), sd, brow, (0.036 - 0.02 * u) * k, (0.016 - 0.008 * u) * k, 8))) });
   }
 
   // ---- tail: a sheaf of hair along the points that trail the dock

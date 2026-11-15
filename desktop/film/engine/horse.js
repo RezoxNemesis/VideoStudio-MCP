@@ -54,7 +54,7 @@ export class Horse {
     j.muzzle = V.add(j.poll, V.add(V.mul(f, Math.cos(ha) * hl * Math.cos(pitch)), V.add([0, Math.sin(ha) * hl, 0], V.mul(sd, (o.turn ?? 0) * 0.2 * k))));
     // legs
     // legs: [name, where the hoof stands at rest (forward of the middle), to the side, place in the gait, front?]
-    const legs = [['LH', -0.70, 0.17, 0, false], ['RH', -0.70, -0.17, 1, false], ['LF', 0.56, 0.15, 2, true], ['RF', 0.56, -0.15, 3, true]];
+    const legs = [['LH', -0.70, 0.17, 0, false], ['RH', -0.70, -0.17, 1, false], ['LF', 0.56, 0.17, 2, true], ['RF', 0.56, -0.17, 3, true]];
     for (const [name, lx, lz, pi, front] of legs) {
       let u = ((cyc + G.ph[pi]) % 1 + 1) % 1, hx, hy = 0;
       // while a hoof is down the body passes over it (it goes back, relative to the body, by the ground covered);
