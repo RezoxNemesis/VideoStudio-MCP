@@ -18,6 +18,6 @@ console.log(steps.map((t) => t.toFixed(2)).join(' '));
 if (bpm) {
   const G = beatGrid(Number(bpm), P.config.fps), M = beatMatch(steps.map((t) => t - steps[0]), Number(bpm));
   console.log(`tempo ${bpm}: a beat is ${G.frames} frames${G.whole ? '' : ` (not whole frames: ${G.suggest} would be)`}`);
-  console.log(`play the clip at rate × ${M.rate.toFixed(3)} (steps on ${M.per === 1 ? 'the beats' : M.per === 0.5 ? 'the half beats' : 'every other beat'}); then the steps are ${(M.error * 1000).toFixed(0)} ms off the beat on average`);
+  console.log(`play the clip at rate × ${M.rate.toFixed(3)} (steps on ${M.per === 1 ? 'the beats' : M.per === 0.5 ? 'the half beats' : 'every other beat'}); then the steps are ${(M.error * 1000).toFixed(0)} ms off the beat on average (pulse ${(M.sure * 100).toFixed(0)}% sure${M.sure < 0.5 ? ": this dance has no steady pulse, matching it will not show" : ""})`);
   console.log(`first step now at ${steps[0].toFixed(2)} s: start the clip so that it falls on a beat (a multiple of ${G.beat.toFixed(3)} s after the music starts)`);
 }

@@ -31,22 +31,26 @@ export function stepTimes(contact, fps) {
  * from `in` (clip seconds) at `rate`, so that each step falls on a beat (per = 1), a half beat (0.5) or every other
  * beat (2) — whichever needs the least change of speed. error: how far the steps still are from the beats, in seconds.
  * o.rates: the slowest and fastest the clip may be played and still look natural (default [0.8, 1.25]).
+ * The dancer's pulse is found the way a period is found in any train of events (every step turns a clock hand; at the
+ * right period all the hands point one way), so steps left out, pauses and taps in between do not hide it.
+ * sure: 0…1, how much of a pulse there is at all — below about 0.5 the dance has none worth matching.
  */
 export function beatMatch(steps, bpm, o = {}) {
-  const [lo, hi] = o.rates ?? [0.8, 1.25], beat = 60 / bpm;
-  if (steps.length < 3) return { rate: 1, in: steps[0] ?? 0, per: 1, error: 0, steps: steps.length };
-  const gaps = steps.slice(1).map((s, i) => s - steps[i]).sort((a, b) => a - b), iv = gaps[Math.floor(gaps.length / 2)];
-  // which note value the steps are nearest to at a natural speed
-  let per = 1, best = Infinity;
-  for (const k of [0.5, 1, 2]) { const r = iv / (beat * k), d = Math.abs(Math.log(r)); if (d < best) { best = d; per = k; } }
-  const target = beat * per;
-  // a straight line through (step number, step time): its slope is the clip time of one step, its start the step on beat 0
-  const n = [0]; for (let i = 1; i < steps.length; i++) n.push(n[i - 1] + Math.max(1, Math.round((steps[i] - steps[i - 1]) / iv)));
-  const N = steps.length, mn = n.reduce((a, b) => a + b, 0) / N, ms = steps.reduce((a, b) => a + b, 0) / N;
-  let sxy = 0, sxx = 0; for (let i = 0; i < N; i++) { sxy += (n[i] - mn) * (steps[i] - ms); sxx += (n[i] - mn) ** 2; }
-  const slope = Math.min(hi * target, Math.max(lo * target, sxy / sxx)), rate = slope / target;
-  const first = ms - slope * mn, start = first - slope * Math.floor(first / slope + 1e-9);
+  const [lo, hi] = o.rates ?? [0.8, 1.25], beat = 60 / bpm, N = steps.length;
+  if (N < 3) return { rate: 1, in: steps[0] ?? 0, per: 1, error: 0, sure: 0, steps: N };
+  // how well the steps keep to a pulse of period P, and where in the period they fall
+  const pulse = (P) => { let c = 0, q = 0; for (const t of steps) { const a = (t / P) * 2 * Math.PI; c += Math.cos(a); q += Math.sin(a); } return { r: Math.hypot(c, q) / N, ph: Math.atan2(q, c) }; };
+  let best = 0; const cand = [];
+  for (let P = 0.18; P <= 0.9001; P += 0.002) { const r = pulse(P).r; cand.push([P, r]); if (r > best) best = r; }
+  // half a true period fits as well as the period itself: of the near-best, the longest is the dancer's step
+  let Pb = cand.filter(([, r]) => r >= best * 0.92).pop()[0], rb = pulse(Pb).r;
+  // (that is somewhere on the side of its peak: climb to the top in fine steps)
+  for (const dir of [-1, 1]) for (let k = 0; k < 400; k++) { const P = Pb + dir * 0.0001, r = pulse(P).r; if (r <= rb) break; rb = r; Pb = P; }
+  let per = 1, d0 = Infinity;
+  for (const k of [0.5, 1, 2]) { const d = Math.abs(Math.log(Pb / (beat * k))); if (d < d0) { d0 = d; per = k; } }
+  const target = beat * per, slope = Math.min(hi * target, Math.max(lo * target, Pb)), rate = slope / target;
+  const ph = pulse(slope).ph, start = ((((ph / (2 * Math.PI)) * slope) % slope) + slope) % slope;
   let err = 0, m = 0;
   for (const s of steps) { const tau = (s - start) / rate; if (tau < -1e-6) continue; err += Math.abs(tau / target - Math.round(tau / target)) * target; m++; }
-  return { rate, in: Math.max(0, start), per, error: m ? err / m : 0, steps: N };
+  return { rate, in: start, per, error: m ? err / m : 0, sure: rb, steps: N };
 }

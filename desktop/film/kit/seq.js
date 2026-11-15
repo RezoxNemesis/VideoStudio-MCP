@@ -39,6 +39,8 @@ export function makeSeq(def) {
  * One shot of a sequence as the shot runner wants it. off: start this many seconds into the shot (to look at a late
  * frame without drawing everything before it).
  */
+/** One thing or a list of things, as a list (an effect function may return one particle system or several). */
+export const asList = (x) => (Array.isArray(x) ? x : x ? [x] : []);
 export function runnerShot(seq, sh, off = 0) {
   const T0 = sh.t0 + off;
   // sh.warp(tFilm) → tStory, both counted from the start of the shot (speed ramps, hit-stop); it must end where it began: warp(len) = len
@@ -74,7 +76,7 @@ export function runnerShot(seq, sh, off = 0) {
     warpT: sh.warp ? wt : null, warpInv: sh.warp?.inv ?? null,
     cam: (t, ctx) => sh.cam(T0 + wt(t), ctx, t + off),
     dof: sh.dof ? (t, ctx) => sh.dof(T0 + wt(t), ctx, t + off) : null,
-    fx: (ctx) => [...(seq.fx ? seq.fx(ctx, sh, seq.T) : []), ...(sh.fx ? sh.fx(ctx) : [])],
+    fx: (ctx) => [...asList(seq.fx ? seq.fx(ctx, sh, seq.T) : null), ...asList(sh.fx ? sh.fx(ctx) : null)],
     dyn: (seq.dyn || sh.dyn) ? (t, ctx) => [...(seq.dyn ? seq.dyn(T0 + wt(t), ctx, sh) : []), ...(sh.dyn ? sh.dyn(T0 + wt(t), ctx) : [])] : null,
     under: sh.under ? (g, cam, sc, t, ctx) => sh.under(g, cam, sc, T0 + wt(t), ctx) : null,
     over: (sh.over || seq.over) ? (g, cam, sc, t, ctx) => { if (seq.over) seq.over(g, cam, sc, T0 + wt(t), ctx, sh); if (sh.over) sh.over(g, cam, sc, T0 + wt(t), ctx, t + off); } : null,

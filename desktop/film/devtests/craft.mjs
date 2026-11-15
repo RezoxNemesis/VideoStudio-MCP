@@ -9,6 +9,7 @@ import { makeCam } from '../engine/camera.js';
 import { beatGrid, countAt, stepTimes, beatMatch } from '../kit/dance.js';
 import { dartTo, gazeBlink, eyesLead, gazeOf } from '../kit/acting.js';
 import { carried } from '../kit/things.js';
+import { asList } from '../kit/seq.js';
 import { ball, onRing, keplerTurns, solarSystem } from '../kit/orbs.js';
 
 const fails = []; let checks = 0;
@@ -50,6 +51,11 @@ const near = (a, b, tol, what) => ok(Math.abs(a - b) <= tol, `${what} (want ${b}
   const fast = Array.from({ length: 30 }, (_, i) => 0.1 + i * 0.26);
   const m3 = beatMatch(fast, 120);
   ok(Math.abs(m3.rate - 1.04) < 0.01 && m3.per === 0.5, 'quick steps go on the half beats', m3);
+  // a real dancer (salsa: quick, quick, quick, pause) leaves steps out and taps in between: the pulse is still found
+  const salsa = []; for (let i = 0; i < 40; i++) { if (i % 4 === 3) continue; salsa.push(0.4 + i * 0.31 + (i % 5 === 0 ? 0.02 : -0.01)); if (i % 7 === 2) salsa.push(0.4 + i * 0.31 + 0.11); }
+  const m4 = beatMatch(salsa.sort((a, b) => a - b), 120, { rates: [0.7, 1.4] });
+  ok(Math.abs(m4.rate - 1.24) < 0.03 && m4.per === 0.5 && m4.error < 0.04, 'steps left out and taps between do not hide the pulse', m4);
+  ok(m4.sure > 0.6 && beatMatch([0.1, 0.37, 0.52, 0.91, 1.3, 1.38, 1.99, 2.2, 2.31, 2.9], 120).sure < 0.5, 'it says how sure it is: a dancer with no pulse gets a low number', [m4.sure]);
 }
 
 /* ---------------------------------------------------------------- EYES */
@@ -103,6 +109,12 @@ const near = (a, b, tol, what) => ok(Math.abs(a - b) <= tol, `${what} (want ${b}
   ok(made.length === 2 && made[0][1] === 25 && made[1][1] === 90, 'it is made where it is, turned the way it lies or the way it is held', made.map((x) => x[1]));
   const cup = carried({ rest: [0, 0.8, 0], by: 'boy', hand: 'L', from: 1, to: 4, drop: [2, 0.8, 0], make: () => ({ draw() {} }) });
   ok(cup(5, ctx([0, 0, 0])).p[0] === 2 && cup(2, ctx([0, 0, 0])).p[0] === 9, 'set down, it stays where it was set; held in the left hand it follows the left', [cup(5, ctx([0, 0, 0])).p, cup(2, ctx([0, 0, 0])).p]);
+}
+
+{
+  // effects may be given as one system or as a list (fx: FX.fx from combat() is one; fx: (ctx) => [rain(box)] is a list)
+  const one = { step() {}, items() { return []; } };
+  ok(asList(one).length === 1 && asList(one)[0] === one && asList([one, one]).length === 2 && asList(null).length === 0 && asList(undefined).length === 0, 'a sequence takes its effects as one system or as a list of them', [asList(one).length, asList([one, one]).length]);
 }
 
 /* ---------------------------------------------------------------- ORBS */

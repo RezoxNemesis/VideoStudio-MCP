@@ -64,7 +64,7 @@ elder, merchant, master, lady, soldier, captain, swordsman, king, warlord. Steps
   { t: 0, idle: true },
   { t: 1, go: [x, z], gait: 'walk' | 'stroll' | 'march' | 'jog' | 'run' | 'sneak', speed: 1.4, face: 90 },
   { t: 6, clip: '143_25', in: 0.2, out: 2.6, at: { yaw: -90 }, blend: 0.4 },   // a motion-capture clip (stage.motions finds them)
-  { t: 9, pose: 'kneel' | 'sit' | 'clip:113_02@1.55', blend: 0.8 },
+  { t: 9, pose: 'kneel' | 'sit' (on the GROUND) | 'clip:113_02@1.55' (the pose of a clip at a moment: 'clip:143_18@3.0' is seated on a chair), blend: 0.8 },
   { t: 12, fall: { push: 0.6 } },
 ] }
 { op: 'stage.overlay', actor: 'tom', add: [
@@ -466,7 +466,9 @@ Four kinds of scene the practice reel proved, each with the rule that makes it r
 its own tempo, so lay it on the music instead of hoping: build once, then `node devtests/steps.mjs <film> <seq> <actor>
 120` prints when the dancer's feet come down and how to play the clip — `beatMatch(steps, bpm)` → `{ rate, in, per,
 error }`: `{ clip, in, rate }` on the action makes every step fall on a beat (per 1), a half beat (0.5) or every other
-beat (2). `countAt(t, bpm)` → `{ count: 1…8, accent }` puts a pose, a cut or a light on the 1. Cut on the beat; hold a
+beat (2). `sure` (and the tool) says how much of a pulse the dancer has at all: below about 50% the clip has
+no steady step to match (a captured salsa is quick-quick-quick-pause with taps in between) — choose another clip, or
+put the POSES on the counts instead. `countAt(t, bpm)` → `{ count: 1…8, accent }` puts a pose, a cut or a light on the 1. Cut on the beat; hold a
 shot for a whole count of eight or four.
 
 **Eyes.** They go first and fast, the head follows when the thought commits. A film's `look` keys are played that way
