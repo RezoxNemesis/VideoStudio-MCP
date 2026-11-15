@@ -5,6 +5,7 @@
 import { film } from "../film/prepare";
 import { code } from "../film/session";
 import type { SenseiDigest, SenseiIssue, SenseiReport } from "./types";
+import { work } from "../../../src/app/progress";
 
 export type SenseiEvent = "report" | "busy" | "tasks" | "chat" | "brain";
 export interface SenseiBusy { label: string; frac: number; detail?: string }
@@ -17,7 +18,11 @@ class SenseiStore {
   private unProgress: (() => void) | null = null;
   on(fn: (e: SenseiEvent) => void): () => void { this.fns.add(fn); return () => this.fns.delete(fn); }
   emit(e: SenseiEvent): void { for (const f of this.fns) { try { f(e); } catch (err) { console.error(err); } } }
-  setBusy(b: SenseiBusy | null): void { this.busy = b; this.emit("busy"); }
+  setBusy(b: SenseiBusy | null): void {
+    this.busy = b;
+    work.set("sensei", b ? { label: b.label, frac: b.frac, text: `${b.label}${b.frac >= 0 ? ` · ${Math.min(99, Math.round(b.frac * 100))}%` : ""}${b.detail ? ` · ${b.detail}` : ""}` } : null);
+    this.emit("busy");
+  }
 
   /** The latest review of the open film (from disk when the film changed). */
   async load(dir = code.dir): Promise<SenseiReport | null> {
@@ -33,8 +38,8 @@ class SenseiStore {
     if (!this.unProgress) {
       this.unProgress = film().onSensei((m) => {
         if (m.dir !== code.dir) return;
-        if (m.phase === "shots") this.setBusy({ label: "Sensei is looking at every shot", frac: m.of ? (m.done ?? 0) / m.of : -1, detail: m.shot });
-        else if (m.phase === "pictures") this.setBusy({ label: "Sensei is marking the problems", frac: m.of ? (m.done ?? 0) / m.of : -1 });
+        if (m.phase === "shots") this.setBusy({ label: "Sensei is looking at every shot", frac: m.of ? (m.done ?? 0) / m.of : -1, detail: m.of ? `${m.done ?? 0} / ${m.of} shots${m.shot ? ` · ${m.shot}` : ""}` : m.shot });
+        else if (m.phase === "pictures") this.setBusy({ label: "Sensei is marking the problems", frac: m.of ? (m.done ?? 0) / m.of : -1, detail: m.of ? `${m.done ?? 0} / ${m.of} pictures` : undefined });
         else if (m.phase === "finish") this.setBusy({ label: "Sensei is weighing cuts, story, sound and style", frac: -1 });
       });
     }

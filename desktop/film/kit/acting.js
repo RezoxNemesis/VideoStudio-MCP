@@ -67,6 +67,53 @@ export function lookAt(head, target, gain = 2.3) {
   const d = V.norm(V.sub(target, head.c));
   return [clamp(V.dot(d, head.s) * gain, -1, 1), clamp(V.dot(d, head.u) * gain, -1, 1)];
 }
+/**
+ * How eyes move: a dart. They do not glide to a new target and they do not teleport: the move takes two or three frames
+ * and most of it happens in the first. d: seconds since the eyes set off → how much of the way they have gone (0…1).
+ */
+export const DART = 0.085;
+export function dartTo(d) { if (d <= 0) return 0; if (d >= DART) return 1; const u = 1 - d / DART; return 1 - u * u * u; }
+/**
+ * A big change of gaze takes a blink with it (the lids shut as the eyes set off and open on the new target); a small
+ * one does not. d: seconds since the change, size: how far the gaze went (in the face's look units, 0…2),
+ * force: true = blink whatever the size, false = never. → 0 (open) … 1 (shut)
+ */
+export function gazeBlink(d, size, force) {
+  if (force === false || d < 0 || d >= 0.2) return 0;
+  if (force !== true && size < 0.45) return 0;
+  return Math.pow(Math.sin((d / 0.2) * Math.PI), 0.6);
+}
+/**
+ * The eyes lead, the head follows. One list of beats — [{ t, at: actor id | 'cam' | [x, y, z], head: 0…1, lead?, fade? }] —
+ * gives both halves of a look: `look`, the eyes' keys for the film's actor, and `head`, the Stage overlays that turn the
+ * head, each setting off `lead` seconds (0.22) after the eyes. head: 0 is a look with the eyes alone — careful, shy,
+ * sneaking — and the head stays where it was; a small head (0.4) is a guarded look, a full one (0.9) an open one.
+ *   const L = eyesLead([...], { end: T.dur });   actors: look: L.look   ·   steps: { op: 'stage.overlay', actor, add: L.head }
+ */
+export function eyesLead(beats, o = {}) {
+  const look = beats.map((b) => [b.t, b.at, ...(b.blink !== undefined ? [{ blink: b.blink }] : [])]);
+  const moves = beats.filter((b) => (b.head ?? 0.6) > 0), late = (b) => b.lead ?? o.lead ?? 0.22;
+  const head = moves.map((b, i) => {
+    const nx = moves[i + 1];
+    return { t0: i === 0 ? b.t : b.t + late(b), t1: nx ? nx.t + late(nx) : (o.end ?? b.t + 4), fade: b.fade ?? o.fade ?? 0.5, look: b.at, head: b.head ?? 0.6 };
+  });
+  return { look, head };
+}
+/**
+ * Where the eyes are at ts, for look keys [[t, target, { blink? }], …]: on the target of the latest key, having darted
+ * there from the one before, with a blink if the change was big. aim(target) → the look [x, y] of that target for these
+ * eyes right now (null when it is not there). → { look: [x, y] | null (free: let them wander), blink: 0…1 }
+ */
+export function gazeOf(keys, ts, aim) {
+  let cur = null, prev = null;
+  if (keys) for (const k of keys) { if (ts >= k[0]) { prev = cur; cur = k; } else break; }
+  const to = cur ? aim(cur[1]) : null;
+  if (!to) return { look: null, blink: 0 };
+  const d = ts - cur[0], from = prev && d < 0.2 ? aim(prev[1]) : null;
+  if (!from) return { look: to, blink: 0 };
+  const k = dartTo(d);
+  return { look: k >= 1 ? to : [lerp(from[0], to[0], k), lerp(from[1], to[1], k)], blink: gazeBlink(d, Math.hypot(to[0] - from[0], to[1] - from[1]), cur[2]?.blink) };
+}
 /** Small quick movements of the eyes when nothing holds them. */
 export function saccade(t, seed) {
   const period = 1.7, i = Math.floor(t / period + hash(seed) * 3), u = (t / period + hash(seed) * 3) - i;

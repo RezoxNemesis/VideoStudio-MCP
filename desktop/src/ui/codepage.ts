@@ -107,6 +107,7 @@ export class CodePage {
   );
   private barEl = h("div", { class: "cs-bar" }, h("i", {}));
   private busyEl = h("span", { class: "cs-busy" });
+  private pctEl = h("b", { class: "cs-pct" });
   private sideEl = h("div", { class: "cs-side-body" });
   private tabsEl = h("div", { class: "cs-tabs" });
   private fileEl = h("span", { class: "cs-file" }, "No file");
@@ -159,6 +160,7 @@ export class CodePage {
       h("span", { class: "sp" }),
       this.busyEl,
       this.barEl,
+      this.pctEl,
       this.drawBtn,
       this.draftBtn,
       this.stopBtn,
@@ -305,7 +307,11 @@ export class CodePage {
   private drawBusy(): void {
     const bz = code.busy;
     this.el.classList.toggle("working", !!bz);
-    this.busyEl.textContent = bz ? `${bz.label}${bz.detail ? ` · ${bz.detail}` : ""}` : "";
+    const words = bz ? (bz.text ?? `${bz.label}${bz.detail ? ` · ${bz.detail}` : ""}`) : "";
+    this.busyEl.textContent = words;
+    this.busyEl.title = words;
+    this.pctEl.textContent = bz ? (bz.percent === null || bz.percent === undefined ? "" : `${bz.percent}%`) : "";
+    this.pctEl.title = bz?.left ? `The whole job · ${bz.left}` : "The whole job";
     const bar = this.barEl.firstElementChild as HTMLElement;
     this.barEl.classList.toggle("run", !!bz && bz.frac < 0);
     bar.style.width = bz ? `${bz.frac < 0 ? 100 : Math.round(bz.frac * 100)}%` : "0";

@@ -9,6 +9,7 @@ import { kvGet, kvSet } from "../../src/core/storage";
 import { setRelayBase } from "../../src/agent/remote";
 import { vsd } from "./bridge";
 import { linkConfigFrom } from "./linkenv";
+import { work } from "../../src/app/progress";
 
 export const DEFAULT_WORKER = "https://videostudio-desktop.prakasharuntandon634.workers.dev";
 
@@ -186,7 +187,7 @@ export class DesktopLink {
     let cur = { done: 0, op: "" };
     const send = () => {
       lastSent = Date.now();
-      void this.post("progress", { id: job.id, state: { done: cur.done, total: n, op: cur.op, status: this.studio.status, at: Date.now() } }).catch(() => {});
+      void this.post("progress", { id: job.id, state: { done: cur.done, total: n, op: cur.op, status: this.studio.status, work: work.list().map((w) => ({ id: w.id, percent: w.percent, left: w.left || undefined, text: w.text })), at: Date.now() } }).catch(() => {});
     };
     const beat = window.setInterval(() => Date.now() - lastSent > 4000 && send(), 5000);
     send();

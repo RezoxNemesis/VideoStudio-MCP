@@ -32,5 +32,8 @@ export * from './people.js';
 export * from './props.js';
 export * from './places.js';
 export * from './combat.js';
+export * from './dance.js';
+export * from './things.js';
+export * from './orbs.js';
 export * from './library2d.js';
 export * from './director.js';

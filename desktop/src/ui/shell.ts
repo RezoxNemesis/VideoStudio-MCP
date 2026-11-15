@@ -31,6 +31,7 @@ import { registerCodeCommands } from "../film/session";
 import { registerSenseiCommands } from "../sensei/commands";
 import { StagePage } from "./stage3d";
 import { setLiveHooks } from "../../../src/agent/api";
+import { work } from "../../../src/app/progress";
 
 export type WsName = "edit" | "color" | "insight" | "audio" | "animate" | "stage" | "code" | "sensei" | "music" | "voice" | "deliver" | "claude";
 const WS: [WsName, string, string][] = [
@@ -79,6 +80,7 @@ export class Shell {
   private linkBtn: HTMLElement;
   private statusMsg: HTMLElement;
   private statusRight: HTMLElement;
+  private workEl = h("span", { class: "d-work" });
   private projEl: HTMLElement;
   readonly viewer: Viewer;
   readonly timeline: DesktopTimeline;
@@ -237,13 +239,18 @@ export class Shell {
 
     this.statusMsg = h("span", { class: "msg" });
     this.statusRight = h("span", { class: "mono" });
-    const status = h("footer", { class: "d-status" }, this.statusMsg, this.statusRight);
+    const status = h("footer", { class: "d-status" }, this.statusMsg, this.workEl, this.statusRight);
+    work.on(() => this.drawWork());
     const body = h("div", { class: "d-body" }, ...Object.values(this.ws));
     const wall = h("div", { class: "d-wall" }, inkTree());
     const drop = h("div", { class: "drop" }, h("div", {}, "Drop to import into the project"));
     this.el = h("div", { style: "height:100%" }, wall, h("div", { class: "d-shell" }, title, body, status), drop);
 
-    s.on("status", () => (this.statusMsg.textContent = s.status || "Ready"));
+    s.on("status", () => {
+      this.statusMsg.textContent = s.status || "Ready";
+      // any status line that carries a percentage (a voice, a proxy, a model download, an export) gets a bar too
+      work.say("status", /\d\s?%/.test(s.status) ? s.status : "");
+    });
     s.on("project", () => this.drawProj());
     s.on("change", () => this.drawProj());
     s.on("time", () => this.drawStatus());
@@ -366,6 +373,22 @@ export class Shell {
   }
 
   /** Animate's two rooms: the drawing desk, or fixing a film shot. */
+  /** The work strip: one small meter for each thing being made, with its percentage and the time left. */
+  private drawWork(): void {
+    const list = work.list();
+    this.workEl.replaceChildren(
+      ...list.map((w) =>
+        h(
+          "span",
+          { class: `d-meter${w.frac < 0 ? " run" : ""}`, title: w.text },
+          w.id === "status" ? "" : h("em", {}, w.label),
+          h("span", { class: "d-meter-bar" }, h("i", { style: `width:${w.frac < 0 ? 100 : Math.round(w.frac * 100)}%` })),
+          h("b", {}, w.percent === null ? "…" : `${w.percent}%`),
+          w.left ? h("small", {}, w.left) : "",
+        ),
+      ),
+    );
+  }
   private animateMode(v: "draw" | "fix"): void {
     this.anFix = v === "fix";
     this.anModeTabs?.set(v);

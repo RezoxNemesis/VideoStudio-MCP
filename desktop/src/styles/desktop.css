@@ -1206,6 +1206,15 @@ input[type="checkbox"] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* the work strip: one small meter with numbers for everything that is being made */
+.d-work { display: inline-flex; align-items: center; gap: 14px; }
+.d-meter { display: inline-flex; align-items: center; gap: 7px; font-variant-numeric: tabular-nums; }
+.d-meter em { font-style: normal; color: var(--ink); max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
+.d-meter b { color: var(--neon); font-weight: 700; min-width: 4ch; text-align: right; }
+.d-meter small { font-size: 11px; color: var(--muted); }
+.d-meter-bar { width: 120px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.d-meter-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--neon), var(--neon-2)); transition: width 0.25s; }
+.d-meter.run .d-meter-bar i { animation: cs-run 1.1s linear infinite; background: linear-gradient(90deg, transparent, var(--neon), transparent); }
 
 /* ---------- audio workspace ---------- */
 .aw-canvas {

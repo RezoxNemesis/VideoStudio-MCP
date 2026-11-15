@@ -457,6 +457,51 @@ shot is drawn again. `paint.parts {shot, t}` says where every part is; `paint.ad
 boy girl teen youngwoman soldier_crimson soldier_azure soldier_jade soldier_onyx captain_* bandit sailor swordsman
 swordswoman king queen — ids like `townswoman_12`. `code.people {group}` lists a group, `code.person {id}` shows one.
 
+## Craft: dance, eyes, things in hands, things that go round
+
+Four kinds of scene the practice reel proved, each with the rule that makes it read and the helper that does it.
+
+**A dance on the beat.** Music is counted in eights and the tempo drives the animation: `beatGrid(120, 30)` → a beat every
+15 frames (pick a tempo whose beats are whole frames; `.suggest` names the nearest one that is). A captured dance has
+its own tempo, so lay it on the music instead of hoping: build once, then `node devtests/steps.mjs <film> <seq> <actor>
+120` prints when the dancer's feet come down and how to play the clip — `beatMatch(steps, bpm)` → `{ rate, in, per,
+error }`: `{ clip, in, rate }` on the action makes every step fall on a beat (per 1), a half beat (0.5) or every other
+beat (2). `countAt(t, bpm)` → `{ count: 1…8, accent }` puts a pose, a cut or a light on the 1. Cut on the beat; hold a
+shot for a whole count of eight or four.
+
+**Eyes.** They go first and fast, the head follows when the thought commits. A film's `look` keys are played that way
+by themselves: the eyes dart to a new target in two or three frames (most of it in the first), and a big change of gaze
+takes a blink with it (`[t, target, { blink: false }]` forbids it for a stare that drops; `{ blink: true }` asks for
+one). `eyesLead([{ t, at, head, lead?, fade? }], { end })` writes both halves of a look from one list: `.look` for the
+actor and `.head` for `{ op: 'stage.overlay', actor, add: L.head }`, each head turn setting off 0.22 s after the eyes.
+`head: 0` is a look with the eyes alone (careful, shy, sneaking: the head stays where it was), 0.4–0.5 a guarded look,
+0.9 an open one. Caught looking: eyes away at once, the head ducks after 0.08 s with a short fade, the blush comes half
+a second later (`emote: [[t, { like: 'afraid', blush: 0.9 }, 0.5]]`). Someone who stares forgets to blink; nobody turns
+eyes and head in one move.
+
+**Things in hands.** `carried({ rest: [x, y, z], by: 'boy', hand: 'R', from: 2.7, make: (p, yaw) => new Mesh(box(p, 0.36,
+0.27, 0.15, yaw, { side: '#b5382e' })) })` in `dyn: (ts, ctx) => [bag(ts, ctx)]`: the thing lies at `rest` until the
+hand closes on it at `from`, then goes where the hand goes (`to` + `drop` set it down). Put it where the hand really is:
+solve once, `where.mjs … boy:wrist.R` at that moment, move `rest` there. A pick-up at a run is keyed over the captured
+run: a `lean` of 35° and `keys` on `hips` (−0.3 m) and `hand.R` (down to the thing and up again) for a second round
+the moment; slow the shot there with `warp: ramps(…)` so the snatch reads.
+
+**Balls and things that go round.** `ball(g, cam, p, r, color, light, { bands, land, hoop })` draws a ball lit from one
+side with the right phase (full, half, crescent): a planet, a moon, a football. `solarSystem({ sun, year: 9, planets:
+[{ name, ring, r, color, year: true, bands, hoop, moon: true }] })` → `S.draw(g, cam, t)` in a shot's `over`, and
+`S.placeOf('earth', t)` for a camera to follow: the planets go round by Kepler's law (twice as far out, 2.83 times as
+long), which is what makes it look like a solar system and not a carousel. A set of `space({ moon: false })`, one slow
+camera move, no cuts.
+
+**A fight that reads** is few beats, each one a wind-up held for a moment, a fast path, a contact that stops for two
+or three frames, a recoil and a recovery — `stage.fight` writes them (see **Action** for the sparks, the shake and the
+slow motion on the blow that ends it). Three-quarter view, both bodies in full for the first exchange; keep to one side
+of the line; go close only between blows.
+
+While a build runs, every progress report carries `work`: the whole job's percentage, the time left and the numbers of
+the step that runs (`Step 3 of 6 · Drawing the shots · 42% · 1,034 / 2,460 frames · 6.1 frames/s · about 4 min left`).
+`code.stop` stops it at any stage: speaking (after the line in hand), solving, drawing, joining.
+
 ## Working well — the director's handbook
 
 What goes wrong in films made this way, and how each mistake is caught before anyone sees it. Read it before staging.

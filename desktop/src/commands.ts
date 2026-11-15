@@ -20,6 +20,7 @@ import { listen, notes, pickSections } from "./listen";
 import { runBatch, runCommand, type Command } from "../../src/agent/api";
 import { analyseSong } from "../../src/media/song";
 import { need, pathBlob, type AudioReport } from "./bridge";
+import { countLine } from "../../src/app/progress";
 
 export interface ShellHooks {
   /** The timeline, for commands that move or zoom its view. */
@@ -181,7 +182,7 @@ export function registerDesktopCommands(s: Studio): void {
       audio: a.bool("audio", true),
       gpuConvert: a.bool("gpuConvert", true),
     });
-    job.onProgress = (pr) => st.setStatus(pr.stage === "video" ? `Rendering ${pr.frame}/${pr.frames} · ${pr.fps.toFixed(1)} fps · ${Math.ceil(pr.etaSec)} s left` : pr.stage === "audio" ? "Mixing sound…" : pr.stage === "finalizing" ? "Finishing the file…" : "Render done");
+    job.onProgress = (pr) => st.setStatus(pr.stage === "video" ? countLine({ label: "Rendering", done: pr.frame, total: pr.frames, unit: "frames", perSec: pr.fps, leftSec: pr.etaSec }) : pr.stage === "audio" ? "Mixing sound… 97%" : pr.stage === "finalizing" ? "Finishing the file… 99%" : "Render done");
     try {
       const r = await job.run();
       hooks?.toast(`Rendered ${r.name}`);

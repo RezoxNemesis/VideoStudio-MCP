@@ -6,7 +6,9 @@
 .cs-film { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--glass-hi); color: var(--ink); font: 600 13px/1 inherit; cursor: pointer; }
 .cs-film:hover { border-color: var(--neon); }
 .cs-meta { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cs-busy { color: var(--neon); font-size: 11.5px; max-width: 34ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-busy { color: var(--neon); font-size: 11.5px; max-width: min(78ch, 46vw); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.cs-pct { color: var(--ink); font: 700 12.5px/1 inherit; min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; }
+.cs:not(.working) .cs-pct { display: none; }
 .cs-bar { width: 150px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.07); overflow: hidden; opacity: 0; transition: opacity 0.2s; }
 .cs.working .cs-bar { opacity: 1; }
 .cs-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--neon), var(--neon-2)); transition: width 0.25s; }

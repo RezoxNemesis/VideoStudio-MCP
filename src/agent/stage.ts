@@ -13,6 +13,7 @@ import type { AnimLayer, AnimScene, Project } from "../core/model";
 import { ctx2d, makeCanvas, renderScene } from "../anim/render";
 import { toJpeg } from "../render/snapshot";
 import { registerCommand, type HostArgs } from "./api";
+import { longWork } from "../app/progress";
 import { ENV_PRESETS, TIMES } from "../stage/env";
 import { loadStage, preloadStage, runtimeOf, stageError } from "../stage/draw";
 import { ensureModels, modelCatalogue, modelSize } from "../stage/models";
@@ -831,6 +832,7 @@ export function registerStageCommands(): void {
         const t = Math.max(0, from + i / fps);
         rt.evaluate(spec, t, 1 / fps);
         if (i < 0) continue;
+        await longWork.tick(i / n, "bake");
         list.forEach((sa, k) => {
           const sk = rt.skeleton(sa.id, joints, quats);
           if (!sk) return;
@@ -900,6 +902,7 @@ export function registerStageCommands(): void {
       const offFrame = new Map<string, number>();
       const cam = rt.st.camera;
       for (let t = 0; t <= end + 1e-6; t += dt) {
+        await longWork.tick(t / end, "check");
         rt.evaluate(spec, t, dt);
         for (const x of spec.actors) {
           const f = rt.feet(x.id), st = rt.actorState(x.id);

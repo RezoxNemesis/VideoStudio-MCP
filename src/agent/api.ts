@@ -44,6 +44,7 @@ import { detectScenes, findOverlays, frameStrip } from "../media/vision";
 import type { RemoveRegion } from "../render/inpaint";
 import { saveBlob } from "../native/storage";
 import { FONTS } from "../render/fonts";
+import { countLine } from "../app/progress";
 
 export type Command = { op: string } & Record<string, unknown>;
 export interface CommandResult {
@@ -2228,7 +2229,7 @@ const HANDLERS: Record<string, { help: string; run: Handler }> = {
       const o: ExportOptions = { height: a.optNum("height"), fps: a.optNum("fps"), quality: a.optStr("quality") as never, bitrate: a.optNum("bitrate"), codec: a.optStr("codec") as never, from: a.optNum("from"), to: a.optNum("to"), name: a.optStr("name") };
       const job = new ExportJob(s.project, s.pool, o);
       activeExport = job;
-      job.onProgress = (pr) => s.setStatus(`Rendering ${pr.frame}/${pr.frames} · ${pr.fps.toFixed(1)} fps`);
+      job.onProgress = (pr) => s.setStatus(countLine({ label: "Rendering", done: pr.frame, total: pr.frames, unit: "frames", perSec: pr.fps, leftSec: pr.fps > 0 ? (pr.frames - pr.frame) / pr.fps : null }));
       try {
         const r = await job.run();
         s.setStatus(`Saved ${r.name}`);

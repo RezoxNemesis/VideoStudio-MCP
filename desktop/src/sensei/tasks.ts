@@ -8,6 +8,7 @@ import { film } from "../film/prepare";
 import { code } from "../film/session";
 import { ask, type ChatMsg } from "./brain";
 import { sensei } from "./store";
+import { work } from "../../../src/app/progress";
 
 export type TaskKind = "review" | "watch" | "goal" | "research" | "style" | "fix";
 export interface Task { id: string; kind: TaskKind; title: string; state: "running" | "done" | "failed" | "cancelled"; progress: number; note: string; started: number; ended?: number; result?: unknown; text?: string; error?: string; log: string[]; film?: string | null }
@@ -21,14 +22,15 @@ class Tasks {
   private emit(): void { for (const f of this.fns) { try { f(); } catch (e) { console.error(e); } } sensei.emit("tasks"); }
   get(id: string): Task | undefined { return this.list.find((t) => t.id === id); }
   watching(): Task | undefined { return this.list.find((t) => t.kind === "watch" && t.state === "running"); }
-  cancel(id: string): boolean { const t = this.get(id); if (!t || t.state !== "running") return false; this.stops.get(id)?.(); t.state = "cancelled"; t.ended = Date.now(); this.emit(); return true; }
+  cancel(id: string): boolean { const t = this.get(id); if (!t || t.state !== "running") return false; this.stops.get(id)?.(); t.state = "cancelled"; t.ended = Date.now(); work.set(`sensei:${id}`, null); this.emit(); return true; }
 
   start(kind: TaskKind, p: Record<string, unknown> = {}): Task {
     const t: Task = { id: ID(), kind, title: TITLE[kind](p), state: "running", progress: -1, note: "", started: Date.now(), log: [], film: code.dir };
     this.list.unshift(t); this.list = this.list.slice(0, 40); this.emit();
-    const say = (note: string, progress = t.progress) => { t.note = note; t.progress = progress; t.log.push(`${new Date().toLocaleTimeString()} ${note}`); this.emit(); };
-    const done = (result: unknown, text?: string) => { if (t.state !== "running") return; t.state = "done"; t.ended = Date.now(); t.result = result; t.text = text; t.progress = 1; this.emit(); };
-    const fail = (e: unknown) => { if (t.state !== "running") return; t.state = "failed"; t.ended = Date.now(); t.error = e instanceof Error ? e.message : String(e); this.emit(); };
+    const board = () => work.set(`sensei:${t.id}`, t.state === "running" ? { label: t.title, frac: t.progress, text: `${t.title}${t.progress >= 0 ? ` · ${Math.min(99, Math.round(t.progress * 100))}%` : ""}${t.note ? ` · ${t.note}` : ""}` } : null);
+    const say = (note: string, progress = t.progress) => { t.note = note; t.progress = progress; t.log.push(`${new Date().toLocaleTimeString()} ${note}`); board(); this.emit(); };
+    const done = (result: unknown, text?: string) => { if (t.state !== "running") return; t.state = "done"; t.ended = Date.now(); t.result = result; t.text = text; t.progress = 1; board(); this.emit(); };
+    const fail = (e: unknown) => { if (t.state !== "running") return; t.state = "failed"; t.ended = Date.now(); t.error = e instanceof Error ? e.message : String(e); board(); this.emit(); };
     const run = RUN[kind];
     void run(p, { say, done, fail, task: t, setStop: (f) => this.stops.set(t.id, f) }).then((r) => { if (r !== undefined) done(r); }, fail);
     return t;

@@ -80,7 +80,7 @@ export class SenseiPage {
   private drawBusy(): void {
     const bz = sensei.busy;
     this.el.classList.toggle("working", !!bz);
-    this.busyEl.replaceChildren(...(bz ? [h("span", { class: "sx-busytxt" }, bz.label + (bz.detail ? ` · ${bz.detail}` : "")), h("span", { class: `sx-bar ${bz.frac < 0 ? "run" : ""}` }, h("i", { style: `width:${Math.round(Math.max(0, bz.frac) * 100)}%` })), b(null, "close", () => { if (code.dir) void film().senseiCancel(code.dir); }, "sm ghost", "Stop")] : []));
+    this.busyEl.replaceChildren(...(bz ? [h("span", { class: "sx-busytxt" }, bz.label + (bz.detail ? ` · ${bz.detail}` : "")), h("span", { class: `sx-bar ${bz.frac < 0 ? "run" : ""}` }, h("i", { style: `width:${Math.round(Math.max(0, bz.frac) * 100)}%` })), h("b", { class: "sx-pct" }, bz.frac < 0 ? "" : `${Math.min(99, Math.round(bz.frac * 100))}%`), b(null, "close", () => { if (code.dir) void film().senseiCancel(code.dir); }, "sm ghost", "Stop")] : []));
   }
 
   // ---------------- the verdict
@@ -199,7 +199,7 @@ export class SenseiPage {
     const goal = h("input", { class: "sx-in", placeholder: "a job for Sensei (needs a model brain)…" }) as HTMLInputElement;
     const rows = tasks.list.map((t) => h("div", { class: `sx-job ${t.state}` },
       h("div", { class: "top" }, h("b", {}, t.title), h("span", { class: "sp" }), h("span", { class: "st" }, t.state), t.state === "running" ? b(null, "close", () => { tasks.cancel(t.id); this.drawJobs(); }, "sm ghost", "Stop") : h("span")),
-      t.state === "running" ? h("span", { class: `sx-bar ${t.progress < 0 ? "run" : ""}` }, h("i", { style: `width:${Math.round(Math.max(0, t.progress) * 100)}%` })) : h("span"),
+      t.state === "running" ? h("span", { class: "sx-barrow" }, h("span", { class: `sx-bar ${t.progress < 0 ? "run" : ""}` }, h("i", { style: `width:${Math.round(Math.max(0, t.progress) * 100)}%` })), h("b", { class: "sx-pct" }, t.progress < 0 ? "" : `${Math.min(99, Math.round(t.progress * 100))}%`)) : h("span"),
       h("div", { class: "note" }, t.error ?? t.text ?? t.note)));
     this.sideBody.replaceChildren(h("div", { class: "sx-jobs" },
       h("div", { class: "sx-jobstart" },

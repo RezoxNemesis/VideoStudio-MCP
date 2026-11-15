@@ -1,7 +1,7 @@
 // A sequence: one continuous stretch of story in one place — its lines on a clock, one solved performance for
 // everybody in it, and the shots (camera set-ups) that cut it up. Shots of a sequence share the performance, so
 // positions, cloth and continuity carry across every cut.
-import { lineDur, emotionAt, mouthAt, lookAt, saccade, VO } from './acting.js';
+import { lineDur, emotionAt, mouthAt, lookAt, saccade, gazeOf, VO } from './acting.js';
 import { V } from '../engine/core.js';
 import { ENV } from '../engine/env.js';
 
@@ -51,13 +51,15 @@ export function runnerShot(seq, sh, off = 0) {
         const ts = T0 + wt(t), f = emotionAt(emo, ts), m = a.who ? mouthAt(seq.cues, a.who, ts, ctx.o.lang ?? 'en') : null;
         if (m) { f.mouthOpen = Math.max(f.mouthOpen ?? 0, m.open * (a.mouth ?? 0.6)); f.mouthWide = (f.mouthWide ?? 0) + m.wide * 0.4; }
         // the eyes: on a target if one is set for this moment, else small movements of their own
-        let tg = null;
-        if (looks) for (const [kt, target] of looks) { if (ts >= kt) tg = target; else break; }
-        if (tg) {
-          const hd = ctx.chars[a.id].frame(ctx.poses[a.id]).head;
+        // (they dart to a new target in two or three frames, and a big change of gaze takes a blink with it)
+        let hd = null;
+        const gz = gazeOf(looks, ts, (tg) => {
+          if (!tg) return null;
           const p = tg === 'cam' ? (ctx.cam?.pos ?? null) : typeof tg === 'string' ? (ctx.poses[tg] ? V.add(ctx.poses[tg].j.head, [0, 0.1, 0]) : null) : tg;
-          if (p) f.look = lookAt(hd, p);
-        } else f.look = saccade(ts + (seq.id.length * 3.7), a.id.charCodeAt(0) + a.id.length * 17);
+          return p ? lookAt((hd ??= ctx.chars[a.id].frame(ctx.poses[a.id]).head), p) : null;
+        });
+        if (gz.look) { f.look = gz.look; if (gz.blink > 0) f.blink = Math.max(f.blink ?? 0, gz.blink); }
+        else f.look = saccade(ts + (seq.id.length * 3.7), a.id.charCodeAt(0) + a.id.length * 17);
         if (a.faceFx) a.faceFx(f, ts, ctx);
         return f;
       },

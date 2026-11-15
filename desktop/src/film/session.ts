@@ -11,6 +11,7 @@ import { toast } from "../../../src/ui/dom";
 import { need } from "../bridge";
 import { importPath } from "../importer";
 import { film, prepare, type PrepResult } from "./prepare";
+import { Meter, longWork, work, type StagePlan } from "../../../src/app/progress";
 import type { BuildOptions, BuildResult, FilmOpen, FilmProgress, FilmStatus } from "./types";
 
 export type CodeEvent = "film" | "files" | "status" | "busy" | "frame" | "library";
@@ -28,9 +29,33 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 export interface Busy {
   label: string;
-  /** 0…1, or -1 while the amount of work is not known. */
+  /** The whole job, 0…1, or -1 while the amount of work is not known. */
   frac: number;
   detail?: string;
+  /** The whole job in percent (null while not known), the step that runs, and the time left in words. */
+  percent?: number | null;
+  step?: number;
+  steps?: number;
+  left?: string;
+  /** Every number in one line: "Step 3 of 5 · Drawing the shots · 42% · 1,034 / 2,460 frames · 6.1 frames/s · about 4 min left". */
+  text?: string;
+}
+const RATES = "vs.work.rates";
+/** How fast this computer did each kind of work the last times (seconds per line, per frame …). */
+function loadRates(): Record<string, number> {
+  try {
+    const r = JSON.parse(localStorage.getItem(RATES) ?? "{}") as Record<string, number>;
+    return Object.fromEntries(Object.entries(r).filter(([, v]) => typeof v === "number" && v > 0 && Number.isFinite(v)));
+  } catch {
+    return {};
+  }
+}
+function saveRates(r: Record<string, number>): void {
+  try {
+    localStorage.setItem(RATES, JSON.stringify(r));
+  } catch {
+    /* no storage: the next job guesses again */
+  }
 }
 
 export class CodeSession {
@@ -64,7 +89,13 @@ export class CodeSession {
   }
   private setBusy(b: Busy | null): void {
     this.busy = b;
+    work.set("film", b ? { label: b.label, frac: b.frac, text: b.text ?? `${b.label}${b.detail ? ` · ${b.detail}` : ""}`, left: b.left } : null);
     this.emit("busy");
+  }
+  /** Show what a meter says: the whole job's percentage on the bar, the running step with its numbers beside it. */
+  private showMeter(m: Meter): void {
+    const v = m.view();
+    this.setBusy({ label: v.label, frac: v.frac, detail: v.detail, percent: v.frac < 0 ? null : v.percent, step: v.step, steps: v.steps, left: v.left, text: v.text });
   }
   must(): string {
     if (!this.dir) throw new Error('No film is open. Open one with code.open {film}, or start one with code.new {name}.');
@@ -161,19 +192,52 @@ export class CodeSession {
     if (this.busy) throw new Error(`Already working: ${this.busy.label}. Stop it with code.stop first.`);
     const draft = !!o.draft;
     let off: (() => void) | null = null;
+    // one meter for the whole job: every stage is weighed by the seconds it costs on this computer
+    const meter = new Meter(undefined, loadRates());
+    const fps = this.info?.config.fps ?? 24, langs = o.langs?.length ? o.langs : (this.info?.config.langs ?? ["en"]);
+    const joins = o.assemble !== false && !o.only;
+    const size = { voice: 0, motion: 0, sound: 0, draw: (this.status?.shots ?? []).filter((s) => !s.off && (!o.only || o.only.includes(s.id))).reduce((q, s) => q + (s.variants ?? []).filter((v) => o.force || v.state !== "ready").length * Math.round(s.dur * fps), 0) };
+    const plan = () => {
+      const st: StagePlan[] = [
+        { id: "voice", label: "Speaking the lines", units: size.voice, unit: "lines", per: 20 },
+        { id: "motion", label: "Solving the performances", units: size.motion, unit: "seconds of performance", per: 7 },
+        { id: "sound", label: "Making the music and sounds", units: size.sound, unit: "sounds", per: 25 },
+        { id: "check", label: "Looking for what changed", units: 1, per: 2 },
+        { id: "draw", label: "Drawing the shots", units: size.draw, unit: "frames", per: draft ? 0.12 : 0.4, rate: draft ? "draw.draft" : "draw" },
+      ];
+      if (joins) for (const l of langs) st.push({ id: `mix.${l}`, label: `Mixing the sound (${l})`, units: o.sound === false ? 0 : 1, per: 6, rate: "mix" }, { id: `join.${l}`, label: `Joining the film (${l})`, units: 1, per: 5, rate: "join" });
+      meter.plan(st);
+    };
+    const beat = window.setInterval(() => this.busy && this.showMeter(meter), 400);
+    longWork.stop = false;
     try {
-      this.setBusy({ label: "Getting ready", frac: -1 });
-      const prep = await prepare(dir, (m) => this.setBusy({ label: m.phase === "voice" ? "Speaking the lines" : m.phase === "motion" ? "Solving the performance" : "Making the sound", frac: m.total ? m.done / m.total : -1, detail: m.what }));
+      meter.note("Getting ready");
+      plan();
+      this.showMeter(meter);
+      let at = "";
+      const prep = await prepare(dir, (m) => {
+        if (m.phase === "plan") { Object.assign(size, m.plan); plan(); return; }
+        if (m.phase === "motion" && size.motion !== m.total) { size.motion = m.total; plan(); }
+        if (at !== m.phase) { at = m.phase; meter.begin(m.phase, m.what); this.showMeter(meter); }
+        meter.set(m.phase, m.done, m.what);
+      });
       await this.refresh();
       if (this.error) throw new Error(this.error);
-      this.setBusy({ label: "Looking for what changed", frac: -1 });
+      meter.begin("check");
+      this.showMeter(meter);
       off = film().onProgress((e: FilmProgress) => {
         if (e.dir !== dir) return;
-        if (e.phase === "render") this.setBusy({ label: e.shots ? `Drawing ${e.shots} shot${e.shots === 1 ? "" : "s"}` : "Nothing to draw", frac: 0, detail: e.shots ? `${(e.ids ?? []).slice(0, 6).join(" ")}${(e.ids ?? []).length > 6 ? " …" : ""}` : "every shot is already right" });
-        else if (e.phase === "frames") this.setBusy({ label: `Drawing · ${e.shotsDone}/${e.shots} shots`, frac: e.total ? (e.done ?? 0) / e.total : -1, detail: e.shot });
+        if (e.phase === "render") {
+          size.draw = e.frames ?? 0;
+          plan();
+          meter.end("check");
+          if (size.draw) meter.begin("draw", `${e.shots} shot${e.shots === 1 ? "" : "s"}: ${(e.ids ?? []).slice(0, 6).join(" ")}${(e.ids ?? []).length > 6 ? " …" : ""}`);
+        } else if (e.phase === "frames") meter.set("draw", e.done ?? 0, `${e.shotsDone}/${e.shots} shots · ${e.shot}`);
         else if (e.phase === "shot") this.emit("status");
-        else if (e.phase === "sound") this.setBusy({ label: "Mixing the sound", frac: -1, detail: e.lang });
-        else if (e.phase === "join") this.setBusy({ label: "Joining the film", frac: -1, detail: e.lang });
+        else if (e.phase === "sound") meter.begin(`mix.${e.lang}`);
+        else if (e.phase === "join") meter.begin(`join.${e.lang}`);
+        else if (e.phase === "done") for (const l of langs) meter.end(`join.${l}`);
+        if (e.phase !== "frames") this.showMeter(meter);
       });
       const { draft: _d, ...rest } = o;
       void _d;
@@ -184,11 +248,15 @@ export class CodeSession {
       return { ...r, prep, draft, problems: prep.problems };
     } finally {
       off?.();
+      window.clearInterval(beat);
+      saveRates(meter.rates());
       this.setBusy(null);
       await this.refresh();
     }
   }
+  /** Stop the build that runs, whatever it is doing: speaking (after the line in hand), solving, drawing, joining. */
   async stop(): Promise<void> {
+    longWork.stop = true;
     if (this.dir) await film().cancel(this.dir);
   }
   /** Switch shots off (they are left out of the film, nothing is deleted) or back on. */

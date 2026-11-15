@@ -13,6 +13,7 @@ import { getBlob, deleteBlob } from "../../../src/core/storage";
 import { dropRuntime } from "../../../src/stage/draw";
 import { filmStageEnv } from "./stageenv";
 import { need } from "../bridge";
+import { longWork } from "../../../src/app/progress";
 import type { BakeNeed, FilmApi, SoundNeed, VoiceNeed } from "./types";
 
 export function film(): FilmApi {
@@ -22,10 +23,13 @@ export function film(): FilmApi {
 }
 
 export interface PrepStep {
-  phase: "voice" | "motion" | "sound";
+  /** "plan" comes first and says how much there is of each kind. */
+  phase: "plan" | "voice" | "motion" | "sound";
+  /** How much is done: lines (voice), seconds of performance (motion), sounds; parts of one are counted too. */
   done: number;
   total: number;
   what: string;
+  plan?: { voice: number; motion: number; sound: number };
 }
 export interface PrepResult {
   spoke: string[];
@@ -56,10 +60,19 @@ function wavBytes(pcm: Float32Array, rate: number): Uint8Array {
 }
 const failed = (rs: CommandResult[]) => rs.filter((r) => !r.ok).map((r) => `${r.op}: ${r.error}`);
 
-async function speak(dir: string, v: VoiceNeed): Promise<void> {
+async function speak(dir: string, v: VoiceNeed, part: (done: number) => void = () => {}): Promise<void> {
   const line = directLine(v.text ?? "", readTone(v.tone));
-  const studio = await studioSay(line.text, v.voice ?? "af_heart", line.tone, v.lang);
-  const { pcm, voice } = studio ?? (await openVoice.say(line.text, v.voice ?? "af_heart", line.tone, v.emphasis?.length ? v.emphasis : undefined, v.lang));
+  const hear = (d: number) => part(Math.max(0, Math.min(0.98, d)));
+  const studio = await studioSay(line.text, v.voice ?? "af_heart", line.tone, v.lang, hear);
+  const was = openVoice.onProgress;
+  if (!studio) openVoice.onProgress = hear;
+  let spoken: { pcm: Float32Array; voice: string };
+  try {
+    spoken = studio ?? (await openVoice.say(line.text, v.voice ?? "af_heart", line.tone, v.emphasis?.length ? v.emphasis : undefined, v.lang));
+  } finally {
+    openVoice.onProgress = was;
+  }
+  const { pcm, voice } = spoken;
   if (!pcm.length) throw new Error(`The voice returned no sound for line ${v.id} (${v.lang}).`);
   let peak = 0;
   for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));
@@ -72,12 +85,15 @@ async function speak(dir: string, v: VoiceNeed): Promise<void> {
 async function solve(dir: string, b: BakeNeed, problems: string[]): Promise<void> {
   const spec = b.spec!;
   const s = scratch();
+  const t0 = Date.now(), times: Record<string, number> = {};
   const made = await runQuiet(s, [{ op: "stage.new", name: spec.name, env: filmStageEnv(spec), time: "day", seconds: spec.seconds, toTimeline: false }]);
   if (!made[0]?.ok) throw new Error(`${b.seq}: the Stage could not start: ${made[0]?.error}`);
   const { sceneId, layerId } = made[0].result as { sceneId: string; layerId: string };
   try {
     const cmds: Command[] = [...spec.actors.map((a) => ({ op: "stage.actor", sceneId, ...a })), ...(spec.steps ?? []).map((st) => ({ sceneId, ...st }) as unknown as Command)];
+    times.setup = Date.now() - t0;
     const res = cmds.length ? await runQuiet(s, cmds, true) : [];
+    times.steps = Date.now() - t0 - times.setup;
     const bad = failed(res);
     if (bad.length) throw new Error(`${b.seq}: the performance has ${bad.length === 1 ? "a step" : "steps"} the Stage cannot do — ${bad.slice(0, 4).join(" | ")}`);
     const info: Record<string, unknown[]> = {};
@@ -88,15 +104,18 @@ async function solve(dir: string, b: BakeNeed, problems: string[]): Promise<void
       if (ck?.ok) issues = ((ck.result as { issues?: { level: string; t?: number; actor?: string; what: string }[] }).issues ?? []).filter((i) => i.level !== "note" && !i.what.includes("shot") && !i.what.includes("frame"));
       for (const i of (issues ?? []).slice(0, 6)) problems.push(`${b.seq}${i.t !== undefined ? ` at ${i.t}s` : ""}${i.actor ? ` (${i.actor})` : ""}: ${i.what}`);
     }
+    times.check = Date.now() - t0 - times.setup - times.steps;
+    const tb = Date.now();
     const bk = (await runQuiet(s, [{ op: "stage.bake", sceneId, fps: spec.fps ?? 60, from: 0, to: spec.seconds, ...(spec.joints ? { joints: spec.joints } : {}), ...(spec.bodies ? { bodies: spec.bodies, rigEvery: spec.rigEvery ?? 2 } : {}) }]))[0];
-    if (!bk?.ok) throw new Error(`${b.seq}: the motion could not be solved: ${bk?.error}`);
+    if (!bk?.ok) throw new Error(/Stopped\./.test(bk?.error ?? "") ? "Stopped." : `${b.seq}: the motion could not be solved: ${bk?.error}`);
+    times.bake = Date.now() - tb;
     type B64Part = { name: string; material: string; vcount: number; params: Record<string, unknown>; pos: string; idx: string; skinIndex: string; skinWeight: string; mask?: string; morphs?: { i: string; d: string }[] };
     const r = bk.result as { fps: number; frames: number; joints: string[]; quats: string[]; stride: number; actors: { id: string; height: number; data: string; contact: string; props: { name: string; data: string }[]; body?: Record<string, unknown> & { parts: B64Part[] }; rig?: { fps: number; frames: number; bones: number; data: string } }[] };
     const parts: Uint8Array[] = [];
     let len = 0;
     const push = (u: Uint8Array): [number, number] => { const at = len; parts.push(u); len += u.length; return [at, u.length]; };
     const meta = {
-      name: spec.name, fps: r.fps, frames: r.frames, joints: r.joints, quats: r.quats, stride: r.stride, info, issues,
+      name: spec.name, fps: r.fps, frames: r.frames, joints: r.joints, quats: r.quats, stride: r.stride, info, issues, times,
       actors: r.actors.map((a) => {
         const data = push(fromB64(a.data)), contact = push(fromB64(a.contact));
         if (len % 4) push(new Uint8Array(4 - (len % 4)));
@@ -152,25 +171,50 @@ export async function prepare(dir: string, on: (m: PrepStep) => void = () => {},
   out.problems.push(...n.problems);
   // (a line that is spoken but not fitted — a build stopped while speaking — is only fitted, never spoken again)
   const lines = only.voices === false ? [] : n.voices.filter((v) => !v.have && !v.spoken);
+  const secsOf = (b: BakeNeed) => Math.max(1, b.spec?.seconds ?? 10);
+  const todo = (x: typeof n) => ({
+    voice: lines.length,
+    motion: only.motion === false ? 0 : x.bakes.filter((b) => !b.have).reduce((q, b) => q + secsOf(b), 0),
+    sound: only.sounds === false ? 0 : x.sounds.filter((c) => !c.have).length,
+  });
+  const halt = () => { if (longWork.stop) throw new Error("Stopped."); };
+  on({ phase: "plan", done: 0, total: 0, what: "", plan: todo(n) });
   if (lines.length || (only.voices !== false && n.voices.some((v) => !v.have && v.spoken))) {
     for (const [i, v] of lines.entries()) {
-      on({ phase: "voice", done: i, total: lines.length, what: `${v.id} · ${v.lang}` });
-      await speak(dir, v);
+      halt();
+      const what = `${v.id} · ${v.lang}`;
+      on({ phase: "voice", done: i, total: lines.length, what });
+      await speak(dir, v, (d) => on({ phase: "voice", done: i + d, total: lines.length, what }));
       out.spoke.push(`${v.id}.${v.lang}`);
     }
+    on({ phase: "voice", done: lines.length, total: lines.length, what: "fitting the lines to the film" });
     await f.voicesFit(dir);
     n = await f.needs(dir);
+    // (how long the lines turned out decides how long the performances are)
+    on({ phase: "plan", done: 0, total: 0, what: "", plan: todo(n) });
   }
   const bakes = only.motion === false ? [] : n.bakes.filter((b) => !b.have);
-  for (const [i, b] of bakes.entries()) {
-    on({ phase: "motion", done: i, total: bakes.length, what: b.seq });
-    await solve(dir, b, out.problems);
+  const secsAll = bakes.reduce((q, b) => q + secsOf(b), 0);
+  let secsDone = 0;
+  for (const b of bakes) {
+    halt();
+    const secs = secsOf(b);
+    on({ phase: "motion", done: secsDone, total: secsAll, what: b.seq });
+    // inside one performance: the steps are laid out (a small part), it is checked, then every frame is solved
+    longWork.on = (frac, w) => on({ phase: "motion", done: secsDone + secs * (w === "check" ? 0.06 + 0.24 * frac : 0.3 + 0.7 * frac), total: secsAll, what: `${b.seq} · ${w === "check" ? "checking the moves" : "solving every frame"}` });
+    try {
+      await solve(dir, b, out.problems);
+    } finally {
+      longWork.on = null;
+    }
+    secsDone += secs;
     out.solved.push(b.seq);
   }
   const snd = only.sounds === false ? [] : n.sounds.filter((x) => !x.have);
   if (snd.length) {
     const s = scratch();
     for (const [i, c] of snd.entries()) {
+      halt();
       on({ phase: "sound", done: i, total: snd.length, what: c.name });
       await sound(dir, c, s);
       out.sounds.push(c.name);
