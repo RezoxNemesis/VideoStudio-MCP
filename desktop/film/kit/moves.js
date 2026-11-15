@@ -96,6 +96,25 @@ const bag = carried({ rest: [bx, 0, bz], by: 'a', hand: 'L', from: TG, hang: 0.2
     check: ['no statue finding from the judge', 'the hips are at the seat (root y about 0.45 m)'],
   },
   {
+    id: 'sit-bench', name: 'Sitting on a bench or chair, by measure', tags: ['sit', 'seated', 'bench', 'chair', 'seat', 'legs', 'depressed', 'sad', 'tired', 'wait', 'platform'],
+    use: 'Someone sits on a real seat (a bench, a chair) and it must look right: on the seat, not in the air before it or sunk into it, the legs natural, the seat not painted over him.',
+    rules: [
+      'Measure, do not guess: the seat\'s top (y) and its front and back edge. Then solve once and read the body with where.mjs: the HIP JOINT (upperleg01) belongs 10 cm over the seat top, the hips over the seat (well behind its front edge), the knees beyond the front edge at about their standing height, the ankles at theirs (0.07 m) with the shins near upright.',
+      'A captured seat is rarely the height of yours. Set the whole body lower or higher with the action\'s own height — at: { pos: [x, y, z] } — and hold both feet where they stood on the floor with foot keys in world space: the knees fold to suit and the thighs come level.',
+      'A seat is drawn in PIECES (0.4 m): the seat and what is under it anchored where the sitter\'s hips are, with bias 0.3, so they are always drawn before him; the back anchored on itself. A bench drawn as one thing is sorted by its middle and paints over whoever sits on it.',
+      'Bent forward with the forearms on the thighs he sits on the middle of the seat; upright and tired, back near the backrest. Play the capture slowly (rate 0.2 to 0.4) so he is alive.',
+    ],
+    clips: [{ clip: '22_03', in: 1.0, out: 5.2, note: 'bent forward, elbows on the knees, face towards the hands: broken' }, { clip: '114_05', in: 11.9, out: 13.6, note: 'upright on a chair, hands on the thighs' }, { clip: '113_15', in: 3.3, out: 4.6, note: 'upright; sits down at 1.8, gets up from 4.6' }],
+    needs: ['stage.do', 'stage.overlay'],
+    code: `// the seat's top is 0.47 m; the capture's hip joint sat at 0.67: the body goes 0.10 lower, the feet stay
+{ op: 'stage.do', actor: 'a', actions: [{ t: 0, clip: '22_03', in: 1.0, out: 5.2, rate: 0.4, at: { pos: [X, -0.1, SIT_Z - 0.1], yaw: 180 } }] },
+{ op: 'stage.overlay', actor: 'a', add: [{ t0: 0, t1: END + 1, fade: 0, keys: [
+  { on: 'foot.L', space: 'world', keys: [[0, FOOT_L], [END + 1, FOOT_L]] }, { on: 'foot.R', space: 'world', keys: [[0, FOOT_R], [END + 1, FOOT_R]] }] }] }
+// FOOT_L / FOOT_R: where.mjs <film> shot@t a:foot.L,foot.R before the body was lowered
+// upright instead: clip: '114_05', in: 11.9, out: 13.6, rate: 0.18 (3 cm lower); sitting down and getting up: '113_15' (down at 1.8, up from 4.6)`,
+    check: ['where.mjs: upperleg01 y = seat top + 0.10 (within 2 cm); foot y 0.07; knee y within 5 cm of standing', 'a frame from the front, the side and three-quarter: the seat is behind and under him in all three'],
+  },
+  {
     id: 'fall', name: 'Struck down: a fall', tags: ['fall', 'knockout', 'ko', 'struck', 'hit', 'die', 'collapse', 'fight'],
     use: 'Someone is struck and goes down: the end of a fight, a blow, a shot.',
     rules: [
