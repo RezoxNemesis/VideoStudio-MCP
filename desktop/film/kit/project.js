@@ -100,6 +100,15 @@ const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8'))
 // a character with no voice for a language keeps its English voice and speaks the language with it
 const DEFAULT_VOICE = { en: 'af_heart', hi: 'hf_alpha', es: 'ef_dora', fr: 'ff_siwis', it: 'if_sara', pt: 'pf_dora', de: 'bm_george', ru: 'af_heart' };
 /** JSON with keys in order (so the same thing always gives the same text). */
+/**
+ * Which solver made a performance. Raise it whenever the Stage solves a performance or builds a body differently in a
+ * way films should get (where a sword hangs, how clothes are cut, how an arm reaches): every film's performances are
+ * then solved again once, instead of keeping bodies made the old way. 2: Nov 2026 — a sword worn outside the clothes,
+ * trousers cut away under a coat, the draw, forearms kept out of the body.
+ */
+export const SOLVER_REV = 2;
+/** The key of a solved performance: its description and the solver that made it. */
+export const bakeKey = (spec) => md5(`${JSON.stringify(spec)}|solver ${SOLVER_REV}`);
 const ordered = (v) => (Array.isArray(v) ? v.map(ordered) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v);
 
 /**
@@ -148,12 +157,12 @@ export function needs(P) {
     for (const c of seq.cues) lines.set(c.id, c);
     if (!seq.motion) continue;
     const spec = { name: seq.bakeName, seconds: +(seq.T.dur + 0.3).toFixed(2), ...seq.motion(seq.T) };
-    const text = JSON.stringify(spec), key = md5(text), kf = path.join(P.D.bake, `${seq.bakeName}.key`);
+    const key = bakeKey(spec), kf = path.join(P.D.bake, `${seq.bakeName}.key`);
     const have = fs.existsSync(kf) && fs.readFileSync(kf, 'utf8') === key && fs.existsSync(path.join(P.D.bake, `${seq.bakeName}.bin`));
     bakes.push({ seq: seq.id, name: seq.bakeName, key, have, spec: have ? undefined : spec });
   }
   for (const m of P.MOTIONS ?? []) {
-    const spec = { ...m, seconds: +(+m.seconds).toFixed(2) }, key = md5(JSON.stringify(spec)), kf = path.join(P.D.bake, `${m.name}.key`);
+    const spec = { ...m, seconds: +(+m.seconds).toFixed(2) }, key = bakeKey(spec), kf = path.join(P.D.bake, `${m.name}.key`);
     const have = fs.existsSync(kf) && fs.readFileSync(kf, 'utf8') === key && fs.existsSync(path.join(P.D.bake, `${m.name}.bin`));
     bakes.push({ seq: m.name, name: m.name, key, have, spec: have ? undefined : spec });
   }

@@ -31,6 +31,19 @@ ok(voiceSpec(script, { ...ln, take_en: -1 }, 'en').key === en0.key && voiceSpec(
   }
 }
 
+// ---- a performance solved by an older Stage is solved again: its key knows which solver made it
+{
+  const PJ = await import('../kit/project.js'), crypto = await import('node:crypto');
+  ok(typeof PJ.bakeKey === 'function' && Number.isInteger(PJ.SOLVER_REV) && PJ.SOLVER_REV >= 2, 'project.js gives bakeKey(spec) and SOLVER_REV (raised whenever the Stage solves or builds bodies differently)', [typeof PJ.bakeKey, PJ.SOLVER_REV]);
+  if (typeof PJ.bakeKey === 'function') {
+    const spec = { name: 's00', seconds: 12.3, actors: [{ id: 'v', preset: 'swordsman' }] }, plain = crypto.createHash('md5').update(JSON.stringify(spec)).digest('hex');
+    ok(PJ.bakeKey(spec) === PJ.bakeKey(JSON.parse(JSON.stringify(spec))), 'the same performance has the same key', [PJ.bakeKey(spec), PJ.bakeKey(JSON.parse(JSON.stringify(spec)))]);
+    ok(PJ.bakeKey(spec) !== PJ.bakeKey({ ...spec, seconds: 12.4 }), 'a changed performance has another', 0);
+    ok(PJ.bakeKey(spec) !== plain, 'a key written before the solver changed (the plain hash of the performance) no longer matches: the performance is solved again', PJ.bakeKey(spec));
+    ok(/^[0-9a-f]{32}$/.test(PJ.bakeKey(spec)), 'a key is still a 32-digit hash', PJ.bakeKey(spec));
+  }
+}
+
 // ---- looking closely: a part of the picture enlarged, and where bodies are in numbers
 {
   const T = await import('../runner/tools.mjs').catch((e) => ({ error: String(e) }));
