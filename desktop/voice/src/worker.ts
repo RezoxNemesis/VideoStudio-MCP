@@ -29,6 +29,7 @@ import {
   type Speaker,
   type StudioModels,
 } from "../../../src/voice/engine/studio";
+import { leadFor } from "../../../src/voice/engine/studio_lead";
 
 type Msg = { id: string; method: string; params: Record<string, unknown> };
 const send = (m: unknown) => process.send?.(m);
@@ -148,7 +149,13 @@ async function handle(m: Msg): Promise<unknown> {
       // a slow line asks for a more deliberate delivery than its mood alone would give
       if (typeof p.cfg === "number") act.cfg = Math.min(act.cfg, Math.max(0.1, p.cfg));
       const text = String(p.text);
-      let first: Float32Array | null = null;
+      // (with trace: the same takes are made and the same one chosen; how each went is told as well)
+      type Take = Awaited<ReturnType<typeof say>>;
+      const told = (r: Take, attempt: number, tries: unknown[]) =>
+        p.trace ? { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, lead: r.lead, attempt, tries } : { pcm: r.pcm };
+      const tries: Array<{ complete: boolean; reason: string; lead?: boolean; pass?: Take["pass"]; found?: unknown }> = [];
+      let first: Take | null = null;
+      let firstAt = 0;
       let firstScore = Infinity;
       for (let attempt = 0; attempt < 3; attempt++) {
         const r = await say(mdl, text, spk, {
@@ -156,15 +163,18 @@ async function handle(m: Msg): Promise<unknown> {
           ...act,
           seed: takeSeed(key, text, attempt, typeof p.take === "number" ? p.take : 0),
           trace: p.trace === true,
+          lead: p.lead === false ? "" : leadFor(text, String(p.lang ?? "en")),
           onToken: (n) => n % 25 === 0 && send({ id: m.id, event: "progress", done: n, what: "Acting the line" }),
         });
-        if (p.trace) return { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, attempt };
-        if (r.complete) return { pcm: r.pcm };
-        // none clean so far: a take that said the line with a leap is still better than one that never got through it
-        const score = r.pass ? r.pass.dirt : 1e6;
-        if (!first || score < firstScore) { first = r.pcm; firstScore = score; }
+        tries.push({ complete: r.complete, reason: r.reason, lead: r.lead, pass: r.pass, found: r.trace?.lead });
+        if (r.complete) return told(r, attempt, tries);
+        // none clean so far: a take that said the line with a leap is still better than one that never got through it;
+        // a lead that could not be parted cleanly from the line (the first word may be clipped, or a trace of the
+        // lead left) counts like a small leap, less than words leapt over
+        const score = (r.pass ? r.pass.dirt : 1e6) + (r.lead === false ? 3 : 0);
+        if (!first || score < firstScore) { first = r; firstAt = attempt; firstScore = score; }
       }
-      return { pcm: first };
+      return told(first!, firstAt, tries);
     }
     default:
       throw new Error(`Unknown studio voice request: ${m.method}`);

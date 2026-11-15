@@ -226,6 +226,11 @@ sentences follow their marks and `pauses`, and the speech is held to about three
 (0.86 is a slow, weighty line of about 2.6). Listen to every line after it is spoken. When one lost or changed a
 word, ask for another take of it: `"take_hi": 1` (then 2, 3 …) acts the line afresh in that language only, `"take"`
 in every language.
+The studio voice spoils the first third of a second of whatever it is given (a first "Make" came out "Take", a first
+"He" was lost). So every sentence is spoken after a short sentence of its own ("Listen to me." in English, "मेरी बात
+सुनो।" in Hindi) that takes the damage and is cut away in the pause after it; a take in which it runs into the line is
+made again.
+Nothing to write for it: the line in script.json is the line.
 
 ## Scenes in a few lines (the director)
 

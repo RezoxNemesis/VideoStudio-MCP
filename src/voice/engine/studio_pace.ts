@@ -163,9 +163,3 @@ export function pacing(parts: Float32Array[], texts: string[], tone: Pace = {}, 
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
   return { pcm: all, words: count, spoken: r3(spoken), asked: r3(paceAsked(spoken, count, tone)), factor: r3(Math.abs(k - 1) > 0.02 ? k : 1) };
 }
-
-/** How the model itself is asked to deliver a line of this pace: a slow line gets a deliberate delivery. */
-export function studioDelivery(tone: Pace = {}): { cfg: number } {
-  const r = tone.rate ?? 1;
-  return { cfg: r < 0.95 ? Math.round(Math.max(0.2, 0.5 - (0.95 - r) * 2) * 100) / 100 : 0.5 };
-}

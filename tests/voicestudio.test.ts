@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acting, exposeAlignment, packSpeaker, prepareText, puncNorm, seedFor, StudioTokenizer, trimSilence, unpackSpeaker } from "../src/voice/engine/studio";
+import { acting, exposeAlignment, leadEnd, makeSpeaker, packSpeaker, prepareText, puncNorm, seedFor, referenceClip, StudioTokenizer, trimSilence, unpackSpeaker } from "../src/voice/engine/studio";
 import { referenceLine, STUDIO_MOODS } from "../src/voice/engine/studio_refs";
 
 describe("studio text", () => {
@@ -25,6 +25,10 @@ describe("studio text", () => {
     // template: EXAGGERATION, BOS, text…, EOT, START_SPEECH ×2
     expect(tok.encode("[en]the[SPACE]a.")).toEqual([6563, 255, 708, 7, 2, 9, 8, 0, 6561, 6561]);
     expect(tok.encode("[en]tz")).toEqual([6563, 255, 708, 3, 1, 0, 6561, 6561]);
+    // a line said after a lead (studio_lead.ts): where its first token stands, as the attention counts (0 = the text's start mark)
+    expect(leadEnd(tok, "the. ", "a the", "en")).toBe(5); // start, [en], the, ., space | a
+    expect(leadEnd(tok, "the. ", "A the.", "en")).toBe(5);
+    expect(leadEnd(tok, "", "a the", "en")).toBe(0); // no lead: nothing before the line
   });
 });
 
@@ -46,6 +50,66 @@ describe("studio speakers", () => {
     expect(back.xvec[191]).toBe(-191);
     expect(back.promptFeat[239]).toBe(119.5);
     expect(() => unpackSpeaker(new Uint8Array(32))).toThrow();
+  });
+
+  // What the voice says first grows out of the last sound of its reference clip: a clip that ends in the middle of a
+  // sound spoils the first word of every line ("Make a world" came out "Pick a world", "For a promise" "For promise").
+  // With half a second of silence after the clip, the same takes say the line.
+  const SR = 24000, tone = (i: number) => 0.4 * Math.sin((2 * Math.PI * 180 * i) / SR);
+  const clip = (...parts: Array<[number, boolean]>) => {
+    const out: number[] = [];
+    for (const [sec, loud] of parts) for (let i = 0, n = Math.round(sec * SR); i < n; i++) out.push(loud ? tone(out.length) : 0);
+    return Float32Array.from(out);
+  };
+  const peakIn = (x: Float32Array, from: number, to: number) => {
+    let m = 0;
+    for (let i = Math.max(0, Math.round(from * SR)); i < Math.min(x.length, Math.round(to * SR)); i++) m = Math.max(m, Math.abs(x[i]!));
+    return m;
+  };
+
+  it("ends a reference clip in half a second of silence", () => {
+    const ref = clip([3, true]), out = referenceClip(ref);
+    expect(out.length / SR).toBeCloseTo(3.5, 1);
+    expect(peakIn(out, out.length / SR - 0.48, out.length / SR)).toBe(0);
+    expect(Math.abs(out[out.length - Math.round(0.5 * SR) - 1]!)).toBeLessThan(0.02); // the sound is let go, not chopped
+    expect([...out.subarray(0, Math.round(2.9 * SR))]).toEqual([...ref.subarray(0, Math.round(2.9 * SR))]); // the clip itself is as it was
+    // a clip that already ends in silence keeps half a second of it, no more
+    expect(referenceClip(clip([3, true], [1.4, false])).length / SR).toBeCloseTo(3.5, 1);
+    expect(referenceClip(clip([3, true], [0.2, false])).length / SR).toBeCloseTo(3.5, 1);
+    expect(referenceClip(new Float32Array(0)).length).toBe(0);
+  });
+
+  it("cuts a long reference clip in a pause, not through a word", () => {
+    // (the model takes ten seconds of a clip: a slow voice's line is longer)
+    const out = referenceClip(clip([4, true], [0.3, false], [4.5, true], [0.3, false], [3, true]));
+    expect(out.length / SR).toBeLessThanOrEqual(10);
+    expect(out.length / SR).toBeGreaterThan(9.2); // up to the pause at 8.8 s, and the silence
+    expect(out.length / SR).toBeLessThan(9.45);
+    expect(peakIn(out, out.length / SR - 0.48, out.length / SR)).toBe(0);
+    expect(peakIn(out, 8.0, 8.7)).toBeGreaterThan(0.3); // the words before the pause are all there
+    // a clip with no pause to cut in is let go at the limit
+    const flat = referenceClip(clip([12, true]));
+    expect(flat.length / SR).toBeLessThanOrEqual(10);
+    expect(flat.length / SR).toBeGreaterThan(9.9);
+    expect(peakIn(flat, flat.length / SR - 0.48, flat.length / SR)).toBe(0);
+    expect(peakIn(flat, 9.0, 9.4)).toBeGreaterThan(0.3);
+  });
+
+  it("makes a speaker from the clip with its silence", async () => {
+    let heard = new Float32Array(0);
+    const t = (data: number[], dims: number[]) => ({ data: Float32Array.from(data), dims });
+    const models = {
+      tensor: (_type: string, data: Float32Array, dims: number[]) => ({ data, dims }),
+      encoder: async () => ({
+        run: async (feeds: Record<string, { data: Float32Array }>) => {
+          heard = Float32Array.from(feeds.audio_values!.data);
+          return { audio_features: t(new Array(1024).fill(0), [1, 1, 1024]), audio_tokens: { data: BigInt64Array.from([1n]), dims: [1, 1] }, speaker_embeddings: t(new Array(192).fill(0), [1, 192]), speaker_features: t(new Array(80).fill(0), [1, 1, 80]) };
+        },
+      }),
+    };
+    await makeSpeaker(models as never, clip([2, true]));
+    expect(heard.length / SR).toBeCloseTo(2.5, 1);
+    expect(peakIn(heard, 2.05, 2.5)).toBe(0);
   });
 
   it("has a reference line for every mood, agreeing with the speaker", () => {

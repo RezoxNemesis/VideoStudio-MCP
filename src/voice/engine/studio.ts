@@ -14,6 +14,7 @@
  * conditional_decoder, tokenizer.json). The language model graph is the same file with three extra outputs
  * (the q/k/v projections of the layers whose attention follows the text), made by exposeAlignment below.
  */
+import { lineOver, linePass, lineStart, withoutLead } from "./studio_lead";
 import { cleanPass, tailOver } from "./studio_pass";
 
 export const STUDIO_SR = 24000;
@@ -94,6 +95,15 @@ export function puncNorm(text: string): string {
 export function prepareText(text: string, lang: string): string {
   const t = puncNorm(text).toLowerCase().normalize("NFKD");
   return `[${lang}]${t}`.replace(/ /g, "[SPACE]");
+}
+
+/**
+ * Where a line's first token stands when it is said after a lead (studio_lead.ts), as the alignment counts text
+ * positions (0 = the text's start mark, 1 = the language tag); 0 without a lead.
+ */
+export function leadEnd(tokenizer: StudioTokenizer, lead: string, text: string, lang: string): number {
+  if (!lead) return 0;
+  return tokenizer.encode(prepareText(lead + text, lang)).length - tokenizer.encode(prepareText(text, lang)).length + 2;
 }
 
 interface TokenizerJson {
@@ -181,10 +191,58 @@ export interface Speaker {
   featLen: number;
 }
 
+/** The most of a clip the speech encoder takes (seconds), and the silence a reference clip ends in. */
+const REF_MAX = 10;
+const REF_REST = 0.5;
+
+/**
+ * A reference clip as a speaker is made from it: the clip, ending in half a second of silence.
+ *
+ * What the voice says first grows out of the last sound of its reference (the decoder goes on from the clip). A clip
+ * that ends in the middle of a sound spoils the first word of every line said with it: "Make a world" came out "Pick
+ * a world", Hindi lines began with a sound that is not in them. After silence the line begins as itself. A clip
+ * longer than the encoder takes is cut in its last pause instead of through a word.
+ */
+export function referenceClip(ref: Float32Array, sr = STUDIO_SR): Float32Array {
+  if (!ref.length) return ref;
+  const hop = Math.round(sr * 0.01), rest = Math.round(sr * REF_REST), max = Math.round(sr * REF_MAX) - rest;
+  const n = Math.floor(ref.length / hop), e = new Float32Array(n);
+  let peak = 0;
+  for (let f = 0; f < n; f++) {
+    let q = 0;
+    for (let i = f * hop; i < (f + 1) * hop; i++) q += ref[i]! * ref[i]!;
+    peak = Math.max(peak, (e[f] = Math.sqrt(q / hop)));
+  }
+  const quiet = peak * 0.02;
+  // where the sound ends (silence the clip brings is counted in the half second, not added to it)
+  let end = n;
+  while (end > 0 && e[end - 1]! <= quiet) end--;
+  let cut = end === n ? ref.length : Math.min(ref.length, (end + 2) * hop);
+  if (cut > max) {
+    // too long: back to the last pause (60 ms of quiet) before the limit; none in the later half: the limit itself
+    const lim = Math.floor(max / hop);
+    cut = max;
+    for (let f = lim - 6; f > lim / 2; f--) {
+      let still = true;
+      for (let k = 0; k < 6 && still; k++) still = e[f + k]! <= quiet;
+      if (!still) continue;
+      while (f > 0 && e[f - 1]! <= quiet) f--;
+      cut = (f + 2) * hop;
+      break;
+    }
+  }
+  const out = new Float32Array(cut + rest);
+  out.set(ref.subarray(0, cut));
+  // the sound is let go over its last 20 ms, not chopped
+  const fade = Math.min(cut, Math.round(sr * 0.02));
+  for (let i = 0; i < fade; i++) out[cut - 1 - i] = out[cut - 1 - i]! * (i / fade);
+  return out;
+}
+
 export async function makeSpeaker(models: StudioModels, ref: Float32Array): Promise<Speaker> {
   const enc = await models.encoder();
-  // The encoder keeps 10 s for the acoustic prompt and 6 s for the style; longer clips only cost time.
-  const clip = ref.length > STUDIO_SR * 10 ? ref.subarray(0, STUDIO_SR * 10) : ref;
+  // The encoder keeps 10 s for the acoustic prompt and 6 s for the style.
+  const clip = referenceClip(ref);
   const out = await enc.run({ audio_values: models.tensor("float32", Float32Array.from(clip), [1, clip.length]) });
   // audio_features = conditioning for the language model, audio_tokens = the clip's speech tokens (decoder prompt)
   const [cond, tok, xv, feat] = ["audio_features", "audio_tokens", "speaker_embeddings", "speaker_features"].map((k) => out[k]!);
@@ -244,6 +302,8 @@ export interface SayOptions {
   onToken?: (n: number) => void;
   /** Keep a trace of the alignment (SayResult.trace), to study a take. */
   trace?: boolean;
+  /** A sentence said before the line and cut away, so the model spoils it and not the line (studio_lead.ts). */
+  lead?: string;
 }
 
 export interface SayResult {
@@ -255,8 +315,10 @@ export interface SayResult {
   tokens: number;
   /** The frames of the one clean pass through the line that was kept (studio_pass.ts), when there was one. */
   pass?: { from: number; end: number; dirt: number };
+  /** With SayOptions.lead: whether the lead was cut away in a pause (false: cut roughly, the take is best made again). */
+  lead?: boolean;
   /** With SayOptions.trace: per frame, the text position attended, the strongest attention on the first four text tokens and on the last two. */
-  trace?: { cur: number[]; first: number[]; tail: number[]; S: number };
+  trace?: { cur: number[]; free: number[]; first: number[]; tail: number[]; S: number; skip?: number; head?: number; lead?: { frame: number; clean: boolean; cut: number } };
 }
 
 /** Chatterbox's AlignmentStreamAnalyzer, fed from attention we compute from the exposed projections. */
@@ -271,7 +333,9 @@ class Aligner {
   private tailSums: Float64Array;
   private repSum = 0;
   private lastTok: number[] = [];
-  trace: { cur: number[]; first: number[]; tail: number[]; S: number } | null = null;
+  trace: NonNullable<SayResult["trace"]> | null = null;
+  /** The text position attended at every frame before the mask below: where the model really is (studio_lead.ts). */
+  readonly frees: number[] = [];
   /** The text position attended at every frame: the path the speech took through the line (studio_pass.ts). */
   readonly curs: number[] = [];
   constructor(readonly i: number, readonly j: number) {
@@ -283,6 +347,13 @@ class Aligner {
   step(rows: Float32Array[], logits: Float32Array, lastToken: number): SayResult["reason"] | null {
     const S = this.S;
     let cur = 0;
+    {
+      const r = rows[rows.length - 1]!;
+      let free = 0;
+      for (let c = 1; c < S; c++) if (r[c]! > r[free]!) free = c;
+      this.frees.push(free);
+      if (this.trace) this.trace.free.push(free);
+    }
     for (const r of rows) {
       for (let c = this.frame + 1; c < S; c++) r[c] = 0; // monotonic mask, as the reference does
       this.rows++;
@@ -343,7 +414,9 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   const minP = o.minP ?? 0.05;
   const rep = o.repetitionPenalty ?? 2.0;
   const rand = rng(o.seed ?? 1);
-  const ids = models.tokenizer.encode(prepareText(text, o.lang));
+  const lead = o.lead ?? "";
+  const lineAt = leadEnd(models.tokenizer, lead, text, o.lang);
+  const ids = models.tokenizer.encode(prepareText(lead + text, o.lang));
   const n = ids.length;
   const pos = ids.map((id, k) => (id >= START ? 0 : k - 1));
   const exT = T("float32", new Float32Array([ex]), [1]);
@@ -372,7 +445,7 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   }
   const textIdx = ids.map((id, k) => (id < START ? k : -1)).filter((k) => k >= 0);
   const al = new Aligner(L0 + textIdx[0]!, L0 + textIdx[textIdx.length - 1]! + 1);
-  if (o.trace) al.trace = { cur: [], first: [], tail: [], S: al.S };
+  if (o.trace) al.trace = { cur: [], free: [], first: [], tail: [], S: al.S };
   const nText = textIdx.length;
   const cap = 40 + nText * 6;
 
@@ -406,7 +479,7 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
     });
     let why = al.step(A, l, gen[gen.length - 1]!);
     // the line was said through and nothing has begun again: stop here (the model's own end often does not come, in Hindi above all)
-    if (!why && tailOver(al.curs, al.S)) {
+    if (!why && (lineAt ? lineOver(al.frees, al.S, lineAt) : tailOver(al.curs, al.S))) {
       l.fill(-1e9);
       l[STOP] = 1e9;
       why = "long_tail";
@@ -467,9 +540,15 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   let toks = gen.slice(1).filter((t) => t < START);
   // The line is the one clean pass of the speech through its words: babble before it and after it is left out,
   // with a short release after the last word. (A line of a word or two is too short to follow: the model's own
-  // alignment check decides there.)
-  const pass = cleanPass(al.curs, al.S);
-  if (pass) toks = toks.slice(Math.max(0, pass.from - 1), pass.end + 11);
+  // alignment check decides there.) A take made with a lead is judged by the line alone (studio_lead.ts), from the
+  // attention as it is (the mask hides a line that begins at once, when the lead was skipped), and is kept from
+  // its beginning: the lead, and what the model may have murmured before it, is cut from the sound, in the pause.
+  const led = lineAt ? linePass(al.frees, al.S, lineAt) : null;
+  const start = !lineAt ? 0 : led ? led.start : lineStart(al.frees, lineAt);
+  const pass = !lineAt ? cleanPass(al.curs, al.S) : led ? { from: led.start, end: led.end, dirt: led.dirt } : null;
+  const lineS = lineAt ? al.S - (lineAt - 2) : al.S;
+  const skip = lineAt || !pass ? 0 : Math.max(0, pass.from - 1);
+  if (pass) toks = toks.slice(skip, pass.end + 11);
   else if (al.endAt >= 0 && toks.length > al.endAt + 12) toks = toks.slice(0, al.endAt + 10);
   const speech = new BigInt64Array(spk.promptToken.length + toks.length);
   speech.set(spk.promptToken);
@@ -479,8 +558,19 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
     speaker_embeddings: T("float32", spk.xvec, [1, 192]),
     speaker_features: T("float32", spk.promptFeat, [1, spk.featLen, 80]),
   });
-  const wav = Float32Array.from(Object.values(dec)[0]!.data as Float32Array);
-  return { pcm: trimSilence(wav), complete: al.S >= 6 ? !!pass && pass.dirt === 0 : al.complete, reason, tokens: toks.length, ...(al.trace ? { trace: al.trace } : {}), ...(pass ? { pass } : {}) };
+  let wav: Float32Array = Float32Array.from(Object.values(dec)[0]!.data as Float32Array);
+  // (for study: the frames left out before the line, and the samples of silence taken off its start)
+  if (al.trace) { al.trace.skip = skip; al.trace.head = soundBounds(wav)[0]; }
+  // The lead is cut away where the speech comes to the line (a speech token is 40 ms of sound). A take whose lead
+  // runs into the line without a pause is not a good one: it is cut as well as can be, and counts as not said cleanly.
+  let cleanLead = true;
+  if (lineAt) {
+    const cut = withoutLead(wav, start < 0 ? -1 : Math.round((start * STUDIO_SR) / 25), STUDIO_SR);
+    if (al.trace) al.trace.lead = { frame: start, clean: cut.clean, cut: wav.length - cut.pcm.length };
+    wav = cut.pcm;
+    cleanLead = cut.clean;
+  }
+  return { pcm: trimSilence(wav), complete: (lineS >= 6 ? !!pass && pass.dirt === 0 : al.complete) && cleanLead, reason, tokens: toks.length, ...(al.trace ? { trace: al.trace } : {}), ...(pass ? { pass } : {}), ...(lineAt ? { lead: cleanLead } : {}) };
 
   /** Mean-free attention maps (rows × total) of the aligned heads, batch row 0. */
   function headAttention(out: Record<string, OrtTensor>, rows: number[], total: number, seq: number): Float32Array[] {
@@ -520,9 +610,15 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
 
 /** Trim leading and trailing silence (40 dB below the loudest 20 ms frame), keeping a short margin. */
 export function trimSilence(pcm: Float32Array, sr = STUDIO_SR): Float32Array {
+  const [start, end] = soundBounds(pcm, sr);
+  return start === 0 && end === pcm.length ? pcm : pcm.slice(start, end);
+}
+
+/** Where the sound of a clip begins and ends (samples), with the short margin trimSilence keeps. */
+function soundBounds(pcm: Float32Array, sr = STUDIO_SR): [number, number] {
   const hop = Math.round(sr * 0.02);
   const frames = Math.floor(pcm.length / hop);
-  if (frames < 3) return pcm;
+  if (frames < 3) return [0, pcm.length];
   const e = new Float32Array(frames);
   let peak = 0;
   for (let f = 0; f < frames; f++) {
@@ -538,7 +634,7 @@ export function trimSilence(pcm: Float32Array, sr = STUDIO_SR): Float32Array {
   while (b > a && e[b]! < floor) b--;
   const start = Math.max(0, (a - 2) * hop);
   const end = Math.min(pcm.length, (b + 4) * hop);
-  return pcm.slice(start, end);
+  return [start, end];
 }
 
 // ---------------------------------------------------------------- model graph

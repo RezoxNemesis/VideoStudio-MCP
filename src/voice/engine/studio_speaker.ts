@@ -26,5 +26,5 @@ export function studioSpeaker(voice: { mix: string; pitch?: number }, mood: stri
   // to the half semitone (less is not heard, and every pitch is a reference clip of its own)
   const total = Math.round(((voice.pitch ?? 0) + (tone?.pitch ?? moods) - moods) * 2) / 2;
   if (tone?.pitch !== undefined) ref.pitch = tone.pitch;
-  return { key: `v1-${seedFor(voice.mix, mood ?? "neutral").toString(36)}${total ? `-p${total}` : ""}`, tone: ref };
+  return { key: `v2-${seedFor(voice.mix, mood ?? "neutral").toString(36)}${total ? `-p${total}` : ""}`, tone: ref };
 }

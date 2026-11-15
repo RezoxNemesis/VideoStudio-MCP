@@ -77,6 +77,83 @@ function tailOver(cur, S, wait = 16) {
   return true;
 }
 
+// src/voice/engine/studio_lead.ts
+var DEVANAGARI = /[\u0900-\u097F]/;
+function leadFor(text, lang) {
+  if (!text.trim()) return "";
+  if (lang === "en") return "Listen to me. ";
+  if (lang === "hi" && DEVANAGARI.test(text)) return "\u092E\u0947\u0930\u0940 \u092C\u093E\u0924 \u0938\u0941\u0928\u094B\u0964 ";
+  return "";
+}
+function lineStart(free, leadEnd2, from = 0) {
+  let last = -1;
+  for (let f = Math.max(0, from); f < free.length; f++) {
+    if (free[f] < leadEnd2) last = f;
+    else if (last >= 0 && f - last > 8) break;
+  }
+  return last < 0 || last + 1 >= free.length ? -1 : last + 1;
+}
+function asLine(free, S, leadEnd2) {
+  const base = leadEnd2 - 2;
+  return { cur: free.map((c) => Math.max(0, c - base)), S: S - base };
+}
+function linePass(free, S, leadEnd2) {
+  const l = asLine(free, S, leadEnd2), p = cleanPass(l.cur, l.S);
+  if (!p) return null;
+  const start = lineStart(free, leadEnd2, p.from);
+  return { ...p, start: start < 0 ? p.from : start };
+}
+function lineOver(free, S, leadEnd2) {
+  const l = asLine(free, S, leadEnd2);
+  return tailOver(l.cur, l.S);
+}
+function loudness(pcm, sr) {
+  const hop = Math.max(1, Math.round(sr * 5e-3)), win = hop * 2;
+  const n = Math.max(0, Math.floor((pcm.length - win) / hop) + 1), e = new Float32Array(n);
+  let peak = 0;
+  for (let f = 0; f < n; f++) {
+    let q = 0;
+    for (let i = f * hop; i < f * hop + win; i++) q += pcm[i] * pcm[i];
+    peak = Math.max(peak, e[f] = Math.sqrt(q / win));
+  }
+  return { e, hop, peak };
+}
+function pauseNear(pcm, at, sr) {
+  const { e, hop, peak } = loudness(pcm, sr);
+  if (!e.length || peak <= 0) return null;
+  const quiet = peak * 0.06, least = Math.round(0.03 * sr / hop), late = Math.round(0.14 * sr), early = Math.round(0.05 * sr);
+  const lead = Math.round(0.1 * sr / hop);
+  let sound = 0;
+  for (let f = 0; f < e.length && f * hop <= at + late; f++) {
+    if (e[f] > quiet) {
+      sound++;
+      continue;
+    }
+    let g = f;
+    while (g < e.length && e[g] <= quiet) g++;
+    if (sound >= lead && g - f >= least && g * hop >= at - early) return { from: f * hop, to: Math.min(pcm.length, g * hop) };
+    f = g - 1;
+  }
+  return null;
+}
+function withoutLead(pcm, at, sr) {
+  if (at < 0 || at >= pcm.length) return { pcm, clean: false };
+  const p = pauseNear(pcm, at, sr);
+  let cut;
+  if (p) cut = p.from + p.to >> 1;
+  else {
+    const { e, hop } = loudness(pcm, sr);
+    const a = Math.max(0, Math.floor((at - 0.06 * sr) / hop)), b = Math.min(e.length - 1, Math.ceil((at + 0.14 * sr) / hop));
+    let k = a;
+    for (let f = a; f <= b; f++) if (e[f] < e[k]) k = f;
+    cut = Math.min(pcm.length, k * hop + hop);
+  }
+  const out = pcm.slice(cut);
+  const fade = Math.min(out.length, Math.round(sr * 8e-3));
+  for (let i = 0; i < fade; i++) out[i] = out[i] * (i / fade);
+  return { pcm: out, clean: !!p };
+}
+
 // src/voice/engine/studio.ts
 var STUDIO_SR = 24e3;
 var STUDIO_REPO = "onnx-community/chatterbox-multilingual-ONNX";
@@ -116,6 +193,10 @@ function puncNorm(text) {
 function prepareText(text, lang) {
   const t = puncNorm(text).toLowerCase().normalize("NFKD");
   return `[${lang}]${t}`.replace(/ /g, "[SPACE]");
+}
+function leadEnd(tokenizer, lead, text, lang) {
+  if (!lead) return 0;
+  return tokenizer.encode(prepareText(lead + text, lang)).length - tokenizer.encode(prepareText(text, lang)).length + 2;
 }
 var StudioTokenizer = class {
   vocab;
@@ -179,9 +260,43 @@ var StudioTokenizer = class {
 };
 var W = String.raw`\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\p{Join_Control}`;
 var WORD_RE = new RegExp(`[${W}]+|[^${W}\\s]+`, "gu");
+var REF_MAX = 10;
+var REF_REST = 0.5;
+function referenceClip(ref, sr = STUDIO_SR) {
+  if (!ref.length) return ref;
+  const hop = Math.round(sr * 0.01), rest = Math.round(sr * REF_REST), max = Math.round(sr * REF_MAX) - rest;
+  const n = Math.floor(ref.length / hop), e = new Float32Array(n);
+  let peak = 0;
+  for (let f = 0; f < n; f++) {
+    let q = 0;
+    for (let i = f * hop; i < (f + 1) * hop; i++) q += ref[i] * ref[i];
+    peak = Math.max(peak, e[f] = Math.sqrt(q / hop));
+  }
+  const quiet = peak * 0.02;
+  let end = n;
+  while (end > 0 && e[end - 1] <= quiet) end--;
+  let cut = end === n ? ref.length : Math.min(ref.length, (end + 2) * hop);
+  if (cut > max) {
+    const lim = Math.floor(max / hop);
+    cut = max;
+    for (let f = lim - 6; f > lim / 2; f--) {
+      let still = true;
+      for (let k = 0; k < 6 && still; k++) still = e[f + k] <= quiet;
+      if (!still) continue;
+      while (f > 0 && e[f - 1] <= quiet) f--;
+      cut = (f + 2) * hop;
+      break;
+    }
+  }
+  const out = new Float32Array(cut + rest);
+  out.set(ref.subarray(0, cut));
+  const fade = Math.min(cut, Math.round(sr * 0.02));
+  for (let i = 0; i < fade; i++) out[cut - 1 - i] = out[cut - 1 - i] * (i / fade);
+  return out;
+}
 async function makeSpeaker(models2, ref) {
   const enc = await models2.encoder();
-  const clip = ref.length > STUDIO_SR * 10 ? ref.subarray(0, STUDIO_SR * 10) : ref;
+  const clip = referenceClip(ref);
   const out = await enc.run({ audio_values: models2.tensor("float32", Float32Array.from(clip), [1, clip.length]) });
   const [cond, tok, xv, feat] = ["audio_features", "audio_tokens", "speaker_embeddings", "speaker_features"].map((k) => out[k]);
   return {
@@ -240,12 +355,21 @@ var Aligner = class {
   repSum = 0;
   lastTok = [];
   trace = null;
+  /** The text position attended at every frame before the mask below: where the model really is (studio_lead.ts). */
+  frees = [];
   /** The text position attended at every frame: the path the speech took through the line (studio_pass.ts). */
   curs = [];
   /** One frame of attention over the text (S values per row); may force or forbid the end in `logits`. */
   step(rows, logits, lastToken) {
     const S = this.S;
     let cur = 0;
+    {
+      const r = rows[rows.length - 1];
+      let free = 0;
+      for (let c = 1; c < S; c++) if (r[c] > r[free]) free = c;
+      this.frees.push(free);
+      if (this.trace) this.trace.free.push(free);
+    }
     for (const r of rows) {
       for (let c = this.frame + 1; c < S; c++) r[c] = 0;
       this.rows++;
@@ -308,7 +432,9 @@ async function say(models2, text, spk, o) {
   const minP = o.minP ?? 0.05;
   const rep = o.repetitionPenalty ?? 2;
   const rand = rng(o.seed ?? 1);
-  const ids = models2.tokenizer.encode(prepareText(text, o.lang));
+  const lead = o.lead ?? "";
+  const lineAt = leadEnd(models2.tokenizer, lead, text, o.lang);
+  const ids = models2.tokenizer.encode(prepareText(lead + text, o.lang));
   const n = ids.length;
   const pos = ids.map((id, k) => id >= START ? 0 : k - 1);
   const exT = T("float32", new Float32Array([ex]), [1]);
@@ -336,7 +462,7 @@ async function say(models2, text, spk, o) {
   }
   const textIdx = ids.map((id, k) => id < START ? k : -1).filter((k) => k >= 0);
   const al = new Aligner(L0 + textIdx[0], L0 + textIdx[textIdx.length - 1] + 1);
-  if (o.trace) al.trace = { cur: [], first: [], tail: [], S: al.S };
+  if (o.trace) al.trace = { cur: [], free: [], first: [], tail: [], S: al.S };
   const nText = textIdx.length;
   const cap = 40 + nText * 6;
   let feeds = { inputs_embeds: T("float32", x, [B, seq0, D]) };
@@ -366,7 +492,7 @@ async function say(models2, text, spk, o) {
       return row;
     });
     let why = al.step(A, l, gen[gen.length - 1]);
-    if (!why && tailOver(al.curs, al.S)) {
+    if (!why && (lineAt ? lineOver(al.frees, al.S, lineAt) : tailOver(al.curs, al.S))) {
       l.fill(-1e9);
       l[STOP] = 1e9;
       why = "long_tail";
@@ -422,8 +548,12 @@ async function say(models2, text, spk, o) {
     total++;
   }
   let toks = gen.slice(1).filter((t) => t < START);
-  const pass = cleanPass(al.curs, al.S);
-  if (pass) toks = toks.slice(Math.max(0, pass.from - 1), pass.end + 11);
+  const led = lineAt ? linePass(al.frees, al.S, lineAt) : null;
+  const start = !lineAt ? 0 : led ? led.start : lineStart(al.frees, lineAt);
+  const pass = !lineAt ? cleanPass(al.curs, al.S) : led ? { from: led.start, end: led.end, dirt: led.dirt } : null;
+  const lineS = lineAt ? al.S - (lineAt - 2) : al.S;
+  const skip = lineAt || !pass ? 0 : Math.max(0, pass.from - 1);
+  if (pass) toks = toks.slice(skip, pass.end + 11);
   else if (al.endAt >= 0 && toks.length > al.endAt + 12) toks = toks.slice(0, al.endAt + 10);
   const speech = new BigInt64Array(spk.promptToken.length + toks.length);
   speech.set(spk.promptToken);
@@ -433,8 +563,19 @@ async function say(models2, text, spk, o) {
     speaker_embeddings: T("float32", spk.xvec, [1, 192]),
     speaker_features: T("float32", spk.promptFeat, [1, spk.featLen, 80])
   });
-  const wav = Float32Array.from(Object.values(dec)[0].data);
-  return { pcm: trimSilence(wav), complete: al.S >= 6 ? !!pass && pass.dirt === 0 : al.complete, reason, tokens: toks.length, ...al.trace ? { trace: al.trace } : {}, ...pass ? { pass } : {} };
+  let wav = Float32Array.from(Object.values(dec)[0].data);
+  if (al.trace) {
+    al.trace.skip = skip;
+    al.trace.head = soundBounds(wav)[0];
+  }
+  let cleanLead = true;
+  if (lineAt) {
+    const cut = withoutLead(wav, start < 0 ? -1 : Math.round(start * STUDIO_SR / 25), STUDIO_SR);
+    if (al.trace) al.trace.lead = { frame: start, clean: cut.clean, cut: wav.length - cut.pcm.length };
+    wav = cut.pcm;
+    cleanLead = cut.clean;
+  }
+  return { pcm: trimSilence(wav), complete: (lineS >= 6 ? !!pass && pass.dirt === 0 : al.complete) && cleanLead, reason, tokens: toks.length, ...al.trace ? { trace: al.trace } : {}, ...pass ? { pass } : {}, ...lineAt ? { lead: cleanLead } : {} };
   function headAttention(out, rows, total2, seq) {
     return ALIGNED.map(([layer, h]) => {
       const qkv = out[`/model/layers.${layer}/attn/qkv_proj/MatMul/output_0`].data;
@@ -470,9 +611,13 @@ async function say(models2, text, spk, o) {
   }
 }
 function trimSilence(pcm, sr = STUDIO_SR) {
+  const [start, end] = soundBounds(pcm, sr);
+  return start === 0 && end === pcm.length ? pcm : pcm.slice(start, end);
+}
+function soundBounds(pcm, sr = STUDIO_SR) {
   const hop = Math.round(sr * 0.02);
   const frames = Math.floor(pcm.length / hop);
-  if (frames < 3) return pcm;
+  if (frames < 3) return [0, pcm.length];
   const e = new Float32Array(frames);
   let peak = 0;
   for (let f = 0; f < frames; f++) {
@@ -488,7 +633,7 @@ function trimSilence(pcm, sr = STUDIO_SR) {
   while (b > a && e[b] < floor) b--;
   const start = Math.max(0, (a - 2) * hop);
   const end = Math.min(pcm.length, (b + 4) * hop);
-  return pcm.slice(start, end);
+  return [start, end];
 }
 function exposeAlignment(model) {
   const names = [...new Set(ALIGNED.map(([l]) => l))].map((l) => `/model/layers.${l}/attn/qkv_proj/MatMul/output_0`);
@@ -695,7 +840,10 @@ async function handle(m) {
       const act = acting(mood, typeof p.moodAmount === "number" ? p.moodAmount : 1);
       if (typeof p.cfg === "number") act.cfg = Math.min(act.cfg, Math.max(0.1, p.cfg));
       const text = String(p.text);
+      const told = (r, attempt, tries2) => p.trace ? { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, lead: r.lead, attempt, tries: tries2 } : { pcm: r.pcm };
+      const tries = [];
       let first = null;
+      let firstAt = 0;
       let firstScore = Infinity;
       for (let attempt = 0; attempt < 3; attempt++) {
         const r = await say(mdl, text, spk, {
@@ -703,17 +851,19 @@ async function handle(m) {
           ...act,
           seed: takeSeed(key, text, attempt, typeof p.take === "number" ? p.take : 0),
           trace: p.trace === true,
+          lead: p.lead === false ? "" : leadFor(text, String(p.lang ?? "en")),
           onToken: (n) => n % 25 === 0 && send({ id: m.id, event: "progress", done: n, what: "Acting the line" })
         });
-        if (p.trace) return { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, attempt };
-        if (r.complete) return { pcm: r.pcm };
-        const score = r.pass ? r.pass.dirt : 1e6;
+        tries.push({ complete: r.complete, reason: r.reason, lead: r.lead, pass: r.pass, found: r.trace?.lead });
+        if (r.complete) return told(r, attempt, tries);
+        const score = (r.pass ? r.pass.dirt : 1e6) + (r.lead === false ? 3 : 0);
         if (!first || score < firstScore) {
-          first = r.pcm;
+          first = r;
+          firstAt = attempt;
           firstScore = score;
         }
       }
-      return { pcm: first };
+      return told(first, firstAt, tries);
     }
     default:
       throw new Error(`Unknown studio voice request: ${m.method}`);

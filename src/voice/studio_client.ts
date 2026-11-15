@@ -13,7 +13,7 @@ import { hinglishShare, transliterateHinglish } from "./engine/hinglish";
 import type { Tone } from "./engine/open";
 import { referenceLine } from "./engine/studio_refs";
 import { devanagariLoanwords } from "./engine/studio_loanwords";
-import { phrases, studioDelivery, pacing } from "./engine/studio_pace";
+import { phrases, pacing } from "./engine/studio_pace";
 import { studioSpeaker } from "./engine/studio_speaker";
 import { loadCustoms } from "./voicelab";
 import { openVoice } from "./open_client";
@@ -107,8 +107,10 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
     // hurries a long line), joined with the silences its marks ask for, and brought to the tone's rate.
     const pace = { rate: (tone?.rate ?? 1) * (own.speed || 1), pauses: tone?.pauses };
     const list = phrases(words);
-    const deliver = studioDelivery(pace);
-    const sayOne = (t: string) => b.say({ key, text: t, lang: code, mood, moodAmount: tone?.moodAmount, ...(deliver.cfg < 0.5 ? { cfg: deliver.cfg } : {}), ...(tone?.take ? { take: tone.take } : {}) });
+    // (A slow line is not asked for with a weaker hold on its words, as Chatterbox advises for a slower delivery:
+    //  measured, the model's pace does not follow it, and with less of it the model murmurs for seconds, skips words
+    //  and runs sentences together. Of eight Hindi sentences five were clean at the first attempt, against seven.)
+    const sayOne = (t: string) => b.say({ key, text: t, lang: code, mood, moodAmount: tone?.moodAmount, ...(tone?.take ? { take: tone.take } : {}) });
     let r = await sayOne(list[0] ?? words);
     if (r.needRef) {
       onProgress?.(0, "Preparing the voice");

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { phrases, pauseAfter, paced, pacing, studioDelivery, tidyEnd, trimmed } from "../src/voice/engine/studio_pace";
+import { phrases, pauseAfter, paced, pacing, tidyEnd, trimmed } from "../src/voice/engine/studio_pace";
 
 // A studio voice acts a line the way it is written, but it knows nothing of the tone's pace: it ran three short
 // sentences together in two and a half seconds and swallowed the end of a long one. So a line is spoken a
@@ -100,11 +100,5 @@ describe("a studio voice keeps the pace of a line", () => {
     // and a line with nothing after it is left alone
     const plain = sine(220, 1);
     expect(tidyEnd(plain, sr).length).toBe(plain.length);
-  });
-  it("a tone's pace also tells the model how to act: slow lines are given a deliberate delivery", () => {
-    expect(studioDelivery({ rate: 0.86 }).cfg).toBeLessThan(studioDelivery({}).cfg);
-    expect(studioDelivery({}).cfg).toBe(0.5);
-    expect(studioDelivery({ rate: 1.15 }).cfg).toBe(0.5);
-    expect(studioDelivery({ rate: 0.7 }).cfg).toBeGreaterThanOrEqual(0.2);
   });
 });
