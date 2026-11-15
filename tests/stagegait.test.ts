@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { gaitCycle as findStride, Clip } from "../src/stage/engine/anim.js";
+import { gaitCycle as findStride, Clip, seamBlend } from "../src/stage/engine/anim.js";
 import { MotionLibrary, type MotionIndex } from "../src/stage/motion/library";
 import { Pack } from "../src/stage/pack";
 
@@ -85,5 +85,88 @@ describe.skipIf(!ASSETS)("the gaits of the motion library", () => {
   it("a gait nobody captured is said so, with the ones there are", () => {
     const lib = new MotionLibrary(); lib.index = index;
     expect(() => lib.pickGait("moonwalk backwards on stilts")).toThrow(/walk, stroll, march, jog, run/);
+  });
+});
+
+
+describe.skipIf(!ASSETS)("the seams of the captured runs", () => {
+  const index = ASSETS ? (JSON.parse(readFileSync(`${ASSETS}/motion/index.json`, "utf8")) as MotionIndex) : (null as unknown as MotionIndex);
+  const clipOf = (name: string) => { const m = index.clips[name]!, b = readFileSync(`${ASSETS}/motion/s${String(m.s).padStart(3, "0")}.pack`); return new Clip(name, m, index, new Pack(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength))); };
+  const jid = ASSETS ? Object.fromEntries(index.joints.map((n, i) => [n, i])) : {};
+  it("an upper arm stays in its swing through every seam (09_05 the scout's run, 143_01 the sprint, 16_46, 35_21, 127_08)", () => {
+    for (const name of ["09_05", "143_01", "16_46", "35_21", "127_08"]) {
+      const clip = clipOf(name) as unknown as { dur: number; fps: number; quatAt(t: number, j: number, out: THREE.Quaternion): THREE.Quaternion };
+      const c = gaitCycle(clip, jid);
+      if (!c || c.seam >= 0.03) continue; // (the runtime loops such a clip another way)
+      const loop: [number, number] = [c.t0, c.t1], per = c.t1 - c.t0;
+      const a = new THREE.Quaternion(), b = new THREE.Quaternion(), ref = new THREE.Quaternion();
+      // how far the upper arm strays, inside its cycle, from where it is anywhere in that cycle as captured
+      const captured: THREE.Quaternion[] = [];
+      for (let t = c.t0; t <= c.t1; t += 1 / 60) captured.push(clip.quatAt(t, jid.LeftArm!, new THREE.Quaternion()).clone());
+      let worst = 0;
+      for (let k = 0; k < 3; k++) for (let tt = c.t0; tt <= c.t1; tt += 1 / 60) {
+        const s = seamBlend(tt, loop, clip.dur, 2 / clip.fps, k) as { w: number; t: number };
+        clip.quatAt(tt, jid.LeftArm!, a); if (s.w > 0) a.slerp(clip.quatAt(s.t, jid.LeftArm!, b), s.w);
+        let nearest = Infinity; for (const q of captured) nearest = Math.min(nearest, ref.copy(q).angleTo(a));
+        worst = Math.max(worst, nearest);
+      }
+      expect(worst, `${name}: cycle ${c.t0.toFixed(2)}–${c.t1.toFixed(2)} of ${clip.dur.toFixed(2)} s (${per.toFixed(2)} s)`).toBeLessThan(0.2);
+    }
+  });
+});
+
+describe("the seam of a looping stride", () => {
+  // A cycle loops by leaning, near its seam, on the same moment of the neighbouring cycle. That moment must exist in
+  // the clip. A sample before the clip's start is its first frame — in a capture, the T-pose — and a runner whose
+  // cycle began a tenth of a second into the clip threw his arms out sideways once every stride.
+  const sb = (tt: number, loop: [number, number], dur: number, start = 0) => seamBlend(tt, loop, dur, start) as { w: number; t: number };
+  it("never leans on a moment outside the clip", () => {
+    for (const [loop, dur] of [[[0.1, 0.8], 1.35], [[0.05, 0.75], 0.82], [[0.5, 1.2], 1.25], [[0.0, 0.8], 0.8], [[0.12, 0.82], 0.9]] as [[number, number], number][]) {
+      for (let tt = loop[0]; tt <= loop[1] + 1e-9; tt += 0.01) {
+        const b = sb(tt, loop, dur, 2 / 30);
+        if (b.w > 0) {
+          expect(b.t, `loop ${loop} in ${dur}s at ${tt.toFixed(2)}`).toBeGreaterThanOrEqual(2 / 30 - 1e-9);
+          expect(b.t).toBeLessThanOrEqual(dur + 1e-9);
+        }
+        expect(b.w).toBeGreaterThanOrEqual(0);
+        expect(b.w).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+  it("leans on what came before the cycle when the clip has it", () => {
+    const loop: [number, number] = [0.5, 1.2];
+    expect(sb(1.2, loop, 1.25)).toEqual({ w: 1, t: 0.5 });
+    expect(sb(0.94, loop, 1.25).w).toBe(0);
+    expect(sb(1.075, loop, 1.25).w).toBeCloseTo(0.5, 5);
+  });
+  it("leans on what comes after the cycle when the cycle begins at the clip's start", () => {
+    const loop: [number, number] = [0.05, 0.75];
+    const at0 = sb(0.05, loop, 1.35);
+    expect(at0.w).toBe(1);
+    expect(at0.t).toBeCloseTo(0.75, 9);
+    expect(sb(0.31, loop, 1.35).w).toBe(0);
+    expect(sb(0.75, loop, 1.35).w).toBe(0);
+  });
+  it("plays the first pass through the cycle, and the lead-in before it, as captured", () => {
+    expect((seamBlend(0.05, [0.05, 0.75], 1.35, 0, 0) as { w: number }).w).toBe(0);
+    expect((seamBlend(0.02, [0.05, 0.75], 1.35, 0, 1) as { w: number }).w).toBe(0);
+  });
+  it("does not blend at all when the clip is nothing but the cycle", () => {
+    for (let tt = 0; tt <= 0.8; tt += 0.05) expect(sb(tt, [0, 0.8], 0.8).w).toBe(0);
+  });
+  it("keeps a runner's arms in their swing through the seam, T-pose first frame or not", () => {
+    // the arms swing ±0.6 rad; the capture's first frame is a T-pose (the arm 1.5 rad out)
+    const period = 0.7, swing = (t: number) => (t < 1.5 / 30 ? 1.5 : 0.6 * Math.sin((2 * Math.PI * t) / period));
+    const loop: [number, number] = [0.1, 0.8];
+    let worst = 0, jump = 0, prev: number | null = null;
+    for (let i = 0; i <= 210; i++) {
+      const t = 0.1 + i * 0.01, tt = loop[0] + ((t - loop[0]) % period), b = sb(tt, loop, 1.35, 2 / 30);
+      const a = swing(tt) * (1 - b.w) + swing(b.t) * b.w;
+      worst = Math.max(worst, Math.abs(a - 0.6 * Math.sin((2 * Math.PI * t) / period)));
+      if (prev !== null) jump = Math.max(jump, Math.abs(a - prev));
+      prev = a;
+    }
+    expect(worst, "the arm never leaves its swing").toBeLessThan(0.05);
+    expect(jump, "and never jumps from one frame to the next").toBeLessThan(0.08);
   });
 });

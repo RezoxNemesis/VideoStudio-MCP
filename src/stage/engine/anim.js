@@ -19,6 +19,24 @@ export class Clip {
   restDir(joint, mirror, out) { const r = this.m.rest[mirror ? SWAP(joint) : joint]; out.set(mirror ? -r[0] : r[0], r[1], r[2]); return out; }
 }
 /**
+ * Where a looping stride hides its seam. A cycle [t0, t1] loops by leaning, near the seam, on the same moment of the
+ * neighbouring cycle — and that moment has to exist in the clip: before t0 (when the cycle starts late enough) or
+ * after t1 (when the clip goes on). Never outside the clip: a sample before a capture's start is its first frame, the
+ * T-pose, and a runner whose cycle began a tenth of a second into the clip threw his arms out once every stride.
+ *   tt: the clip time being played, loop: [t0, t1], dur: the clip's length, start: its first moment of real motion,
+ *   cycles: how many cycles have been played (the first pass is played as captured), len: the longest blend (s)
+ * → { w: 0…1 how much to lean on the other moment, t: that moment (always inside the clip) }
+ */
+export function seamBlend(tt, loop, dur, start = 0, cycles = 1, len = 0.25) {
+  const per = loop[1] - loop[0], pre = Math.min(len, Math.max(0, loop[0] - start)), post = Math.min(len, Math.max(0, dur - loop[1]));
+  // the end of the cycle leans on what came before its start …
+  if (pre >= post && pre > 0.02) return { w: clamp((tt - (loop[1] - pre)) / pre), t: tt - per };
+  // … or, when the cycle begins where the clip does, its start leans on what comes after its end
+  if (post > 0.02 && cycles > 0 && tt >= loop[0]) return { w: clamp(1 - (tt - loop[0]) / post), t: tt + per };
+  return { w: 0, t: tt };
+}
+
+/**
  * The stride of a locomotion clip: one whole cycle — a leg coming forward, to the same leg coming forward again — as
  * { t0, t1, seam } (seam: how far the pose at its two ends differs; 0 = the same pose). A walk or a run loops on this
  * and on nothing shorter: one step matches the next only in the mirror, and a loop over any other stretch makes the
@@ -94,8 +112,8 @@ export class Motion {
     if (o.face != null && o.face !== false) { const hq = clip.quatAt(typeof o.face === 'number' ? o.face : tt, this.mc.jid.Hips, _q, mir); const f = (o.lying ? _v.set(0, 1, 0) : _v.set(0, 0, 1)).applyQuaternion(hq); yawFix = -Math.atan2(f.x, f.z) + (o.lying ? Math.PI : 0); }
     const yaw = yawFix + (o.yaw || 0);
     const qYaw = _q2.setFromAxisAngle(Yax, yaw).clone();
-    const w = o.w ?? 1; const blendSeam = o.loop ? clamp((tt - (o.loop[1] - 0.25)) / 0.25) : 0;
-    const sampleQ = (j, out) => { clip.quatAt(tt, j, out, mir); if (blendSeam > 0) { clip.quatAt(tt - per, j, _q, mir); out.slerp(_q, blendSeam); } return out; };
+    const w = o.w ?? 1; const sb = o.loop ? seamBlend(tt, o.loop, clip.dur, 2 / clip.fps, cycles) : null, blendSeam = sb ? sb.w : 0;
+    const sampleQ = (j, out) => { clip.quatAt(tt, j, out, mir); if (blendSeam > 0) { clip.quatAt(sb.t, j, _q, mir); out.slerp(_q, blendSeam); } return out; };
     // rotations
     const bones = this.order, gq = this.gq;
     for (let i = 0; i < bones.length; i++) {
@@ -107,7 +125,7 @@ export class Motion {
       } else { if (pg) gq[i].copy(pg).multiply(b.quaternion); else gq[i].copy(b.quaternion); }
     }
     // root translation
-    const r = clip.rootAt(tt, _v, mir); if (blendSeam > 0) { const r2 = clip.rootAt(tt - per, _v2, mir); r.y = lerp(r.y, r2.y, blendSeam); }
+    const r = clip.rootAt(tt, _v, mir); if (blendSeam > 0) { const r2 = clip.rootAt(sb.t, _v2, mir); r.y = lerp(r.y, r2.y, blendSeam); }
     const ref = clip.rootAt(o.ref ?? (o.loop ? o.loop[0] : 0), _v2, mir);
     let dx = r.x - ref.x, dz = r.z - ref.z;
     if (o.loop && cycles > 0) { const a = clip.rootAt(o.loop[0], _v3, mir), bx = a.x, bz = a.z; const e = clip.rootAt(o.loop[1], _v3, mir); dx += (e.x - bx) * cycles; dz += (e.z - bz) * cycles; }
