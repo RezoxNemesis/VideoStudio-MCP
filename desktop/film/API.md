@@ -185,7 +185,8 @@ the jaw: `face.beard: { style: 'full' | 'goatee' | 'chin' | 'mustache', cheek: 0
 mustache: false | { heavy: true (it hangs over the upper lip, its ends down past the corners of the mouth), density },
 sideburn: false, soul: false, rough: 0…1 (how ragged its edge is drawn), strands: 0…1 (darker strokes through it, the
 way it grows), density: 0…1 (below 1: stubble), color }` — in the hair's colour unless it has its own (a white beard
-under dark hair); the body model's own beard (a shell of hair round the jaw) is then left out. `face.scars: [{ from:
+under dark hair); the body model's own beard (a shell of hair round the jaw) is then left out. `face.beard: false` leaves the body
+model's own beard out altogether (a woman, a child: a stray piece of it shows as a dark mark on the chin). `face.scars: [{ from:
 [x, y], to: [x, y], w: 0.0012 }]` draws fine scars between places on the face — metres from its middle (positive
 towards the head's own left) and up from the line of the eyes: the brow lies near 0.03, the nose's tip near −0.045,
 the mouth near −0.08. `face.lines: 0…1` draws the lines of age (the folds from the nose past the mouth; from 0.5 the

@@ -356,6 +356,8 @@ export function faceMarkOptions(d, rgbOf = (c) => hex(c)) {
 }
 /** A beard painted on the face replaces the body model's own beard (a shell of hair round the jaw). */
 export function paintedBeard(d) { return !!d.face?.beard; }
+/** Is the body model's own beard drawn? Not under a painted one, and not at all with design.face.beard: false (a woman, a child). */
+export function bodyBeard(d) { return d.face?.beard !== false && !paintedBeard(d); }
 
 export function hairPaint(d, rgbOf, o = {}) {
   const hc = d.hair.color, fill = rgbOf(hc), shade = rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi = rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), k = clamp(d.hair.strands ?? 0);
@@ -430,7 +432,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       else cp.add(p.out, p.idx, { fill: hex(ink), shade: hex(ink), flat: true, two: true, bias: 0.002, line: false, group: 'eye' }, nr);
       continue;
     }
-    if (real && p.name === 'beard' && paintedBeard(d)) continue;
+    if (real && p.name === 'beard' && !bodyBeard(d)) continue;
     if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.name === 'haircap' && d.hair.sideburns === false ? capWithoutSideburns(B) : p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard' }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
     // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it

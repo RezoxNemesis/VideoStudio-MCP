@@ -195,6 +195,7 @@ if (M && typeof F3.faceDecals === 'function') {
     const c = fo({ hair: { color: '#3a383e' }, face: {} });
     ok(!c.beard && !c.scars && !c.lines, 'a design that asks for nothing gets nothing', c);
     ok(BD.paintedBeard?.({ face: { beard: { style: 'full' } } }) === true && BD.paintedBeard?.({ face: {}, beard: { length: 0.2 } }) === false, 'paintedBeard(design): a painted beard replaces the body model\'s own', [BD.paintedBeard?.({ face: { beard: { style: 'full' } } }), BD.paintedBeard?.({ face: {} })]);
+    ok(BD.bodyBeard?.({ face: { beard: false } }) === false && BD.bodyBeard?.({ face: {} }) === true && BD.bodyBeard?.({ face: { beard: { style: 'full' } } }) === false, 'bodyBeard(design): face.beard: false leaves the body model\'s own beard out altogether (a woman, a child: a stray piece of it shows as a dark mark on the chin); a painted beard replaces it; otherwise it is drawn', [BD.bodyBeard?.({ face: { beard: false } }), BD.bodyBeard?.({ face: {} })]);
   }
 }
 
