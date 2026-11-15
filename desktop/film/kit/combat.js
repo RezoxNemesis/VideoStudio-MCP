@@ -55,6 +55,27 @@ export function turnPose(pose, pivot, axis, ang) {
 }
 export { bendPose };
 /**
+ * A runner's arms swing against his legs. Captured joggers carry both hands before the chest, which on a figure in a
+ * film reads as running with the arms clutched; this swings each upper arm from the shoulder with the stride (forward
+ * with the opposite foot, back and down past the hip with its own) and opens the elbow on the way back. How far is read
+ * from the feet: nothing when they pass each other, all of it at the stride's full reach — so it goes with any run or
+ * walk, at any speed. o: { amount: 1, deg: 30 (an upper arm's swing at full stride), reach: 0.8 (m between the feet,
+ * fore and aft, at full stride, for a body 1.8 m tall), sides: 'LR' (one arm only: 'R' when the left rests on a scabbard) }.
+ * For an actor: fit: (pose) => swingArms(pose) — while he runs (a body that kneels has its feet apart too).
+ */
+export function swingArms(pose, o = {}) {
+  const j = pose.j, hl = j['upperleg01.L'], hr = j['upperleg01.R'], fl = j['foot.L'], fr = j['foot.R']; if (!hl || !hr || !fl || !fr) return pose;
+  const k = pose.height / 1.8, n = Math.hypot(hl[0] - hr[0], hl[2] - hr[2]) || 1, fx = -(hl[2] - hr[2]) / n, fz = (hl[0] - hr[0]) / n; // (the way the body faces, on the ground)
+  const s = clamp(((fr[0] - fl[0]) * fx + (fr[2] - fl[2]) * fz) / ((o.reach ?? 0.8) * k), -1, 1); // +1: the right foot a full stride ahead of the left
+  if (Math.abs(s) < 1e-6) return pose;
+  const am = o.amount ?? 1, A = (o.deg ?? 30) * am, sides = o.sides ?? 'LR', bends = [];
+  // (about `side` a negative turn lifts what hangs on the bone forward, a positive one swings it back)
+  const arm = (S, fwd) => bends.push({ bone: `upperarm01.${S}`, about: 'side', deg: -A * fwd }, { bone: `lowerarm01.${S}`, about: 'side', deg: fwd < 0 ? 22 * -fwd * am : -8 * fwd * am });
+  if (sides.includes('L')) arm('L', s);
+  if (sides.includes('R')) arm('R', -s);
+  return bendPose(pose, bends);
+}
+/**
  * Stand a spear on its butt: the shaft goes from the ground up through the hand that holds it, whatever the arm does
  * (a captured wait moves the arm about; a soldier's spear at rest stands). o: { ground: 0 (height of the ground there),
  * len: 2.4 (the spear's shaft), hand: 'R', lean: [right, forward] (m: where the butt stands from under the hand — a

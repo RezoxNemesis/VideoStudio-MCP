@@ -2,7 +2,7 @@
 // A bone can be turned about its own joint after the performance is posed (a rider's thighs lie along the horse, a
 // soldier's forearm carries his spear upright): everything that hangs on the bone goes with it, nothing else moves.
 import { bendBone, bodyAxes } from '../engine/body.js';
-import { bendPose, plantSpear } from '../kit/combat.js';
+import { bendPose, plantSpear, swingArms } from '../kit/combat.js';
 import { qrot } from '../engine/core.js';
 
 const fails = []; let checks = 0;
@@ -78,6 +78,25 @@ const pos = (B, n) => Array.from(B.P.subarray(B.bi[n] * 3, B.bi[n] * 3 + 3)), ne
   ok(al[1] < ax[1] - 0.005 && al[1] > 0.9, 'a man can let it lean a little his own way', al[1]);
   const none = { height: 1.8, j: { 'wrist.R': [0, 1, 0] }, props: {} }; plantSpear(none);
   ok(Object.keys(none.props).length === 0, 'a body without a spear is left alone', 0);
+}
+
+// ---- a runner's arms: captured joggers carry both hands before the chest; a sprint is read from arms that swing
+{
+  // a body facing +z in mid-stride: which foot is forward decides which arm is
+  const mk = (rf) => ({ height: 1.8, props: {}, q: {}, j: { root: [0, 1, 0], 'upperleg01.L': [0.1, 0.95, 0], 'upperleg01.R': [-0.1, 0.95, 0], 'foot.L': [0.1, 0.1, -0.4 * rf], 'foot.R': [-0.1, 0.1, 0.4 * rf],
+    'upperarm01.L': [0.2, 1.45, 0], 'lowerarm01.L': [0.22, 1.17, 0.02], 'wrist.L': [0.14, 1.1, 0.24], 'upperarm01.R': [-0.2, 1.45, 0], 'lowerarm01.R': [-0.22, 1.17, 0.02], 'wrist.R': [-0.14, 1.1, 0.24] } });
+  const a = mk(1), a0 = mk(1); swingArms(a);
+  ok(a.j['wrist.L'][2] > a0.j['wrist.L'][2] + 0.05 && a.j['wrist.R'][2] < a0.j['wrist.R'][2] - 0.05, 'right foot forward: the left arm swings forward, the right arm back (each by 5 cm and more at the wrist)', [a.j['wrist.L'][2] - a0.j['wrist.L'][2], a.j['wrist.R'][2] - a0.j['wrist.R'][2]]);
+  ok(a.j['wrist.R'][2] < 0.12, 'the hand that goes back comes down beside the hip, not held before the chest', a.j['wrist.R'][2]);
+  const b = mk(-1), b0 = mk(-1); swingArms(b);
+  ok(b.j['wrist.R'][2] > b0.j['wrist.R'][2] + 0.05 && b.j['wrist.L'][2] < b0.j['wrist.L'][2] - 0.05, 'left foot forward: the other way round', [b.j['wrist.L'][2] - b0.j['wrist.L'][2], b.j['wrist.R'][2] - b0.j['wrist.R'][2]]);
+  const c = mk(0), c0 = mk(0); swingArms(c);
+  ok(Math.abs(c.j['wrist.L'][2] - c0.j['wrist.L'][2]) < 1e-9 && Math.abs(c.j['wrist.R'][2] - c0.j['wrist.R'][2]) < 1e-9, 'feet passing each other: the arms are where the capture has them', c.j['wrist.L'][2] - c0.j['wrist.L'][2]);
+  ok(['root', 'foot.L', 'foot.R', 'upperleg01.L', 'upperarm01.L'].every((n) => a.j[n].every((v, i) => Math.abs(v - a0.j[n][i]) < 1e-9)), 'legs, hips and shoulders are not moved', 0);
+  const h = mk(1); swingArms(h, { amount: 0.5 });
+  ok(h.j['wrist.L'][2] < a.j['wrist.L'][2] - 0.02 && h.j['wrist.L'][2] > a0.j['wrist.L'][2], 'amount: half as much', h.j['wrist.L'][2]);
+  const r = mk(1); swingArms(r, { sides: 'R' });
+  ok(Math.abs(r.j['wrist.L'][2] - a0.j['wrist.L'][2]) < 1e-9 && r.j['wrist.R'][2] < a0.j['wrist.R'][2] - 0.05, 'sides: one arm only (the other rests on a scabbard)', r.j['wrist.L'][2]);
 }
 
 if (fails.length) { console.log(`bend: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.log('  ✗ ' + f); process.exit(1); }
