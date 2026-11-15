@@ -1,7 +1,10 @@
 // A horse that walks, trots and gallops: hooves planted by the ground it covers (no sliding), legs solved from hoof to
 // shoulder, a body that rises, falls and pitches with the gait, mane and tail that follow. Drawn as cels like the people.
 import { inView } from './camera.js';
-import { V, clamp, lerp, hash, noise1, shade as shadeHex, smooth } from './core.js';
+import { V, clamp, lerp, hash, hex, noise1, shade as shadeHex, smooth } from './core.js';
+import { CelPainter } from './body.js';
+import { look } from './look.js';
+import { horseMeshes } from './horsemesh.js';
 import { capsule, smoothClosed, smoothOpen, hull } from './draw.js';
 
 // stride (m), how long each hoof is down (share of the cycle), when each hoof lands (LH, RH, LF, RF), rise, pitch
@@ -19,6 +22,12 @@ function knee(top, hoof, l1, l2, fwd, bend) {
   const a = (l1 * l1 - l2 * l2 + dl * dl) / (2 * dl), h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
   let side = V.sub(fwd, V.mul(u, V.dot(fwd, u))); side = V.norm(side);
   return V.add(V.add(top, V.mul(u, a)), V.mul(side, h * bend));
+}
+
+/** A joint hidden in the body gives where a leg is asked to reach further than its bones: it comes towards `to` by what is missing (the shoulder blade slides on the ribs, the pelvis tips). */
+function give(top, to, total) {
+  const d = V.sub(to, top), dl = V.len(d), over = dl - total * 0.998;
+  return over > 0 ? V.add(top, V.mul(d, over / dl)) : top;
 }
 
 export class Horse {
@@ -44,34 +53,51 @@ export class Horse {
     const ha = na - 1.75 - nod * 0.5, hl = 0.56 * k;
     j.muzzle = V.add(j.poll, V.add(V.mul(f, Math.cos(ha) * hl * Math.cos(pitch)), V.add([0, Math.sin(ha) * hl, 0], V.mul(sd, (o.turn ?? 0) * 0.2 * k))));
     // legs
-    const legs = [['LH', -0.56, 0.17, 0, -1], ['RH', -0.56, -0.17, 1, -1], ['LF', 0.5, 0.15, 2, 1], ['RF', 0.5, -0.15, 3, 1]];
-    for (const [name, lx, lz, pi, bend] of legs) {
-      const top = W(lx * k, (bend > 0 ? 1.12 : 1.18) * k, lz * k);
+    // legs: [name, where the hoof stands at rest (forward of the middle), to the side, place in the gait, front?]
+    const legs = [['LH', -0.70, 0.17, 0, false], ['RH', -0.70, -0.17, 1, false], ['LF', 0.56, 0.15, 2, true], ['RF', 0.56, -0.15, 3, true]];
+    for (const [name, lx, lz, pi, front] of legs) {
       let u = ((cyc + G.ph[pi]) % 1 + 1) % 1, hx, hy = 0;
       // while a hoof is down the body passes over it (it goes back, relative to the body, by the ground covered);
       // then it is lifted and swung forward to its next print
       const span = G.stride * k * G.duty;
       if (gait === 'stand') { hx = (pi % 2 ? 0.03 : -0.03) * k; }
       else if (u < G.duty) { hx = span * (0.5 - u / G.duty); }
-      else { const v = (u - G.duty) / (1 - G.duty), e = v * v * (3 - 2 * v); hx = span * (-0.5 + e); hy = Math.sin(Math.PI * v) * G.lift * k * (bend > 0 ? 1.15 : 0.85); }
-      const hoof = [pos[0] + f[0] * (lx * k + hx + (bend > 0 ? 0.06 : -0.02) * k) + sd[0] * lz * k, gy + hy + 0.045 * k, pos[1] + f[2] * (lx * k + hx + (bend > 0 ? 0.06 : -0.02) * k) + sd[2] * lz * k];
-      const l1 = (bend > 0 ? 0.5 : 0.56) * k, l2 = (bend > 0 ? 0.68 : 0.76) * k;
-      // front legs fold forwards at the knee when lifted; hind legs keep the hock behind
-      const mid = knee(top, hoof, l1, l2, f, bend > 0 ? (hy > 0.02 ? 1 : 0.35) : -1);
-      j[name] = { top, mid, hoof, fet: V.lerp(mid, hoof, 0.78) };
+      else { const v = (u - G.duty) / (1 - G.duty), e = v * v * (3 - 2 * v); hx = span * (-0.5 + e); hy = Math.sin(Math.PI * v) * G.lift * k * (front ? 1.15 : 0.85); }
+      const hoof = [pos[0] + f[0] * (lx * k + hx) + sd[0] * lz * k, gy + hy + 0.045 * k, pos[1] + f[2] * (lx * k + hx) + sd[2] * lz * k];
+      const reach = clamp(hx / (span * 0.5 || 1), -1, 1); // −1: the hoof as far back as it goes, 1: as far forward
+      if (front) {
+        // a foreleg is a column from the shoulder to the hoof (the knee a third of the way up), straight while it
+        // carries; the shoulder swings with the leg (the blade turns on the ribs), which is where its reach comes
+        // from; lifted, it folds forwards at the knee
+        const top = give(W(0.5 * k + hx * 0.5, (1.12 - 0.04 * reach * reach) * k, lz * k), hoof, 1.079 * k);
+        const mid = knee(top, hoof, 0.6 * k, 0.479 * k, f, 1);
+        j[name] = { top, mid, hoof, fet: V.lerp(mid, hoof, 0.76) };
+      } else {
+        // a hind leg is three bones: thigh (hip to stifle), gaskin (stifle to hock), cannon (hock to hoof). The
+        // cannon stands nearly upright over a hoof that carries: the hock a little behind a hoof set forward, a
+        // little ahead of one left far behind; a lifted leg folds at the hock. The stifle bends forwards.
+        const fold = clamp(hy / (0.35 * k)) * 0.9, th = 0.06 + 0.2 * reach - fold, lc = 0.616 * k;
+        const hock = V.add(hoof, V.add(V.mul(f, -Math.sin(th) * lc), [0, Math.cos(th) * lc, 0]));
+        const hip = give(W(-0.6 * k, 1.3 * k, lz * 0.9 * k), hock, 0.85 * k);
+        const stifle = knee(hip, hock, 0.31 * k, 0.54 * k, f, 1);
+        j[name] = { top: hip, stifle, mid: hock, hoof, fet: V.lerp(hock, hoof, 0.76) };
+      }
     }
-    this.j = j; this.f = f; this.sd = sd; this.k = k; this.gait = gait; this.t = t; this.pitch = pitch; this.yaw = yaw;
+    this.j = j; this.f = f; this.sd = sd; this.k = k; this.gait = gait; this.t = t; this.pitch = pitch; this.yaw = yaw; this.W = W; this.pos = pos; this.gy = gy;
     // the tail: a few points that trail the dock and swing
-    const dt = clamp(t - (this.tt ?? t), 0, 0.05); this.tt = t;
-    const n = 5; if (!this.tail || V.dist(this.tail[0], j.dock) > 2) this.tail = Array.from({ length: n }, (_, i) => V.add(j.dock, [-f[0] * 0.12 * i * k, -0.2 * i * k, -f[2] * 0.12 * i * k]));
+    // (a horse set down somewhere else, or at another moment — a new shot — begins with its tail at rest)
+    const jump = Math.abs(t - (this.tt ?? t)) > 0.2, dt = clamp(t - (this.tt ?? t), 0, 0.05); this.tt = t;
+    const n = 5; if (!this.tail || jump || V.dist(this.tail[0], j.dock) > 0.6) this.tail = Array.from({ length: n }, (_, i) => V.add(j.dock, [-f[0] * 0.035 * i * k, -0.215 * i * k, -f[2] * 0.035 * i * k]));
     this.tail[0] = j.dock;
     for (let i = 1; i < n; i++) {
-      const want = V.add(this.tail[i - 1], V.add(V.mul(f, -(gait === 'gallop' ? 0.2 : 0.07) * k), [noise1(t * 2 + i, seed) * 0.02, -(gait === 'gallop' ? 0.1 : 0.2) * k, 0]));
+      const want = V.add(this.tail[i - 1], V.add(V.mul(f, -(gait === 'gallop' ? 0.2 : gait === 'trot' ? 0.09 : i === 1 ? 0.07 : 0.025) * k), [noise1(t * 2 + i, seed) * 0.02, -(gait === 'gallop' ? 0.1 : 0.2) * k, 0]));
       this.tail[i] = V.lerp(this.tail[i], want, clamp(dt * 14));
       const d = V.sub(this.tail[i], this.tail[i - 1]), dl = V.len(d) || 1; this.tail[i] = V.add(this.tail[i - 1], V.mul(d, 0.22 * k / dl));
     }
     return this;
   }
+  /** A place in the world as the horse has it: [forward of its middle, above the ground, to its left], for a horse of scale 1. */
+  local(p) { const dx = p[0] - this.pos[0], dz = p[2] - this.pos[1], k = this.k; return [(dx * this.f[0] + dz * this.f[2]) / k, (p[1] - this.gy) / k, (dx * this.sd[0] + dz * this.sd[2]) / k]; }
   /** Where a rider sits: the saddle's place, the way the horse faces (radians) and how far it tips. */
   saddle() { const j = this.j; return { p: V.add(V.lerp(j.withers, j.back, 0.6), [0, 0.06 * this.k, 0]), yaw: this.yaw, pitch: this.pitch, f: this.f, sd: this.sd }; }
 
@@ -86,6 +112,18 @@ export class Horse {
     const sc = (p) => cam.f / Math.max(0.05, p[2]);
     // ground shadow
     if (o.shadow !== false) { const c = P([j.belly[0], o.ground ?? 0, j.belly[2]]); if (c[2] > 0.3) { const r = 0.95 * k * sc(c); g.save(); g.globalAlpha = o.shadowAlpha ?? 0.28; g.fillStyle = o.shadowColor ?? '#0a0814'; g.beginPath(); g.ellipse(c[0], c[1], r * (0.6 + 0.4 * Math.abs(V.dot(this.f, cam.R))) * 1.15, r * clamp(Math.abs(cam.F[1]) * 1.15 + 0.1, 0.12, 1) * 0.5, 0, 0, 7); g.fill(); g.restore(); } }
+    // a rounded, painted body (engine/horsemesh.js); the cut-out below is kept for the looks that are flat on purpose
+    if (o.body === false) return; // (its rider paints it, in one picture with himself: kit/riders.js)
+    if (!o.flat && look()?.paint?.mode !== 'flat') {
+      const sun = V.norm(o.sun ?? [-0.45, 0.7, 0.5]);
+      // (as for the people: the light a cel is drawn under leans towards the lens, so a body seen head-on is never all shadow)
+      const Lm = V.norm(V.add(V.mul(sun, 0.78), V.add(V.mul(cam.F, -0.34), V.mul(cam.U, 0.22)))), rs = cam.H / 1080, lwm = clamp(0.0042 * ppm, 0.7 * rs, 2.2 * rs);
+      const cp = new CelPainter(cam, { ss: 2, light: Lm, ink: hex(ink), lw: lwm * 1.75, lwIn: lwm * 0.95 });
+      for (const m of horseMeshes(this, lit, { eye: cam.pos })) cp.add(m.pos, m.idx, m.paint);
+      const spr = cp.finish();
+      if (spr) g.drawImage(spr.canvas, spr.x, spr.y);
+      return;
+    }
     const part = (path, fill, shade) => {
       g.beginPath(); path(); g.lineJoin = 'round'; g.lineWidth = lw * 2; g.strokeStyle = ink; g.stroke(); g.fillStyle = fill; g.fill();
       if (shade && !far) { g.save(); g.beginPath(); path(); g.clip(); g.fillStyle = shade; g.beginPath(); path(); g.fill(); g.translate(L[0] * ppm * 0.07 * k, L[1] * ppm * 0.09 * k); g.fillStyle = fill; g.beginPath(); path(); g.fill(); g.restore(); }

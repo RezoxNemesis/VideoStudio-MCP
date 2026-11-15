@@ -442,6 +442,9 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   if (real && d.headgear?.type === 'crown' && lmk.crown && lmk.nape) for (const m of crownMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.38)), hi: rgbOf(shadeHex(m.c, 0.5)), hiAt: 0.8, thr: 0.0, two: true, group: 'hair', bias: 0.005, edge: 1.4, noAO: true, recv: false } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.3)), flat: true, two: true, group: 'hair', bias: 0.006, line: false }));
   if (real && d.headgear?.type === 'helmet' && lmk.crown && lmk.nape) for (const m of helmetMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.42)), hi: rgbOf(shadeHex(m.c, 0.55)), hiAt: 0.8, thr: 0.0, group: 'hair', bias: 0.004, edge: 1.6 } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.35)), thr: 0.05, two: true, group: 'hair', bias: 0.004, edge: 1.4 }));
   for (const m of carried(ch, pose, lit, pose.height / 1.8)) { const id = cp.add(m.pos, m.idx, m.paint); limbIds.add(id); }
+  // what is painted in one picture with the body, so each hides the other as it should: the horse under a rider
+  // (drawn apart, the whole rider lay on top of the horse, the leg on its far side too)
+  if (real) for (const m of o.along ?? []) cp.add(m.pos, m.idx, m.paint);
   { const rb = robeMesh(ch, lit); if (rb) cp.add(rb.pos, rb.idx, rb.paint, null, rb.u); }
   if (ch.cape && d.cape) { const m = sheet(ch.cape), c = d.cape.color, li = d.cape.lining ?? shadeHex(c, -0.25); cp.add(m.pos, m.idx, { fill: hex(lit(c)), shade: hex(lit(shadeHex(c, -0.3))), two: true, back: { fill: hex(lit(li)), shade: hex(lit(shadeHex(li, -0.3))) }, thr: 0.0 }); }
   const spr = cp.finish();

@@ -331,6 +331,34 @@ rows of small plates laid like bricks: each plate's lower edge catches the light
 above, a cord's colour is stitched through every plate. `from` / `to` (metres up from the ground) keep the plates to a
 part of a garment's height.
 
+## Riders
+
+A horse is a rounded, painted body made from a skeleton that walks, trots and gallops with its hooves planted
+(engine/horse.js, engine/horsemesh.js), and a performed person sits on it with a real body (kit/riders.js):
+
+```js
+import { rider } from '../vs.js';
+const R = rider({ horse: { coat: '#2e282c', mane: '#0e0c0e', tack: true, cloth: '#5a1a1e' },
+                  path: [[0, 1.7, 0, 'stand'], [8, 1.7, 0]] });        // or [[0, 3, -4, 'walk'], [8, 3, 6]]
+makeSeq({ …,
+  actors: () => [{ id: 'gar', design: …, ...R.actor }],               // he is carried to the saddle and seated
+  dyn: (ts, ctx) => [R.item(ts, ctx)],                                // the horse's place in the picture (its shadow)
+});
+```
+
+- `path`: way-points `[t, x, z, gait?]` in sequence time (`stand`, `walk`, `trot`, `gallop`; the gait follows the speed
+  when it is not named), or a function `(ts) → { pos: [x, z], yaw, dist, gait }`.
+- `horse`: `coat`, `mane`, `scale` (1 = 1.56 m at the withers), `tack: true` (saddle, girth, bridle, reins to the
+  rider's hands, stirrups at his feet), `cloth` (the saddle cloth's colour), `leather`.
+- The rider performs as anybody does (stage him standing: `idle: true`, lines, looks, gestures); `...R.actor` turns
+  him the way the horse faces, carries him to the saddle and bends him into a seat: thighs along the barrel, lower
+  legs down the horse's sides, hands at the reins. `arms: false` leaves the arms to the performance (a rider who
+  points, draws, carries a spear); `lift`, `spread`, `thigh`, `knee` adjust the seat.
+- Rider and horse are painted in one picture, so the horse hides the leg on its far side.
+- A horse alone: `const h = new Horse({ coat }); h.place([x, z], yaw, dist, gait, ts)` in a `dyn` item that calls
+  `h.draw(g, cam, sc.litAt(d), { sun: sc.sun, light: sc.light2(cam), shadow: true })`.
+- Looks that are flat on purpose (paper, puppet, flat) keep the cut-out horse.
+
 ## The 2D library
 
 587 pictures drawn by the app (all original, free to use): 48 backgrounds (16 places × day, dusk, night) each in five

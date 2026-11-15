@@ -177,7 +177,7 @@ export class ShotRun {
       const drawIt = (gg, cm, sc) => {
         if (!inView(cm, pose.j)) { if (globalThis.__cullLog) globalThis.__cullLog('actor', a.id, cm, pose, t); if (!this.o.noCull) return; } // beside or behind the lens: nothing of it belongs in the picture
         const d = V.dist(cm.pos, pose.j.root);
-        a.ch.draw(gg, cm, pose, face, a.lit ?? sc.litAt(d), { sun: scene.sun, light: a.light ?? light, rim: a.rim ?? sc.o.rim ?? null, pole: typeof a.pole === 'function' ? a.pole(t, ctx) : a.pole, ground: a.gnd ?? 0, shadow: a.shadow ?? sc.o.shadow !== false, shadowAlpha: sc.o.shadowAlpha ?? 0.28, shadowColor: sc.o.shadowColor });
+        a.ch.draw(gg, cm, pose, face, a.lit ?? sc.litAt(d), { along: a.along ? a.along(t, ctx, cm, a.lit ?? sc.litAt(d)) : null, sun: scene.sun, light: a.light ?? light, rim: a.rim ?? sc.o.rim ?? null, pole: typeof a.pole === 'function' ? a.pole(t, ctx) : a.pole, ground: a.gnd ?? 0, shadow: a.shadow ?? sc.o.shadow !== false, shadowAlpha: sc.o.shadowAlpha ?? 0.28, shadowColor: sc.o.shadowColor });
         if (a.after) a.after(gg, cm, sc, t, pose, ctx);
       };
     }
