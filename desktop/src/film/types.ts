@@ -47,6 +47,8 @@ export interface VoiceNeed {
   id: string;
   lang: string;
   have: boolean;
+  /** Spoken already, only not fitted to the other languages yet (a build that was stopped while speaking). */
+  spoken?: boolean;
   who?: string;
   text?: string;
   show?: string;

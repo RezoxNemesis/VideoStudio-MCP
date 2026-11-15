@@ -11,6 +11,7 @@ import { openVoice } from "../../../src/voice/open_client";
 import { SAMPLE_RATE } from "../../../src/voice/engine/audio";
 import { getBlob, deleteBlob } from "../../../src/core/storage";
 import { dropRuntime } from "../../../src/stage/draw";
+import { filmStageEnv } from "./stageenv";
 import { need } from "../bridge";
 import type { BakeNeed, FilmApi, SoundNeed, VoiceNeed } from "./types";
 
@@ -71,7 +72,7 @@ async function speak(dir: string, v: VoiceNeed): Promise<void> {
 async function solve(dir: string, b: BakeNeed, problems: string[]): Promise<void> {
   const spec = b.spec!;
   const s = scratch();
-  const made = await runQuiet(s, [{ op: "stage.new", name: spec.name, env: spec.env ?? "plain", time: "day", seconds: spec.seconds, toTimeline: false }]);
+  const made = await runQuiet(s, [{ op: "stage.new", name: spec.name, env: filmStageEnv(spec), time: "day", seconds: spec.seconds, toTimeline: false }]);
   if (!made[0]?.ok) throw new Error(`${b.seq}: the Stage could not start: ${made[0]?.error}`);
   const { sceneId, layerId } = made[0].result as { sceneId: string; layerId: string };
   try {
@@ -149,8 +150,9 @@ export async function prepare(dir: string, on: (m: PrepStep) => void = () => {},
   const f = film(), out: PrepResult = { spoke: [], solved: [], sounds: [], problems: [] };
   let n = await f.needs(dir);
   out.problems.push(...n.problems);
-  const lines = only.voices === false ? [] : n.voices.filter((v) => !v.have);
-  if (lines.length) {
+  // (a line that is spoken but not fitted — a build stopped while speaking — is only fitted, never spoken again)
+  const lines = only.voices === false ? [] : n.voices.filter((v) => !v.have && !v.spoken);
+  if (lines.length || (only.voices !== false && n.voices.some((v) => !v.have && v.spoken))) {
     for (const [i, v] of lines.entries()) {
       on({ phase: "voice", done: i, total: lines.length, what: `${v.id} · ${v.lang}` });
       await speak(dir, v);

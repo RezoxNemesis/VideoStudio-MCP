@@ -70,6 +70,10 @@ elder, merchant, master, lady, soldier, captain, swordsman, king, warlord. Steps
 ] }
 { op: 'stage.fight', … }                                                        // sword and fist fights: see {"op":"help"} stage.fight
 ```
+A sword at the hip is drawn with the sword overlay: `{ t0, t1, fade: 0.35, sword: [[0, 'sheath'], [1.5, 'sheath'], [1.7,
+'unsheath'], [2.0, 'drawn']] }` — the hand on the hilt, the blade out along the scabbard's own line, the swing (start the
+overlay off screen: the sword is in the hand from its first moment). The ground of a film is flat (y = 0 everywhere), and
+a performance is solved on a flat floor; `motion: () => ({ env: 'village', … })` asks for one of the Stage's own places.
 Actions chain: each starts where the last left the body. `at: { pos, yaw }` jumps instead. Useful clips: `143_25` wave,
 `113_02` bow. A changed performance is solved again (a few seconds); shots that do not show the change stay as they are.
 
@@ -149,6 +153,22 @@ lower lip, the crease of the lids, and the hair's own shadow on the brow. On the
 the lips are drawn (default 0.45; about 0.9 for a woman's painted mouth), `face.lipColor`, `face.nostrils: false`,
 `face.detail: false` for the plain face of earlier versions. `face.nose: 0…1` lays the nose's shadows in lightly
 (about 0.35 for a fine nose under the soft brush).
+
+**Beards, scars, the lines of age.** They are painted on the skin of a real head, so they turn with it and move with
+the jaw: `face.beard: { style: 'full' | 'goatee' | 'chin' | 'mustache', cheek: 0…1 (how high it grows on the cheek),
+mustache: false | { heavy: true (it hangs over the upper lip, its ends down past the corners of the mouth), density },
+sideburn: false, soul: false, rough: 0…1 (how ragged its edge is drawn), strands: 0…1 (darker strokes through it, the
+way it grows), density: 0…1 (below 1: stubble), color }` — in the hair's colour unless it has its own (a white beard
+under dark hair); the body model's own beard (a shell of hair round the jaw) is then left out. `face.scars: [{ from:
+[x, y], to: [x, y], w: 0.0012 }]` draws fine scars between places on the face — metres from its middle (positive
+towards the head's own left) and up from the line of the eyes: the brow lies near 0.03, the nose's tip near −0.045,
+the mouth near −0.08. `face.lines: 0…1` draws the lines of age (the folds from the nose past the mouth; from 0.5 the
+lines under the eyes; from 0.8 across the brow), `face.frown: true` the furrow between the brows.
+
+**Shoulder plates.** `design.armor.pauldron: '#585c68'` puts plates on the shoulders of a real body: a cap over each
+shoulder and lames lapping down the upper arm, going with the arm when it is lifted (`design.body.pauldrons: false |
+{ size: 1.15, lames: 3 }`). With `body.plates: { cuirass: {…}, coat: { h, w, lace } }` the skirt under a cuirass is a
+skirt of plates.
 
 ## Action
 
@@ -295,8 +315,10 @@ A place can be painted pixel by pixel, the way a background painter lays it in (
 for a Scene: `sc.add('sky', skyPaint({ zenith, mid, horizon, away, sun: { dir, color, glow, r }, clouds: { cover, scale,
 height, color, far, shade, wind, seed } }))` — a sky lit from where the sun stands (warm round the sun, cool away from
 it), clouds with a lit and a shaded side that drift; `sc.add('far', ridgePaint({ layers: [{ dist, h, color, seed, peaks,
-folds, sharp, snow, gap: { az, w, depth } }], air, sun }))` — ridges round the horizon, crest behind crest, each lost in
-mist at its foot, paler the farther off, with a gap where a gorge cuts them; `sc.add('ground', landPaint({ colors: [the
+folds, sharp, peaky, snow, gap: { az, w, depth } }], air, sun }))` — ridges round the horizon, crest behind crest, each lost in
+mist at its foot, paler the farther off, with a gap where a gorge cuts them (`peaky: 1` makes the highest crests peaks
+instead of level table tops; far ranges read as land, not as cut paper, when they stay low in the sky's pale band and
+near the colour of the air); `sc.add('ground', landPaint({ colors: [the
 colours of what grows], earth, earthAmt, earthCover, patch, relief, cool, sun, wet, mist: { color, dist, amt } }))` — land
 whose colour varies like grown ground, low light lying on its swells, dew shining towards a low sun, mist on far land;
 `mistBand({ color, h, amt })` — mist along the horizon, in banks that drift; `grassPaint({ land, max, h: [a, b] })` — tufts
@@ -316,7 +338,8 @@ const figs = [0, 1, 2].map((i) => performer({ bake: 's00', as: 'model', design: 
 for (const it of legion({ men: ranks({ at: [14, 0], yaw: -90, files: 56, ranks: 60, figs: 3 }), yaw: -90, figures: figs }))
   sc.add('world', it);
 ```
-`ranks` sets men in ranks and files (`skip(rank, file)` leaves places empty for actors); `performer({ loop: strideOf('s00',
+A sequence's armies can be made from a soldier of that same sequence: the performance is read when the first figure is
+drawn, after the Stage has solved it. `ranks` sets men in ranks and files (`skip(rank, file)` leaves places empty for actors); `performer({ loop: strideOf('s00',
 'marcher') })` makes a marching figure (one stride, twelve drawings) and `legion({ state: (t) => ({ advance: t * 1.3,
 phase: t / stride }) })` marches them in step. Near men cover far ones, far ones pale into the air and end as marks along
 the horizon; the ground they stand on is darkened away from the sun.
@@ -346,8 +369,9 @@ makeSeq({ …,
 });
 ```
 
-- `path`: way-points `[t, x, z, gait?]` in sequence time (`stand`, `walk`, `trot`, `gallop`; the gait follows the speed
-  when it is not named), or a function `(ts) → { pos: [x, z], yaw, dist, gait }`.
+- `path`: way-points `[t, x, z, gait?, yaw?]` in sequence time (`stand`, `walk`, `trot`, `gallop`; the gait follows the
+  speed when it is not named), or a function `(ts) → { pos: [x, z], yaw, dist, gait }`. A horse that stands faces the
+  way it came in by, or `yaw` degrees when its way-point names one: `[[0, 17, 0, 'stand', -90], [60, 17, 0]]`.
 - `horse`: `coat`, `mane`, `scale` (1 = 1.56 m at the withers), `tack: true` (saddle, girth, bridle, reins to the
   rider's hands, stirrups at his feet), `cloth` (the saddle cloth's colour), `leather`.
 - The rider performs as anybody does (stage him standing: `idle: true`, lines, looks, gestures); `...R.actor` turns
@@ -406,4 +430,8 @@ swordswoman king queen — ids like `townswoman_12`. `code.people {group}` lists
 - After every change look at `code.frame` / `code.sheet` of the shots you touched before `code.build`.
 - Keep both feet of a character inside the picture or cut them off on purpose (frame from the chest up).
 - People are drawn whole, nearest last. For a hand on a far shoulder give the nearer one `actor: { id: { bias: 0.5 } }` in that shot.
+- Set cameras by numbers, not by following a head (a camera that follows a head shakes with every step):
+  `node devtests/where.mjs <film dir> s01_two@1.5 mira:head,root tom` prints where bodies are at a moment of a shot.
+- A build that is stopped while the lines are being spoken loses nothing: the lines already spoken are kept and only
+  fitted to each other when the build runs again.
 - Nothing in `.vs` needs care: delete it and everything is made again from the code.

@@ -127,6 +127,18 @@ export function voiceSpec(script, ln, lang) {
 }
 
 /**
+ * What a spoken line still needs: 'have' (its take is spoken and fitted to the other languages), 'fit' (spoken, but the
+ * takes have not been fitted to each other yet — the build was stopped while speaking: only the fitting is left, the
+ * line is not spoken again), 'speak' (no take, or the line's text, voice, tone or take number changed).
+ * q: { rawKey (the key its take was spoken with), key (the line's key now), raw, fitted (are the files there), listed
+ * (is it in the list of fitted lines) }
+ */
+export function voiceState(q) {
+  if (!q.raw || q.rawKey !== q.key) return 'speak';
+  return q.fitted && q.listed ? 'have' : 'fit';
+}
+
+/**
  * What a project still needs before it can be drawn and heard: solved motion per sequence, spoken lines, and the
  * music / sound beds of cues.json. Each entry says whether it is there (`have`) and, when not, how to make it.
  */
@@ -153,8 +165,8 @@ export function needs(P) {
       const ln = LN[id];
       if (!ln) { if (lang === P.config.langs[0]) problems.push(`Line ${id} is used in the film but is not in script.json.`); continue; }
       const sp = voiceSpec(script, ln, lang);
-      const have = raw[id]?.key === sp.key && fs.existsSync(path.join(P.D.vo, 'raw', lang, `${id}.wav`)) && fs.existsSync(path.join(P.D.vo, lang, `${id}.wav`)) && !!VO[lang]?.[id];
-      voices.push(have ? { id, lang, have } : { ...sp, have });
+      const state = voiceState({ rawKey: raw[id]?.key, key: sp.key, raw: fs.existsSync(path.join(P.D.vo, 'raw', lang, `${id}.wav`)), fitted: fs.existsSync(path.join(P.D.vo, lang, `${id}.wav`)), listed: !!VO[lang]?.[id] }), have = state === 'have';
+      voices.push(have ? { id, lang, have } : { ...sp, have, spoken: state === 'fit' });
     }
   }
   const cues = readJson(path.join(P.dir, 'cues.json'), []), idx = readJson(path.join(P.D.audio, 'index.json'), {}), sounds = [];
