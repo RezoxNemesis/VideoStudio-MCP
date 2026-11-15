@@ -90,6 +90,111 @@ if (D) {
   if (P) { const skin = lum([232, 184, 150]); ok(P.every((p) => lum(p.fill) < skin - 4), 'every drawn tone is darker than the lit skin', P.map((p) => Math.round(lum(p.fill)))); }
 }
 
+// ---- 2b. a beard, a scar and the lines of age are painted on the skin too: they turn with the head and move with the jaw
+if (M && typeof F3.faceDecals === 'function') {
+  const named = (o) => { const d = F3.faceDecals(M, { shadeSide: 1, ...o }); return { d, at: (x, y) => { const k = d.map(x, y); return k < 0 ? 'skin' : d.names[k]; } }; };
+  const plain = named({});
+  ok(!plain.d.names.includes('beard') && plain.at(0, M.chin + 0.002) === 'skin', 'a face that asks for no beard has none', plain.at(0, M.chin + 0.002));
+  const full = named({ beard: { style: 'full', strands: 0 } }), mid = (M.sub + M.lipTopEdge) / 2; // (strands are looked at on their own below)
+  ok(full.d.names.includes('beard') && full.d.names.includes('mustache'), 'beard: { style: "full" } adds the tones beard and mustache', full.d.names);
+  ok(full.at(0, M.chin + 0.002) === 'beard' && full.at(0.012, M.chin - 0.01) === 'beard', 'a full beard covers the chin and the skin under it', [full.at(0, M.chin + 0.002), full.at(0.012, M.chin - 0.01)]);
+  ok(full.at(0.055, M.mouth - 0.008) === 'beard' && full.at(-0.055, M.mouth - 0.008) === 'beard', 'and the jaw on both sides', [full.at(0.055, M.mouth - 0.008), full.at(-0.055, M.mouth - 0.008)]);
+  ok(full.at(0.008, mid) === 'mustache' && full.at(-0.008, mid) === 'mustache', 'between the nose and the upper lip: the moustache', [full.at(0.008, mid), full.at(-0.008, mid)]);
+  ok(full.at(M.mouthW + 0.006, M.mouth) === 'beard', 'beside the corner of the mouth the moustache runs down into the beard', full.at(M.mouthW + 0.006, M.mouth));
+  ok(full.at(0.004, M.mouth - 0.004) === 'lipLow' && full.at(0.004, M.mouth + 0.004) === 'lipUp' && full.at(0.005, M.mouth) === 'mouthLine', 'the lips stay lips', [full.at(0.004, M.mouth - 0.004), full.at(0.004, M.mouth + 0.004)]);
+  ok(full.at(0, M.tip - 0.009) === 'noseUnder' && full.at(M.alar * 0.62, M.tip + 0.006) === 'noseSide', 'the nose keeps its shadows', [full.at(0, M.tip - 0.009), full.at(M.alar * 0.62, M.tip + 0.006)]);
+  ok(full.at(0.03, M.tip) === 'skin' && full.at(0.045, -0.03) === 'skin' && full.at(0, 0.05) === 'skin', 'the cheek under the eye and the brow stay bare', [full.at(0.03, M.tip), full.at(0.045, -0.03), full.at(0, 0.05)]);
+  ok(full.at(M.mouthW * 0.6, (M.lipEdge + M.dip) / 2 + 0.001) !== 'beard', 'under the lower lip, beside its middle, the skin is bare (a beard grows from the chin)', full.at(M.mouthW * 0.6, (M.lipEdge + M.dip) / 2 + 0.001));
+  // the ear: found on a real head where its fine folds begin; a head without one is given a place for it by its size
+  ok(near(M.ear, 0.128 * (M.eyeX / 0.0302), 0.002), 'a head with no ear to find: the ear is placed by the head\'s size', M.ear);
+  { const fsm = await import('node:fs'), FX = JSON.parse(fsm.readFileSync(new URL('./fixtures/head_mesh.json', import.meta.url), 'utf8'));
+    const MR = F3.faceMarksOf(Float32Array.from(FX.skin.pos), FX.skin.idx, FX.landmarks);
+    ok(MR.ear > 0.12 && MR.ear < 0.138, 'on a real head the ear is found: it begins about 13 cm round from the middle of the face', MR.ear);
+    // the measure round the side of the head runs evenly with the skin: along the cheek's side, a centimetre of skin is about a centimetre of it
+    const P = FX.skin.pos, eY = FX.landmarks.eyeL[1], eZ = FX.landmarks.eyeL[2], zF = eZ - (F3.FACE_FRONT ?? 0.045), side = [];
+    // (the cheek's side below the cheekbone, as its outline seen from above: the outermost skin at every half centimetre of depth)
+    const env = new Map(); for (let v = 0; v < P.length; v += 3) { const y = P[v + 1] - eY, dp = eZ - P[v + 2]; if (y > -0.025 || y < -0.04 || P[v] < 0.03 || dp < 0 || dp > 0.07) continue; const b = Math.floor(dp / 0.005), q = env.get(b); if (!q || P[v] > q[1]) env.set(b, [dp, P[v], Math.abs(F3.unfoldX?.(P[v], P[v + 2], zF) ?? 0)]); }
+    for (const b of [...env.keys()].sort((a, b) => a - b)) side.push(env.get(b));
+    let skin = 0; const from = side.length > 4 ? 0 : -1, run = from < 0 ? 0 : side[side.length - 1][2] - side[0][2];
+    for (let i = 1; i < side.length; i++) skin += Math.hypot(side[i][0] - side[i - 1][0], side[i][1] - side[i - 1][1]);
+    ok(from >= 0 && skin > 0.05 && run > skin * 0.8 && run < skin * 1.25, 'round the side of a real head the measure keeps pace with the skin (it does not stand still along the cheek and then leap)', [skin, run]); }
+  const sb = M.ear - 0.004; // (just in front of the ear)
+  ok(full.at(sb - 0.006, -0.02) === 'beard' && full.at(sb - 0.006, -0.06) === 'beard' && full.at(sb - 0.004, 0.0) === 'beard', 'in front of the ear the beard runs up as a sideburn to meet the hair', [full.at(sb - 0.006, -0.02), full.at(sb - 0.006, -0.06), full.at(sb - 0.004, 0.0)]);
+  ok(full.at(M.ear + 0.006, -0.03) === 'skin' && full.at(M.ear + 0.03, -0.03) === 'skin' && full.at(9, -0.08) === 'skin', 'it stops at the ear; the back of the head carries none', [full.at(M.ear + 0.006, -0.03), full.at(9, -0.08)]);
+  { const width = (y) => { let n = 0; for (let x = 0.06; x < 0.14; x += 0.0005) if (full.at(x, y) === 'beard') n++; return n * 0.0005; };
+    ok(width(0.0) > 0.006 && width(0.0) < 0.014 && width(-0.03) > width(0.0) + 0.002, 'the sideburn is a narrow strip (about a centimetre) that widens downwards into the beard', [width(0.0), width(-0.03)]); }
+  ok(full.at(sb - 0.024, -0.012) === 'skin', 'the cheek before the sideburn is bare', full.at(sb - 0.024, -0.012));
+  // how high it grows on the cheek
+  const low = named({ beard: { style: 'full', cheek: 0, strands: 0 } }), high = named({ beard: { style: 'full', cheek: 1, strands: 0 } });
+  ok(low.at(0.06, M.mouth + 0.012) === 'skin' && high.at(0.06, M.mouth + 0.012) === 'beard', 'cheek: 0 keeps it along the jaw, cheek: 1 lets it grow high on the cheek', [low.at(0.06, M.mouth + 0.012), high.at(0.06, M.mouth + 0.012)]);
+  // other cuts
+  const goat = named({ beard: { style: 'goatee', strands: 0 } });
+  ok(goat.at(0, M.chin + 0.002) === 'beard' && goat.at(0.008, mid) === 'mustache' && goat.at(0.06, M.mouth - 0.008) === 'skin' && goat.at(M.ear - 0.008, -0.03) === 'skin', 'a goatee: chin and moustache, bare jaw and cheeks', [goat.at(0, M.chin + 0.002), goat.at(0.008, mid), goat.at(0.06, M.mouth - 0.008)]);
+  const must = named({ beard: { style: 'mustache' } });
+  ok(must.at(0.008, mid) === 'mustache' && must.at(0, M.chin + 0.002) === 'skin' && must.at(0.055, M.mouth - 0.008) === 'skin', 'a moustache alone', [must.at(0.008, mid), must.at(0, M.chin + 0.002)]);
+  const noMust = named({ beard: { style: 'full', mustache: false, strands: 0 } });
+  ok(noMust.at(0.008, mid) === 'skin' && noMust.at(0, M.chin + 0.002) === 'beard', 'mustache: false leaves the upper lip bare', noMust.at(0.008, mid));
+  // a heavy moustache hangs over the upper lip (the lip is not drawn through it) and is thick from the nose down
+  { const hv = named({ beard: { style: 'mustache', mustache: { heavy: true } } }), lt = named({ beard: { style: 'mustache' } });
+    ok(hv.at(0.006, M.mouth + 0.004) === 'mustache' && lt.at(0.006, M.mouth + 0.004) === 'lipUp', 'mustache: { heavy: true } covers the upper lip; a light one leaves it', [hv.at(0.006, M.mouth + 0.004), lt.at(0.006, M.mouth + 0.004)]);
+    ok(hv.at(0.006, M.mouth - 0.004) === 'lipLow' && hv.at(0.005, M.mouth) === 'mouthLine', 'the lower lip and the line of the mouth stay', [hv.at(0.006, M.mouth - 0.004), hv.at(0.005, M.mouth)]);
+    ok(hv.at(M.mouthW + 0.004, M.mouth - 0.008) === 'mustache' && lt.at(M.mouthW + 0.004, M.mouth - 0.008) === 'skin', 'its ends hang down past the corners of the mouth', [hv.at(M.mouthW + 0.004, M.mouth - 0.008), lt.at(M.mouthW + 0.004, M.mouth - 0.008)]); }
+  // the edge on the cheek is drawn like hair: it is not one straight cut
+  { const edge = (x) => { let y = M.mouth - 0.02; while (y < 0 && full.at(x, y) === 'beard') y += 0.0002; return y; };
+    const xs = []; for (let x = 0.05; x < 0.09; x += 0.0005) xs.push(edge(x)); let turns = 0; for (let i = 2; i < xs.length; i++) if ((xs[i] - xs[i - 1]) * (xs[i - 1] - xs[i - 2]) < 0) turns++;
+    ok(turns >= 6, 'the beard\'s edge on the cheek is ragged like drawn hair (it rises and falls)', turns); }
+  // strands: a beard is hair — darker strokes run through it the way it grows, most of it stays its own tone
+  { const share = (o) => { const q = named({ beard: { style: 'full', ...o } }); let all = 0, st = 0; for (let x = 0.002; x < 0.08; x += 0.0007) for (let y = M.chin - 0.012; y < M.mouth + 0.004; y += 0.0007) { const k = q.at(x, y); if (k === 'beard' || k === 'beardStrand') { all++; if (k === 'beardStrand') st++; } } return [st / (all || 1), q.d.names.includes('beardStrand')]; };
+    const def = share({}), none = share({ strands: 0 }), many = share({ strands: 1 });
+    ok(def[1] && def[0] > 0.04 && def[0] < 0.3, 'a beard is drawn with strands: darker strokes through it, most of it its own tone', def);
+    ok(!none[1] && none[0] === 0, 'strands: 0 leaves it one flat tone', none);
+    ok(many[0] > def[0] * 1.3, 'strands: 1 draws more of them', [def[0], many[0]]);
+    const q = named({ beard: { style: 'full' } }); let runs = 0, inRun = false; for (let y = M.chin - 0.01; y < M.dip; y += 0.0002) { const k = q.at(0.0125, y) === 'beardStrand'; if (k && !inRun) runs++; inRun = k; }
+    let across = 0; inRun = false; for (let x = 0.002; x < 0.03; x += 0.0002) { const k = q.at(x, M.chin - 0.002) === 'beardStrand'; if (k && !inRun) across++; inRun = k; }
+    ok(across >= 3 && across > runs, 'the strokes run down the chin, the way a beard grows (crossing it finds more of them than going down it)', [across, runs]); }
+  // paints: the beard in the hair's colour (or its own), thin for stubble
+  const skinC = [232, 184, 150], shadeC = [196, 140, 118], lumOf = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
+  const pOf = (o, name) => { const d = F3.faceDecals(M, { shadeSide: 1, ...o }), P2 = F3.decalPaints(d, skinC, shadeC, o); return P2[d.names.indexOf(name)]; };
+  const pFull = pOf({ beard: { style: 'full', color: [58, 56, 62] } }, 'beard'), pStub = pOf({ beard: { style: 'full', color: [58, 56, 62], density: 0.35 } }, 'beard');
+  ok(!!pFull && lumOf(pFull.fill) < 70 && lumOf(pFull.shade) < lumOf(pFull.fill), 'a beard is painted in its colour, darker in shadow', pFull && pFull.fill);
+  ok(!!pStub && lumOf(pStub.fill) > lumOf(pFull.fill) + 40 && lumOf(pStub.fill) < lumOf(skinC) - 15, 'density below 1 thins it to stubble: between the skin and the beard', pStub && pStub.fill);
+  // a scar: a fine line from one place on the face to another
+  const sc = named({ scars: [{ from: [0.022, 0.03], to: [0.034, -0.05] }] });
+  ok(sc.d.names.includes('scar') && sc.at(0.028, -0.01) === 'scar', 'scars: [{ from, to }] draws a scar along its line', sc.at(0.028, -0.01));
+  ok(sc.at(0.031, -0.01) === 'skin' && sc.at(0.028, -0.07) === 'skin' && sc.at(-0.028, -0.01) === 'skin', 'a scar is fine (a millimetre or so) and ends where it ends', [sc.at(0.031, -0.01), sc.at(0.028, -0.07), sc.at(-0.028, -0.01)]);
+  // the lines of age
+  const old = named({ lines: 1 }), young = named({});
+  const foldX = (M.alar + 0.004 + M.mouthW + 0.009) / 2, foldY = (M.sub + 0.004 + M.mouth - 0.004) / 2;
+  let hit = 0; for (let dx = -0.004; dx <= 0.004; dx += 0.0002) if (old.at(foldX + dx, foldY) === 'ageLine') hit++;
+  let hitL = 0; for (let dx = -0.004; dx <= 0.004; dx += 0.0002) if (old.at(-foldX + dx, foldY) === 'ageLine') hitL++;
+  ok(old.d.names.includes('ageLine') && hit >= 2 && hit <= 12 && hitL >= 2, 'lines: 1 draws the fold from each wing of the nose down past the corner of the mouth, as a fine line', [hit, hitL]);
+  ok(!young.d.names.includes('ageLine'), 'a face without lines has none', young.d.names);
+  let frown = 0; const fr = named({ lines: 0.5, frown: true }); for (let y = 0.008; y < 0.03; y += 0.0005) for (let x = 0.002; x < 0.012; x += 0.0004) if (fr.at(x, y) === 'ageLine') frown++;
+  ok(frown >= 4, 'frown: true draws the furrow between the brows', frown);
+  // the side of the head unfolds into the face's measure, so a beard can run back along the jaw to the ear
+  if (typeof F3.unfoldX === 'function') {
+    ok(F3.unfoldX(0.03, 0.14, 0.09) === 0.03 && F3.unfoldX(-0.03, 0.14, 0.09) === -0.03, 'unfoldX: skin in front keeps its place', F3.unfoldX(0.03, 0.14, 0.09));
+    ok(near(F3.unfoldX(0.06, 0.06, 0.09), 0.09, 1e-9) && near(F3.unfoldX(-0.06, 0.06, 0.09), -0.09, 1e-9), 'unfoldX: skin behind the face lies further out by as much as it lies behind', F3.unfoldX(0.06, 0.06, 0.09));
+  } else ok(false, 'unfoldX(x, z, zFront) unfolds the side of the head', null);
+}
+
+// ---- 2c. a design asks for them on its sheet: face: { beard, scars, lines, frown }
+{
+  const BD = await import('../engine/bodydraw.js').catch((e) => ({ err: e }));
+  const fo = typeof BD.faceMarkOptions === 'function' ? BD.faceMarkOptions : null;
+  ok(!!fo, 'faceMarkOptions(design) reads what a design asks to have painted on its face', BD.err ? String(BD.err) : Object.keys(BD).slice(0, 4));
+  if (fo) {
+    const a = fo({ hair: { color: '#3a383e', shade: '#242328' }, face: { beard: { style: 'full', cheek: 0.4 }, scars: [{ from: [0.02, 0.03], to: [0.03, -0.05] }], lines: true, frown: true } });
+    ok(a.beard && a.beard.style === 'full' && a.beard.cheek === 0.4 && a.beard.color.join() === '58,56,62' && a.beard.shade.join() === '36,35,40', 'a beard takes the hair\'s colour and shade', a.beard);
+    ok(a.scars.length === 1 && a.lines === true && a.frown === true, 'scars, lines and frown are handed on', [a.scars, a.lines, a.frown]);
+    const b = fo({ hair: { color: '#3a383e' }, face: { beard: { style: 'goatee', color: '#e8e6e2' } } });
+    ok(b.beard.color.join() === '232,230,226' && b.beard.shade.every((v, i) => v < b.beard.color[i]), 'or its own colour (a white beard under dark hair), with a shade made from it', b.beard);
+    const c = fo({ hair: { color: '#3a383e' }, face: {} });
+    ok(!c.beard && !c.scars && !c.lines, 'a design that asks for nothing gets nothing', c);
+    ok(BD.paintedBeard?.({ face: { beard: { style: 'full' } } }) === true && BD.paintedBeard?.({ face: {}, beard: { length: 0.2 } }) === false, 'paintedBeard(design): a painted beard replaces the body model\'s own', [BD.paintedBeard?.({ face: { beard: { style: 'full' } } }), BD.paintedBeard?.({ face: {} })]);
+  }
+}
+
 // ---- 3. hair throws its shadow on the face (and only hair does): a strip of hair over a brow, light from above
 {
   const quad = (x0, x1, y0, y1, z) => ({ pos: Float32Array.from([x0, y0, z, x1, y0, z, x1, y1, z, x0, y1, z]), idx: Uint32Array.from([0, 1, 2, 0, 2, 3]) });

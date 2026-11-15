@@ -58,7 +58,19 @@ export function faceMarksOf(pos, tris, lm, lower = null) {
     let s0 = 0, s2 = 0, s4 = 0, t0 = 0, t2 = 0; for (let c = 0; c < NS; c++) { if (up[c] > 1e8) continue; const x2 = (c * colW) ** 2; s0 += 1; s2 += x2; s4 += x2 * x2; t0 += up[c]; t2 += up[c] * x2; }
     if (s0 >= 3) { const det = s0 * s4 - s2 * s2; if (Math.abs(det) > 1e-18) { seamA = Math.max(-6, Math.min(6, (s0 * t2 - s2 * t0) / det)); mouth = (t0 - seamA * s2) / s0; } else mouth = t0 / s0; }
   }
-  return { eyeX, eyeY, eyeZ, m, nasion, tip, sub, lipTop, lipTopEdge: mouth + 0.42 * (sub - mouth), mouth, lipLow, lipEdge: mouth - 0.62 * (mouth - dip), dip, chin, alar, bridge, mouthW, seamA, relief: { G, NC, n, cell, top } };
+  // the ear, in the face's measure unfolded round the side of the head (unfoldX): where its fine folds begin, at the
+  // height between the eyes and the nose's foot — the side of a head is modelled coarsely, an ear finely. A head
+  // without one is given a place for it by its size.
+  const sz = eyeX / 0.0302, zF = eyeZ - FACE_FRONT, fine = [];
+  for (let t = 0; t + 2 < tris.length; t += 3) {
+    const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3, cy = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3 - eyeY; if (cy > 0 || cy < -0.045 * sz) continue;
+    const u = Math.min(Math.abs(unfoldX(pos[a], pos[a + 2], zF)), Math.abs(unfoldX(pos[b], pos[b + 2], zF)), Math.abs(unfoldX(pos[c], pos[c + 2], zF))); if (u < 0.09 * sz) continue;
+    const e = Math.max(Math.hypot(pos[a] - pos[b], pos[a + 1] - pos[b + 1], pos[a + 2] - pos[b + 2]), Math.hypot(pos[a] - pos[c], pos[a + 1] - pos[c + 1], pos[a + 2] - pos[c + 2]), Math.hypot(pos[b] - pos[c], pos[b + 1] - pos[c + 1], pos[b + 2] - pos[c + 2]));
+    if (e < 0.0045 * sz) fine.push(u);
+  }
+  fine.sort((p, q) => p - q);
+  const ear = fine.length >= 12 ? fine[2] : 0.128 * sz;
+  return { eyeX, eyeY, eyeZ, m, nasion, tip, sub, lipTop, lipTopEdge: mouth + 0.42 * (sub - mouth), mouth, lipLow, lipEdge: mouth - 0.62 * (mouth - dip), dip, chin, alar, bridge, mouthW, seamA, ear, relief: { G, NC, n, cell, top } };
 }
 
 /**
@@ -96,10 +108,25 @@ export function noseLine(M, turn, far) {
  * o: { shadeSide: +1 | −1 (the side of the nose away from the light, as a sign of x), eye?: { cx, cy, hw, hh } (where
  * the drawn eyes sit: centre off the middle and above the line of the eyes, half width and height), lips?: 0…1 (how
  * full the lips are drawn; 0 leaves them out), nostrils?: false }
+ * Hair and age are painted on the skin as well (they turn with the head and move with the jaw):
+ *   beard?: { style: 'full' | 'goatee' | 'chin' | 'mustache', cheek: 0…1 (how high it grows on the cheek), mustache?:
+ *     false | { heavy: true (it hangs over the upper lip, its ends down past the corners of the mouth), density },
+ *     sideburn?: false, soul?: false (the tuft under the lower lip), rough: 0…1 (how ragged its edge on the cheek
+ *     is drawn), gap (metres left bare under the nose's middle), color, shade, density: 0…1 (below 1: stubble) }
+ *   scars?: [{ from: [x, y], to: [x, y], w: 0.0012 }] — fine lines between places on the face
+ *   lines?: 0…1 — the lines of age: the folds from the nose past the mouth (any), under the eyes (from 0.5), across the
+ *     brow (from 0.8); frown?: true — the furrow between the brows
+ * x reaches round the side of the head (see unfoldX): the ear begins about 0.13 from the middle (marks.ear).
  * Returns { map, names, lidY } — names[k] is the tone map gives as k; lidY is the height of the lids' crease over the eye.
  */
 export function faceDecals(M, o = {}) {
   const names = ['noseSide', 'noseUnder', 'nostril', 'lipUp', 'lipLow', 'lipUnder', 'lid', 'mouthLine'];
+  const bd = o.beard && o.beard.style !== 'none' ? o.beard : null, bStyle = bd ? bd.style ?? 'full' : null;
+  const kBeard = bd && bStyle !== 'mustache' ? names.push('beard') - 1 : -1, kMust = bd && bd.mustache !== false && bStyle !== 'chin' ? names.push('mustache') - 1 : -1;
+  const strands = bd ? bd.strands ?? 0.5 : 0, kStrand = bd && strands > 0 ? names.push('beardStrand') - 1 : -1;
+  const heavy = kMust >= 0 && typeof bd.mustache === 'object' && !!bd.mustache.heavy; // a heavy moustache hangs over the upper lip, its ends down past the corners of the mouth
+  const scars = (o.scars ?? []).map((q) => ({ a: q.from, b: q.to, hw: (q.w ?? 0.0012) / 2 })), kScar = scars.length ? names.push('scar') - 1 : -1;
+  const age = o.lines === true ? 0.6 : o.lines || 0, kAge = age > 0 || o.frown ? names.push('ageLine') - 1 : -1;
   const side = o.shadeSide ?? 1, lips = o.lips ?? 1, nostrils = o.nostrils !== false, nl = M.tip - M.sub;
   // the nose's shadow side: a sliver down the lower half of the nose, widening to the wing, where it runs into the shadow under the tip
   const nTop = M.nasion - 0.55 * (M.nasion - M.tip), nBot = M.tip - 0.62 * nl;
@@ -109,7 +136,7 @@ export function faceDecals(M, o = {}) {
   const e = o.eye ?? { cx: M.eyeX, cy: 0, hw: 0.0215, hh: 0.016 }, lidY = e.cy + e.hh * 0.86 + 0.0032, lidT = 0.00075;
   const ulW = 0.5 * M.mouthW, ulTop = M.lipEdge - 0.12 * (M.lipEdge - M.dip), ulBot = M.dip + 0.18 * (M.lipEdge - M.dip);
   const upH = (M.lipTopEdge - M.mouth) * (0.45 + 0.4 * lips), loH = (M.mouth - M.lipEdge) * (0.55 + 0.4 * lips), mlT = 0.00055;
-  const map = (x, y) => {
+  const base = (x, y) => {
     if (x > 5) return -1; // the back of the head
     const ax = x < 0 ? -x : x;
     if (y < M.lipTopEdge + 0.002 && y > M.dip - 0.002) {
@@ -137,8 +164,76 @@ export function faceDecals(M, o = {}) {
     if (y > e.cy && y < lidY + 0.004) { const u = (ax - e.cx) / (e.hw * 1.02); if (u > -1 && u < 1) { const yc = lidY - e.hh * 0.42 * u * u * (u < 0 ? 0.85 : 1.15); if (Math.abs(y - yc) < lidT * (1.25 - u * u)) return 6; } }
     return -1;
   };
+  // ---- hair on the face, scars, the lines of age
+  // the beard's upper edge: from beside the mouth it runs back low over the cheek and sweeps up before the ear into the
+  // front edge of the sideburn — one line, to where the sideburn meets the hair (a strip about a centimetre wide there)
+  const sz = M.eyeX / 0.0302, uxB = (M.ear ?? 0.128 * sz) - 0.004, uxF = uxB - 0.0095 * sz, sbTop = 0.004;
+  const uxM = M.mouthW + 0.012, ck = bd ? bd.cheek ?? 0.5 : 0, rough = bd ? bd.rough ?? 0.6 : 0;
+  const yM = M.mouth + 0.004 + 0.006 * ck, yS = -0.047 + 0.03 * ck, pw = 3.2 - 1.6 * ck, gap = bd ? bd.gap ?? 0 : 0, yTop = bd && bd.sideburn === false ? yS : sbTop;
+  const tri = (v) => { const f = v - Math.floor(v); return f < 0.5 ? 4 * f - 1 : 3 - 4 * f; };
+  const cheekY = (ax) => { const t = Math.min(1, Math.max(0, (ax - uxM) / (uxF - uxM))), t4 = t * t * t * t; return yM + (yTop - yM) * Math.pow(t, pw) + rough * (0.0013 * tri(ax / 0.0037) + 0.0008 * tri(ax / 0.0023 + 0.3)) * Math.min(1, t * 6) * (1 - t4); };
+  const mustTop = (ax) => M.sub - 0.0012 - 0.0045 * (ax / uxM) * (ax / uxM);
+  const hair = (ax, y) => {
+    // the moustache: from under the nose down to the upper lip, thinner towards the corners of the mouth, where it turns down
+    if (kMust >= 0 && ax < uxM && ax >= gap && y < mustTop(ax)) {
+      const lo = ax < M.mouthW * 0.85 ? (heavy ? M.mouth + M.seamA * ax * ax + 0.0009 : M.lipTopEdge + 0.0008) : bStyle === 'mustache' ? (heavy ? M.mouth - 0.012 - 0.3 * (ax - M.mouthW * 0.85) : M.mouth - 0.004 - 0.02 * (ax - M.mouthW * 0.85)) : M.mouth + 0.0045;
+      if (y > lo && (bStyle !== 'mustache' || ax < M.mouthW + (heavy ? 0.0085 : 0.007))) return kMust;
+    }
+    if (kBeard < 0) return -1;
+    if (bStyle === 'chin') return ax < 0.021 * (1 - 0.35 * Math.min(1, Math.max(0, (M.dip - y) / 0.03))) && y < M.dip + 0.001 ? kBeard : -1;
+    if (ax < uxM) {
+      // the chin and under it; under the lower lip the beard closes in an arc, leaving a crescent of bare skin below the lip
+      const lw = M.mouthW + 0.0015, q = Math.min(1, ax / lw);
+      if (y < Math.max(M.dip + 0.001, M.lipEdge - 0.003 - 0.0045 * (1 - q * q))) return kBeard;
+      if (ax >= lw && y < M.mouth + 0.0045) return kBeard;                        // beside the mouth, down from the moustache
+      if (bd.soul !== false && y < M.lipEdge - 0.0012 && ax < 0.0052 * (0.45 + 0.55 * (M.lipEdge - y) / (M.lipEdge - M.dip))) return kBeard; // the tuft under the lip
+      return -1;
+    }
+    if (bStyle === 'goatee') return ax < uxM + 0.007 * Math.min(1, Math.max(0, (M.mouth - y) / 0.02)) && y < yM - 0.004 ? kBeard : -1;
+    if (ax < uxF) return y < cheekY(ax) ? kBeard : -1;
+    // the sideburn, up to the hair; under the lobe of the ear the beard runs a little further back, along the jaw's hind edge
+    if (ax < uxB) return y < yTop ? kBeard : -1;
+    return ax < uxB + 0.012 * sz * Math.min(1, Math.max(0, (-0.05 * sz - y) / (0.022 * sz))) ? kBeard : -1;
+  };
+  // strands: fine darker strokes through the beard the way it grows — straight down the chin, down and forward on the
+  // cheek — each a dash with a beginning and an end, no two rows alike
+  const sPitch = 0.0031, sWide = 0.1 + 0.14 * strands, hash = (n) => { const v = Math.sin(n * 127.1 + 31.7) * 43758.5453; return v - Math.floor(v); };
+  const strand = (ax, y) => {
+    const c = (ax - 0.28 * Math.min(1, Math.max(0, (ax - 0.02) / 0.03)) * (y - M.chin)) / sPitch, row = Math.floor(c), f = c - row; if (f > sWide) return false;
+    const h = hash(row), along = y / (0.009 + 0.006 * h) + h * 7; return along - Math.floor(along) < 0.42 + 0.25 * strands;
+  };
+  const nearSeg = (x, y, a, b, hw) => { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1e-12, u = ((x - a[0]) * dx + (y - a[1]) * dy) / l2; if (u < 0 || u > 1) return false; const px = a[0] + dx * u - x, py = a[1] + dy * u - y, w = hw * (0.35 + 0.65 * Math.sin(Math.PI * u)); return px * px + py * py < w * w; };
+  const foldA = [M.alar + 0.004, M.sub + 0.004], foldB = [M.mouthW + 0.009, M.mouth - 0.004], foldC = [(foldA[0] + foldB[0]) / 2 + 0.0022, (foldA[1] + foldB[1]) / 2];
+  const lines = (ax, y) => {
+    if (age > 0) {
+      // the fold from the wing of the nose down past the corner of the mouth (bowed a little outwards)
+      if (nearSeg(ax, y, foldA, foldC, 0.00075) || nearSeg(ax, y, foldC, foldB, 0.00075)) return kAge;
+      if (age >= 0.5) { const u = (ax - e.cx) / (e.hw * 0.85); if (u > -1 && u < 1) { const yc = e.cy - e.hh * 1.5 - 0.0028 * (1 - u * u) + 0.0012 * u; if (Math.abs(y - yc) < 0.00045 * (1.2 - u * u)) return kAge; } }
+      if (age >= 0.8) for (const [yy, hw] of [[0.047, 0.03], [0.057, 0.024]]) { if (ax < hw) { const yc = yy - 0.0035 * (ax / hw) * (ax / hw); if (Math.abs(y - yc) < 0.00045 * (1.1 - (ax / hw) * (ax / hw))) return kAge; } }
+    }
+    if (o.frown && nearSeg(ax, y, [0.0052, 0.0105], [0.0068, 0.0265], 0.0007)) return kAge;
+    return -1;
+  };
+  const map = kBeard < 0 && kMust < 0 && kScar < 0 && kAge < 0 ? base : (x, y) => {
+    if (x > 5 || x < -5) return -1;
+    const ax = x < 0 ? -x : x;
+    if (heavy && y > M.mouth + M.seamA * ax * ax + 0.0009 && y < M.lipTopEdge + 0.003 && ax < M.mouthW * 0.85 && ax >= gap) return kMust; // (over the upper lip)
+    const k = base(x, y); if (k >= 0) return k;
+    if (bd) { const h = hair(ax, y); if (h >= 0) return h === kBeard && kStrand >= 0 && strand(ax, y) ? kStrand : h; }
+    for (const q of scars) if (nearSeg(x, y, q.a, q.b, q.hw)) return kScar;
+    return kAge >= 0 ? lines(ax, y) : -1;
+  };
   return { map, names, lidY };
 }
+
+/** How far behind the eyes the face's front ends and its side begins (metres): unfoldX's zFront is the eyes' z less this. */
+export const FACE_FRONT = 0.02;
+/**
+ * The side of the head, unfolded into the face's measure: skin in front of `zFront` keeps its x; skin behind it lies
+ * further out from the middle by as much as it lies behind — so the cheek runs on round the jaw to the ear in one
+ * measure, and a beard can be laid along it.
+ */
+export function unfoldX(x, z, zFront) { const back = zFront - z; return back <= 0 ? x : x < 0 ? x - back : x + back; }
 
 /** A paint for every drawn tone of faceDecals: its lit tone and its tone in shadow, from the skin's own two tones. o: { lips, lip, nose (0…1: how strongly the nose's shadows are laid in) } */
 export function decalPaints(D, skin, shade, o = {}) {
@@ -154,5 +249,12 @@ export function decalPaints(D, skin, shade, o = {}) {
     lid: [mul(shade, 0.74), mul(shade, 0.66)],
     mouthLine: [mul(shade, 0.42), mul(shade, 0.38)],
   };
+  // hair on the face in its own colour (thinned towards the skin for stubble); a scar and the lines of age from the skin's tones
+  const bd = o.beard ?? {}, bc = bd.color ?? [40, 34, 34], bs = bd.shade ?? mul(bc, 0.62), dn = bd.density ?? 1, md = typeof bd.mustache === 'object' ? bd.mustache.density ?? dn : dn;
+  tones.beard = [mix(skin, bc, dn), mix(shade, bs, dn)];
+  tones.mustache = [mix(skin, bc, md), mix(shade, bs, md)];
+  tones.beardStrand = [mix(skin, mix(bc, bs, 0.7), dn), mix(shade, mul(bs, 0.8), dn)];
+  tones.scar = [mix(mix(skin, shade, 0.75), [150, 72, 70], 0.42), mix(deep, [120, 52, 52], 0.35)];
+  tones.ageLine = [mix(skin, shade, 0.95), mul(shade, 0.86)];
   return D.names.map((n) => ({ fill: tones[n][0].map(Math.round), shade: tones[n][1].map(Math.round), line: false, recvHair: true }));
 }

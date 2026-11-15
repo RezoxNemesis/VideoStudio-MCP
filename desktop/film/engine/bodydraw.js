@@ -6,8 +6,9 @@ import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
 import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn } from './body.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes } from './hair.js';
+import { pauldronMeshes } from './armour.js';
 import { look } from './look.js';
-import { faceMarksOf, faceDecals, decalPaints, noseLine } from './face3.js';
+import { faceMarksOf, faceDecals, decalPaints, noseLine, unfoldX, FACE_FRONT } from './face3.js';
 import { knuckleMarks, handLineWeight } from './hand3.js';
 
 const SKIP = new Set(['eyes', 'teeth', 'tongue', 'lashes', 'haircap', 'hair', 'beard']);
@@ -304,6 +305,22 @@ export function topMeasures(B, p, d) {
  * hair.sheen (0…1) the band of light across the hair stands higher on the ridge of each lock than at its edges.
  * Locks are numbered across from −1 to 1 (hair.js gives that with every mesh). o: { edge }.
  */
+/**
+ * What a design asks to have painted on its face (design.face: { beard: { style, cheek, color?, density? … }, scars: [{
+ * from, to }], lines, frown } — see faceDecals): a beard takes the hair's colour and shade unless it has its own.
+ * rgbOf: how a colour of the sheet becomes the picture's (the light of the place); default: as it is.
+ */
+export function faceMarkOptions(d, rgbOf = (c) => hex(c)) {
+  const fd = d.face ?? {}, out = {};
+  if (fd.beard) { const own = fd.beard.color, c = own ?? d.hair?.color ?? '#28221f', sh = fd.beard.shade ?? (own ? shadeHex(own, -0.34) : d.hair?.shade ?? shadeHex(c, -0.34)); out.beard = { ...fd.beard, color: rgbOf(c), shade: rgbOf(sh) }; }
+  if (fd.scars?.length) out.scars = fd.scars;
+  if (fd.lines) out.lines = fd.lines;
+  if (fd.frown) out.frown = fd.frown;
+  return out;
+}
+/** A beard painted on the face replaces the body model's own beard (a shell of hair round the jaw). */
+export function paintedBeard(d) { return !!d.face?.beard; }
+
 export function hairPaint(d, rgbOf, o = {}) {
   const hc = d.hair.color, fill = rgbOf(hc), shade = rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi = rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), k = clamp(d.hair.strands ?? 0);
   const base = { fill, shade, hi, hiAt: 0.9, thr: 0.1, group: 'hair', hairy: true, soft: 0, bias: 0.002, noAO: true, recv: false, castHair: true, ...(o.edge ? { edge: o.edge } : {}) };
@@ -377,6 +394,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       else cp.add(p.out, p.idx, { fill: hex(ink), shade: hex(ink), flat: true, two: true, bias: 0.002, line: false, group: 'eye' }, nr);
       continue;
     }
+    if (real && p.name === 'beard' && paintedBeard(d)) continue;
     if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard' }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
     // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it
@@ -400,7 +418,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (p.idxFingers) p.idxFingers.forEach((fi, f) => { if (fi.length) { const id = cp.add(p.out, fi, { ...paint, bands: undefined, group: `finger${f + 1}`, joins: paint.group ?? p.name, ow: handOw }, nr); limbIds.add(id); handIds.add(id); } });
     if (real && p.material === 'skin' && p.idxHead.length) {
       // the face: lit almost everywhere (a drawn face keeps its shadows to the jaw and the far cheek); brows ride on the skin
-      const xy = p.faceXY ?? (p.faceXY = (() => { const a = new Float32Array(p.n * 2), base = p.base ?? p.pos; for (let v = 0; v < p.n; v++) { const front = base[v * 3 + 2] > eyeZ - 0.045; a[v * 2] = front ? base[v * 3] : 9; a[v * 2 + 1] = base[v * 3 + 1] - eyeY; } return a; })());
+      const xy = p.faceXY ?? (p.faceXY = (() => { const a = new Float32Array(p.n * 2), base = p.base ?? p.pos; for (let v = 0; v < p.n; v++) { a[v * 2] = unfoldX(base[v * 3], base[v * 3 + 2], eyeZ - FACE_FRONT); a[v * 2 + 1] = base[v * 3 + 1] - eyeY; } return a; })());
       const br = fd.brow3 ?? {}, by = br.y ?? 0.0235, th = br.thick ?? 0.0036, x0 = br.x0 ?? 0.011, x1 = br.x1 ?? 0.058, arch = br.arch ?? 0.0055, tilt = br.tilt ?? 0.0;
       const bc = d.hair?.color ?? '#1c1a22';
       const brow = (x, y) => { const ax = x < 0 ? -x : x; if (ax < x0 || ax > x1) return -1; const u = (ax - x0) / (x1 - x0), yc = by + arch * Math.sin(Math.PI * Math.min(1, u * 1.15)) - tilt * (1 - u) - 0.004 * u * u, h = th * (1 - 0.62 * u) * (u < 0.08 ? 0.5 + u * 6.25 : 1); return Math.abs(y - yc) < h ? 0 : -1; };
@@ -414,8 +432,9 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
           return faceMarksOf(base, p.idxHead, lmk, jaw.size ? lower : null);
         })());
         const ey = fd.eye ?? {}, e3 = fd.eye3 ?? {}, ehw = e3.w ?? 0.0215, ehh = e3.h ?? ehw * ((ey.h ?? 0.15) / (ey.w ?? 0.2)) * 1.05;
-        dec = faceDecals(M, { shadeSide: V.dot(L, dirOnBone(B, 'head', [1, 0, 0])) > 0 ? -1 : 1, lips: fd.lips ?? 0.45, nostrils: fd.nostrils, eye: drawn ? { cx: M.eyeX + (e3.dx ?? 0.003), cy: e3.dy ?? 0.003, hw: ehw, hh: ehh } : { cx: M.eyeX, cy: 0.001, hw: 0.017, hh: 0.0085 } });
-        decP = decalPaints(dec, paint.fill, paint.shade, { lips: fd.lips ?? 0.45, lip: fd.lipColor ? rgbOf(fd.lipColor) : undefined, nose: fd.nose });
+        const marks = faceMarkOptions(d, rgbOf);
+        dec = faceDecals(M, { ...marks, shadeSide: V.dot(L, dirOnBone(B, 'head', [1, 0, 0])) > 0 ? -1 : 1, lips: fd.lips ?? 0.45, nostrils: fd.nostrils, eye: drawn ? { cx: M.eyeX + (e3.dx ?? 0.003), cy: e3.dy ?? 0.003, hw: ehw, hh: ehh } : { cx: M.eyeX, cy: 0.001, hw: 0.017, hh: 0.0085 } });
+        decP = decalPaints(dec, paint.fill, paint.shade, { ...marks, lips: fd.lips ?? 0.45, lip: fd.lipColor ? rgbOf(fd.lipColor) : undefined, nose: fd.nose });
       }
       const browP = { fill: rgbOf(bc), shade: rgbOf(bc), flat: true, line: false };
       const maps = drawn ? decP : [browP, ...decP];
@@ -442,6 +461,11 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   if (real && d.headgear?.type === 'crown' && lmk.crown && lmk.nape) for (const m of crownMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.38)), hi: rgbOf(shadeHex(m.c, 0.5)), hiAt: 0.8, thr: 0.0, two: true, group: 'hair', bias: 0.005, edge: 1.4, noAO: true, recv: false } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.3)), flat: true, two: true, group: 'hair', bias: 0.006, line: false }));
   if (real && d.headgear?.type === 'helmet' && lmk.crown && lmk.nape) for (const m of helmetMeshes(B, lmk, d.headgear)) eyeIds.add(cp.add(m.pos, m.idx, m.metal ? { metal: true, fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.42)), hi: rgbOf(shadeHex(m.c, 0.55)), hiAt: 0.8, thr: 0.0, group: 'hair', bias: 0.004, edge: 1.6 } : { fill: rgbOf(m.c), shade: rgbOf(shadeHex(m.c, -0.35)), thr: 0.05, two: true, group: 'hair', bias: 0.004, edge: 1.4 }));
   for (const m of carried(ch, pose, lit, pose.height / 1.8)) { const id = cp.add(m.pos, m.idx, m.paint); limbIds.add(id); }
+  // shoulder plates (design.armor.pauldron: their colour; design.body.pauldrons: false | { size, lames }): built over the body's own shoulders as they are posed
+  if (real && d.armor?.pauldron && d.body?.pauldrons !== false) {
+    const jb = {}; for (const nm of ['upperarm01.L', 'upperarm01.R', 'lowerarm01.L', 'lowerarm01.R', 'neck01', 'spine02']) { const b = B.bi[nm]; if (b !== undefined) jb[nm] = onBone(B, b, [B.head[b * 3], B.head[b * 3 + 1], B.head[b * 3 + 2]]); }
+    for (const m of pauldronMeshes(jb, B.height / 1.8, { color: d.armor.pauldron, size: d.body?.pauldrons?.size, lames: d.body?.pauldrons?.lames, rgbOf })) cp.add(m.pos, m.idx, m.paint);
+  }
   // what is painted in one picture with the body, so each hides the other as it should: the horse under a rider
   // (drawn apart, the whole rider lay on top of the horse, the leg on its far side too)
   if (real) for (const m of o.along ?? []) cp.add(m.pos, m.idx, m.paint);

@@ -33,13 +33,14 @@ export function seat(pose, horse, o = {}) {
 }
 
 /**
- * path: [[t, x, z, gait?], …] way-points in sequence time (the horse eases between them; the gait named at a point is
- * used from there on; 'stand' between two equal points). Returns { horse, at(ts) → { pos, yaw, dist, gait, speed } }.
+ * path: [[t, x, z, gait?, yaw?], …] way-points in sequence time (the horse eases between them; the gait named at a point is
+ * used from there on; 'stand' between two equal points — facing the way it came in by, or `yaw` degrees if the point names one). Returns { horse, at(ts) → { pos, yaw, dist, gait, speed } }.
  */
 export function ridePath(path) {
   // cumulative distance at each way-point
   const acc = [0]; for (let i = 1; i < path.length; i++) acc.push(acc[i - 1] + Math.hypot(path[i][1] - path[i - 1][1], path[i][2] - path[i - 1][2]));
-  let lastYaw = null;
+  const named = (i) => { for (let k = i; k >= 0; k--) { if (path[k][4] != null) return (path[k][4] * Math.PI) / 180; if (k > 0 && Math.hypot(path[k][1] - path[k - 1][1], path[k][2] - path[k - 1][2]) >= 0.02) return null; } return null; };
+  const cameBy = (i) => { const n = named(i); if (n != null) return n; for (let k = i; k > 0; k--) { const dx = path[k][1] - path[k - 1][1], dz = path[k][2] - path[k - 1][2]; if (Math.hypot(dx, dz) >= 0.02) return Math.atan2(dx, dz); } return 0; };
   return (ts) => {
     let i = 0; while (i < path.length - 2 && ts >= path[i + 1][0]) i++;
     const a = path[i], b = path[i + 1], span = Math.max(1e-6, b[0] - a[0]), raw = clamp((ts - a[0]) / span);
@@ -49,12 +50,12 @@ export function ridePath(path) {
     const u = fromStop && toStop ? smooth(raw) : fromStop ? raw * raw * (2 - raw) * 1 : toStop ? 1 - (1 - raw) * (1 - raw) * (2 - (1 - raw)) * 1 : raw;
     const uu = clamp(fromStop && !toStop ? (raw * raw + raw) / 2 : !fromStop && toStop ? 1 - ((1 - raw) * (1 - raw) + (1 - raw)) / 2 : u);
     const x = lerp(a[1], b[1], uu), z = lerp(a[2], b[2], uu), dist = lerp(acc[i], acc[i + 1], uu);
-    let yaw = still ? (lastYaw ?? 0) : Math.atan2(b[1] - a[1], b[2] - a[2]);
+    // standing, a horse faces the way it came in by (the last leg it moved along, read from the path itself: frames are
+    // drawn in any order), or the way its way-point names (degrees: 0 looks towards +z, 90 towards +x)
+    let yaw = still ? cameBy(i) : Math.atan2(b[1] - a[1], b[2] - a[2]);
     // turn smoothly through a way-point: blend towards the next leg's heading near its end
     if (!still && i + 2 < path.length) { const c = path[i + 2], nx = Math.atan2(c[1] - b[1], c[2] - b[2]); if (Math.hypot(c[1] - b[1], c[2] - b[2]) > 0.02) { let d = nx - yaw; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; yaw += d * smooth(clamp((raw - 0.7) / 0.3)) * 0.5; } }
     if (!still && i > 0) { const p = path[i - 1], pv = Math.atan2(a[1] - p[1], a[2] - p[2]); if (Math.hypot(a[1] - p[1], a[2] - p[2]) > 0.02) { let d = pv - yaw; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; yaw += d * (1 - smooth(clamp(raw / 0.3))) * 0.5; } }
-    if (path[i][4] != null && still) yaw = path[i][4];
-    lastYaw = yaw;
     const speed = still ? 0 : Math.hypot(b[1] - a[1], b[2] - a[2]) / span;
     return { pos: [x, z], yaw, dist, gait: still ? 'stand' : (a[3] ?? (speed > 6 ? 'gallop' : speed > 2.6 ? 'trot' : 'walk')), speed };
   };

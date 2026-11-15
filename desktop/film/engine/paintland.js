@@ -190,7 +190,8 @@ export function landPaint(o) {
  * Ridges standing round the horizon, one behind another. Each is a body of its own: crest behind crest (folds), every
  * crest dark against the paler one behind it and lost in mist at its foot.
  * o: { layers: [{ dist (m), h (m, its highest crest), color, seed, peaks: 5 (crests in a quarter turn), base: 0.25 (its lowest
- *   saddles, as a part of h), folds: 4, sharp: 0.4 (0 a rolling line … 1 teeth), rough: 0.5 (small teeth), snow: { line: 0.7, color },
+ *   saddles, as a part of h), folds: 4, sharp: 0.4 (0 a rolling line … 1 teeth), rough: 0.5 (small teeth), peaky: 0 (1: the
+ *   highest crests are peaks; 0: they are cut off level, like table mountains), snow: { line: 0.7, color },
  *   gap: { az (degrees round from +z towards +x), w (degrees), depth: 0…1 } a gorge cut through it }],
  *   air: 2600 (m of air after which a ridge has paled by two thirds), sun: { dir, color, glow (the air's colour towards it) }, res: 1 }
  */
@@ -208,7 +209,11 @@ export function ridgePaint(o) {
     const L = q.L, s = q.seed, K = q.k, w = (fbm2(ca * K * 0.5 + s * 0.4, sa * K * 0.5 + 7.7, 2) - 0.5) * 0.5;
     const soft = fbm2(ca * K + s + w, sa * K + s * 0.3, 4), sharp = 1 - Math.abs(2 * fbm2(ca * K * 2.3 + s * 1.7 - w, sa * K * 2.3 + 4.1 + s, 3) - 1);
     const sp = L.sharp ?? 0.4;
-    let hh = (L.base ?? 0.25) + (1 - (L.base ?? 0.25)) * clamp(((1 - sp) * soft + sp * sharp * (0.4 + soft) - 0.2) * 1.8) + ((L.rough ?? 0.5) * 0.05 + sp * 0.07) * (fbm2(ca * K * 9 + s, sa * K * 9 + 1.3, 3) - 0.5);
+    // (how high the land stands here, 0…1 of the layer's height: cut off flat at 1 — table mountains — or, with `peaky`,
+    // bent over from a knee below 1 so that the highest land still rises and falls: peaks)
+    const raw = ((1 - sp) * soft + sp * sharp * (0.4 + soft) - 0.2) * 1.8, pk = L.peaky ?? 0, knee = 1 - 0.62 * pk;
+    const up = pk > 0 && raw > knee ? knee + (1 - knee) * (1 - Math.exp(-(raw - knee) / (1 - knee))) : clamp(raw);
+    let hh = (L.base ?? 0.25) + (1 - (L.base ?? 0.25)) * up + ((L.rough ?? 0.5) * 0.05 + sp * 0.07) * (fbm2(ca * K * 9 + s, sa * K * 9 + 1.3, 3) - 0.5);
     if (L.gap) { let da = az - (L.gap.az * Math.PI) / 180; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI; const u = da / ((L.gap.w * Math.PI) / 180); hh *= 1 - (L.gap.depth ?? 0.9) * Math.exp(-u * u); }
     return Math.max(0.004, hh);
   };

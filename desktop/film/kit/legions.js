@@ -26,12 +26,20 @@ export function strideOf(bakeName, id, from = 0) {
  * mark (his colour far off), hands, bends (kit/combat.js bendPose: [{ bone, about, deg, props }] — a spear carried upright) }
  */
 export function performer(o) {
-  const bk = loadBake(o.bake), B = bodyOf(bk, o.as), ch = new Character(o.design), d = ch.d;
+  // (the performance is read when a figure is first drawn: a sequence's own set — its armies — is built before the
+  // Stage has solved that sequence, and can still be made from it)
+  let got = null;
+  const perf = () => {
+    if (got) return got;
+    let bk; try { bk = loadBake(o.bake); } catch (e) { if (e && e.code === 'ENOENT') throw new Error(`the performance of ${o.bake} has not been solved yet (build the film, or the sequence ${o.bake}, once): a legion's figure "${o.as}" is drawn from it`); throw e; }
+    if (!bk.actors[o.as]) throw new Error(`no actor ${o.as} in the performance of ${o.bake}`);
+    return (got = { bk, B: bodyOf(bk, o.as), ch: new Character(o.design), h: bk.actors[o.as].height });
+  };
   const loop = o.loop ?? [o.at ?? 0, o.at ?? 0], poses = o.loop ? (o.poses ?? 12) : 1, face0 = ((o.facing ?? 0) * Math.PI) / 180;
-  const h = bk.actors[o.as].height;
   return {
-    h, top: o.top ?? h + 1.0, half: o.half ?? 0.8, poses, mark: o.mark ?? d.top?.color ?? '#3a3038',
+    get h() { return perf().h; }, get top() { return o.top ?? perf().h + 1.0; }, half: o.half ?? 0.8, poses, mark: o.mark ?? o.design?.top?.color ?? '#3a3038',
     paint(g, cam, i, q) {
+      const { bk, B, ch } = perf();
       const t = loop[0] + ((loop[1] - loop[0]) * i) / poses, raw = poseAt(bk, o.as, t), r = raw.j.root;
       // the performer is turned to face the legion's way and set down where the man stands
       const yaw = (q.yaw * Math.PI) / 180 - face0, c = Math.cos(yaw), s = Math.sin(yaw), xf = { yaw, pos: [q.at[0] - (r[0] * c + r[2] * s), 0, q.at[2] - (-r[0] * s + r[2] * c)] };

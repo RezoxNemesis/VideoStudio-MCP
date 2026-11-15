@@ -148,5 +148,43 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a
   }
 }
 
+// ---- 4. shoulder plates on a real body: lames that lie over the shoulder and lap down the upper arm
+{
+  const AR = await import('../engine/armour.js').catch(() => ({}));
+  const k = POSE.height / 1.8, len = (a) => Math.hypot(a[0], a[1], a[2]), nrm = (a) => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; }, add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]], mul = (a, q) => [a[0] * q, a[1] * q, a[2] * q];
+  const make = (j) => (typeof AR.pauldronMeshes === 'function' ? AR.pauldronMeshes(j, k, {}) : null);
+  const M = make(POSE.j);
+  ok(Array.isArray(M) && M.filter((m) => m.side === 'L').length >= 3 && M.filter((m) => m.side === 'R').length >= 3, 'pauldronMeshes(joints, k) gives each shoulder its lames (three or more)', M && M.map((m) => m.name));
+  if (Array.isArray(M) && M.length) {
+    const pts = (m) => { const out = []; for (let v = 0; v < m.pos.length; v += 3) out.push([m.pos[v], m.pos[v + 1], m.pos[v + 2]]); return out; };
+    for (const sd of ['L', 'R']) {
+      const S = POSE.j[`upperarm01.${sd}`], E = POSE.j[`lowerarm01.${sd}`], a = nrm(sub(E, S)), armLen = len(sub(E, S)), mid = [(POSE.j['upperarm01.L'][0] + POSE.j['upperarm01.R'][0]) / 2, S[1], (POSE.j['upperarm01.L'][2] + POSE.j['upperarm01.R'][2]) / 2], out = nrm(sub(S, mid));
+      const L = M.filter((m) => m.side === sd), all = L.flatMap(pts), radial = (p) => { const d = sub(p, S), s = dot(d, a); return [s, len(sub(d, mul(a, s)))]; };
+      const top = Math.max(...all.map((p) => p[1])), low = Math.max(...all.map((p) => radial(p)[0]));
+      ok(top > S[1] + 0.02 * k && top < S[1] + 0.1 * k, `${sd}: the plates rise over the top of the shoulder (2–10 cm above the joint)`, top - S[1]);
+      ok(low > 0.1 * k && low < armLen * 0.8, `${sd}: and lap down the upper arm (10 cm or more, well short of the elbow)`, low);
+      const inner = Math.min(...all.filter((p) => radial(p)[0] > 0.03 * k).map((p) => radial(p)[1]));
+      ok(inner > 0.05 * k, `${sd}: below the shoulder every plate stands clear of the arm (5 cm or more from its middle)`, inner);
+      ok(Math.min(...all.map((p) => dot(sub(p, S), out))) > -0.085 * k, `${sd}: they stay on the shoulder (nothing reaches in to the neck)`, Math.min(...all.map((p) => dot(sub(p, S), out))));
+      // each lame laps over the next: no gap between them down the arm
+      const span = L.map((m) => { const ss = pts(m).map((p) => radial(p)[0]); return [Math.min(...ss), Math.max(...ss)]; }).sort((p, q) => p[1] - q[1]);
+      ok(span.every((sp, i) => i === 0 || sp[0] < span[i - 1][1] - 0.008 * k), `${sd}: each plate begins under the one above (they overlap)`, span.map((sp) => sp.map((v) => +v.toFixed(3))));
+      // the plates face outwards: a painter lights them from outside
+      let outw = 0, tot = 0; for (const m of L) for (let t = 0; t < m.idx.length; t += 3) { const A = [m.pos[m.idx[t] * 3], m.pos[m.idx[t] * 3 + 1], m.pos[m.idx[t] * 3 + 2]], B2 = [m.pos[m.idx[t + 1] * 3], m.pos[m.idx[t + 1] * 3 + 1], m.pos[m.idx[t + 1] * 3 + 2]], C = [m.pos[m.idx[t + 2] * 3], m.pos[m.idx[t + 2] * 3 + 1], m.pos[m.idx[t + 2] * 3 + 2]], u = sub(B2, A), v = sub(C, A), n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], c = [(A[0] + B2[0] + C[0]) / 3, (A[1] + B2[1] + C[1]) / 3, (A[2] + B2[2] + C[2]) / 3], d = sub(c, add(S, mul(a, radial(c)[0]))); tot++; if (dot(n, d) > 0) outw++; }
+      ok(outw / tot > 0.9, `${sd}: the plates' faces look outwards`, outw / tot);
+    }
+    ok(M.every((m) => m.paint && m.paint.metal && Array.isArray(m.paint.fill)), 'each comes with its paint: metal', M[0].paint);
+    // an arm lifted out to the side: the lower plates go with the arm, the top one stays on the shoulder
+    const J2 = JSON.parse(JSON.stringify(POSE.j)), S = J2['upperarm01.L'], armLen = len(sub(J2['lowerarm01.L'], S)); J2['lowerarm01.L'] = [S[0] + armLen * 0.96, S[1] + armLen * 0.25, S[2]];
+    const M2 = make(J2).filter((m) => m.side === 'L'), a2 = nrm(sub(J2['lowerarm01.L'], S));
+    const lowest = M2[M2.length - 1], c2 = pts(lowest).reduce((p, q) => add(p, mul(q, 1 / (lowest.pos.length / 3))), [0, 0, 0]);
+    ok(dot(sub(c2, S), a2) > 0.06 * k, 'an arm lifted to the side carries its lower plates with it', dot(sub(c2, S), a2));
+    const clear = Math.min(...M2.flatMap(pts).map((p) => { const d = sub(p, S), s = dot(d, a2); return s > 0.03 * k ? len(sub(d, mul(a2, s))) : 1; }));
+    ok(clear > 0.045 * k, 'and they still stand clear of the arm', clear);
+    const o = AR.pauldronMeshes(POSE.j, k, { size: 1.3 }), big = Math.max(...o.filter((m) => m.side === 'L').flatMap(pts).map((p) => p[1])), std = Math.max(...M.filter((m) => m.side === 'L').flatMap(pts).map((p) => p[1]));
+    ok(big > std + 0.004, 'size: 1.3 makes them larger', [std, big]);
+  }
+}
+
 if (fails.length) { console.error(`costume: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`costume: ${checks} rules hold`);

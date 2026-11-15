@@ -60,5 +60,18 @@ for (const [gait, d] of [['stand', 0], ['walk', 2.3]]) {
   ok(!(p.body.after ?? []).some((a) => a.bend && /arm/.test(a.bend.bone)), 'arms: false leaves the arms to the performance', 0);
 }
 
+// ---- the way a horse faces when it stands is told by its path alone (frames are drawn in any order, shots side by side)
+{
+  const RD = await import('../kit/riders.js'), near2 = (a, b) => Math.abs(a - b) < 1e-6;
+  const walkIn = () => RD.ridePath([[0, 0, 0, 'walk'], [4, -6, 0], [9, -6, 0]]);
+  ok(near2(walkIn()(6.5).yaw, -Math.PI / 2), 'a horse that walked in and stopped faces the way it came, asked at any moment first (the path keeps no memory)', walkIn()(6.5).yaw);
+  { const p = walkIn(); p(1); p(3); ok(near2(p(8).yaw, -Math.PI / 2), 'and the same after its walk has been asked for', p(8).yaw); }
+  const stands = RD.ridePath([[0, 3, 2, 'stand', -90], [8, 3, 2]]);
+  ok(near2(stands(5).yaw, -Math.PI / 2) && stands(5).gait === 'stand', 'a horse that stands from the start faces the way its way-point names (degrees, as everywhere: −90 looks towards −x)', stands(5).yaw);
+  const turned = RD.ridePath([[0, 0, 0, 'walk'], [4, -6, 0, 'stand', 180], [9, -6, 0]]);
+  ok(near2(Math.abs(turned(7).yaw), Math.PI), 'a heading named where it stops is the one it stands in', turned(7).yaw);
+  ok(near2(RD.ridePath([[0, 1, 1, 'stand'], [5, 1, 1]])(2).yaw, 0), 'no heading named, never moved: it faces +z', RD.ridePath([[0, 1, 1, 'stand'], [5, 1, 1]])(2).yaw);
+}
+
 if (fails.length) { console.error(`rider: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`rider: ${checks} rules hold`);

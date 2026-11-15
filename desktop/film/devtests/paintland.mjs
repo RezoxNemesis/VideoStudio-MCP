@@ -133,6 +133,18 @@ const diff = (a, b) => { let s = 0; for (let i = 0; i < a.d.length; i += 4) s +=
   ok(line(1) > line(0) * 1.4, 'sharp: 1 gives a ridge teeth, sharp: 0 a rolling line', [line(0), line(1)]);
 }
 
+// ---- 6b. the highest crests are peaks, not tables: a ridge does not stand at its full height along a stretch of sky
+{
+  const camO = { pos: [0, 1.6, 0], target: [40, 6, 49], fov: 60 };
+  const flat = (peaky) => { const s2 = shot(ridgePaint({ layers: [{ dist: 12000, h: 1750, color: '#30364a', seed: 3, folds: 3, peaks: 7, sharp: 0.78, base: 0.2, peaky }] }), camO); const ys = []; for (let x = 0; x < W; x++) { let y = 0; while (y < H && s2.px(x, y)[3] < 128) y++; ys.push(y); }
+    // (the longest stretch of skyline, among its high parts, that keeps to one level: within a thirtieth of the ridge's relief)
+    const top = Math.min(...ys), low = Math.max(...ys), tol = (low - top) / 30; let best = 0;
+    for (let i = 0; i < ys.length; i++) { if (low - ys[i] < 0.6 * (low - top)) continue; let lo = ys[i], hi = ys[i], k = i; while (k + 1 < ys.length && Math.max(hi, ys[k + 1]) - Math.min(lo, ys[k + 1]) <= tol) { k++; lo = Math.min(lo, ys[k]); hi = Math.max(hi, ys[k]); } best = Math.max(best, k - i + 1); }
+    return best / ys.length; };
+  const table = flat(0), peaks = flat(1);
+  ok(table > 0.04 && peaks < table * 0.55, 'peaky: 1 rounds the highest crests into peaks (no long stretch of the skyline keeps to one level)', [table, peaks]);
+}
+
 // ---- 7. grass standing on the land
 {
   const LAND = landPaint({ colors: ['#4a5230', '#5d6238', '#3c4630', '#6e6a40'], earth: '#5a4634', earthAmt: 0, sun: { dir: SUN, color: '#ffc890' } });

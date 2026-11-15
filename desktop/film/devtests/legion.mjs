@@ -93,5 +93,15 @@ const CAM = { pos: [0, 1.6, 0], target: [0, 1.0, -10], fov: 40 };
   ok(i1.size >= 1 && [...new Set(log.map((q) => q.i))].some((i) => !i0.has(i)), 'and the stride moves on with time', [[...i0], [...new Set(log.map((q) => q.i))]]);
 }
 
+// ---- a performer is made before its performance may exist: a sequence's set is built before the Stage has solved it
+{
+  const LG = await import('../kit/legions.js');
+  let made = null, err = null;
+  try { made = LG.performer({ bake: 'no_such_performance_yet', as: 'model', design: { name: 'x', top: { color: '#3a3038' } }, at: 1 }); } catch (e) { err = e; }
+  ok(!!made && !err, 'performer() can be made before its performance is solved (it reads it when a figure is first drawn)', err ? String(err.message).slice(0, 80) : 0);
+  let asked = null; try { void made?.h; } catch (e) { asked = e; }
+  ok(!!asked && /no_such_performance_yet/.test(String(asked.message)) && /not (been )?solved|build/i.test(String(asked.message)), 'asked for its figure before then, it says which performance is not solved yet', asked ? String(asked.message).slice(0, 120) : 0);
+}
+
 if (fails.length) { console.log(`legion: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.log('  ✗ ' + f); process.exit(1); }
 console.log(`legion: ${checks} rules hold`);
