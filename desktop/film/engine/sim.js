@@ -52,6 +52,7 @@ export class Cloth {
   /**
    * Advance by dt. pins: world positions of the top row. caps: [[a, ra, b, rb], …] body parts to stay outside of.
    * wind(p, t) → m/s. rest(c, r): where the cloth would be if it were rigid (for `stiff`). ground: floor height.
+   * keepOut(p): moves a point of the cloth out of a shape it may not enter (a real body's seat under a robe).
    */
   step(pins, dt, t, o = {}) {
     if (this.fresh) this.reset(pins, o.rest);
@@ -107,6 +108,7 @@ export class Cloth {
         for (let c = 0; c < this.cols; c++) for (let r = 1; r < this.rows; r++) {
           const p = this.p[c][r];
           for (const cp of caps) pushOut(p, cp[0], cp[1], cp[2], cp[3], this.pad);
+          if (o.keepOut) o.keepOut(p); // (a shape of the body's own to stay outside of: it moves the point itself)
           if (p[1] < ground + 0.01) { p[1] = ground + 0.01; const q = this.q[c][r]; q[0] += (p[0] - q[0]) * 0.5; q[2] += (p[2] - q[2]) * 0.5; }
         }
       }

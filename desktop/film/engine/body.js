@@ -219,6 +219,40 @@ export function bendBone(B, name, axis, ang) {
   }
 }
 
+const _SEAT = /^(root|spine0[3-5]|pelvis)/, _THIGH = /^upperleg01/;
+/**
+ * The hips and seat of a body as it is dressed, as a shape with an inside: level outlines of the body and its clothes
+ * round the middle of the hips, in the rest pose (x to the body's left, y up, z forward — all from the point midway
+ * between the hip joints). What hangs from the waist — a robe's skirts — is kept outside it. Arms are no part of it,
+ * and of the thighs only their tops (the seat): legs move, and cloth has their own rounds to stay outside of.
+ * null for a body with no hips or nothing there to measure.
+ */
+export function seatShape(B) {
+  if (B._seat !== undefined) return B._seat;
+  const hl = B.bi?.['upperleg01.L'], hr = B.bi?.['upperleg01.R']; if (hl === undefined || hr === undefined) return (B._seat = null);
+  const H = B.head, c = [(H[hl * 3] + H[hr * 3]) / 2, (H[hl * 3 + 1] + H[hr * 3 + 1]) / 2, (H[hl * 3 + 2] + H[hr * 3 + 2]) / 2], name = []; for (const [n, i] of Object.entries(B.bi)) name[i] = n;
+  const dy = 0.02, y0 = -0.32, n = 27, NB = 32, R = new Float32Array(n * NB); let any = false;
+  for (const p of B.parts ?? []) { if (!p.si || !p.sw) continue;
+    for (let v = 0; v < p.n; v++) {
+      let b = 0; for (let k = 1; k < 4; k++) if (p.sw[v * 4 + k] > p.sw[v * 4 + b]) b = k; const bn = name[p.si[v * 4 + b]] ?? '';
+      const x = p.pos[v * 3] - c[0], y = p.pos[v * 3 + 1] - c[1], z = p.pos[v * 3 + 2] - c[2];
+      if (!(_SEAT.test(bn) || (_THIGH.test(bn) && y > -0.16))) continue;
+      const j0 = Math.floor((y - y0) / dy); if (j0 < -1 || j0 > n) continue; any = true;
+      const r = Math.hypot(x, z), k0 = Math.floor((Math.atan2(z, x) / (2 * Math.PI) + 0.5) * NB) % NB;
+      // (each point also counts for the slices and the directions next to its own: a slice of few points has no gaps)
+      for (let j = Math.max(0, j0 - 1); j <= Math.min(n - 1, j0 + 1); j++) for (const k of [(k0 + NB - 1) % NB, k0, (k0 + 1) % NB]) if (r > R[j * NB + k]) R[j * NB + k] = r;
+    } }
+  return (B._seat = any ? { y0, dy, n, NB, R } : null);
+}
+/** The outline's distance from the middle of the hips at a height and in a direction (x, z): metres; 0 above and below the shape. */
+export function seatRadius(S, y, x, z) {
+  const f = (y - S.y0) / S.dy; if (f < 0 || f >= S.n) return 0;
+  const j = Math.floor(f), a = (Math.atan2(z, x) / (2 * Math.PI) + 0.5) * S.NB - 0.5, k = Math.floor(a), t = a - k, NB = S.NB;
+  return S.R[j * NB + ((k % NB) + NB) % NB] * (1 - t) + S.R[j * NB + (((k + 1) % NB) + NB) % NB] * t;
+}
+/** How far a point (from the middle of the hips, in the body's own directions) is outside the hips and seat: metres; negative inside. */
+export function seatClear(S, x, y, z) { return Math.hypot(x, z) - seatRadius(S, y, x, z); }
+
 /**
  * Pose the body at a moment of the baked performance (seconds) and place it in the film's world (xf: { pos, yaw, scale }).
  * hands: { L, R } each a name of HANDS, a [name, name, mix] blend, or a hand object. Fills every part's `out` (positions).

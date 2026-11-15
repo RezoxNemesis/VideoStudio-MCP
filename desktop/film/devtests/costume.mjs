@@ -186,6 +186,37 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a
   }
 }
 
+// ---- 4b. a robe on a real body hangs outside the body it is worn on (its seat does not come through the skirts)
+{
+  const BD = await import('../engine/body.js');
+  ok(typeof BD.seatShape === 'function' && typeof BD.seatClear === 'function', 'body.js gives seatShape(body) and seatClear(shape, x, y, z): the hips and seat as a shape with an inside', [typeof BD.seatShape, typeof BD.seatClear]);
+  if (typeof BD.seatShape === 'function' && typeof BD.seatClear === 'function') {
+    // a body of points alone: hips and a seat wider and deeper than a robe's own waist ring (the seat stands out behind)
+    const hipL = POSE.j['upperleg01.L'], hipR = POSE.j['upperleg01.R'], c = [(hipL[0] + hipR[0]) / 2, (hipL[1] + hipR[1]) / 2, (hipL[2] + hipR[2]) / 2];
+    const names = ['root', 'upperleg01.L', 'upperleg01.R', 'upperarm01.L'], bi = Object.fromEntries(names.map((n, i) => [n, i]));
+    const head = new Float32Array([c[0], c[1], c[2], hipL[0], hipL[1], hipL[2], hipR[0], hipR[1], hipR[2], c[0] + 0.2, c[1] + 0.5, c[2]]);
+    const pts = [], si = [], sw = [], RX = 0.21, RZF = 0.15, RZB = 0.24; // half width, depth in front, depth behind
+    for (let y = -0.3; y <= 0.2; y += 0.02) for (let a = 0; a < 48; a++) { const an = a / 48 * 2 * Math.PI, z = Math.sin(an); pts.push(c[0] + Math.cos(an) * RX, c[1] + y, c[2] + z * (z < 0 ? RZB : RZF)); si.push(0, 0, 0, 0); sw.push(1, 0, 0, 0); }
+    // (an arm hanging beside the hips is no part of the seat)
+    for (let y = -0.3; y <= 0.2; y += 0.02) { pts.push(c[0] + 0.45, c[1] + y, c[2]); si.push(3, 0, 0, 0); sw.push(1, 0, 0, 0); }
+    const B = { bi, head, height: POSE.height, parts: [{ name: 'coat', n: pts.length / 3, pos: Float32Array.from(pts), si: Uint16Array.from(si), sw: Float32Array.from(sw) }] };
+    const S = BD.seatShape(B);
+    ok(!!S, 'a body with hips has a seat shape', S);
+    if (S) {
+      ok(BD.seatClear(S, 0, 0, 0) < -0.1, 'the middle of the hips is inside it', BD.seatClear(S, 0, 0, 0));
+      ok(Math.abs(BD.seatClear(S, 0, -0.1, -RZB)) < 0.02 && Math.abs(BD.seatClear(S, RX, -0.1, 0)) < 0.02, 'its outline is the body\'s own: the seat behind, the hip at the side', [BD.seatClear(S, 0, -0.1, -RZB), BD.seatClear(S, RX, -0.1, 0)]);
+      ok(BD.seatClear(S, 0.45, -0.1, 0) > 0.2, 'an arm beside the hips does not widen it', BD.seatClear(S, 0.45, -0.1, 0));
+      const ch = new Character(makeDesign({ name: 'robed', robe: { color: '#1c1b21', len: 0.46, open: 0.18 } })), pose = { ...poseAt(), body: { B, t: 0, xf: null } };
+      for (let f = 0; f < 60; f++) ch.step(pose, 1 / 24, f / 24, {});
+      const F = ch.frame(pose), R = ch.robe; let worst = Infinity, at = null;
+      for (let col = 0; col < R.cols; col++) for (let r = 0; r < R.rows; r++) { const d = sub(R.p[col][r], F.pel), cl = BD.seatClear(S, dot(d, F.sP), dot(d, F.up), dot(d, F.fP)); if (cl < worst) { worst = cl; at = [col, r]; } }
+      ok(worst > 0.008, 'a robe worn on it hangs outside it everywhere: the seat does not come through the skirts (metres clear, at the worst thread)', [worst, at]);
+      const top = R.p.map((col) => col[0]), spread = Math.max(...top.map((p) => Math.hypot(dot(sub(p, F.pel), F.sP), dot(sub(p, F.pel), F.fP))));
+      ok(spread < 0.34, 'and still hangs from the waist, close to the body (not flung wide)', spread);
+    }
+  }
+}
+
 // ---- 5. a sword in its scabbard: home, on its way out along the scabbard, and out
 {
   const CH = await import('../engine/character.js'), BD = await import('../engine/bodydraw.js');

@@ -6,6 +6,7 @@ import { makeHead, drawHead, skull } from './head.js';
 import { Cloth, Strand } from './sim.js';
 import { qrot } from './core.js';
 import { drawBodyMesh } from './bodydraw.js';
+import { seatShape, seatRadius } from './body.js';
 
 const SIDES = ['L', 'R'];
 
@@ -93,9 +94,14 @@ export class Character {
       const Rb = d.robe, n = Rb.cols ?? 13, rows = Rb.rows ?? 7, len = (Rb.len ?? 0.46) * pose.height, open = Math.max(0, Math.min(0.6, Rb.open ?? 0.16));
       if (!this.robe) this.robe = new Cloth({ cols: n, rows, length: len, damp: 0.98, drag: Rb.drag ?? 1.6, stiff: Rb.stiff ?? 0.012, pad: 0.03 }); // light cloth: it holds little shape of its own and the air takes it
       const c0 = V.add(F.pel, V.mul(F.up, (Rb.rise ?? 0.075) * k)), a = F.hipHalf + 0.1 * k * d.build.hip, bb = 0.14 * k, pins = [], dirs = [];
-      for (let i = 0; i < n; i++) { const ph = Math.PI * (open + (i / (n - 1)) * (2 - 2 * open)), dir = V.add(V.mul(F.sP, Math.sin(ph)), V.mul(F.fP, Math.cos(ph))); dirs.push(dir); pins.push(V.add(c0, V.add(V.mul(F.sP, Math.sin(ph) * a), V.mul(F.fP, Math.cos(ph) * bb)))); }
-      const fl = Rb.flare ?? 0.5, rest = (c, r) => { const u = r / (rows - 1); return V.add(V.add(pins[c], [0, -len * u * 0.97, 0]), V.mul(dirs[c], len * u * fl * 0.42)); };
-      this.robe.step(pins, dt, t, { caps: caps.filter((c) => c[4] === 'leg'), wind: env.wind, ground: env.ground ?? 0, rest, flare: fl * 1.6 });
+      // On a real body the skirts hang outside the body as it is dressed: the waist ring lies on its outline, and
+      // no thread may enter its hips and seat (a seat stands out behind further than any ring round the waist).
+      const Bd = pose.body?.B, S = Bd ? seatShape(Bd) : null, sc = S ? pose.height / (Bd.height || pose.height) : 1, pad = 0.02 * k;
+      const out = (p) => { if (!S) return p; const d = V.sub(p, F.pel), x = V.dot(d, F.sP), y = V.dot(d, F.up), z = V.dot(d, F.fP), r = Math.hypot(x, z), need = seatRadius(S, y / sc, x, z) * sc + pad;
+        if (need > pad && r < need) { const g = r > 1e-6 ? need / r - 1 : 0; p[0] += (F.sP[0] * x + F.fP[0] * z) * g; p[1] += (F.sP[1] * x + F.fP[1] * z) * g; p[2] += (F.sP[2] * x + F.fP[2] * z) * g; } return p; };
+      for (let i = 0; i < n; i++) { const ph = Math.PI * (open + (i / (n - 1)) * (2 - 2 * open)), dir = V.add(V.mul(F.sP, Math.sin(ph)), V.mul(F.fP, Math.cos(ph))); dirs.push(dir); pins.push(out(V.add(c0, V.add(V.mul(F.sP, Math.sin(ph) * a), V.mul(F.fP, Math.cos(ph) * bb))))); }
+      const fl = Rb.flare ?? 0.5, rest = (c, r) => { const u = r / (rows - 1); return out(V.add(V.add(pins[c], [0, -len * u * 0.97, 0]), V.mul(dirs[c], len * u * fl * 0.42))); };
+      this.robe.step(pins, dt, t, { caps: caps.filter((c) => c[4] === 'leg'), wind: env.wind, ground: env.ground ?? 0, rest, flare: fl * 1.6, keepOut: S ? out : null });
     }
     // ---- skirt / robe: a ring of threads from the waist
     if (d.bottom.type === 'skirt' || d.bottom.type === 'robe') {

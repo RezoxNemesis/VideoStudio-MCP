@@ -133,7 +133,8 @@ fills the picture.
 `body.bands: { tunic: [[from, to, colour]] }` lays stripes across a garment by height (fractions of the body's height:
 a collar, a sash). `design.robe: { color, lining, len: 0.43, open: 0.2, flare: 0.5, trim, trimW }` hangs a robe's
 skirts from the waist over the trousers — open in front, the lining showing inside, a trim along the hem; they swing
-and stream behind a moving figure. Hair tied in a tail takes a cord: `hair3: { cut: 'tied', tail: { len, w, at: 'high',
+and stream behind a moving figure, and on a real body they hang outside the body as it is dressed (its hips and seat
+never come through them). Hair tied in a tail takes a cord: `hair3: { cut: 'tied', tail: { len, w, at: 'high',
 tie: true } }` with `hair: { tie: '#a3222a' }`; finer hair is more, narrower clumps (`n: 150, w: 0.021`).
 
 **Hair designed lock by lock.** A cut can be laid out the way a character designer draws one. `hair3.locks: [{ from: [round,

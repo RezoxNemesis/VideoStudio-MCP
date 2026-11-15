@@ -86,6 +86,15 @@ describe.skipIf(!ASSETS)("what a dressed body wears", () => {
       expect(through, `points that come through the coat (the first: ${worst})`).toBe(0);
     });
 
+    it(`${who}: where a coat covers the trousers they are cut away — in no pose can their seat come through it`, () => {
+      // (a coat and the trousers under it are carried by different bones: lying under it at rest is not enough once the body moves)
+      const d = body(who, req), coat = part(d, "coat"), tr = part(d, "trousers"); let top = -Infinity, bot = Infinity, under = 0, below = 0;
+      for (let i = 0; i < coat.vcount; i++) { top = Math.max(top, coat.pos[i * 3 + 1]!); bot = Math.min(bot, coat.pos[i * 3 + 1]!); }
+      for (let i = 0; i < tr.vcount; i++) { const y = tr.pos[i * 3 + 1]!; if (y > bot + 0.2 && y < top - 0.1) under++; if (y < bot) below++; }
+      expect(under, "points of the trousers left under the coat (between a span above its hem and its top)").toBe(0);
+      expect(below, "the trousers are still there below the hem").toBeGreaterThan(50);
+    });
+
     it(`${who}: the sword rides at the left hip outside the clothes, its hilt before the belly where a hand can close on it`, () => {
       const d = body(who, req);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

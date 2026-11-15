@@ -460,7 +460,16 @@ export class HumanFactory {
     /** What is already on the body, in the order it was put on (a skirt put on later lies over all of it). */
     const worn: { Pg: Float32Array; ids: Iterable<number> }[] = [];
     const REGS: Record<string, string[]> = { tunic: ["torso", "upperarm", "forearm"], trousers: ["thigh", "shin", "torso"], boots: ["foot", "shin"], cuirass: ["torso", "upperarm"], vambrace: ["forearm"], greave: ["shin"], wraps: ["forearm"] };
-    for (const g of spec.garments ?? []) {
+    /** The height band a skirt put on after garment i covers: [a hand's breadth above its hem, just under its top]; null when there is none. */
+    const coverOf = (i: number): [number, number] | null => {
+      const g2 = (spec.garments ?? []).slice(i + 1).find((x) => x.kind === "skirt");
+      if (!g2) return null;
+      let topY = -Infinity, minY = Infinity;
+      for (let q = 0; q < sq.length; q++) { const y = Y(sq[q]!); topY = Math.max(topY, y); minY = Math.min(minY, y); }
+      const bot = topY - (topY - minY) * num(g2.length, 1.0);
+      return bot + 0.12 < topY - 0.02 ? [bot + 0.12, topY - 0.02] : null;
+    };
+    for (const [gi, g] of (spec.garments ?? []).entries()) {
       const kind = g.kind;
       const off = num(g.offset, 0.012);
       const Pg = Float32Array.from(P);
@@ -481,7 +490,22 @@ export class HumanFactory {
           else if (kind === "vambrace" || kind === "wraps") k = !(isReg(i, "forearm") && (dist3(P, i, wristJ[0]) < 0.035 || dist3(P, i, wristJ[1]) < 0.035));
           if (k) ok[i] = 1;
         }
-        const quads = quadsAll(tq, ok);
+        let quads = quadsAll(tq, ok);
+        // Trousers under a skirt or coat that is put on after them are cut away where it covers them, from a hand's
+        // breadth above its hem to its top: the two are carried by different bones, so trousers that lie under a coat
+        // in the rest pose still come through it when the body moves (the seat, through the back of a long coat).
+        if (kind === "trousers") {
+          const band = coverOf(gi);
+          if (band) {
+            const keep: number[] = [];
+            for (let q = 0; q < quads.length; q += 4) {
+              let inside = true;
+              for (let c = 0; c < 4; c++) { const y = Y(quads[q + c]!); if (!(y > band[0] && y < band[1])) inside = false; }
+              if (!inside) keep.push(quads[q]!, quads[q + 1]!, quads[q + 2]!, quads[q + 3]!);
+            }
+            quads = Uint32Array.from(keep);
+          }
+        }
         if (!quads.length) continue;
         const ids = uniqueSorted(quads, N);
         for (const v of ids) for (let c = 0; c < 3; c++) Pg[v * 3 + c] = Pg[v * 3 + c]! + tn[v * 3 + c]! * off;
