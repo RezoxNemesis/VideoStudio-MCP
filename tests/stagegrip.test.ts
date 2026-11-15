@@ -42,6 +42,30 @@ describe("the Stage's sword hand", () => {
   const names = Object.keys(SW);
   it("has the named sword positions to test", () => { expect(names.length).toBeGreaterThan(15); });
 
+  it("sheath: the hand lies on the hilt of the sword at the hip, the blade down the scabbard — a draw begins there", () => {
+    expect(ALL.sheath, "a position named sheath").toBeTruthy();
+    const P = key("sheath");
+    // (the scabbard of the swordsman's kit hangs at the left hip and points down and back: see actors.js, kit orez)
+    const scabbard = new THREE.Vector3(-0.12, -0.45, -0.88).normalize();
+    expect(P.d.angleTo(scabbard) * DEG, "the blade lies along the scabbard").toBeLessThan(4);
+    expect(P.h.x, "the hand is at the left hip (x is the fighter's left)").toBeGreaterThan(0.1);
+    expect(P.h.y, "at the height of the hip").toBeGreaterThan(0.95); expect(P.h.y).toBeLessThan(1.12);
+    const a = fighter(); applySword(a, P, {});
+    const m = hand(a);
+    expect(m.blade.angleTo(scabbard) * DEG, "held there, the blade is in the scabbard's line").toBeLessThan(6);
+    expect(m.blade.y, "its point is down").toBeLessThan(-0.3); expect(m.blade.z, "and behind").toBeLessThan(-0.6);
+  });
+
+  it("unsheath: the blade has slid out along the scabbard's own line — the hand a forearm's length further up it, the blade still pointing down the scabbard", () => {
+    expect(ALL.unsheath, "a position named unsheath").toBeTruthy();
+    const A = key("sheath"), B = key("unsheath"), line = A.d.clone().negate(), move = B.h.clone().sub(A.h);
+    expect(B.d.angleTo(A.d) * DEG, "the blade keeps the scabbard's direction").toBeLessThan(3);
+    expect(move.length(), "the hand has drawn the blade most of its length").toBeGreaterThan(0.35); expect(move.length()).toBeLessThan(0.6);
+    expect(move.clone().normalize().angleTo(line) * DEG, "along the scabbard's line (a blade cannot leave its scabbard sideways)").toBeLessThan(6);
+    const a = fighter(); applySword(a, B, {});
+    expect(hand(a).blade.angleTo(A.d) * DEG, "held there, the blade is still in the scabbard's line").toBeLessThan(7);
+  });
+
   it("every sword position: the blade lies where the position says, through the hand", () => {
     for (const n of names) {
       const a = fighter(), P = key(n); applySword(a, P, {});

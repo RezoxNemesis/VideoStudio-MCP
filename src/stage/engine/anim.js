@@ -78,7 +78,8 @@ export class Motion {
   _corr(clip, mirror = false) { // per clip (source rest directions) correction quaternions
     const key = mirror ? clip.name + '|m' : clip.name; if (this.bindCache[key]) return this.bindCache[key];
     const R = this.h.rest, C = {};
-    for (const [s, t, c] of MAP) { const q = new THREE.Quaternion(); if (c) { const dt = _v.copy(R[c].head).sub(R[t].head).normalize(); const ds = clip.restDir(s, mirror, _v2); if (s.endsWith('Foot')) { ds.y *= 0.6; ds.normalize(); } q.setFromUnitVectors(dt, ds); } C[t] = q; }
+    for (const [s, t, c] of MAP) { const q = new THREE.Quaternion(); if (c) { const dt = _v.copy(R[c].head).sub(R[t].head).normalize(); // (a capture's hand is its last joint on the arm: it has no direction of its own in the rest pose — there it lies in line with the forearm)
+      const ds = clip.restDir(s.endsWith('Hand') ? s.replace('Hand', 'ForeArm') : s, mirror, _v2); if (s.endsWith('Foot')) { ds.y *= 0.6; ds.normalize(); } q.setFromUnitVectors(dt, ds); } C[t] = q; }
     return this.bindCache[key] = C;
   }
   /** Pose the character from clip `name` at time t (seconds in clip).

@@ -11,6 +11,10 @@ export const SW = {
   chamber: K([-0.16, 1.14, 0.14], [0, 0.04, 1]), thrust: K([-0.04, 1.22, 0.7], [0, 0.02, 1]), parry: K([0.12, 1.52, 0.36], [1, 0.22, 0.1], [0, 1, 0]), block: K([-0.1, 1.25, 0.4], [0.5, 0.85, 0.15]),
   hiL: K([0.3, 1.5, 0.02], [0.4, 0.8, -0.45]), loR: K([-0.4, 0.76, 0.24], [-0.75, -0.45, 0.5]), point: K([-0.1, 1.32, 0.6], [0.05, -0.02, 1]), overhead: K([-0.1, 1.9, -0.04], [0.05, 0.6, -0.8]), smash: K([-0.02, 0.85, 0.55], [0.05, -0.35, 0.95]),
   hip: K([0.2, 0.98, 0.16], [-0.1, 0.15, 1]), drawn: K([-0.3, 1.2, 0.45], [-0.6, 0.5, 0.6]), rest: K([-0.26, 0.9, 0.1], [0.5, -0.55, 0.65]),
+  // the hand on the hilt of the sword in its scabbard at the left hip (the blade down the scabbard: down and back) — where a draw begins
+  sheath: K([0.152, 1.044, 0.058], [-0.12, -0.45, -0.88], [1, 0, 0]),
+  // the blade drawn most of its length out along the scabbard's own line, still pointing down it (between sheath and drawn)
+  unsheath: K([0.205, 1.243, 0.447], [-0.12, -0.45, -0.88], [1, 0, 0]),
 };
 // From one direction to another by way of the front: seen from straight behind (where neither a sword hand nor a
 // blade's point passes) the directions are flattened onto a plane, carried straight across it, and lifted back. On the
