@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { plantedJoin, stepFoot, landingFeet } from "../src/stage/engine/shotkit.js";
+import { plantedJoin, stepFoot, landingFeet, stepsIn } from "../src/stage/engine/shotkit.js";
 
 // Two captured actions joined on feet that stand: the blend used to drag a planted foot across the ground (a runner
 // who pivoted from a pick-up into a start skated a foot 19 cm). A foot that has to move becomes a STEP: lifted, carried,
@@ -10,6 +10,20 @@ describe("a join on standing feet steps instead of skating", () => {
     expect(plantedJoin(3, 1)).toBe(false);   // the next action begins with a foot in the air: it flows, the blend is right
     expect(plantedJoin(2, 3)).toBe(false);   // the action before ends in mid-stride
     expect(plantedJoin(0, 0)).toBe(false);
+  });
+  it("the feet step into a stance whatever came before — also when the fight is the first thing a body does", () => {
+    // (measured in a duel: two swordsmen who stood, then took their stances as their FIRST action, slid all four feet
+    // 30 cm apart along the ground: the step-in only ran after another action, never after plain standing)
+    const o = { kind: "stance", cut: false, local: 0.1, planted: false };
+    expect(stepsIn({ ...o, first: false, fromStand: false })).toBe(true);       // after another action: as before
+    expect(stepsIn({ ...o, first: true, fromStand: true })).toBe(true);         // after plain standing: now too
+    expect(stepsIn({ ...o, first: true, fromStand: false })).toBe(false);       // a body that begins in its stance (t = 0) has nowhere to step from
+    expect(stepsIn({ ...o, first: false, fromStand: false, cut: true })).toBe(false);
+    expect(stepsIn({ ...o, first: false, fromStand: false, local: 0.5 })).toBe(false);   // the step-in is over
+    expect(stepsIn({ kind: "clip", first: false, fromStand: false, cut: false, local: 0.1, planted: true })).toBe(true);
+    expect(stepsIn({ kind: "clip", first: false, fromStand: false, cut: false, local: 0.1, planted: false })).toBe(false);
+    expect(stepsIn({ kind: "clip", first: true, fromStand: true, cut: false, local: 0.1, planted: false })).toBe(false);
+    expect(stepsIn({ kind: "go", first: false, fromStand: false, cut: false, local: 0.1, planted: true })).toBe(false);
   });
   it("a foot that was in the air when the action before ended is landing through the join, not skating", () => {
     // (measured: a boy rising from a pick-up had his left foot 6 cm up, mid-step, when the next action — whose own

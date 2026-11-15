@@ -62,6 +62,18 @@ export function kneelPose(a, o = {}) { const h = a.h, sit = o.sit ?? 0.6, al = s
 /** How far a body must be lifted for its lowest point to rest on a floor at y: never a negative amount — a body in the air is left there. */
 export const liftToFloor = (low, y) => Math.max(0, y - low);
 /** Keep a falling or lying body out of the floor: lift it (never lower it) so that none of these parts (bone, radius) is under world height y. */
+/**
+ * Do the feet STEP into an action (rather than ride the crossfade)? Into a stance: after another action, and after plain
+ * standing when the stance is the first thing the body does. Into a captured action: where it joins on standing feet.
+ * Never across a cut, and only while the step-in lasts.
+ *   { kind, first (the body's first action), fromStand (it stood before it), cut, local (s into the action), planted }
+ */
+export function stepsIn({ kind, first, fromStand, cut, local, planted }, within = 0.46) {
+  if (local >= within) return false;
+  if (first) return kind === 'stance' && !!fromStand;
+  if (cut) return false;
+  return kind === 'stance' || (kind === 'clip' && !!planted);
+}
 /** A join of two actions is on standing feet when both feet are on the ground before it and after it (contact bits 3). */
 export const plantedJoin = (before, after) => before === 3 && after === 3;
 /**

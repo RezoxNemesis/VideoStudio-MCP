@@ -648,9 +648,14 @@ export class StageRuntime {
     if (have !== undefined) return have;
     pins[i] = null; // nothing to hold while the block before is being measured
     const prev = sa.blocks[i - 1], cur = sa.blocks[i], anchors = rt.anchors;
-    if (!prev || !cur || !anchors[i] || anchors[i]!.cut || !anchors[i - 1] || prev.kind === "fall") return null;
     const h = rt.a.h;
-    this.basePose(rt, sa, prev, anchors[i - 1]!, Math.max(0, cur.t - prev.t), prev.t);
+    if (i === 0 && cur) {
+      // before its first action the body stands where the actor was placed: the feet step from there
+      this.basePose(rt, sa, null, { x: sa.at.pos[0], y: sa.at.pos[1], z: sa.at.pos[2], yaw: sa.at.yaw * D2R, cut: true }, 0, 0);
+    } else {
+      if (!prev || !cur || !anchors[i] || anchors[i]!.cut || !anchors[i - 1] || prev.kind === "fall") return null;
+      this.basePose(rt, sa, prev, anchors[i - 1]!, Math.max(0, cur.t - prev.t), prev.t);
+    }
     h.root.updateMatrixWorld(true);
     const l = h.wpos("foot.L", new THREE.Vector3()), r = h.wpos("foot.R", new THREE.Vector3());
     const out: Pins = { L: [l.x, l.z, l.y], R: [r.x, r.z, r.y] };
@@ -802,14 +807,14 @@ export class StageRuntime {
     rt.stepping = 0;
     // into a stance the feet step; so they do where two captured actions are joined on feet that stand (a pivot from
     // a pick-up into a start skated a foot 19 cm across the ground while the bodies blended)
-    const steps = !!b && i > 0 && !A.cut && local < STEP_IN && (b.kind === "stance" || (b.kind === "clip" && this.joinOf(rt, sa, i).planted));
+    const fromStand = i === 0 && !!b && b.t > 1e-3 && !b.at?.pos && b.kind !== "go";
+    const steps = !!b && (SK.stepsIn({ kind: b.kind, first: i === 0, fromStand, cut: !!A.cut, local, planted: b.kind === "clip" && i > 0 && this.joinOf(rt, sa, i).planted }, STEP_IN) as boolean);
     // where the feet stood when the stance began is measured before this frame is posed (measuring poses the body)
     const joins = !!b && b.kind === "clip" && i > 0 && !A.cut && local < (b.blend ?? 0.3);
     if (steps || joins) this.idlePins(rt, sa, i);
     this.basePose(rt, sa, b, A, local, t);
     // crossfade from the block before
     const blend = b ? (b.blend ?? 0.3) : 0;
-    const fromStand = i === 0 && !!b && b.t > 1e-3 && !b.at?.pos && b.kind !== "go";
     if (b && ((i > 0 && !A.cut) || fromStand) && blend > 0 && local < blend) {
       const snap = this.prevSnap(rt, sa, i, anchors);
       // prevSnap posed the body to measure; pose this block again, then blend
