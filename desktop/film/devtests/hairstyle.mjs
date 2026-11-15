@@ -238,5 +238,23 @@ const pts = (c) => c.pts;
   }
 }
 
+// ---- a ribbon tied in a bow: a loop to each side of the knot (a child's high tail)
+{
+  const mk = (tie) => { const H = makeHair(B, { cut: 'tied', flow: 'tie', tail: { len: 0.3, w: 0.07, at: [180, 52], up: 0.5, locks: 7, tie } }, 3); let ms = null; for (let f = 0; f < 20; f++) ms = hairMeshes(H, B, 1 / 24, f / 24, null); return { H, ms }; };
+  const { H, ms } = mk({ ends: 2, len: 0.08, bow: 0.13 }), loops = ms.filter((m) => m.bow), knot = H.tail.at;
+  ok(loops.length === 2 && loops.every((m) => m.tie), 'a tie with bow: 0.13 has two loops, painted as the ribbon', loops.length);
+  if (loops.length === 2) {
+    const ext = loops.map((m) => { let lo = 1e9, hi = -1e9, ylo = 1e9, yhi = -1e9; for (let i = 0; i < m.pos.length; i += 3) { lo = Math.min(lo, m.pos[i]); hi = Math.max(hi, m.pos[i]); ylo = Math.min(ylo, m.pos[i + 1]); yhi = Math.max(yhi, m.pos[i + 1]); } return { lo, hi, mid: (lo + hi) / 2, tall: yhi - ylo }; });
+    ok(Math.sign(ext[0].mid - knot[0]) === -Math.sign(ext[1].mid - knot[0]) && ext.every((e) => Math.abs(e.mid - knot[0]) > 0.02), 'one loop to each side of the knot', ext.map((e) => e.mid - knot[0]));
+    const span = Math.max(ext[0].hi, ext[1].hi) - Math.min(ext[0].lo, ext[1].lo);
+    ok(span > 0.13 * 0.8 && span < 0.13 * 1.25, 'the bow is as wide as it is asked to be', span);
+    ok(ext.every((e) => e.tall > 0.13 * 0.25 && e.tall < 0.13 * 0.75), 'each loop is a broad band of ribbon standing on its edge', ext.map((e) => e.tall));
+    const HS = HAIR.headSurface(B), deep = (q) => dist(q, HS.c) - HS.r(Math.atan2(q[0] - HS.c[0], q[2] - HS.c[2]), Math.asin(Math.max(-1, Math.min(1, (q[1] - HS.c[1]) / dist(q, HS.c))))); let low = 1e9;
+    for (const m of loops) for (let i = 0; i < m.pos.length; i += 3) low = Math.min(low, deep([m.pos[i], m.pos[i + 1], m.pos[i + 2]]));
+    ok(low > -0.002, 'no part of a loop is inside the head', low);
+  }
+  ok(mk({ ends: 2, len: 0.08 }).ms.filter((m) => m.bow).length === 0, 'a tie without a bow has no loops', 0);
+}
+
 if (fails.length) { console.error(`hairstyle: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`hairstyle: ${checks} rules hold`);

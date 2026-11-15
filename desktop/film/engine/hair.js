@@ -101,7 +101,7 @@ export function makeHair(B, spec, seed = 1) {
   const clumps = [], S = 8;
   // a tail gathered at the back or on top (a strand that swings as one)
   let tail = null;
-  if (cut.tail) { const place = Array.isArray(cut.tail.at), at = place ? headSurface(B).at(cut.tail.at[0] * Math.PI / 180, cut.tail.at[1] * Math.PI / 180, 0.01) : cut.tail.at === 'top' ? [0, L.crown[1] + 0.012, L.crown[2] + 0.005] : cut.tail.at === 'low' ? [0, L.nape[1] + 0.03, L.nape[2] - 0.03] : [0, (L.crown[1] + L.nape[1]) / 2 + 0.035, L.nape[2] - 0.035]; const tie = cut.tail.tie; tail = { at, len: cut.tail.len, w: cut.tail.w ?? 0.05, dir: cut.tail.at === 'top' ? [0, 1, -0.25] : [0, cut.tail.up ?? -0.15, -1], tie: !!tie, ends: tie && typeof tie === 'object' ? { n: tie.ends ?? 0, len: tie.len ?? 0.2 } : null, locks: cut.tail.locks ?? 0, seed: seed * 17 + 3, st: null }; }
+  if (cut.tail) { const place = Array.isArray(cut.tail.at), at = place ? headSurface(B).at(cut.tail.at[0] * Math.PI / 180, cut.tail.at[1] * Math.PI / 180, 0.01) : cut.tail.at === 'top' ? [0, L.crown[1] + 0.012, L.crown[2] + 0.005] : cut.tail.at === 'low' ? [0, L.nape[1] + 0.03, L.nape[2] - 0.03] : [0, (L.crown[1] + L.nape[1]) / 2 + 0.035, L.nape[2] - 0.035]; const tie = cut.tail.tie; tail = { at, len: cut.tail.len, w: cut.tail.w ?? 0.05, dir: cut.tail.at === 'top' ? [0, 1, -0.25] : [0, cut.tail.up ?? -0.15, -1], tie: !!tie, ends: tie && typeof tie === 'object' ? { n: tie.ends ?? 0, len: tie.len ?? 0.2 } : null, bow: tie && typeof tie === 'object' && tie.bow > 0 ? tie.bow : 0, locks: cut.tail.locks ?? 0, seed: seed * 17 + 3, st: null }; }
   const HS = (cut.flow === 'tie' && tail) || cut.locks?.length ? headSurface(B) : null;
   const frameAlong = (pts) => { const wides = [], nrms = []; for (let i = 0; i < pts.length; i++) { const tg = norm(sub(pts[Math.min(pts.length - 1, i + 1)], pts[Math.max(0, i - 1)])); let out = sub(pts[i], HS.c); out = sub(out, mul(tg, dot(out, tg))); out = len(out) < 1e-4 ? [0, 0, 1] : norm(out); const w = norm(cross(tg, out)); wides.push(w); nrms.push(norm(cross(w, tg))); } return { wides, nrms }; };
   // hair swept back: with flow: 'tie' every clump runs from its root over the head to where the tail is tied
@@ -331,6 +331,26 @@ export function hairMeshes(H, B, dt, t, wind = null) {
           if (i < M - 1) for (let q = 0; q < 4; q++) { const a2 = i * 4 + q, b2 = i * 4 + (q + 1) % 4, c2 = a2 + 4, d2 = b2 + 4; ei.push(a2, c2, b2, b2, c2, d2); }
         }
         out.push({ pos: ep, idx: Uint32Array.from(ei), tie: true });
+      }
+      // a ribbon tied in a bow (tail.tie.bow: its width in metres): a loop of ribbon to each side of the knot, standing on
+      // its edge, pinched at the knot and fullest towards its end, tilted up a little. It is built in the head's own
+      // space (it is tied to the hair on the head, so it tilts and turns with it) and kept outside the head.
+      if (T.bow > 0) {
+        const M = 9, half = T.bow / 2, k0 = N2[1].p, x0 = k0[0] - Th[hb * 3], y0 = k0[1] - Th[hb * 3 + 1], z0 = k0[2] - Th[hb * 3 + 2];
+        const kl = [(Rh[ho] * x0 + Rh[ho + 3] * y0 + Rh[ho + 6] * z0) / s2, (Rh[ho + 1] * x0 + Rh[ho + 4] * y0 + Rh[ho + 7] * z0) / s2, (Rh[ho + 2] * x0 + Rh[ho + 5] * y0 + Rh[ho + 8] * z0) / s2];
+        const clearOf = (q, r) => (HSt ? HSt.out(q, r) : q);
+        for (const sd of [1, -1]) {
+          const dir = norm([sd, 0.28, -0.12]); let up = [0, 1, 0]; up = norm(sub(up, mul(dir, dot(up, dir)))); const thick = cross(dir, up);
+          const lp = new Float32Array(M * 4 * 3), li = [];
+          for (let i = 0; i < M; i++) {
+            const u = i / (M - 1), hh = half * 0.5 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.06 + 0.94 * Math.pow(u, 0.75))), 0.7) * (0.35 + 0.65 * u) + 0.004, th = 0.004 + 0.012 * Math.sin(Math.PI * u);
+            const c = clearOf(add(kl, mul(dir, half * u * 0.97 + 0.004)), th + 0.014), o = i * 12;
+            const put = (k, q) => { const w = onBone(B, 'head', clearOf(q, 0.006)); lp[o + k * 3] = w[0]; lp[o + k * 3 + 1] = w[1]; lp[o + k * 3 + 2] = w[2]; };
+            put(0, sub(c, mul(up, hh))); put(1, add(c, mul(thick, th))); put(2, add(c, mul(up, hh))); put(3, sub(c, mul(thick, th)));
+            if (i < M - 1) for (let q = 0; q < 4; q++) { const a2 = i * 4 + q, b2 = i * 4 + (q + 1) % 4, c2 = a2 + 4, d2 = b2 + 4; li.push(a2, c2, b2, b2, c2, d2); }
+          }
+          out.push({ pos: lp, idx: Uint32Array.from(li), tie: true, bow: true });
+        }
       }
     }
   }

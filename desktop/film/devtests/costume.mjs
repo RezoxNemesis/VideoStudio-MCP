@@ -97,6 +97,33 @@ const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], dot = (a, b) => a
   ok(none === base, 'a design with neither keeps the top\'s plain paint', none === base);
 }
 
+// ---- 1d. a shirt: an open neck with a collar's two leaves, a placket with buttons, a chest pocket, a loosened tie
+{
+  const BD = await import('../engine/bodydraw.js'), rgb = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+  const base = { fill: [183, 186, 195], shade: [140, 143, 152], group: 'top' };
+  const G = { neckY: 1.53, top: 1.6, backTop: 1.61, sashY: 1.1, shoulder: [0.23, 1.42], arm: [0.66, -0.75], hem: 1.0 };
+  const mk = (collar) => BD.topPaint(base, { skin: '#c08b63', body: { collar } }, G, rgb);
+  const S = mk({ style: 'shirt', depth: 0.1, w: 0.03, buttons: 0.085, pocket: true });
+  const tone = (P, x, y) => { const k = P.map(x, y); return k < 0 ? 'top' : P.maps[k].name; };
+  ok(tone(S, 0, 1.5) === 'inner' && S.maps.find((m) => m.name === 'inner').fill.join() === rgb('#c08b63').join(), 'style: \'shirt\' opens the neck on the wearer\'s own skin', [tone(S, 0, 1.5), S.maps.find((m) => m.name === 'inner')?.fill]);
+  ok(tone(S, 0.045, 1.5) === 'leaf' && tone(S, -0.045, 1.5) === 'leaf' && tone(S, 0.12, 1.5) === 'top', 'a collar leaf lies along each side of the opening', [tone(S, 0.045, 1.5), tone(S, 0.12, 1.5)]);
+  ok(tone(S, 0.045, 1.36) === 'top', 'the leaves end in points a little below the opening, not in a band down the chest', tone(S, 0.045, 1.36));
+  const ys = []; for (let y = 1.42; y > 1.02; y -= 0.001) if (tone(S, 0, y) === 'button') ys.push(y);
+  const groups = ys.filter((y, i) => i === 0 || ys[i - 1] - y > 0.01).length;
+  ok(groups >= 4 && groups <= 6, 'buttons down the middle below the opening, about 8.5 cm apart, to the hem (past the sash)', groups);
+  ok(tone(S, 0.0135, 1.3) === 'seam' && tone(S, 0.03, 1.3) === 'top', 'the placket has a stitched edge', tone(S, 0.0135, 1.3));
+  let pk = 0; for (let x = 0.03; x < 0.2; x += 0.001) if (tone(S, x, 1.36) === 'seam') pk++;
+  let pr = 0; for (let x = -0.2; x < -0.03; x += 0.001) if (tone(S, x, 1.36) === 'seam') pr++;
+  ok(pk >= 2 && pr === 0, 'a pocket is stitched on the wearer\'s left breast only', [pk, pr]);
+  ok(tone(S, 0, 11.4) === 'top' && tone(S, 0.05, 11.3) === 'top', 'the back of a shirt is plain', tone(S, 0, 11.4));
+  const T = mk({ style: 'shirt', depth: 0.1, w: 0.03, buttons: 0.085, tie: { color: '#6e2630', stripe: '#b9a27a', len: 0.36, w: 0.028, loose: 0.03 } });
+  ok(tone(T, 0, 1.49) === 'inner' && ['tie', 'stripe'].includes(tone(T, 0, 1.385)), 'a loosened tie: its knot hangs below the open neck', [tone(T, 0, 1.49), tone(T, 0, 1.385)]);
+  let blade = 0, stripes = 0; for (let y = 1.37; y > 1.1; y -= 0.002) { const t = tone(T, 0, y); if (t === 'tie' || t === 'stripe') blade++; if (t === 'stripe') stripes++; }
+  ok(blade > 100 && stripes > 10 && stripes < blade * 0.6, 'the blade hangs down the middle, striped', [blade, stripes]);
+  ok(['top', 'seam', 'button'].includes(tone(T, 0, 1.02)) && tone(T, 0.05, 1.25) === 'top', 'it ends above the hem and is narrow', [tone(T, 0, 1.02), tone(T, 0.05, 1.25)]);
+  ok(tone(T, 0, 1.3) !== 'button', 'the tie covers the buttons under it', tone(T, 0, 1.3));
+}
+
 // ---- 2. hair tied high
 {
   // a scalp: the top of a ball, with the landmarks a head has

@@ -256,5 +256,5 @@ export function decalPaints(D, skin, shade, o = {}) {
   tones.beardStrand = [mix(skin, mix(bc, bs, 0.7), dn), mix(shade, mul(bs, 0.8), dn)];
   tones.scar = [mix(mix(skin, shade, 0.75), [150, 72, 70], 0.42), mix(deep, [120, 52, 52], 0.35)];
   tones.ageLine = [mix(skin, shade, 0.95), mul(shade, 0.86)];
-  return D.names.map((n) => ({ fill: tones[n][0].map(Math.round), shade: tones[n][1].map(Math.round), line: false, recvHair: true }));
+  return D.names.map((n) => ({ fill: tones[n][0].map(Math.round), shade: tones[n][1].map(Math.round), line: false, recvHair: o.hairShadow !== false }));
 }

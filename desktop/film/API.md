@@ -153,6 +153,17 @@ with two hanging ends) }`. A tail hangs as hair does: off the tie in a curve, ro
 back (never through them), swaying with the walk. Painted with a brush: `hair: { strands: 0…1 }` lays darker strands and a lighter streak along
 every lock, `hair.sheen: 0…1` makes the band of light across the hair zigzag from lock to lock, `hair.shine` its colour.
 
+**A shirt.** `design.body.collar: { style: 'shirt', depth: 0.1, w: 0.03, buttons: 0.085 (metres between them), button:
+'#eef0f4', pocket: true, tie: { color, stripe, len: 0.38, w: 0.03, loose: 0.035 (the knot pulled down: a loosened tie) } }`
+opens the neck on the wearer's own skin (or `inner`), lays a collar's two leaves along the opening, stitches a placket
+with buttons down to the hem and a pocket on the wearer's left breast, and hangs a striped tie. A tucked shirt: the
+tunic garment `below_hip: -0.1`, the trousers `rise: 0.19, offset: 0.013`, a belt as `body.bands: { trousers: [[0.605,
+0.628, '#0e0d10']] }`. Rolled sleeves: the tunic's `sleeve: 'short'` (it ends at the elbow). A child's dress collar is the
+same cut, small: `depth: 0.045, buttons: 0.05`.
+
+**A ribbon bow.** `hair3.tail.tie: { ends: 2, len: 0.07, bow: 0.15 }` ties the tail with a bow that wide (metres): a loop
+of ribbon to each side of the knot, in the colour `hair.tie`; it turns and tilts with the head.
+
 **A top cut like a robe.** `design.body.collar: { style: 'cross' | 'v', depth: 0.13, w: 0.026, inner: '#ece6da', trim:
 '#b08a3c' }` cuts the top's neck: lapels that cross at the chest (the wearer's left over the right, down to the sash) or
 a neck cut to a point, the under-robe showing in the opening, a band along the lapels and round the back of the neck.
@@ -162,7 +173,8 @@ With `body.sleeves` the sleeves are set in at one clean seam from shoulder to ar
 under its tip, nostrils, the line of a turned head's nose, the lips and the line where they meet, the shadow under the
 lower lip, the crease of the lids, and the hair's own shadow on the brow. On the design: `face: { lips: 0…1 }` how full
 the lips are drawn (default 0.45; about 0.9 for a woman's painted mouth), `face.lipColor`, `face.nostrils: false`,
-`face.detail: false` for the plain face of earlier versions. `face.nose: 0…1` lays the nose's shadows in lightly
+`face.detail: false` for the plain face of earlier versions. `face.hairShadow: false` keeps the hair's cast shadow off the face
+(a child's face under a fringe, a gentle face in low light). `face.nose: 0…1` lays the nose's shadows in lightly
 (about 0.35 for a fine nose under the soft brush).
 
 **Beards, scars, the lines of age.** They are painted on the skin of a real head, so they turn with it and move with

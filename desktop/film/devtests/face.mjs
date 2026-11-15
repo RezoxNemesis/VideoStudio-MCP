@@ -87,6 +87,9 @@ if (D) {
   const P = F3.decalPaints ? F3.decalPaints(D, [232, 184, 150], [196, 140, 118]) : null;
   const lum = (c) => c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11;
   ok(Array.isArray(P) && P.length === D.names.length && P.every((p) => p.fill.length === 3 && p.shade.length === 3 && lum(p.shade) <= lum(p.fill)), 'decalPaints gives a paint (lit tone and shadow tone) for every drawn tone', P && P.length);
+  // a gentle face (a child, a fringe): design.face.hairShadow: false keeps the hair's cast shadow off the face and its drawn tones
+  const Q = F3.decalPaints ? F3.decalPaints(D, [232, 184, 150], [196, 140, 118], { hairShadow: false }) : null;
+  ok(Array.isArray(P) && P.every((p) => p.recvHair === true) && Array.isArray(Q) && Q.every((p) => p.recvHair === false), 'hairShadow: false: the drawn tones of the face take no shadow from the hair (they do by default)', Q && Q.map((p) => p.recvHair));
   if (P) { const skin = lum([232, 184, 150]); ok(P.every((p) => lum(p.fill) < skin - 4), 'every drawn tone is darker than the lit skin', P.map((p) => Math.round(lum(p.fill)))); }
 }
 

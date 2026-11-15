@@ -216,7 +216,7 @@ export function robeMesh(ch, lit = (c) => c) {
  * the top's sleeves a colour of their own — a dark vest over a white robe — with a line where sleeve meets vest.
  */
 /**
- * A top cut like a robe. design.body.collar: { style: 'cross' | 'v', depth (m below the neck where the lapels cross or the
+ * A top cut like a robe, or a shirt. design.body.collar: { style: 'cross' | 'v' | 'shirt' (see below), depth (m below the neck where the lapels cross or the
  * neck is cut to), w (the band along the lapels), inner (the under-robe that shows in the opening), trim (the band's
  * colour; none without it), to (where the lapels end, as a part of the body's height: the sash) } and design.body.sleeves
  * (sleeves of a colour of their own, set in at one clean seam at the shoulder). Returns `base` itself when the design
@@ -229,14 +229,45 @@ export function topPaint(base, d, G, rgbOf) {
   const bd = d.body ?? {}, col = bd.collar ?? null, sl = bd.sleeves ?? null;
   if (!col && !sl) return base;
   const maps = [], tone = (name, c, extra = {}) => { maps.push({ name, fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.3)), two: base.two, bias: base.bias, ...extra }); return maps.length - 1; };
-  const SLEEVE = sl ? tone('sleeve', sl, { group: 'sleeve' }) : -1, INNER = col ? tone('inner', col.inner ?? '#ece6da', { group: 'inner' }) : -1, TRIM = col?.trim ? tone('trim', col.trim, { group: 'trim' }) : -1;
-  const cross = col?.style !== 'v', FOLD = col && cross ? tone('fold', shadeHex(col.inner ?? '#ece6da', -0.34), { group: 'inner' }) : -1;
+  const SLEEVE = sl ? tone('sleeve', sl, { group: 'sleeve' }) : -1, INNER = col ? tone('inner', col.inner ?? (col.style === 'shirt' ? d.skin ?? '#e9b995' : '#ece6da'), { group: 'inner' }) : -1, TRIM = col?.trim ? tone('trim', col.trim, { group: 'trim' }) : -1;
+  const shirt = col?.style === 'shirt', cross = col?.style !== 'v' && !shirt, FOLD = col && cross ? tone('fold', shadeHex(col.inner ?? '#ece6da', -0.34), { group: 'inner' }) : -1;
   const [sx, sy] = G.shoulder, nw = G.neckW ?? 0.062, w = col?.w ?? 0.03, yc = G.neckY - (col?.depth ?? 0.12), k = nw / Math.max(0.02, G.top - yc), n = Math.sqrt(1 + k * k), gap = 0.014;
+  // a shirt (style: 'shirt'): the neck open on the skin, a collar's two leaves along the opening running out to points, a
+  // placket with a stitched edge and buttons down to the hem (collar.buttons: metres between them), a pocket on the
+  // wearer's left breast (collar.pocket), a tie (collar.tie: { color, stripe, len, w, loose: how far the knot is pulled down })
+  const up = (c, q) => c.map((v) => Math.max(0, Math.min(255, q < 0 ? v * (1 + q) : v + (255 - v) * q)));
+  const own = (name, fill, shade, extra = {}) => { maps.push({ name, fill, shade, two: base.two, bias: base.bias, group: base.group, ...extra }); return maps.length - 1; };
+  const tie = shirt ? col.tie ?? null : null;
+  const LEAF = shirt ? own('leaf', up(base.fill, 0.14), up(base.shade, 0.1), { group: 'leaf' }) : -1, SEAM = shirt ? own('seam', up(base.fill, -0.24), up(base.shade, -0.2)) : -1;
+  const BUTTON = shirt && col.buttons ? own('button', rgbOf(col.button ?? '#eef0f4'), rgbOf(shadeHex(col.button ?? '#eef0f4', -0.25))) : -1;
+  const TIE = tie ? tone('tie', tie.color ?? '#6e2630', { group: 'tie' }) : -1, STRIPE = tie?.stripe ? tone('stripe', tie.stripe, { group: 'tie' }) : -1;
+  const hem = G.hem ?? G.sashY - 0.12, kY = G.neckY - (col?.depth ?? 0.12) - (tie?.loose ?? 0), tLen = tie?.len ?? 0.36, tW = tie?.w ?? 0.028, pkY = sy - 0.045;
+  const shirtAt = (x, y, ax) => {
+    const e = nw - k * (G.top - y), f = (ax - e) / n;
+    if (y >= yc && f < 0) return INNER;
+    if (tie) {
+      // the knot (a small wedge, wider at its top), then the blade: widening to four fifths of its length, then cut to a point
+      const kt = kY + 0.012, kb = kY - 0.028, end = kY - tLen;
+      let hw = -1;
+      if (y <= kt && y > kb) hw = 0.013 + 0.007 * ((y - kb) / (kt - kb));
+      else if (y <= kb && y > end) { const u = (kb - y) / (kb - end); hw = u < 0.8 ? 0.012 + (tW - 0.012) * (u / 0.8) : tW * (1 - (u - 0.8) / 0.2); }
+      if (hw > 0 && ax < hw) { if (STRIPE >= 0) { const q = (x * 0.9 + y) / 0.024, r = q - Math.floor(q); if (r < 0.3) return STRIPE; } return TIE; }
+    }
+    // the leaves of the collar: along each edge of the opening, their outer corners hanging to a point below where the edges meet
+    if (f >= 0 && f < w + 0.0028) { const low = yc - 0.038 * Math.min(1, f / w); if (y >= low) return f < w ? (y < low + 0.0026 ? SEAM : LEAF) : SEAM; }
+    if (y < yc - 0.004 && y > hem) {
+      if (BUTTON >= 0 && ax < 0.006) { const sp = col.buttons, i = Math.round((yc - 0.03 - y) / sp), by = yc - 0.03 - i * sp; if (i >= 0 && by > hem + 0.03 && x * x + (y - by) * (y - by) < 0.0055 * 0.0055) return BUTTON; }
+      if (ax >= 0.0125 && ax < 0.0147) return SEAM;
+    }
+    if (col.pocket && x > 0.06 && x < 0.135 && y < pkY && y > pkY - 0.085) { if (x < 0.0626 || x > 0.1324 || y < pkY - 0.0824 || (y > pkY - 0.016 && y < pkY - 0.0134) || y > pkY - 0.0026) return SEAM; }
+    return -1;
+  };
   const map = (x, yy) => {
     const back = yy > 5, y = back ? yy - 10 : yy, ax = x < 0 ? -x : x;
     // the sleeve: beyond a seam that runs down from the shoulder to the armpit (leaning in a little towards the neck at its top)
     if (SLEEVE >= 0 && ax - sx + 0.012 + 0.2 * (y - sy) > 0) return SLEEVE;
     if (!col) return -1;
+    if (shirt) return back ? (y > G.backTop - 0.03 ? LEAF : -1) : shirtAt(x, y, ax);
     if (back) return TRIM >= 0 && y > G.backTop - w ? TRIM : -1;
     if (y < G.sashY) return -1;
     // the lapels' edges: from beside the neck down to where they meet; the cloth of each lies outside its edge
@@ -295,13 +326,14 @@ export function topMeasures(B, p, d) {
   if (p.top) return p.top;
   const P = p.rest0 ?? p.pos, n = p.n, lm = B.landmarks, si = B.bi['upperarm01.L'], sh = si !== undefined ? [B.head[si * 3], B.head[si * 3 + 1], B.head[si * 3 + 2]] : [0.23, (lm.neckY ?? 1.5) - 0.11, 0];
   const zs = sh[2]; let top = -1e9, backTop = -1e9, ringW = 0;
+  let hem = 1e9; for (const v of p.idxCore) if (P[v * 3 + 1] < hem) hem = P[v * 3 + 1];
   for (let v = 0; v < n; v++) { const x = Math.abs(P[v * 3]), y = P[v * 3 + 1], z = P[v * 3 + 2]; if (z > zs) { if (x < 0.1 && y > top) top = y; } else if (y > backTop) backTop = y; }
   for (let v = 0; v < n; v++) { const x = Math.abs(P[v * 3]), y = P[v * 3 + 1]; if (P[v * 3 + 2] > zs && y > top - 0.02 && x < 0.12 && x > ringW) ringW = x; }
   const xyF = new Float32Array(n * 2), xyB = new Float32Array(n * 2);
   for (let v = 0; v < n; v++) { xyF[v * 2] = xyB[v * 2] = P[v * 3]; xyF[v * 2 + 1] = P[v * 3 + 1]; xyB[v * 2 + 1] = P[v * 3 + 1] + 10; }
   const sort = (idx) => { const f = [], b = []; for (let t = 0; t + 2 < idx.length; t += 3) { const z = (P[idx[t] * 3 + 2] + P[idx[t + 1] * 3 + 2] + P[idx[t + 2] * 3 + 2]) / 3; (z > zs ? f : b).push(idx[t], idx[t + 1], idx[t + 2]); } return [Uint32Array.from(f), Uint32Array.from(b)]; };
   const [coreF, coreB] = sort(p.idxCore), [limbF, limbB] = sort(p.idxLimb), to = d?.body?.collar?.to;
-  return (p.top = { G: { neckY: lm.neckY ?? top - 0.03, top, backTop, sashY: to !== undefined ? to * B.height : (lm.hipY ?? 0.96) + 0.14, shoulder: [sh[0], sh[1]], neckW: Math.max(0.045, ringW * 0.8) }, xyF, xyB, coreF, coreB, limbF, limbB });
+  return (p.top = { G: { neckY: lm.neckY ?? top - 0.03, top, backTop, sashY: to !== undefined ? to * B.height : (lm.hipY ?? 0.96) + 0.14, shoulder: [sh[0], sh[1]], neckW: Math.max(0.045, ringW * 0.8), hem: hem < 1e8 ? hem : undefined }, xyF, xyB, coreF, coreB, limbF, limbB });
 }
 /**
  * The paint of a head of hair: its two tones, a sheen, and — with design.hair.strands (0…1) — strands laid along every
@@ -438,13 +470,13 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
         const ey = fd.eye ?? {}, e3 = fd.eye3 ?? {}, ehw = e3.w ?? 0.0215, ehh = e3.h ?? ehw * ((ey.h ?? 0.15) / (ey.w ?? 0.2)) * 1.05;
         const marks = faceMarkOptions(d, rgbOf);
         dec = faceDecals(M, { ...marks, shadeSide: V.dot(L, dirOnBone(B, 'head', [1, 0, 0])) > 0 ? -1 : 1, lips: fd.lips ?? 0.45, nostrils: fd.nostrils, eye: drawn ? { cx: M.eyeX + (e3.dx ?? 0.003), cy: e3.dy ?? 0.003, hw: ehw, hh: ehh } : { cx: M.eyeX, cy: 0.001, hw: 0.017, hh: 0.0085 } });
-        decP = decalPaints(dec, paint.fill, paint.shade, { ...marks, lips: fd.lips ?? 0.45, lip: fd.lipColor ? rgbOf(fd.lipColor) : undefined, nose: fd.nose });
+        decP = decalPaints(dec, paint.fill, paint.shade, { ...marks, lips: fd.lips ?? 0.45, lip: fd.lipColor ? rgbOf(fd.lipColor) : undefined, nose: fd.nose, hairShadow: fd.hairShadow });
       }
       const browP = { fill: rgbOf(bc), shade: rgbOf(bc), flat: true, line: false };
       const maps = drawn ? decP : [browP, ...decP];
       const map = drawn ? (dec ? dec.map : null) : (x, y) => { if (brow(x, y) === 0) return 0; const k = dec ? dec.map(x, y) : -1; return k < 0 ? -1 : k + 1; };
       const nrF = rounded(p.out, nr, 0.55, 0.13);
-      const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: true, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
+      const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: d.face?.hairShadow !== false, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
       eyeIds.add(fid); faceIds.add(fid); for (const k of fp.mapIds ?? []) faceIds.add(k);
       if (p.idxMouth.length) cp.add(p.out, p.idxMouth, { fill: rgbOf('#4a1c22'), shade: rgbOf('#2a0e12'), line: false, group: 'mouth', flat: true }, nr);
     }
