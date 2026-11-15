@@ -210,8 +210,27 @@ export function applySword(a, P, o = {}) { const h = a.h, k = h.height / 1.8 * a
   if (o.two) holdAt(a, 'L', hand.clone().addScaledVector(dir, -0.12 * k), dir, edge, null, null);
   return { hand, dir }; }
 /** fall backwards (reverse of a get-up) starting at t0; returns 0..1 progress. o: dur, push (m), dir (world V3), face-down: prone */
-export function fall(a, t, t0, o = {}) { const u = clamp((t - t0) / (o.dur ?? 1.1)); const prone = !!o.prone; const clip = prone ? '139_16' : '139_18'; const c0 = prone ? 4.7 : 6.0, c1 = prone ? 1.2 : 1.0; const k = ease.out(u);
-  a.mo.apply(clip, lerp(c0, c1, 1 - Math.pow(1 - u, 1.6)), { inPlace: true, face: prone ? 5.0 : 6.6 }); if (o.push) { const d = o.dir || V3(0, 0, -1).applyQuaternion(a.root.quaternion); a.root.position.addScaledVector(d, o.push * k); } return u; }
+/**
+ * The captured falls. A body that is struck down loses its balance, goes over and lands, and that takes about a
+ * second: `back` goes over backwards onto its back (struck from the front), `face` — the knees give and it pitches
+ * forward onto its face. in: the last moment standing, down: the body is on the ground, out: it has settled.
+ */
+export const FALLS = { back: { clip: '90_18', in: 0.45, down: 1.55, out: 2.7 }, face: { clip: '90_16', in: 2.25, down: 4.0, out: 5.2 } };
+/**
+ * The clip time of a fall that began at t0: forwards, at the capture's own speed. dur asks for the time it takes to
+ * be down and is held to what a body can do (0.7 to 1.4 times the capture's speed); after `down` the body settles to
+ * `out` and lies still.
+ */
+export function fallClock(t, t0, f, dur) {
+  const natural = f.down - f.in, rate = dur ? clamp(natural / dur, 0.7, 1 / 0.7) : 1;
+  return clamp(f.in + Math.max(0, t - t0) * rate, f.in, f.out);
+}
+/** A fall, from standing where the body stands: it goes over where a falling body goes (the hips travel, the feet stay). Returns 0…1, how far down it is. */
+export function fall(a, t, t0, o = {}) {
+  const f = o.prone ? FALLS.face : FALLS.back, ct = fallClock(t, t0, f, o.dur);
+  a.mo.apply(f.clip, ct, { ref: f.in, face: f.in });
+  return clamp((ct - f.in) / (f.down - f.in));
+}
 /** hit-stop: animation time that freezes for `hold` seconds at each hit time */
 export function hitStop(t, hits) { let w = t; for (const [ti, hold] of hits) { if (t > ti) w -= Math.min(hold, t - ti); } return w; }
 /** recoil of a body struck at time ti: returns 0..1 envelope */

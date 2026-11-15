@@ -7,6 +7,7 @@
  * Times are seconds from the start of the scene.
  */
 import type { CharSpec } from "./human/factory";
+import { FALLS } from "./engine/fight.js";
 
 export type Vec3 = [number, number, number];
 
@@ -304,7 +305,7 @@ export function clipsOf(s: StageSpec): Set<string> {
     for (const b of a.blocks) {
       if ((b.kind === "clip" || b.kind === "go" || b.kind === "idle") && b.clip) out.add(b.clip);
       if (b.kind === "pose" && typeof b.pose === "string" && b.pose.startsWith("clip:")) out.add(b.pose.slice(5).split("@")[0]!);
-      if (b.kind === "fall") out.add(b.prone ? "139_16" : "139_18");
+      if (b.kind === "fall") out.add((FALLS as Record<string, { clip: string }>)[b.prone ? "face" : "back"]!.clip);
     }
     for (const o of a.overlays) if (o.kind === "clip") out.add(o.clip);
   }

@@ -541,6 +541,7 @@ export class StageRuntime {
     if (b.kind === "fall") {
       place(gx, gz, A.yaw);
       fallDown(a, local, 0, { dur: b.dur ?? 1.1, push: b.push ?? 0.6, prone: !!b.prone });
+      SK.floorLift(a, this.ground(gx, gz) + A.y); // (a capture lies a little lower than it stood: it never sinks into the floor)
       return;
     }
     // pose

@@ -34,7 +34,7 @@ ok(voiceSpec(script, { ...ln, take_en: -1 }, 'en').key === en0.key && voiceSpec(
 // ---- a performance solved by an older Stage is solved again: its key knows which solver made it
 {
   const PJ = await import('../kit/project.js'), crypto = await import('node:crypto');
-  ok(typeof PJ.bakeKey === 'function' && Number.isInteger(PJ.SOLVER_REV) && PJ.SOLVER_REV >= 3, 'project.js gives bakeKey(spec) and SOLVER_REV (raised whenever the Stage solves or builds bodies differently)', [typeof PJ.bakeKey, PJ.SOLVER_REV]);
+  ok(typeof PJ.bakeKey === 'function' && Number.isInteger(PJ.SOLVER_REV) && PJ.SOLVER_REV >= 4, 'project.js gives bakeKey(spec) and SOLVER_REV (raised whenever the Stage solves or builds bodies differently)', [typeof PJ.bakeKey, PJ.SOLVER_REV]);
   if (typeof PJ.bakeKey === 'function') {
     const spec = { name: 's00', seconds: 12.3, actors: [{ id: 'v', preset: 'swordsman' }] }, plain = crypto.createHash('md5').update(JSON.stringify(spec)).digest('hex');
     ok(PJ.bakeKey(spec) === PJ.bakeKey(JSON.parse(JSON.stringify(spec))), 'the same performance has the same key', [PJ.bakeKey(spec), PJ.bakeKey(JSON.parse(JSON.stringify(spec)))]);
