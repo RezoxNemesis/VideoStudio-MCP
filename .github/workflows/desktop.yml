@@ -100,8 +100,8 @@ jobs:
           done
           du -sh desktop/stage-assets
 
-      - name: Stage — every gait loops on a whole stride (checked on the real motion library)
-        run: VS_STAGE_ASSETS_DIR=desktop/stage-assets npx vitest run tests/stagegait.test.ts
+      - name: Stage — every gait loops on a whole stride, and every captured run obeys gravity (checked on the real motion library)
+        run: VS_STAGE_ASSETS_DIR=desktop/stage-assets npx vitest run tests/stagegait.test.ts tests/stagetime.test.ts
 
       - name: Code Studio — the film engine draws (its canvas library loads, the people library is there)
         working-directory: desktop/film
