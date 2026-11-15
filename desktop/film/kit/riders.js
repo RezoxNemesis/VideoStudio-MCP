@@ -21,9 +21,11 @@ export function seat(pose, horse, o = {}) {
   shiftPose(pose, V.sub(to, pel));
   const sp = o.spread ?? 28, th = o.thigh ?? 50, kn = o.knee ?? 62, bends = [];
   for (const [S, sg] of [['L', 1], ['R', -1]]) {
+    // (what the hand holds goes with the hand: a drawn sword, a spear)
+    const wr = pose.j[`wrist.${S}`], held = wr ? Object.keys(pose.props ?? {}).filter((n) => V.dist(pose.props[n].pos, wr) < 0.2 * k) : [];
     bends.push({ bone: `upperleg01.${S}`, about: 'fwd', deg: sg * sp }, { bone: `upperleg01.${S}`, about: 'side', deg: -th },
       { bone: `lowerleg01.${S}`, about: 'side', deg: kn }, { bone: `lowerleg01.${S}`, about: 'fwd', deg: -sg * sp * 0.86 }, { bone: `foot.${S}`, about: 'side', deg: -10 });
-    if (o.arms !== false) bends.push({ bone: `upperarm01.${S}`, about: 'side', deg: -16 }, { bone: `lowerarm01.${S}`, about: 'side', deg: -68 }, { bone: `lowerarm01.${S}`, about: 'up', deg: -sg * 30 });
+    if (o.arms !== false) bends.push({ bone: `upperarm01.${S}`, about: 'side', deg: -16, props: held }, { bone: `lowerarm01.${S}`, about: 'side', deg: -68, props: held }, { bone: `lowerarm01.${S}`, about: 'up', deg: -sg * 30, props: held });
   }
   bendPose(pose, bends);
   pose.contact = 0;

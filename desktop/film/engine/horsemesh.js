@@ -78,8 +78,8 @@ export function trunkHalfWidth(x, y) {
 
 // a leg from its joint in the body to the coronet: [where along its joints (fore: 0 shoulder, 1 knee, 2 fetlock, 3 hoof;
 // hind: 0 hip, 1 stifle, 2 hock, 3 fetlock, 4 hoof), half depth fore and aft, half width, shift back]
-const FORE = [[-0.06, 0.135, 0.090, 0], [0.2, 0.120, 0.080, 0.012], [0.5, 0.088, 0.064, 0.004], [0.85, 0.058, 0.050, 0], [1, 0.060, 0.054, -0.004], [1.2, 0.042, 0.036, 0], [1.8, 0.040, 0.034, 0], [2, 0.050, 0.044, 0.004], [2.55, 0.040, 0.039, 0], [2.86, 0.047, 0.045, 0]];
-const HIND = [[-0.1, 0.200, 0.120, 0], [0.45, 0.215, 0.128, 0.02], [1, 0.160, 0.105, 0.03], [1.35, 0.115, 0.082, 0.012], [1.75, 0.072, 0.056, 0.004], [2, 0.066, 0.052, 0.014], [2.2, 0.048, 0.040, 0.004], [2.8, 0.042, 0.036, 0], [3, 0.052, 0.046, 0.004], [3.55, 0.042, 0.040, 0], [3.86, 0.049, 0.046, 0]];
+const FORE = [[-0.06, 0.135, 0.090, 0], [0.2, 0.122, 0.082, 0.012], [0.5, 0.092, 0.068, 0.004], [0.85, 0.064, 0.055, 0], [1, 0.066, 0.060, -0.004], [1.2, 0.050, 0.043, 0], [1.8, 0.048, 0.041, 0], [2, 0.058, 0.052, 0.004], [2.55, 0.046, 0.045, 0], [2.86, 0.053, 0.051, 0]];
+const HIND = [[-0.1, 0.200, 0.120, 0], [0.45, 0.215, 0.128, 0.02], [1, 0.165, 0.108, 0.03], [1.35, 0.120, 0.086, 0.012], [1.75, 0.078, 0.061, 0.004], [2, 0.072, 0.058, 0.014], [2.2, 0.055, 0.046, 0.004], [2.8, 0.050, 0.043, 0], [3, 0.060, 0.053, 0.004], [3.55, 0.048, 0.046, 0], [3.86, 0.055, 0.052, 0]];
 // the head from behind the poll to the lips: [where along poll → muzzle, half depth, half width, shift towards the jaw]
 const HEAD = [[-0.07, 0.055, 0.055, 0], [0, 0.112, 0.090, 0.012], [0.18, 0.160, 0.110, 0.04], [0.38, 0.140, 0.100, 0.034], [0.6, 0.104, 0.076, 0.016], [0.8, 0.084, 0.064, 0.006], [0.95, 0.080, 0.066, 0], [1.04, 0.052, 0.050, 0]];
 
@@ -114,7 +114,7 @@ export function horseMeshes(horse, lit = (c) => c, q = {}) {
   // ---- neck: from between the withers and the breast up to the poll, deep at its root, fine at the throat
   const root = W(0.5 * k, 1.3 * k, 0), poll = j.poll, nAx = V.norm(V.sub(poll, root));
   const crest = V.norm(V.cross(sd, nAx)); // towards the mane
-  const bend = V.mul(crest, 0.06 * k);
+  const bend = V.mul(crest, 0.09 * k);
   const neckAt = (u) => V.add(lerp3(root, poll, u), V.mul(bend, 4 * u * (1 - u)));
   const NECK = [[-0.14, 0.33, 0.185], [0.08, 0.30, 0.160], [0.32, 0.235, 0.122], [0.58, 0.180, 0.095], [0.82, 0.140, 0.080], [1.0, 0.115, 0.076]];
   const neckRings = NECK.map(([u, d, w]) => { const c = neckAt(u), t = V.norm(V.sub(neckAt(u + 0.02), neckAt(u - 0.02))), e2 = V.norm(V.cross(sd, t)); return ring(c, sd, e2, w * k, d * k, N, (a) => [Math.sin(a) > 0 ? 1 - 0.3 * Math.sin(a) ** 2 : 1, 1]); });
@@ -151,25 +151,22 @@ export function horseMeshes(horse, lit = (c) => c, q = {}) {
     out.push({ name: `leg${leg}`, paint: legPaint(leg), ...tube(rings) });
     // the hoof: wider at the ground than at the coronet, longer at the toe
     const ground = L.hoof[1] - 0.045 * k, hc = [L.hoof[0], 0, L.hoof[2]];
-    const hr = [[hoofTop[1] + 0.012 * k, 0.047, 0.045, 0], [hoofTop[1] - 0.02 * k, 0.054, 0.05, 0.006], [ground, 0.064, 0.058, 0.014]].map(([y, a, b, toe]) => ring([hc[0] + f[0] * toe * k, y, hc[2] + f[2] * toe * k], sd, f, b * k, a * k, 12));
+    const hr = [[hoofTop[1] + 0.012 * k, 0.054, 0.052, 0], [hoofTop[1] - 0.02 * k, 0.062, 0.058, 0.006], [ground, 0.074, 0.067, 0.016]].map(([y, a, b, toe]) => ring([hc[0] + f[0] * toe * k, y, hc[2] + f[2] * toe * k], sd, f, b * k, a * k, 12));
     out.push({ name: `hoof${leg}`, paint: dark(o.hoof ?? '#2a2424', 'hoof'), ...tube(hr) });
   }
 
   // ---- mane: a sheet of hair from the poll down the crest, falling to the right side; a forelock between the ears
   {
-    const M = 16, a = [], b = [];
+    // rows of points on the neck's skin, from the crest down its right side (a: round the neck, a quarter turn = the crest)
+    const neckDims = (u) => { let n0 = NECK[0], n1 = NECK[NECK.length - 1]; for (let r = 0; r < NECK.length - 1; r++) if (u >= NECK[r][0] && u <= NECK[r + 1][0]) { n0 = NECK[r]; n1 = NECK[r + 1]; } const w = (u - n0[0]) / ((n1[0] - n0[0]) || 1); return [n0[1] + (n1[1] - n0[1]) * w, n0[2] + (n1[2] - n0[2]) * w]; };
+    const onNeck = (u, ang, off) => { const c = neckAt(u), t = V.norm(V.sub(neckAt(u + 0.02), neckAt(u - 0.02))), e2 = V.norm(V.cross(sd, t)), [d, wd] = neckDims(u), sn = Math.sin(ang), cs = Math.cos(ang); return V.add(V.add(c, V.mul(e2, (d + off) * k * sn)), V.mul(sd, (wd * (sn > 0 ? 1 - 0.3 * sn * sn : 1) + off) * k * cs)); };
+    const M = 16, a = [], rows = [];
     for (let i = 0; i <= M; i++) {
-      const u = 0.98 - (i / M) * 0.92, c = neckAt(u), t = V.norm(V.sub(neckAt(u + 0.02), neckAt(u - 0.02))), e2 = V.norm(V.cross(sd, t));
-      // (the neck's depth and width where this lock grows)
-      let n0 = NECK[0], n1 = NECK[NECK.length - 1]; for (let r = 0; r < NECK.length - 1; r++) if (u >= NECK[r][0] && u <= NECK[r + 1][0]) { n0 = NECK[r]; n1 = NECK[r + 1]; }
-      const w = (u - n0[0]) / ((n1[0] - n0[0]) || 1), d = n0[1] + (n1[1] - n0[1]) * w, wd = n0[2] + (n1[2] - n0[2]) * w;
-      const top = V.add(c, V.mul(e2, (d + 0.008) * k)), fall = (0.2 + 0.035 * Math.sin(i * 0.9) + (i % 2) * 0.02) * k;
-      a.push(top); b.push(V.add(V.add(c, V.mul(e2, (d - 0.02) * k - fall)), V.mul(sd, -(wd * 0.86 + 0.02) * k)));
+      const u = 0.98 - (i / M) * 0.92, fall = 0.16 + 0.1 * Math.sin(i * 0.9) + (i % 2) * 0.07; // how far round the neck this lock reaches
+      a.push(onNeck(u, Math.PI / 2, 0.008));
+      rows.push([0, 0.34, 0.68, 1].map((v, r) => onNeck(u, Math.PI / 2 + v * (Math.PI / 2 + fall - 0.5), r === 0 ? 0.008 : 0.03)));
     }
-    const pos = [], idx = [];
-    for (let i = 0; i <= M; i++) { const m = lerp3(a[i], b[i], 0.4); pos.push(...a[i], m[0] - sd[0] * 0.05 * k, m[1], m[2] - sd[2] * 0.05 * k, ...b[i]); }
-    for (let i = 0; i < M; i++) for (let r = 0; r < 2; r++) { const p = i * 3 + r, q = (i + 1) * 3 + r; idx.push(p, q, p + 1, p + 1, q, q + 1); }
-    out.push({ name: 'mane', paint: hairP(o.mane), pos: Float32Array.from(pos), idx: Uint32Array.from(idx) });
+    out.push({ name: 'mane', paint: hairP(o.mane), ...sheet(rows) });
     // and the roots of it stand along the crest, seen from either side
     const up2 = a.map((p, i) => { const u = 0.98 - (i / M) * 0.92, t = V.norm(V.sub(neckAt(u + 0.02), neckAt(u - 0.02))), e2 = V.norm(V.cross(sd, t)); return [p, e2]; });
     out.push({ name: 'crest', paint: { ...hairP(o.mane), two: false }, ...tube(up2.map(([p, e2], i) => ring(V.add(p, V.mul(e2, 0.012 * k)), sd, e2, (i === 0 || i === M ? 0.012 : 0.03) * k, (i === 0 || i === M ? 0.01 : 0.034 + 0.008 * (i % 2)) * k, 8))) });

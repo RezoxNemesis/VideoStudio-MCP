@@ -47,6 +47,14 @@ for (const [gait, d] of [['stand', 0], ['walk', 2.3]]) {
   ok((p.body.after ?? []).some((a) => a.turn) && (p.body.after ?? []).some((a) => a.shift), `${gait}: and carried to the saddle with them`, (p.body.after ?? []).map((a) => Object.keys(a)[0]));
 }
 {
+  // what a hand holds goes with the hand (a drawn sword stayed where the hand had hung, beside the horse's shoulder)
+  const h = new Horse({}).place([0, 0], 0, 0, 'stand', 0), r = rider();
+  r.props = { sword: { pos: [...r.j['wrist.R']], q: [0, 0, 0, 1], visible: true }, lamp: { pos: [9, 1, 9], q: [0, 0, 0, 1], visible: true } };
+  const p = seat(r, h), d = Math.hypot(...p.props.sword.pos.map((v, i) => v - p.j['wrist.R'][i]));
+  ok(d < 0.02, 'a sword in the hand stays in the hand', d);
+  ok(p.props.sword.q.some((v, i) => Math.abs(v - [0, 0, 0, 1][i]) > 0.05), 'and turns with the forearm', p.props.sword.q);
+}
+{
   // without the reins (a rider who acts with his arms keeps them)
   const h = new Horse({}).place([0, 0], 0, 0, 'stand', 0), p = seat(rider(), h, { arms: false });
   ok(!(p.body.after ?? []).some((a) => a.bend && /arm/.test(a.bend.bone)), 'arms: false leaves the arms to the performance', 0);

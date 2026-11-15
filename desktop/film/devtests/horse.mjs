@@ -71,6 +71,13 @@ const ms = horseMeshes(stand, (c) => c);
   // deep at the jaw, fine at the muzzle
   const depthAt = (a, b) => { const vs = hd.filter((_, i) => along[i] > a * len && along[i] < b * len); const [y0, y1] = span(vs, 1), [z0, z1] = span(vs, 2); return Math.hypot(y1 - y0, z1 - z0); };
   ok(depthAt(0.15, 0.4) > depthAt(0.75, 0.95) * 1.25, 'deep at the jaw, fine at the muzzle', [depthAt(0.15, 0.4), depthAt(0.75, 0.95)]);
+  // the mane lies on the neck from the crest down its right side: outside the neck's skin everywhere (it lay half
+  // inside it and showed as ragged patches)
+  const mn = verts(part(ms, 'mane')), nkv = verts(part(ms, 'neck'));
+  const side = mn.filter((v) => v[0] < -0.02).length / mn.length;
+  ok(side > 0.6, 'the mane falls to the right of the neck', side);
+  const nearest = mn.map((v) => Math.min(...nkv.map((n) => Math.hypot(v[0] - n[0], v[1] - n[1], v[2] - n[2]))));
+  ok(Math.max(...nearest) < 0.2, 'and lies on it', Math.max(...nearest));
   const nk = verts(part(ms, 'neck'));
   ok(Math.max(...nk.map((v) => v[1])) > H + 0.25, 'the neck carries the head above the withers', Math.max(...nk.map((v) => v[1])));
   ok(Math.max(...verts(part(ms, 'earL')).map((v) => v[1])) > Math.max(...hd.map((v) => v[1])) - 0.02, 'the ears stand on top of the head', 0);
@@ -84,7 +91,7 @@ for (const leg of ['LF', 'RF', 'LH', 'RH']) {
   // thick where the muscle is, thin below the knee and the hock
   const girth = (y0, y1) => { const vs = lg.filter((v) => v[1] > y0 && v[1] < y1); if (!vs.length) return 0; const [a, b] = span(vs, 0), [c, d] = span(vs, 2); return Math.max(b - a, d - c); };
   const cannon = girth(0.22, 0.32), upper = girth(front ? 0.7 : 0.8, front ? 0.85 : 0.95);
-  ok(cannon > 0.05 && cannon < 0.12, `the ${leg} cannon is a slim bone`, cannon);
+  ok(cannon > 0.085 && cannon < 0.13, `the ${leg} cannon is a slim bone, but a horse's (8 cm of bone and tendon read as a stilt)`, cannon);
   ok(upper > cannon * 1.6, `and the ${leg} is thick above it`, [upper, cannon]);
   const side = lg.reduce((s, v) => s + v[0], 0) / lg.length;
   ok(leg[0] === 'L' ? side > 0.08 : side < -0.08, `the ${leg} leg is on its own side`, side);
