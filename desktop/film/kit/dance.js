@@ -54,3 +54,43 @@ export function beatMatch(steps, bpm, o = {}) {
   for (const s of steps) { const tau = (s - start) / rate; if (tau < -1e-6) continue; err += Math.abs(tau / target - Math.round(tau / target)) * target; m++; }
   return { rate, in: start, per, error: m ? err / m : 0, sure: rb, steps: N };
 }
+/**
+ * The pulse of a dancer who grooves on the spot is in the bounce: the hips come down on every beat. The moments the
+ * hips are lowest. ys: the height of the hips at every frame (m); a dip counts when it is at least `deep` (0.012 m)
+ * below the heights around it. Give the result to beatMatch like steps.
+ */
+export function bounceTimes(ys, fps, o = {}) {
+  const deep = o.deep ?? 0.012, w = Math.max(2, Math.round(fps * (o.win ?? 0.18))), N = ys.length, out = [];
+  // smooth a little (three frames) so a tremble does not make dips
+  const y = ys.map((_, i) => (ys[Math.max(0, i - 1)] + ys[i] + ys[Math.min(N - 1, i + 1)]) / 3);
+  for (let i = w; i < N - w; i++) {
+    let low = true, hi = -Infinity;
+    for (let k = i - w; k <= i + w; k++) { if (y[k] < y[i] - 1e-9 || (y[k] === y[i] && k < i)) { low = false; break; } hi = Math.max(hi, y[k]); }
+    if (low && hi - y[i] >= deep) { out.push(i / fps); i += w; }
+  }
+  return out;
+}
+/**
+ * Lock a captured dance to the music. A person is not a metronome: a captured dancer's pulse drifts and stumbles, so
+ * every mark (a dip of the hips from bounceTimes, or a step) is moved onto the music's grid by playing the stretch
+ * before it a little faster or slower — never more than `max` (15 %), so it does not show; a mark that would need
+ * more is skipped and the next one carries on.
+ *   marks: CLIP seconds of the dips, in order.   o: { bpm, in, out (clip seconds played), t (film seconds the action
+ *   starts at; the music starts at 0), per: 0.5 (beats between two marks: 0.5 = a bounce on every half beat), max: 0.15 }
+ * → { warp: [[seconds since the action began, clip seconds], …] for the clip action, dur, locked, skipped, rates: [slowest, fastest] }
+ */
+export function beatLock(marks, o = {}) {
+  const step = (60 / o.bpm) * (o.per ?? 0.5), cin = o.in, cout = o.out, t = o.t ?? 0, max = o.max ?? 0.15;
+  const r6 = (x) => Math.round(x * 1e6) / 1e6, warp = [[0, cin]];
+  let a0 = 0, c0 = cin, locked = 0, skipped = 0, lo = 1, hi = 1;
+  for (const m of [...marks].filter((x) => x > cin + 1e-6 && x < cout - 1e-6).sort((x, y) => x - y)) {
+    const gap = m - c0;
+    // the first mark goes to the grid moment nearest to where it falls by itself; the others a whole number of grid steps on
+    const a = locked === 0 ? Math.round((t + a0 + gap) / step) * step - t : a0 + Math.max(1, Math.round(gap / step)) * step;
+    const rate = a - a0 > 1e-6 ? gap / (a - a0) : Infinity;
+    if (Math.abs(rate - 1) > max) { skipped++; continue; }
+    warp.push([r6(a), m]); a0 = a; c0 = m; locked++; lo = Math.min(lo, rate); hi = Math.max(hi, rate);
+  }
+  warp.push([r6(a0 + (cout - c0)), cout]);
+  return { warp, dur: warp[warp.length - 1][0], locked, skipped, rates: [lo, hi] };
+}

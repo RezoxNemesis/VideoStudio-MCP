@@ -171,19 +171,40 @@ const bag = carried({ rest: [bx, 0, bz], by: 'a', hand: 'L', from: TG, hang: 0.2
     check: ['a strip a tenth of a second apart across the blow: contact, rocked, going over, down'],
   },
   {
-    id: 'dance-on-beat', name: 'A dance laid on its music', tags: ['dance', 'beat', 'music', 'rhythm', 'tempo', 'count'],
-    use: 'Someone dances to the film\'s music and the steps must fall on the beats.',
+    id: 'dance-on-beat', name: 'A dance laid on its music', tags: ['dance', 'beat', 'music', 'rhythm', 'tempo', 'count', 'bounce', 'groove', 'twist'],
+    use: 'Someone dances to the film\'s music, and the bounces, the accents and the cuts must fall on the beats.',
     rules: [
-      'Poses HIT on the beat and travel between beats; the body drops (knees bend) on the accent; cuts fall on the beat, a shot lasts four or eight beats.',
+      'Poses HIT on the beat and travel between beats; the knees give on every beat or half beat (the bounce IS the pulse); a big accent is a drop of the whole body on the first beat of a bar.',
       'The weight is always on one leg: the hip goes out over it and the shoulders tilt the other way; arms never mirror each other; hands stay away from the trunk so the outline reads.',
-      'Pick a tempo whose beat is a whole number of frames; measure the dancer\'s pulse before trusting a capture (below 50 % sure it has none: choose another clip or key the poses on the counts).',
+      'Take the tempo FROM the dancer: measure his bounce, make the music\'s half beat that long at a beat that is a whole number of frames; then lock every bounce to the grid (a person drifts) — never more than 15 % faster or slower.',
+      'The lens stands still: a lens that follows the hips cancels the bounce. Cuts fall on a bar or half a bar; a new take begins ON a cut with blend: 0, at in = dip − (beat moment − t) so its first bounce is on the grid by itself.',
+      'Measure the music cue once too: its onsets must be where the grid says, and the bar must begin where the accent lands.',
     ],
-    needs: ['beatGrid', 'beatMatch', 'countAt', 'steps.mjs'],
-    code: `const G = beatGrid(120, 30);                       // a beat every 15 frames
-// node devtests/steps.mjs <film> <seq> <actor> 120  →  rate, start and how sure the pulse is
-const M = beatMatch(steps, 120);                    // { rate, in, per, sure }
-// { t: START, clip, in: M.in, rate: M.rate }        shots: cut where countAt(t, 120).accent`,
-    check: ['steps.mjs: the steps are under 40 ms off the beat and the pulse is above 50 % sure'],
+    clips: [
+      { clip: '15_05', in: 104.53, out: 114.7, note: 'stands, the arm goes out, the Dive (lowest at 107.33), rises, the Twist (bounces from 109.92, every 0.35 s)' },
+      { clip: '15_05', in: 135.53, out: 141.6, note: 'the Cabbage Patch (bounces from 135.88), then he stops, turns to his right and stands' },
+    ],
+    needs: ['beatGrid', 'bounceTimes', 'beatMatch', 'beatLock', 'steps.mjs', 'stage.do'],
+    code: `const BPM = 60 / 0.7, BEAT = 0.7;                    // beatGrid(BPM, 30).whole: a beat is 21 frames; the bar is 4 beats
+// 1) play '15_05' plain, solve, then: node devtests/steps.mjs <film> <seq> <actor> 85.7   → the dips (bounceTimes) and, by beatMatch, how sure the pulse is
+const DIVE = 107.33, TWIST = [109.92, 110.25, 110.58, 110.92, 111.28, 111.63, 111.98, 112.37, 112.70, 113.08, 113.55, 113.88, 114.28];   // CLIP seconds
+const P1 = beatLock([DIVE, ...TWIST], { bpm: BPM, in: DIVE - 4 * BEAT, out: 114.7, t: 0 });   // the Dive lands on beat 4: the one of bar two
+{ op: 'stage.do', actor: 'dan', actions: [{ t: 0, clip: '15_05', in: DIVE - 4 * BEAT, out: 114.7, warp: P1.warp, at: { pos: [0, 0], yaw: 0 } },
+  { t: CUT - 0.001, clip: '15_05', in: 135.88 - (CUT + 0.35 - (CUT - 0.001)), out: 141.6, warp: P2.warp, at: { pos: [0, 0], yaw: 0 }, blend: 0 }] }   // a new take on the cut`,
+    check: ['every dip of the hips within 20 ms of a half beat (measured: 23 of 23, the Dive on the first beat of bar two)', 'the judge has no must on the dance (a pop means a take was blended in sight: start it on the cut)', 'the music cue\'s onsets measured against the grid'],
+  },
+  {
+    id: 'hand-clear', name: 'A hand that brushes the body: open the arm for a moment', tags: ['hand', 'arm', 'body', 'through', 'clip', 'penetrate', 'overlay', 'shoulder', 'elbow', 'wrist'],
+    use: 'A captured move on another body puts a hand a few centimetres inside the hip or the clothes for a moment (the judge reports arm-in-body).',
+    rules: [
+      'Change as little as possible: a bone overlay ADDS degrees to the captured pose for a moment, with a fade each side; the performance stays the performer\'s.',
+      'For the LEFT upper arm z+ opens the arm sideways (15° moves the wrist 10 cm out) and x+ swings it back (15° = 7 cm); measure the other side before trusting a sign.',
+      'Look where the wrist is against the hips first: beside them, open the arm (z); before them, bring it forward (x−).',
+    ],
+    needs: ['stage.overlay', 'sensei.mjs', 'where.mjs'],
+    code: `{ op: 'stage.overlay', actor: 'dan', add: [{ t0: 11.3, t1: 12.0, fade: 0.25, keys: [{ on: 'upperarm01.L', keys: [[0, [0, 0, 8]], [0.7, [0, 0, 8]]] }] }] }
+// the moment and the depth come from: SHOW=arm-in-body node devtests/sensei.mjs <film> <shot>`,
+    check: ['the judge no longer reports arm-in-body', 'the wrist moved the way meant (where.mjs before and after)'],
   },
   {
     id: 'solar-system', name: 'A solar system', tags: ['space', 'planet', 'orbit', 'sun', 'moon', 'solar', 'star'],

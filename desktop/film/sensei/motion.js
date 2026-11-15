@@ -15,9 +15,10 @@ const t2 = (x) => Math.round(x * 100) / 100;
 /**
  * Arms that fly out: the moments the distance between a body's wrists jumps far above what it is around that moment
  * and comes straight back — a pose that belongs to nothing (a loop that leans on a capture's T-pose, a blend through
- * the rest pose). Arms opened on purpose stay open; these last a fraction of a second.
+ * the rest pose). Arms opened on purpose stay open; these last a fraction of a second, and they snap: out or back in
+ * a frame, which no arm can do (a dancer's quick flourish opens and closes as arms move, and is left alone).
  *   dist: metres between the wrists at every sample (null where the body is not there), dt: seconds between samples
- *   o: { jump: 0.4 (m above the usual), maxLen: 0.45 (s), win: 0.7 (s each side that says what is usual) }
+ *   o: { jump: 0.4 (m above the usual), maxLen: 0.45 (s), win: 0.7 (s each side that says what is usual), snap: 8 (m/s: faster than arms can part) }
  * → [{ i0, i1, peak, base }]
  */
 export function armFlares(dist, dt, o = {}) {
@@ -36,7 +37,9 @@ export function armFlares(dist, dt, o = {}) {
     // a flare leaves the usual and comes straight back to it; arms that open and STAY open are a gesture (its two ends are not flares)
     const usual = (q) => q < 0 || q >= N || dist[q] === null || dist[q] === undefined || Math.abs(dist[q] - base[i]) < jump / 2;
     const side = Math.max(1, Math.round(0.3 / dt));   // (a third of a second before and after: the way out may be a ramp)
-    if (k - i + 1 <= maxLen && usual(i - side) && usual(k + side)) { let peak = 0; for (let q = i; q <= k; q++) peak = Math.max(peak, dist[q]); out.push({ i0: i, i1: k, peak, base: base[i] }); }
+    // and it SNAPS on at least one side: arms cannot part faster than `snap` (8 m/s); a quick real gesture never does
+    let fastest = 0; for (let q = Math.max(1, i - side); q <= Math.min(N - 1, k + side); q++) if (dist[q] != null && dist[q - 1] != null) fastest = Math.max(fastest, Math.abs(dist[q] - dist[q - 1]) / dt);
+    if (k - i + 1 <= maxLen && usual(i - side) && usual(k + side) && fastest >= (o.snap ?? 8)) { let peak = 0; for (let q = i; q <= k; q++) peak = Math.max(peak, dist[q]); out.push({ i0: i, i1: k, peak, base: base[i] }); }
     i = k;
   }
   return out;

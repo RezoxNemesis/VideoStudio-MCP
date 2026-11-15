@@ -468,13 +468,30 @@ wave. A move is added only when it has been built, watched in motion and measure
 entry to that (its clips exist, its moments are inside them, nothing starts on a capture's T-pose frame).
 
 The judge now also reports **arm-flare**: arms that fly out for a fraction of a second and come straight back (a pose
-that belongs to nothing — seen once a stride, it is the seam of a looping clip).
+that belongs to nothing — seen once a stride, it is the seam of a looping clip). A flare SNAPS (out or back faster than 8 m/s,
+which no arm can do); a dancer's quick flourish opens and closes as arms move and is left alone.
+
+A **bone overlay adds degrees** to whatever the body is doing (`keys: [{ on: 'upperarm01.L', keys: [[0, [0, 0, 8]], [0.7,
+[0, 0, 8]]] }]`): for the left upper arm z+ opens the arm sideways (15° moves the wrist 10 cm out) and x+ swings it back
+(15° = 7 cm). It is the small, local cure for a hand that brushes the body on one frame of a capture (move `hand-clear`).
 
 ## Craft: dance, eyes, things in hands, things that go round
 
 Four kinds of scene the practice reel proved, each with the rule that makes it read and the helper that does it.
 
-**A dance on the beat.** Music is counted in eights and the tempo drives the animation: `beatGrid(120, 30)` → a beat every
+**A dance on the beat: take the tempo from the dancer, then lock him to it.** A dancer who grooves on the spot hardly
+lifts a foot: his pulse is the BOUNCE (the hips come down on every beat or half beat). `node devtests/steps.mjs <film>
+<seq> <actor> <bpm> [from] [to]` now prints the dips of the hips too (`bounceTimes(hipHeights, fps)`) and how sure that
+pulse is. Make the music's half beat as long as the dancer's bounce, at a beat that is a whole number of frames (a
+captured groove of 0.35 s a bounce → 85.7 beats a minute, 21 frames a beat). A person drifts and stumbles, so
+`beatLock(dipsInClipSeconds, { bpm, in, out, t })` → `{ warp, dur, locked, skipped, rates }` gives the clip action a
+`warp` that plays each stretch a little faster or slower (never more than 15 %) so that EVERY bounce falls on the grid.
+Put the big accent (a dive, a drop) on the first beat of a bar: `in = accent − beats × beat`. The lens stands still (a
+lens that follows the hips cancels the bounce); cuts fall on a bar or half a bar; a new take begins ON a cut with
+`blend: 0`, at `in = dip − (beat moment − t)` so its first bounce is on the grid by itself. Measure the music cue once
+as well (its onsets must be where the grid says). All of it is the move `dance-on-beat` in the code collection.
+
+**The older way (steps on beats).** Music is counted in eights and the tempo drives the animation: `beatGrid(120, 30)` → a beat every
 15 frames (pick a tempo whose beats are whole frames; `.suggest` names the nearest one that is). A captured dance has
 its own tempo, so lay it on the music instead of hoping: build once, then `node devtests/steps.mjs <film> <seq> <actor>
 120` prints when the dancer's feet come down and how to play the clip — `beatMatch(steps, bpm)` → `{ rate, in, per,

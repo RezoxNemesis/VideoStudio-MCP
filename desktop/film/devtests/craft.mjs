@@ -6,7 +6,7 @@
 //   ORBS   a ball lit from one side shows the right phase; planets go round by Kepler's law.
 import { createCanvas } from '@napi-rs/canvas';
 import { makeCam } from '../engine/camera.js';
-import { beatGrid, countAt, stepTimes, beatMatch } from '../kit/dance.js';
+import { beatGrid, countAt, stepTimes, beatMatch, bounceTimes, beatLock } from '../kit/dance.js';
 import { dartTo, gazeBlink, eyesLead, gazeOf } from '../kit/acting.js';
 import { carried } from '../kit/things.js';
 import { asList } from '../kit/seq.js';
@@ -57,6 +57,42 @@ const near = (a, b, tol, what) => ok(Math.abs(a - b) <= tol, `${what} (want ${b}
   const m4 = beatMatch(salsa.sort((a, b) => a - b), 120, { rates: [0.7, 1.4] });
   ok(Math.abs(m4.rate - 1.24) < 0.03 && m4.per === 0.5 && m4.error < 0.04, 'steps left out and taps between do not hide the pulse', m4);
   ok(m4.sure > 0.6 && beatMatch([0.1, 0.37, 0.52, 0.91, 1.3, 1.38, 1.99, 2.2, 2.31, 2.9], 120).sure < 0.5, 'it says how sure it is: a dancer with no pulse gets a low number', [m4.sure]);
+}
+
+{
+  // a dancer who grooves on the spot hardly lifts a foot: the pulse is in the BOUNCE — the hips come down on every beat
+  const fps = 60, ys = Array.from({ length: 360 }, (_, i) => 0.95 - 0.04 * Math.abs(Math.sin((Math.PI * (i / fps - 0.12)) / 0.5)) + 0.002 * Math.sin(i * 1.7));
+  const b = bounceTimes(ys, fps);
+  ok(b.length >= 10 && b.every((t, i) => i === 0 || Math.abs(t - b[i - 1] - 0.5) < 0.04), 'the moments the hips are lowest are found: one every half second here', b.slice(0, 5));
+  ok(Math.abs(((b[0] - 0.37 + 0.25) % 0.5) - 0.25) < 0.04, 'and they are the low points (0.37 s, 0.87 s …), not the high ones', b[0]);
+  ok(bounceTimes(Array.from({ length: 200 }, () => 0.95), fps).length === 0, 'a body that does not bounce has none', 0);
+  ok(bounceTimes(Array.from({ length: 300 }, (_, i) => 0.95 + 0.003 * Math.sin(i * 0.9)), fps).length === 0, 'a tremble of a few millimetres is not a bounce', 0);
+  const m = beatMatch(b, 100);
+  ok(Math.abs(m.rate - 0.5 / 0.6) < 0.02 && m.sure > 0.8, 'the bounce is matched to a tempo like steps are', m);
+}
+
+{
+  // A person is not a metronome: a captured dancer's pulse drifts (measured: 0.33 to 0.38 s a bounce, and a stumble
+  // now and then). beatLock moves every dip onto the music's grid by playing the stretch before it a little faster or slower.
+  const step = 0.35, marks = [10.0, 10.33, 10.69, 11.05, 11.40, 11.87, 12.20, 12.60];     // clip seconds; a stumble at 11.87
+  const L = beatLock(marks, { bpm: 60 / 0.7, in: 8.6, out: 13.5, t: 2.0 });
+  const W = L.warp, last = W[W.length - 1];
+  ok(W[0][0] === 0 && W[0][1] === 8.6 && last[1] === 13.5, 'the warp runs from the clip\'s in to its out', [W[0], last]);
+  ok(W.every((k, i) => i === 0 || (k[0] > W[i - 1][0] && k[1] > W[i - 1][1])), 'time only goes forward, in the film and in the clip', W);
+  const onGrid = W.slice(1, -1).every((k) => Math.abs((2.0 + k[0]) / step - Math.round((2.0 + k[0]) / step)) < 1e-6);
+  ok(onGrid && L.locked === W.length - 2, 'every dip it keeps plays exactly on a half beat of the music (which starts at 0)', W.slice(1, -1).map((k) => +(2.0 + k[0]).toFixed(3)));
+  ok(L.locked >= 6 && L.skipped <= 2 && L.locked + L.skipped === marks.length, 'a stumble is skipped, the rest are kept', [L.locked, L.skipped]);
+  const rates = W.slice(1).map((k, i) => (k[1] - W[i][1]) / (k[0] - W[i][0]));
+  ok(rates.every((r) => r > 0.849 && r < 1.151) && L.rates[0] >= 0.849 && L.rates[1] <= 1.151, 'no stretch is played more than 15 % faster or slower: it must not show', rates.map((r) => +r.toFixed(2)));
+  ok(Math.abs(L.dur - last[0]) < 1e-9 && Math.abs(L.dur - (13.5 - 8.6)) < 0.5, 'it says how long the action now lasts', L.dur);
+  // a dancer already on the grid is left as he is
+  const even = beatLock([1.05, 1.4, 1.75, 2.1], { bpm: 60 / 0.7, in: 0.35, out: 2.45, t: 0.7 });
+  ok(even.warp.slice(1).every((k, i) => Math.abs((k[1] - even.warp[i][1]) / (k[0] - even.warp[i][0]) - 1) < 1e-6), 'a dancer already on the beat is left as he is', even.warp);
+  const none = beatLock([], { bpm: 100, in: 3, out: 5, t: 0 });
+  ok(none.warp.length === 2 && none.dur === 2 && none.locked === 0, 'nothing to lock: the clip plays as it is', none.warp);
+  // dips on whole beats only (per: 1)
+  const whole = beatLock([4.0, 4.72, 5.38, 6.1], { bpm: 60 / 0.7, in: 2.6, out: 7, t: 0, per: 1 });
+  ok(whole.warp.slice(1, -1).every((k) => Math.abs(k[0] / 0.7 - Math.round(k[0] / 0.7)) < 1e-6), 'per: 1 puts them on whole beats', whole.warp);
 }
 
 /* ---------------------------------------------------------------- EYES */
@@ -133,6 +169,12 @@ const near = (a, b, tol, what) => ok(Math.abs(a - b) <= tol, `${what} (want ${b}
   // arms opened on purpose (a gesture held for a second and a half) are not a fault
   const gesture = Array.from({ length: 150 }, (_, i) => { const t = i * dt; return t > 1.5 && t < 3.0 ? 1.3 : 0.45; });
   ok(armFlares(gesture, dt).length === 0, 'arms held out on purpose are a pose, not a flare', armFlares(gesture, dt).length);
+  // a quick REAL gesture (measured on a captured dancer: the arms open from 0.5 m to 0.93 m and close again in under
+  // half a second, never faster than 2.4 m/s) is not a fault: an arm cannot snap, so a flare needs a snap on one side
+  const d60 = 1 / 60, flourish = Array.from({ length: 240 }, (_, i) => { const t = i * d60, u = (t - 1.8) / 0.47; return 0.48 + (u > 0 && u < 1 ? 0.45 * Math.sin(Math.PI * u) ** 2 : 0); });
+  ok(armFlares(flourish, d60).length === 0, 'a dancer who opens and closes the arms fast, but as arms move, is left alone', armFlares(flourish, d60));
+  const snap = Array.from({ length: 240 }, (_, i) => (i >= 130 && i <= 138 ? 1.3 : 0.48));
+  ok(armFlares(snap, d60).length === 1, 'the same arms out in one frame and back in one frame are a flare', armFlares(snap, d60).length);
   // a body that is not in the picture for a while breaks nothing
   const holes = bad.map((v, i) => (i > 40 && i < 60 ? null : v));
   ok(armFlares(holes, dt).length >= 2, 'a body out of the picture for a while breaks nothing', armFlares(holes, dt).length);

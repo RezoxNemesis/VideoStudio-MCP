@@ -12,10 +12,10 @@ if (words) { for (const m of findMoves(words)) console.log(moveText(m) + '\n'); 
 const fails = []; let checks = 0;
 const ok = (cond, what, got) => { checks++; if (!cond) fails.push(`${what} — got ${JSON.stringify(got)}`); };
 
-ok(Array.isArray(MOVES) && MOVES.length >= 14, 'the collection holds the moves worked out so far', MOVES.length);
+ok(Array.isArray(MOVES) && MOVES.length >= 16, 'the collection holds the moves worked out so far', MOVES.length);
 const ids = MOVES.map((m) => m.id);
 ok(new Set(ids).size === ids.length && ids.every((x) => /^[a-z][a-z0-9-]*$/.test(x)), 'every move has a name of its own (lower case, hyphens)', ids);
-for (const id of ['run', 'sprint', 'brake', 'pick-up', 'carry', 'sit-alive', 'fall', 'kneel', 'look', 'caught-looking', 'wait', 'duel-ending', 'dance-on-beat', 'solar-system'])
+for (const id of ['run', 'sprint', 'brake', 'pick-up', 'carry', 'sit-alive', 'fall', 'kneel', 'look', 'caught-looking', 'wait', 'duel-ending', 'dance-on-beat', 'hand-clear', 'solar-system'])
   ok(ids.includes(id), `it has "${id}"`, ids.includes(id));
 for (const m of MOVES) {
   ok(typeof m.name === 'string' && m.name.length > 3 && typeof m.use === 'string' && m.use.length > 20, `${m.id}: a name and what it is for`, [m.name, m.use?.length]);
