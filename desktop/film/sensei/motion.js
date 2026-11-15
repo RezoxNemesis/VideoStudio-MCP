@@ -3,6 +3,8 @@
 // gestures without arcs, weight outside the feet. Every number is measured on the solved performance, frame by frame.
 import { issue } from './rules.js';
 import { screenAt, onScreen } from './collect.js';
+import { bodyOf } from '../engine/body.js';
+import { trunkShape, wornChecks } from './geo.js';
 import { sub, dot, len, dist, norm, mid, lerp3, flat, angleBetween, yawBetween, segSeg, capsulesOf, SELF_PAIRS, partName, bodyFrames, robust, runs, mergeRuns, hull2, polyDist, cm, fmt } from './geo.js';
 
 const side = (s) => (s === 'L' ? 'left' : 'right');
@@ -139,6 +141,30 @@ export function motionChecks(D, B) {
         push({ sev: seen(D, a, i0, i1, p, 'should'), cat: 'anatomy', kind, actor: a.id, part, t0: t2(D.ts[i0]), t1: t2(D.ts[i1]), at: t2(D.ts[w]), pt: p, where: whereAt(D, w, p), value: Math.round(arr[w]), limit: lim, unit: '°',
           msg: `${a.id}'s ${what} ${Math.round(arr[w])}° away from the ${kind === 'neck-twist' ? 'chest' : 'hips'} (an owl turn; people stop near ${lim}°).`,
           fix: kind === 'neck-twist' ? `Turn the whole body toward what it looks at (a 'face' in the go action, or a turn) and let the head do the last 40°.` : `Turn the feet/hips with the chest (face on the action) instead of twisting the waist.` });
+      }
+    }
+    // ---------- the body as it is dressed: an arm, a blade or something worn inside the real body's own outline
+    // (rounds from the joints do not know a bagged tunic, a belly or a coat: the real body does)
+    {
+      let S = null; try { const Bd = bodyOf(a.bk, a.bakeId); S = Bd ? trunkShape(Bd) : null; } catch { S = null; }
+      if (S) {
+        const hits = new Map(), keyOf = (h) => `${h.kind}|${h.side ?? ''}|${h.kind === 'worn-in-body' ? h.part : ''}`;
+        for (let i = 0; i < N; i += 2) { if (!a.vis[i]) continue; for (const h of wornChecks(a.J[i], a.props[i] ?? {}, S)) { const kq = keyOf(h); if (!hits.has(kq)) hits.set(kq, new Array(N).fill(null)); const arr = hits.get(kq); arr[i] = h; if (i + 1 < N) arr[i + 1] = h; } }
+        for (const arr of hits.values()) for (const [i0, i1] of mergeRuns(runs(arr.map((x) => !!x)), 6)) {
+          const long = (i1 - i0) * dt; if (long < 0.1) continue;
+          let w = i0, dmax = 0; for (let i = i0; i <= i1; i++) if (arr[i] && arr[i].depth > dmax) { dmax = arr[i].depth; w = i; }
+          const h = arr[w]; if (!h) continue;
+          const sev = seen(D, a, i0, i1, (i) => arr[i]?.at ?? h.at, dmax > 0.03 * k || h.kind === 'worn-in-body' ? 'must' : 'should'), base = { sev, cat: 'anatomy', kind: h.kind, actor: a.id, part: h.part, t0: t2(D.ts[i0]), t1: t2(D.ts[i1]), at: t2(D.ts[w]), pt: h.at, where: whereAt(D, w, h.at), value: +dmax.toFixed(3), unit: 'm' };
+          if (h.kind === 'arm-in-body') push({ ...base,
+            msg: `${a.id}'s ${h.part} is ${cm(dmax)} inside the body as it is dressed for ${t2(long)} s — the arm passes through the clothes and the body.`,
+            fix: `Bring the hand's place out before the body (a keys/reach overlay ${cm(dmax + 0.05)} further forward, or a sword position further from the body) so the forearm crosses in front of the belly; a hilt worn at the hip must stand before the belly (props: sword, hold: 'hip' hangs it so).` });
+          else if (h.kind === 'blade-in-body') push({ ...base,
+            msg: `${a.id}'s own blade passes ${cm(dmax)} into the body as it is dressed for ${t2(long)} s.`,
+            fix: `Take the blade round the front, not through the body: put a sword position before the body between the two (guard, midF), and draw a worn sword through 'sheath' → 'unsheath' (the Stage then takes it out round the front itself).` });
+          else push({ ...base,
+            msg: `${a.id}'s ${h.part} hangs ${cm(dmax)} inside the body as it is dressed${long < D.dur * 0.9 ? ` for ${t2(long)} s` : ''} — it is worn through the clothes${h.part === 'hilt' ? ', and no hand can close on it' : ''}.`,
+            fix: `Solve the performance again (a sword worn at the hip is hung outside whatever the body wears, its hilt before the belly), or wear it with props: [{ kind: 'sword', hold: 'hip' }] instead of placing it by hand.` });
+        }
       }
     }
     // ---------- held things: the hand lets go; the blade cuts through its own body

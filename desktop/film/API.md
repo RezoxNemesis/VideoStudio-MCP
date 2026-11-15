@@ -10,9 +10,13 @@ the film is joined again without re-encoding — a fix to one shot of a long fil
 1. `code.new {name}` (or `code.open {film}`) — start from the starter film and read it: `code.read {file:"seq/s01.js"}`.
 2. Change the code: `code.write {file, text}` for a whole file, `code.patch {file, find, replace}` for a part.
    The answer says at once whether the code loads (and the mistake if not) and how many shots must be drawn.
-3. Look before drawing: `code.frame {shot, t}` draws one frame now; `code.sheet {shot}` draws six moments of a shot.
+3. Look before drawing: `code.frame {shot, t}` draws one frame now (`scale: 2, crop: [left, top, width, height]`
+   enlarges a part of it); `code.sheet {shot}` draws six moments of a shot; `code.where {shot, t}` says where bodies
+   and the camera are, in numbers.
 4. `code.build` — speaks new lines, solves changed performances, makes new music, draws only the changed shots (several
    at once), mixes the sound, joins the film. `code.build {draft:true}` is a quick half-size version.
+   Every build comes back with `sensei`: the judge's findings on the bodies, cameras and story — read them, fix the
+   MUST findings, build again (see "Working well" at the end: the order of work and what goes wrong).
 5. `code.check` looks at every frame of the joined film for flashes; `code.shots {off:[…]}` leaves shots out without
    deleting them; `code.export` saves the film to the Videos folder; `code.toTimeline` puts it into the editor.
 
@@ -431,14 +435,66 @@ shot is drawn again. `paint.parts {shot, t}` says where every part is; `paint.ad
 boy girl teen youngwoman soldier_crimson soldier_azure soldier_jade soldier_onyx captain_* bandit sailor swordsman
 swordswoman king queen — ids like `townswoman_12`. `code.people {group}` lists a group, `code.person {id}` shows one.
 
-## Working well
+## Working well — the director's handbook
 
-- Write one sequence per place and stretch of story; a film is a list of them. Put shared helpers in their own file.
-- After every change look at `code.frame` / `code.sheet` of the shots you touched before `code.build`.
-- Keep both feet of a character inside the picture or cut them off on purpose (frame from the chest up).
-- People are drawn whole, nearest last. For a hand on a far shoulder give the nearer one `actor: { id: { bias: 0.5 } }` in that shot.
-- Set cameras by numbers, not by following a head (a camera that follows a head shakes with every step):
-  `node devtests/where.mjs <film dir> s01_two@1.5 mira:head,root tom` prints where bodies are at a moment of a shot.
-- A build that is stopped while the lines are being spoken loses nothing: the lines already spoken are kept and only
-  fitted to each other when the build runs again.
+What goes wrong in films made this way, and how each mistake is caught before anyone sees it. Read it before staging.
+
+**The order of work.** Write → look → build → read the judge → fix → look again. Never show a build unread.
+1. After every change look at the shots you touched: `code.sheet {shot}` (moments in order), `code.frame {shot, t}`.
+2. Look closely at what people look at first — hands, faces, feet, hips: `code.frame {shot, t, scale: 2, crop: [left,
+   top, width, height]}` enlarges a part of the picture. A half-size sheet hides most mistakes.
+3. `code.build` comes back with `sensei`: what the judge found in the bodies, cameras and story. **MUST findings are
+   mistakes, not opinions** — a foot that skates, an arm inside the body, a blade through its owner, a scabbard worn
+   through a coat, bodies in one place, a camera that jerks. Fix them (`sensei.report {sev: "must"}` gives each with its
+   fix, `sensei.issue {id}` shows it marked in the picture) and build again. `code.export` is refused while any remain.
+4. Look at the film from angles the camera does not use while you stage: from behind, from the side, from above. Most
+   costume and prop mistakes (things worn through the body, cloth the body comes through) only show from behind.
+
+**Bodies.**
+- Proportions: judge a full figure from the front before any shot. Warriors: weight 0.45–0.55, muscle 0.9+, proportions
+  0.95–1, a close-cut tunic; heavy presets with baggy tunics read as sacks with short legs.
+- Detail weights are 0…1 only; the way back from a preset's own detail is its opposite detail, never a negative weight.
+- Everyone stands ON the ground: `code.where {shot, t, actors: {v: ["root"]}}` — hips near 0.93 m for a standing adult.
+- Hands: a hand lies along its forearm and swings with the arm; look at the hands on a sheet of any walk or run.
+- A hand sent to something on the body (a hilt, a pocket, the chest) crosses IN FRONT of the body: the forearm must
+  never run through the belly. The judge measures this against the body as it is dressed (`arm-in-body`).
+- Clothes in layers are carried by different bones: what lies under a coat at rest can come through it in motion.
+  Look from behind in motion. A robe (`design.robe`) and a skirt/coat garment keep themselves outside the body.
+
+**Movement.**
+- Running is captured running (`gait: 'run'`), never a sped-up walk. A runner who stops needs room to stop: a run that
+  ends in `idle` within half a second skates (`foot-slide`). Let the run end a stride early (`speed` down, a longer
+  blend) or stage the stop out of the picture.
+- Someone who reports to a leader comes to a stop BEFORE kneeling; the kneel is its own action after a short stand.
+- Laughing: only gentle captures, or the upper body; if the voice cannot laugh, write a smile.
+- Before a kind of movement goes into a film, look at it alone on a sheet from the side.
+
+**Swords.**
+- Worn: `props: [{ kind: 'sword', hold: 'hip' }]` (or the swordsman's kit). It hangs outside the clothes by itself.
+- Walking with one: `{ t0, t1, scabbard: true }` rests the left hand on the scabbard (the arm would swing through it).
+- Drawing: one overlay from `'sheath'` — `sword: [[0,'sheath'],[1.5,'sheath'],[1.7,'unsheath'],[2.05,'loR']]`. Never
+  key a blade from the hip to a guard by hand: it turns through the body. Putting it away: end the list in `'sheath'`.
+- A fight: ready, wind-up, swing, impact, follow-through, recovery; the world and the camera stay still on big strikes.
+
+**Cameras.**
+- No shake, ever — not on impacts. Locked-off shots, or smooth eased moves that have a reason (`move(a, b, t, t0, t1)`).
+- Set cameras by numbers: `code.where` gives where heads, hands and hips are; a camera that follows a head shakes
+  with every step — aim at a point that is eased over time.
+- Keep both feet in the picture or cut on purpose (chest up); never cut at ankles or knees.
+- Nobody who has not entered yet may be visible in an earlier shot: `hide: [ids]` until their entrance.
+- A leader and those who report to him: check from the camera who stands before whom.
+
+**Voices.**
+- A natural dramatic line is 2.2–2.8 words a second; pace comes from pauses written into the line (`...`, commas).
+- Listen to the first word and the last word of every line; a line the voice gets wrong twice is rewritten for speaking.
+- A stopped build loses no spoken line; lines already spoken are only fitted again.
+
+**Pictures.**
+- Land and sky are painted (`paintedLand`), judged at full size. Far ranges: low, near the colour of the air, peaked.
+- Armies are performed soldiers laid down by the thousand (`legion`), never capsules; look from inside the ranks.
+- Beards are painted on the skin (`face.beard`), hair is designed lock by lock or drawn back to a tie.
+
+**Housekeeping.**
+- One sequence per place and stretch of story; shared helpers in their own file.
+- People are drawn whole, nearest last. For a hand on a far shoulder give the nearer one `actor: { id: { bias: 0.5 } }`.
 - Nothing in `.vs` needs care: delete it and everything is made again from the code.

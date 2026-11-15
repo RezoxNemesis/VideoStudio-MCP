@@ -31,5 +31,23 @@ ok(voiceSpec(script, { ...ln, take_en: -1 }, 'en').key === en0.key && voiceSpec(
   }
 }
 
+// ---- looking closely: a part of the picture enlarged, and where bodies are in numbers
+{
+  const T = await import('../runner/tools.mjs').catch((e) => ({ error: String(e) }));
+  ok(typeof T.cropRect === 'function' && typeof T.jointsOf === 'function', 'runner/tools.mjs gives cropRect and jointsOf', T.error ?? [typeof T.cropRect, typeof T.jointsOf]);
+  if (typeof T.cropRect === 'function' && typeof T.jointsOf === 'function') {
+    ok(JSON.stringify(T.cropRect(1920, 1080, [0.25, 0.5, 0.5, 0.25])) === JSON.stringify([480, 540, 960, 270]), 'a crop is given in parts of the picture: [left, top, width, height] from 0 to 1', T.cropRect(1920, 1080, [0.25, 0.5, 0.5, 0.25]));
+    ok(JSON.stringify(T.cropRect(1920, 1080, [0.9, 0.9, 0.5, 0.5])) === JSON.stringify([1728, 972, 192, 108]), 'a crop that runs off the picture is cut at its edge', T.cropRect(1920, 1080, [0.9, 0.9, 0.5, 0.5]));
+    ok(T.cropRect(1920, 1080, null) === null && T.cropRect(1920, 1080, [0, 0, 1, 1]) === null, 'no crop, or the whole picture, is no crop', [T.cropRect(1920, 1080, null), T.cropRect(1920, 1080, [0, 0, 1, 1])]);
+    let threw = ''; try { T.cropRect(1920, 1080, [0.2, 0.2, 0, 0.5]); } catch (e) { threw = String(e.message); }
+    ok(/left, top, width, height/.test(threw), 'a crop with no width says how a crop is written', threw);
+    const pose = { j: { head: [1.23456, 1.7, -2], root: [1.2, 0.93, -2], 'wrist.R': [0.9, 1.0, -1.8] } };
+    ok(JSON.stringify(T.jointsOf(pose, ['head', 'wrist.R'])) === JSON.stringify({ head: [1.235, 1.7, -2], 'wrist.R': [0.9, 1, -1.8] }), 'jointsOf(pose, names): where those joints are, to the millimetre', T.jointsOf(pose, ['head', 'wrist.R']));
+    ok(JSON.stringify(Object.keys(T.jointsOf(pose))) === JSON.stringify(['head', 'root']), 'with no names: the head and the hips', T.jointsOf(pose));
+    let t2 = ''; try { T.jointsOf(pose, ['elbow']); } catch (e) { t2 = String(e.message); }
+    ok(/elbow/.test(t2) && /head/.test(t2) && /wrist\.R/.test(t2), 'a joint that is not there is refused with the names that are', t2);
+  }
+}
+
 if (fails.length) { console.log(`takes: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.log('  ✗ ' + f); process.exit(1); }
 console.log(`takes: ${checks} rules hold`);

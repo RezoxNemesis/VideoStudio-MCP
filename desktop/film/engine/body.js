@@ -219,31 +219,43 @@ export function bendBone(B, name, axis, ang) {
   }
 }
 
-const _SEAT = /^(root|spine0[3-5]|pelvis)/, _THIGH = /^upperleg01/;
+const _SEAT = /^(root|spine0[3-5]|pelvis)/, _TRUNK = /^(root|spine0[1-5]|breast|pelvis)/, _THIGH = /^upperleg01/;
 /**
- * The hips and seat of a body as it is dressed, as a shape with an inside: level outlines of the body and its clothes
- * round the middle of the hips, in the rest pose (x to the body's left, y up, z forward — all from the point midway
- * between the hip joints). What hangs from the waist — a robe's skirts — is kept outside it. Arms are no part of it,
- * and of the thighs only their tops (the seat): legs move, and cloth has their own rounds to stay outside of.
- * null for a body with no hips or nothing there to measure.
+ * Level outlines of a body as it is dressed, in the rest pose, round the upright line through the middle of its hips
+ * (x to the body's left, y up, z forward, all from the point midway between the hip joints): the points whose chief
+ * bone `keep(name, y)` passes, from y0 up in `n` slices. Points alone cannot say that something is inside a body — a
+ * forearm lying deep in a belly is far from every point of its surface — outlines can.
  */
-export function seatShape(B) {
-  if (B._seat !== undefined) return B._seat;
-  const hl = B.bi?.['upperleg01.L'], hr = B.bi?.['upperleg01.R']; if (hl === undefined || hr === undefined) return (B._seat = null);
-  const H = B.head, c = [(H[hl * 3] + H[hr * 3]) / 2, (H[hl * 3 + 1] + H[hr * 3 + 1]) / 2, (H[hl * 3 + 2] + H[hr * 3 + 2]) / 2], name = []; for (const [n, i] of Object.entries(B.bi)) name[i] = n;
-  const dy = 0.02, y0 = -0.32, n = 27, NB = 32, R = new Float32Array(n * NB); let any = false;
+function outlines(B, keep, y0, n) {
+  const hl = B.bi?.['upperleg01.L'], hr = B.bi?.['upperleg01.R']; if (hl === undefined || hr === undefined) return null;
+  const H = B.head, c = [(H[hl * 3] + H[hr * 3]) / 2, (H[hl * 3 + 1] + H[hr * 3 + 1]) / 2, (H[hl * 3 + 2] + H[hr * 3 + 2]) / 2], name = []; for (const [nm, i] of Object.entries(B.bi)) name[i] = nm;
+  const dy = 0.02, NB = 32, R = new Float32Array(n * NB); let any = false;
   for (const p of B.parts ?? []) { if (!p.si || !p.sw) continue;
     for (let v = 0; v < p.n; v++) {
-      let b = 0; for (let k = 1; k < 4; k++) if (p.sw[v * 4 + k] > p.sw[v * 4 + b]) b = k; const bn = name[p.si[v * 4 + b]] ?? '';
+      let b = 0; for (let k = 1; k < 4; k++) if (p.sw[v * 4 + k] > p.sw[v * 4 + b]) b = k;
       const x = p.pos[v * 3] - c[0], y = p.pos[v * 3 + 1] - c[1], z = p.pos[v * 3 + 2] - c[2];
-      if (!(_SEAT.test(bn) || (_THIGH.test(bn) && y > -0.16))) continue;
+      if (!keep(name[p.si[v * 4 + b]] ?? '', y)) continue;
       const j0 = Math.floor((y - y0) / dy); if (j0 < -1 || j0 > n) continue; any = true;
       const r = Math.hypot(x, z), k0 = Math.floor((Math.atan2(z, x) / (2 * Math.PI) + 0.5) * NB) % NB;
       // (each point also counts for the slices and the directions next to its own: a slice of few points has no gaps)
       for (let j = Math.max(0, j0 - 1); j <= Math.min(n - 1, j0 + 1); j++) for (const k of [(k0 + NB - 1) % NB, k0, (k0 + 1) % NB]) if (r > R[j * NB + k]) R[j * NB + k] = r;
     } }
-  return (B._seat = any ? { y0, dy, n, NB, R } : null);
+  return any ? { y0, dy, n, NB, R, hip: Math.hypot(H[hl * 3] - H[hr * 3], H[hl * 3 + 1] - H[hr * 3 + 1], H[hl * 3 + 2] - H[hr * 3 + 2]) } : null;
 }
+/**
+ * The hips and seat of a body as it is dressed, as a shape with an inside. What hangs from the waist — a robe's skirts
+ * — is kept outside it. Arms are no part of it, and of the thighs only their tops (the seat): legs move, and cloth has
+ * their own rounds to stay outside of. null for a body with no hips or nothing there to measure.
+ */
+export function seatShape(B) { return B._seat !== undefined ? B._seat : (B._seat = outlines(B, (bn, y) => _SEAT.test(bn) || (_THIGH.test(bn) && y > -0.16), -0.32, 27)); }
+/**
+ * The whole trunk of a body as it is dressed — from under the seat to the armpits — as a shape with an inside: what a
+ * judge holds an arm, a hand, a blade or a worn scabbard against (sensei/geo.js). `hip`: the rest distance between the
+ * hip joints (a posed body's own gives its scale).
+ */
+export function trunkShape(B) { return B._trunk !== undefined ? B._trunk : (B._trunk = outlines(B, (bn, y) => _TRUNK.test(bn) || (_THIGH.test(bn) && y > -0.16), -0.34, 42)); }
+/** How far a point (from the middle of the hips, in the body's own directions) is outside the trunk: metres; negative inside; Infinity above, below, or where the body has nothing. */
+export function trunkClear(S, x, y, z) { const f = (y - S.y0) / S.dy; if (f < 0 || f >= S.n) return Infinity; const r = seatRadius(S, y, x, z); return r > 0 ? Math.hypot(x, z) - r : Infinity; }
 /** The outline's distance from the middle of the hips at a height and in a direction (x, z): metres; 0 above and below the shape. */
 export function seatRadius(S, y, x, z) {
   const f = (y - S.y0) / S.dy; if (f < 0 || f >= S.n) return 0;

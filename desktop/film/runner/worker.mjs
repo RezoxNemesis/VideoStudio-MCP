@@ -18,6 +18,7 @@ import { openProject, needs, timeline, fingerprints, readIndex, writeIndex, shot
 import { fitAndLip } from '../kit/lip.js';
 import { mix, srt, kitSounds } from '../kit/sound.js';
 import { PROPS } from '../kit/props.js';
+import { cropRect, jointsOf } from './tools.mjs';
 import { PLACES } from '../kit/places.js';
 import { flashScan } from '../kit/qa.js';
 import { PEOPLE, PEOPLE_LIST, PEOPLE_GROUPS } from '../kit/people.js';
@@ -187,12 +188,24 @@ const methods = {
   },
 
   /** One frame of a shot, now (no need to draw what comes before it). → { jpeg (base64), width, height } */
-  async frame({ dir, id, t = 0, lang, scale = 0.5, quality = 82, paint = true }) {
+  async frame({ dir, id, t = 0, lang, scale = 0.5, quality = 82, paint = true, crop = null }) {
     const Pr = await project(dir), base = shotOf(Pr, id), sh = shotFrom(Pr, id, t);
     const W = Math.round((Pr.config.width * scale) / 2) * 2, H = Math.round((Pr.config.height * scale) / 2) * 2;
     const run = new ShotRun(sh, Pr.CAST, { lang: lang ?? Pr.config.langs[0], W, H, fps: Pr.config.fps, noGrain: true, noPaint: !paint });
-    const cv = run.draw(0);
-    return { jpeg: jpeg(cv, quality), width: W, height: H, t: +Math.min(t, base.dur).toFixed(3), shot: id };
+    let cv = run.draw(0);
+    // a part of the picture alone (a hand, a face, a hip): drawn at `scale`, then cut out — the way to look closely
+    const rc = cropRect(W, H, crop);
+    if (rc) { const part = createCanvas(rc[2], rc[3]); part.getContext('2d').drawImage(cv, rc[0], rc[1], rc[2], rc[3], 0, 0, rc[2], rc[3]); cv = part; }
+    return { jpeg: jpeg(cv, quality), width: cv.width, height: cv.height, t: +Math.min(t, base.dur).toFixed(3), shot: id };
+  },
+  /** Where bodies are at a moment of a shot, in numbers (after everything that places them: a rider is in his saddle), and the camera. */
+  async where({ dir, id, t = 0, actors = null }) {
+    const Pr = await project(dir), base = shotOf(Pr, id), sh = shotFrom(Pr, id, t);
+    const run = new ShotRun(sh, Pr.CAST, { lang: Pr.config.langs[0], W: 64, H: 36, fps: Pr.config.fps, probe: true }), pr = run.probe(0), out = {};
+    const want = actors && typeof actors === 'object' && !Array.isArray(actors) ? actors : Object.fromEntries((Array.isArray(actors) ? actors : Object.keys(pr.poses)).map((n) => [n, null]));
+    for (const [who, names] of Object.entries(want)) { const pose = pr.poses[who]; if (!pose) throw new Error(`No "${who}" in shot ${id}. In it: ${Object.keys(pr.poses).join(', ')}.`); out[who] = names === 'all' ? Object.keys(pose.j) : jointsOf(pose, Array.isArray(names) && names.length ? names : undefined); }
+    const r3 = (v) => v.map((x) => +x.toFixed(3));
+    return { shot: id, t: +Math.min(t, base.dur).toFixed(3), camera: { pos: r3(pr.cam.pos), target: r3(pr.cam.target), fov: pr.cam.fov }, bodies: out };
   },
   /** Several moments of a shot in one picture (drawn in order, so cloth and hair are as in the film). */
   async sheet({ dir, id, times, count = 6, cols = 3, cell = 0.5, lang }) {

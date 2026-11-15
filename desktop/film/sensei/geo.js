@@ -136,3 +136,63 @@ export function polyDist(poly, q) {
 }
 export const fmt = (x, d = 2) => (Math.round(x * 10 ** d) / 10 ** d);
 export const cm = (m) => `${Math.round(m * 100)} cm`;
+
+// ---------------------------------------------------------------- the body as it is dressed
+// Rounds drawn from the joints cannot tell that a hand has sunk into a bagged tunic or that a scabbard hangs through
+// a coat. The real body's own outline can (engine/body.js: trunkShape, read once from the body's rest pose).
+export { trunkShape, trunkClear } from '../engine/body.js';
+import { trunkClear as _clear } from '../engine/body.js';
+/**
+ * A posed body's own directions, from its joints: pel (the middle of the hips), up (towards the neck), side(f) and
+ * front(f) — its left and its front at a height f (0 at the hips … 1 at the shoulders: a chest turns on its hips) —
+ * and local(p): a point as [left, up, forward] from the middle of the hips.
+ */
+export function trunkFrame(j) {
+  const hl = j['upperleg01.L'], hr = j['upperleg01.R']; if (!hl || !hr) return null;
+  const pel = mid(hl, hr), nk = j.neck01 ?? j.spine01 ?? [pel[0], pel[1] + 0.5, pel[2]], up = norm(sub(nk, pel));
+  const perp = (v) => { const d = dot(v, up); return norm([v[0] - up[0] * d, v[1] - up[1] * d, v[2] - up[2] * d]); };
+  const hs = perp(sub(hl, hr)), sl = j['upperarm01.L'], sr = j['upperarm01.R'], cs = sl && sr ? perp(sub(sl, sr)) : hs, H = sl && sr ? Math.max(0.2, dot(sub(mid(sl, sr), pel), up)) : 0.5;
+  const side = (f) => { const u = Math.max(0, Math.min(1, f)); return norm([hs[0] + (cs[0] - hs[0]) * u, hs[1] + (cs[1] - hs[1]) * u, hs[2] + (cs[2] - hs[2]) * u]); };
+  const front = (f) => cross(side(f), up);
+  const local = (p) => { const d = sub(p, pel), y = dot(d, up), sd = side(y / H); return [dot(d, sd), y, dot(d, cross(sd, up))]; };
+  return { pel, up, H, side, front, local, hipW: dist(hl, hr) };
+}
+const _along = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+const _axis = (q) => [2 * (q[0] * q[1] - q[3] * q[2]), 1 - 2 * (q[0] * q[0] + q[2] * q[2]), 2 * (q[1] * q[2] + q[3] * q[0])];
+/**
+ * One pose against the body as it is dressed (S: trunkShape of its real body). Finds:
+ *   arm-in-body   — a forearm, elbow or hand inside the trunk (one finding a side, the deepest part)
+ *   blade-in-body — the blade of a sword in a hand inside the trunk
+ *   worn-in-body  — a scabbard worn through the body, or the hilt of the sword in it sitting in the clothes
+ * each { kind, side?, part, depth (metres inside), at (the point, in the world) }. k: the body's scale against its
+ * rest pose (default: from the hips).
+ */
+export function wornChecks(j, props, S, k) {
+  const F = S ? trunkFrame(j) : null, out = []; if (!F) return out;
+  const sc = k ?? (S.hip ? F.hipW / S.hip : 1), depthAt = (p) => { const l = F.local(p); return -_clear(S, l[0] / sc, l[1] / sc, l[2] / sc) * sc; };
+  // arms: the middle line of a forearm lies its own thickness outside whatever it rests on
+  for (const s of ['L', 'R']) {
+    const E = j[`lowerarm01.${s}`], W = j[`wrist.${s}`], Kn = j[`finger3-1.${s}`] ?? W; if (!E || !W) continue;
+    let worst = null; const take = (p, part, min) => { const d = depthAt(p); if (d > min && (!worst || d > worst.depth)) worst = { depth: d, part, at: p }; };
+    take(E, 'elbow', 0.02); for (const f of [0.2, 0.4, 0.6, 0.8]) take(_along(E, W, f), 'forearm', 0.012); take(W, 'wrist', 0.012); for (const f of [0.5, 1]) take(_along(W, Kn, f), 'hand', 0.012);
+    if (worst) out.push({ kind: 'arm-in-body', side: s, part: `${s === 'L' ? 'left' : 'right'} ${worst.part}`, depth: worst.depth, at: worst.at });
+  }
+  const sw = props?.sword, scb = props?.scabbard, kb = sc;
+  // does the sword ride its scabbard (home, or sliding along it)?
+  let rides = false;
+  if (sw?.visible && scb?.visible) { const ax = _axis(scb.q), d = sub(sw.pos, scb.pos), al = dot(d, ax), off = len(sub(d, [ax[0] * al, ax[1] * al, ax[2] * al])); rides = off < 0.03 * kb && al < 0.02 * kb && al > -1.2 * kb && dot(_axis(sw.q), ax) > 0.96; }
+  if (sw?.visible && !rides) {
+    const ax = _axis(sw.q); let worst = null;
+    for (const f of [0.2, 0.32, 0.44, 0.56, 0.68, 0.8]) { const p = [sw.pos[0] + ax[0] * f * kb, sw.pos[1] + ax[1] * f * kb, sw.pos[2] + ax[2] * f * kb], d = depthAt(p); if (d > 0.015 && (!worst || d > worst.depth)) worst = { depth: d, at: p }; }
+    if (worst) out.push({ kind: 'blade-in-body', part: 'blade', ...worst });
+  }
+  if (scb?.visible) {
+    const ax = _axis(scb.q); let worst = null;
+    for (const f of [0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75]) { const p = [scb.pos[0] + ax[0] * f * kb, scb.pos[1] + ax[1] * f * kb, scb.pos[2] + ax[2] * f * kb], d = depthAt(p); if (d > 0.012 && (!worst || d > worst.depth)) worst = { depth: d, at: p }; }
+    if (worst) out.push({ kind: 'worn-in-body', part: 'scabbard', ...worst });
+    // the hilt of the sword in it: a hand must be able to close on it — its middle a grip's thickness clear of the clothes
+    if (sw?.visible && rides) { let w2 = null; for (const f of [-0.08, 0, 0.08]) { const p = [sw.pos[0] + ax[0] * f * kb, sw.pos[1] + ax[1] * f * kb, sw.pos[2] + ax[2] * f * kb], d = depthAt(p) + 0.015 * kb; if (d > 0 && (!w2 || d > w2.depth)) w2 = { depth: d, at: p }; }
+      if (w2) out.push({ kind: 'worn-in-body', part: 'hilt', ...w2 }); }
+  }
+  return out;
+}

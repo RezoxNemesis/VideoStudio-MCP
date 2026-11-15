@@ -155,7 +155,8 @@ export interface FilmApi {
   write(dir: string, file: string, text: string): Promise<{ file: string; bytes: number }>;
   remove(dir: string, file: string): Promise<{ file: string; keptAt: string }>;
   config(dir: string, patch?: Partial<FilmConfig>): Promise<FilmConfig>;
-  frame(dir: string, id: string, t?: number, lang?: string, scale?: number, quality?: number, paint?: boolean): Promise<{ jpeg: string; width: number; height: number; t: number; shot: string }>;
+  frame(dir: string, id: string, t?: number, lang?: string, scale?: number, quality?: number, paint?: boolean, crop?: number[] | null): Promise<{ jpeg: string; width: number; height: number; t: number; shot: string }>;
+  where(dir: string, id: string, t?: number, actors?: unknown): Promise<{ shot: string; t: number; camera: { pos: number[]; target: number[]; fov: number }; bodies: Record<string, unknown> }>;
   /** earlier versions of a film file, newest first */
   history?(dir: string, file: string): Promise<{ at: number; bytes: number }[]>;
   historyRead?(dir: string, file: string, at: number): Promise<string>;

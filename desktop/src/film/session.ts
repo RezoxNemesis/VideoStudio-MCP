@@ -2,6 +2,7 @@
  * Code Studio's session: the film that is open, what its code says, what is drawn and what is not — one place that
  * both the Code workspace and Claude's commands use, so whatever Claude does shows in the window as it happens.
  */
+import { senseiNote } from "./senseinote";
 import { fixTransform, nearestPart, partAt, strokeToLocal } from "./paint";
 import type { PaintAnchor, PaintData, PaintFix, PaintStroke } from "./types";
 import type { Studio } from "../../../src/app/studio";
@@ -138,9 +139,9 @@ export class CodeSession {
     await this.refresh();
     return { ...r, loads: !this.error, error: this.error ?? undefined };
   }
-  async frame(shot: string, t?: number, lang?: string, scale = 0.5): Promise<{ jpeg: string; shot: string; t: number; width: number; height: number }> {
+  async frame(shot: string, t?: number, lang?: string, scale = 0.5, crop?: number[] | null): Promise<{ jpeg: string; shot: string; t: number; width: number; height: number }> {
     const sh = this.info?.shots.find((s) => s.id === shot);
-    const r = await film().frame(this.must(), shot, t ?? (sh ? sh.dur / 2 : 0), lang, scale);
+    const r = await film().frame(this.must(), shot, t ?? (sh ? sh.dur / 2 : 0), lang, scale, undefined, undefined, crop ?? null);
     this.shown = { jpeg: dataUrl(r.jpeg), shot, t: r.t };
     this.emit("frame");
     return { ...r, jpeg: this.shown.jpeg };
@@ -235,7 +236,7 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
   registerCommand(
     "code.help",
     "How to write films as code in Code Studio: the whole reference (film folder, sequences, script and voices, performances, cameras, faces, sets, people, sound, effects) with a worked example. Read it before writing a film.",
-    async () => ({ reference: await film().reference(), commands: "code.list, code.new, code.open, code.status, code.files, code.read, code.write, code.patch, code.remove, code.frame, code.sheet, code.build, code.stop, code.shots, code.check, code.export, code.toTimeline, code.config, code.people, code.person, code.sets" }),
+    async () => ({ reference: await film().reference(), commands: "code.list, code.new, code.open, code.status, code.files, code.read, code.write, code.patch, code.remove, code.frame, code.sheet, code.where, code.build, code.stop, code.shots, code.check, code.export, code.toTimeline, code.config, code.people, code.person, code.sets" }),
   );
   registerCommand("code.list", "The code films on this PC, the templates a new one can start from, and where films are kept.", async () => {
     const i = await film().info();
@@ -302,11 +303,20 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
   });
   registerCommand(
     "code.frame",
-    "{shot, t? (seconds into the shot, default its middle), lang?, scale?=0.5} One frame of a shot as it will be in the film, drawn now from the code (no need to draw what comes before). Look at frames while writing; build when it reads right.",
+    "{shot, t? (seconds into the shot, default its middle), lang?, scale?=0.5 (up to 3), crop?: [left, top, width, height] (parts of the picture, 0…1)} One frame of a shot as it will be in the film, drawn now from the code (no need to draw what comes before). Look at frames while writing; build when it reads right. To look closely at a hand, a face or a hip, enlarge that part: scale: 2, crop: [0.4, 0.3, 0.2, 0.25].",
     async (_s, a) => {
       go();
-      const r = await code.frame(a.str("shot"), a.optNum("t"), a.optStr("lang"), a.num("scale", 0.5));
+      const crop = a.any("crop");
+      const r = await code.frame(a.str("shot"), a.optNum("t"), a.optStr("lang"), Math.min(3, a.num("scale", 0.5)), Array.isArray(crop) ? crop.map(Number) : null);
       return { jpeg: r.jpeg, shot: r.shot, t: r.t, width: r.width, height: r.height };
+    },
+  );
+  registerCommand(
+    "code.where",
+    '{shot, t? (seconds into the shot, default its middle), actors?: ["v", "gar"] | {v: ["head", "wrist.R"], gar: "all" (lists the joint names)}} Where bodies are at a moment of a shot, in numbers — metres [x, y, z], after everything that places them (a rider is in his saddle) — and the camera of that moment. Set cameras and look-at points by these numbers, never by eye.',
+    async (_s, a) => {
+      const shot = a.str("shot"), sh = code.info?.shots.find((x) => x.id === shot);
+      return film().where(code.must(), shot, a.optNum("t") ?? (sh ? sh.dur / 2 : 0), a.any("actors") ?? null);
     },
   );
   registerCommand(
@@ -320,12 +330,24 @@ export function registerCodeCommands(s: Studio, go: () => void): void {
   );
   registerCommand(
     "code.build",
-    '{draft?=false (a quick small version), only?: [shot ids] (draw just these, no joining), force?=false, langs?, subs?: "soft" (a subtitle track, default) | "burn" | "none", sound?=true} Bring the film up to date: speak new lines, solve changed performances, make new sounds, draw ONLY the shots whose picture changed (several at once), mix the sound and join the film without re-encoding. Returns what was drawn, what was reused and the film files.',
+    '{draft?=false (a quick small version), only?: [shot ids] (draw just these, no joining), force?=false, langs?, subs?: "soft" (a subtitle track, default) | "burn" | "none", sound?=true, sensei?=true} Bring the film up to date: speak new lines, solve changed performances, make new sounds, draw ONLY the shots whose picture changed (several at once), mix the sound and join the film without re-encoding. Returns what was drawn, what was reused, the film files, and sensei: what the judge found in the bodies, cameras and story (grade, how many MUST and SHOULD findings, the worst in words with what to do) — fix the MUST findings before showing the film.',
     async (_s, a) => {
       go();
       const only = a.any("only"), langs = a.any("langs");
       const r = await code.build({ draft: a.bool("draft", false), only: Array.isArray(only) ? only.map(String) : undefined, force: a.bool("force", false), langs: Array.isArray(langs) ? langs.map(String) : undefined, subs: (a.optStr("subs") as "soft" | "burn" | "none" | undefined) ?? "soft", sound: a.bool("sound", true) });
+      // The judge looks at whatever a build changed (bodies, cameras, story: seconds, nothing is drawn for it) and its
+      // findings come back with the build: nobody has to remember to ask.
+      let note: ReturnType<typeof senseiNote>;
+      if (a.bool("sensei", true) && (r.prep.solved.length || r.rendered.length)) {
+        try {
+          const { sensei } = await import("../sensei/store");
+          const before = await sensei.load(code.must());
+          await sensei.review({ bench: before?.bench.id ?? "youtube", checks: ["motion", "camera", "story"], images: 0, draw: false });
+          note = senseiNote(await sensei.load(code.must()));
+        } catch { note = undefined; }
+      }
       return {
+        sensei: note,
         drew: r.rendered, reused: r.reused, seconds: r2(r.ms / 1000), spoke: r.prep.spoke.length || undefined, solved: r.prep.solved.length ? r.prep.solved : undefined, sounds: r.prep.sounds.length ? r.prep.sounds : undefined,
         films: r.films.map((f) => ({ file: f.file, seconds: f.seconds, MB: r2(f.bytes / 1e6), subtitles: f.subtitles, sound: f.sound })), draft: r.draft || undefined, problems: r.problems.length ? r.problems : undefined,
       };

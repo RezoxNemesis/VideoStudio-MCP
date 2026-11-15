@@ -122,7 +122,8 @@ function setupFilm(o) {
     if (patch && typeof patch === "object") { Object.assign(c, patch); await fsp.writeFile(f, JSON.stringify(c, null, 1)); }
     return c;
   });
-  h("film.frame", (dir, id, t, lang, scale, quality, paint) => farm().ask("frame", { dir: film(dir), id, t, lang, scale, quality, paint: paint !== false }));
+  h("film.frame", (dir, id, t, lang, scale, quality, paint, crop) => farm().ask("frame", { dir: film(dir), id, t, lang, scale, quality, paint: paint !== false, crop: crop ?? null }));
+  h("film.where", (dir, id, t, actors) => farm().ask("where", { dir: film(dir), id, t, actors: actors ?? null }));
   // fixes painted over shots (Animate → Fix a film shot)
   h("film.paintGet", (dir, id) => farm().ask("paintGet", { dir: film(dir), id: String(id) }));
   h("film.paintSave", (dir, id, data) => farm().ask("paintSave", { dir: film(dir), id: String(id), data }));
