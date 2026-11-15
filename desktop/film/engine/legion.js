@@ -35,7 +35,8 @@ export function ranks(o) {
  *      keepMB: 220 (how much memory the drawings may take; those not needed any more are let go) }
  * A figure that WAITS ({ dur: seconds of its loop, swing: true = played forth and back, poses: drawings of it }) is
  * played by the legion itself when there is no `state`: every man at his own moment of the wait and at his own pace
- * (m.ph gives him one), near men on finer moments than far men — a standing army is never a still picture.
+ * (m.ph gives him one), near men on finer moments than far men (a man a few pixels tall on two) — a standing army is
+ * never a still picture, and costs no more drawings than can be seen.
  * Returns world items (one a rank, and the ground they darken) for a place or a shot's dyn list; `.kept()` says how
  * many drawings are held.
  */
@@ -114,10 +115,12 @@ export function legion(o) {
           if (o.state || !F.dur) { const u = phase + (m.ph ?? 0); i = Math.floor((u - Math.floor(u)) * F.poses) % F.poses; } // in step (a march), or one drawing
           else {
             // a man who waits: his own moment of the wait, at his own pace; near the lens on finer moments
-            const sub = S >= 192 ? 4 : S >= 96 ? 2 : 1, n = F.poses * sub, own = m.ph ?? hash(m.x * 7.31 + m.z * 3.17 + fi * 1.7), pace = 0.85 + 0.3 * hash(m.x * 1.93 + m.z * 5.71);
+            // (how many moments of the wait a man is drawn from goes by his size: a man a few pixels tall cannot show
+            // more than two, and every moment is a drawing that has to be made)
+            const sub = S >= 384 ? 4 : S >= 192 ? 2 : S >= 96 ? 1 : S >= 48 ? Math.min(1, 6 / F.poses) : Math.min(1, 2 / F.poses), n = Math.max(1, Math.round(F.poses * sub)), own = m.ph ?? hash(m.x * 7.31 + m.z * 3.17 + fi * 1.7), pace = 0.85 + 0.3 * hash(m.x * 1.93 + m.z * 5.71);
             const u = ((t ?? 0) * pace) / F.dur + own * (F.swing ? 2 : 1);
-            if (F.swing) { const v = ((u % 2) + 2) % 2, w = v < 1 ? v : 2 - v; i = Math.min(n - 1, Math.floor(w * n)) / sub; }
-            else i = (Math.floor((u - Math.floor(u)) * n) % n) / sub;
+            if (F.swing) { const v = ((u % 2) + 2) % 2, w = v < 1 ? v : 2 - v; i = (Math.min(n - 1, Math.floor(w * n)) * F.poses) / n; }
+            else i = ((Math.floor((u - Math.floor(u)) * n) % n) * F.poses) / n;
           }
           const s = sprite(fi, i, azB, elB, S, sc), k = hpx / F.h / s.ppm;
           g.drawImage(aired(s, q, sc), sx - s.ax * k, sy - s.ay * k, s.cv.width * k, s.cv.height * k);

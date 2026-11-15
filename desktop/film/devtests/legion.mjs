@@ -97,12 +97,12 @@ const CAM = { pos: [0, 1.6, 0], target: [0, 1.0, -10], fov: 40 };
 {
   // a figure with a loop of waiting (`dur` seconds, played forth and back): the legion plays it by itself
   const wait = (log) => ({ ...slab('#b02020', log), poses: 16, dur: 8, swing: true });
-  const log = [], men = []; for (let r = 0; r < 8; r++) for (let c = 0; c < 12; c++) men.push({ x: (c - 6) * 1.1, z: -30 - r * 1.2 });
+  const log = [], men = []; for (let r = 0; r < 8; r++) for (let c = 0; c < 12; c++) men.push({ x: (c - 6) * 1.1, z: -9 - r * 1.2 });
   const L = legion({ men, yaw: 0, figures: [wait(log)] });
   shot(L, CAM, 0); const at0 = log.map((q) => q.i); log.length = 0;
   ok(new Set(at0).size >= 6, 'men who stand are not in step: at one moment they are drawn from many moments of the wait', new Set(at0).size);
   // the same man over time: follow one man alone
-  const one = [], solo = legion({ men: [{ x: 0, z: -30 }], yaw: 0, figures: [wait(one)], keep: 0 }), seen = []; // (keep: 0 — every moment is drawn anew, so the test sees which)
+  const one = [], solo = legion({ men: [{ x: 0, z: -8 }], yaw: 0, figures: [wait(one)], keep: 0 }), seen = []; // (keep: 0 — every moment is drawn anew, so the test sees which)
   for (let t = 0; t < 20; t += 0.25) { one.length = 0; const before = seen.length; shot(solo, CAM, t); seen.push(one.length ? one[one.length - 1].i : seen[before - 1]); }
   ok(new Set(seen).size >= 12, 'a man who waits goes through the moments of his wait as time passes', new Set(seen).size);
   let jump = 0; for (let k = 1; k < seen.length; k++) jump = Math.max(jump, Math.abs(seen[k] - seen[k - 1]));
@@ -112,6 +112,10 @@ const CAM = { pos: [0, 1.6, 0], target: [0, 1.0, -10], fov: 40 };
   const kinds = (L2, lg) => { const set = new Set(); for (let t = 0; t < 2; t += 1 / 24) { lg.length = 0; shot(L2, CAM, t); for (const q of lg) set.add(q.i); } return set.size; };
   const kn = kinds(nearMan, nearLog), kf = kinds(farMan, farLog);
   ok(kn >= kf * 2 && kn >= 8, 'a man near the lens moves on finer moments than one far off (near: at least 8 drawings in two seconds)', [kn, kf]);
+  // a man who is only a few pixels tall is drawn from two moments at most: more could not be seen, and each is a drawing
+  const tinyLog = [], tiny = []; for (let c = 0; c < 60; c++) tiny.push({ x: (c - 30) * 1.1, z: -200 });
+  const TL = legion({ men: tiny, yaw: 0, figures: [wait(tinyLog)] }); for (let t = 0; t < 16; t += 0.5) shot(TL, CAM, t);
+  ok(new Set(tinyLog.map((q) => q.i)).size <= 2, 'sixty men far off, over a whole wait, are drawn from two moments at most', new Set(tinyLog.map((q) => q.i)).size);
   // a marching legion is still in step
   const ml = [], M = legion({ men, yaw: 0, figures: [wait(ml)], state: (t) => ({ advance: t * 1.3, phase: t / 1.1 }) }); shot(M, CAM, 0.4);
   ok(new Set(ml.map((q) => q.i)).size === 1, 'men who march stay in step', new Set(ml.map((q) => q.i)).size);

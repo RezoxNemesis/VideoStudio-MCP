@@ -365,6 +365,23 @@ rows of small plates laid like bricks: each plate's lower edge catches the light
 above, a cord's colour is stitched through every plate. `from` / `to` (metres up from the ground) keep the plates to a
 part of a garment's height.
 
+**A standing army is alive.** A figure made at one moment (`performer({ at })`) is ONE drawing: ten thousand men who
+never move. Give the legion men who wait: `performer({ bake, as, design, wait: [t0, t1], fit: (pose) => plantSpear(pose) })`
+— a stretch in which the performer stands and waits. The legion plays it forth and back by itself, every man at his own
+moment and pace (near men on finer moments than far men), so heads turn, weight shifts and spear tips sway all through
+the ranks, never in step. The performers are soldiers of the sequence who wait as soldiers do:
+```js
+// a short stand, then a captured wait: it keeps the feet where they stood (its shuffles become shifts of weight);
+// the hands are kept on spear and shield, so the capture's arms do not wave them about
+{ op: 'stage.do', actor: 'model', actions: [{ t: 0, idle: true }, { t: 0.3, idle: true, clip: '139_02', in: 0.5, blend: 0.6 }] },
+{ op: 'stage.overlay', actor: 'model', add: [{ t0: 0, t1: dur, fade: 0, keys: [
+  { on: 'hand.R', keys: [[0, [0.24, 1.0, 0.2]], [dur, [0.24, 1.0, 0.2]]] }, { on: 'hand.L', keys: [[0, [-0.3, 1.1, 0.16]], [dur, [-0.3, 1.1, 0.16]]] }] }] },
+```
+Waits that read as a soldier in the line: `139_02` (shifting weight), `137_41`, `40_10`, `40_11`; not `139_01`, `137_32`,
+`137_28` (they crouch, stoop or fidget). Deal three performers among six figures, each figure its own stretch of the wait.
+`plantSpear(pose, { lean: [right, forward] })` stands a spear on its butt through the hand that holds it. Which way a
+figure faces is measured from his performance: a legion always faces its `yaw`, however the performer was turned.
+
 ## Riders
 
 A horse is a rounded, painted body made from a skeleton that walks, trots and gallops with its hooves planted
@@ -393,6 +410,11 @@ makeSeq({ …,
 - A horse alone: `const h = new Horse({ coat }); h.place([x, z], yaw, dist, gait, ts)` in a `dyn` item that calls
   `h.draw(g, cam, sc.litAt(d), { sun: sc.sun, light: sc.light2(cam), shadow: true })`.
 - Looks that are flat on purpose (paper, puppet, flat) keep the cut-out horse.
+
+**A horse that stands is alive** by itself: it breathes (the barrel fills), carries its head higher and lower, dips and
+lifts it, turns it to look, flicks each ear by itself, swishes its tail, and rests one hind leg and then the other with
+the toe on the ground — every horse in its own time (`horse: { seed }`), the same at the same moment. `horse: { alive: 0 }`
+holds one still. The rider on it breathes like everybody else.
 
 ## The 2D library
 
@@ -450,6 +472,17 @@ What goes wrong in films made this way, and how each mistake is caught before an
 4. Look at the film from angles the camera does not use while you stage: from behind, from the side, from above. Most
    costume and prop mistakes (things worn through the body, cloth the body comes through) only show from behind.
 
+**Life.** Nobody in a picture is a statue. The engine gives every body breath, shoulders that ride on it, a trunk that
+sways over the hips and a head that is never quite still, at its own pace; a speaker's head rides the words. Leave it on.
+- `alive: 2.5` on an actor who has run or fought: he heaves. `alive: 0` only for the dead.
+- Life is the floor, not the acting. A body that only stands for more than two seconds gets a captured wait
+  (`idle: true, clip: '137_28'` after a short plain `idle`, so its feet stay planted), a look that goes somewhere, a hand
+  that settles. A listener reacts: eyes first, then the head, a blink on the turn.
+- The judge's `statue` finds a body that holds still for two seconds; `sensei.report {kind: "statue"}`.
+- Horses, armies, banners, cloth, hair, grass, clouds and mist move too: give the place a wind that can be seen
+  (`makeWind({ speed: 2.5, gust: 1 })`, clouds `wind: [30, 9]`, `mistBand({ drift: 0.07 })`, `grassPaint({ wind: 1.9 })`).
+  A still background under a moving figure reads as a painted card.
+
 **Bodies.**
 - Proportions: judge a full figure from the front before any shot. Warriors: weight 0.45–0.55, muscle 0.9+, proportions
   0.95–1, a close-cut tunic; heavy presets with baggy tunics read as sacks with short legs.
@@ -465,7 +498,14 @@ What goes wrong in films made this way, and how each mistake is caught before an
 - Running is captured running (`gait: 'run'`), never a sped-up walk. A runner who stops needs room to stop: a run that
   ends in `idle` within half a second skates (`foot-slide`). Let the run end a stride early (`speed` down, a longer
   blend) or stage the stop out of the picture.
-- Someone who reports to a leader comes to a stop BEFORE kneeling; the kneel is its own action after a short stand.
+- Someone who reports to a leader is SEEN to arrive — do not cut away from the hard part. The chain that works, every
+  link a captured performance: `{ go, gait: 'run', clip: '09_05', speed: 3.6 }` (a sprint with the arms pumping; the
+  Stage's own run tucks them) → `{ clip: '127_05', in: 0.45, out: 2.2 }` (run to a quick stop: weight back, arms out; it
+  carries him 2.3 m on) → `{ go, gait: 'walk', face: deg }` (two steps that turn him to his lord; allow 2.4 s) →
+  `{ clip: '23_03', in: 0.45, out: 2.6, warp: [[0, 0.45], [1.45, 1.9], [rest, 2.6]] }` (down on one knee in a second
+  and a half, then the capture runs on very slowly: he never freezes). Solve, then read where he really ended
+  (`code.where`) and move the way-points by the difference: captures travel on their own.
+- A held pose after a clip (`pose: 'clip:…@t'`) slides the feet to a new anchor; hold by slowing the same clip (`warp`).
 - Laughing: only gentle captures, or the upper body; if the voice cannot laugh, write a smile.
 - Before a kind of movement goes into a film, look at it alone on a sheet from the side.
 
@@ -477,6 +517,11 @@ What goes wrong in films made this way, and how each mistake is caught before an
 - A fight: ready, wind-up, swing, impact, follow-through, recovery; the world and the camera stay still on big strikes.
 
 **Cameras.**
+- Every shot moves a little or has a reason not to: a slow push on a face (5–8 % in four seconds), a rise over an army,
+  a track with a walker. A move too small to feel (centimetres) is a still picture with a flaw in it.
+- Stay on one side of the line between two people who look at each other, shot after shot (the 180° rule): a cut to
+  the other side turns them round in the viewer's head.
+- A crowd has depth only from above or from an angle: at eye height in front of it, ten thousand men are one row.
 - No shake, ever — not on impacts. Locked-off shots, or smooth eased moves that have a reason (`move(a, b, t, t0, t1)`).
 - Set cameras by numbers: `code.where` gives where heads, hands and hips are; a camera that follows a head shakes
   with every step — aim at a point that is eased over time.
@@ -491,7 +536,8 @@ What goes wrong in films made this way, and how each mistake is caught before an
 
 **Pictures.**
 - Land and sky are painted (`paintedLand`), judged at full size. Far ranges: low, near the colour of the air, peaked.
-- Armies are performed soldiers laid down by the thousand (`legion`), never capsules; look from inside the ranks.
+- Armies are performed soldiers laid down by the thousand (`legion`), never capsules; look from inside the ranks, and
+  CHECK WHICH WAY THEY FACE in a frame from the enemy's side and from behind. Their figures wait (`wait:`), never `at:`.
 - Beards are painted on the skin (`face.beard`), hair is designed lock by lock or drawn back to a tie.
 
 **Housekeeping.**
