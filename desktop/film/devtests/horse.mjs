@@ -23,8 +23,9 @@ function volume(m) {
   return v;
 }
 
-// standing, facing +z (its left is +x), at the origin
-const stand = new Horse({ coat: '#2a2226' }).place([0, 0], 0, 0, 'stand', 0);
+// standing square on all four legs (alive: 0 — the build of the horse is measured, not what it does while it waits),
+// facing +z (its left is +x), at the origin
+const stand = new Horse({ coat: '#2a2226', alive: 0 }).place([0, 0], 0, 0, 'stand', 0);
 const ms = horseMeshes(stand, (c) => c);
 {
   const names = ms.map((m) => m.name);
@@ -180,6 +181,49 @@ for (const leg of ['LF', 'RF', 'LH', 'RH']) {
     let bad = 0; for (const m of tm) for (let i = 0; i < m.pos.length; i++) if (!Number.isFinite(m.pos[i])) bad++;
     ok(bad === 0, 'all of it sound', bad);
   }
+}
+
+// ---- a standing horse is never a statue: it breathes, carries its head about, turns its ears, swishes its tail, rests a leg
+{
+  const HO = ['LH', 'RH', 'LF', 'RF'], rng = (a) => Math.max(...a) - Math.min(...a);
+  const run = (seed, o = {}) => { const h = new Horse({ coat: '#2a2226', seed, ...o }), S = []; for (let t = 0; t <= 30; t += 1 / 24) { h.place([0, 0], 0, 0, 'stand', t); S.push({ t, poll: [...h.j.poll], muzzle: [...h.j.muzzle], back: [...h.j.back], croup: [...h.j.croup], breath: h.breath, eL: h.ears.L, eR: h.ears.R, tail: [...h.tail[4]], hoof: HO.map((n) => [...h.j[n].hoof]), hock: ['LH', 'RH'].map((n) => [...h.j[n].mid]) }); } return S; };
+  const S = run(3);
+  ok(rng(S.map((s) => s.poll[1])) > 0.03 && rng(S.map((s) => s.muzzle[1])) > 0.05, 'a standing horse carries its head about: it nods and lifts it (the poll by 3 cm and more, the muzzle by 5)', [rng(S.map((s) => s.poll[1])), rng(S.map((s) => s.muzzle[1]))]);
+  ok(rng(S.map((s) => s.muzzle[0])) > 0.05, 'and turns it to look to one side and the other', rng(S.map((s) => s.muzzle[0])));
+  const br = S.map((s) => s.breath); let cross = 0; for (let i = 1; i < br.length; i++) if (br[i - 1] < 0 && br[i] >= 0) cross++;
+  ok(Math.min(...br) < -0.9 && Math.max(...br) > 0.9 && cross >= 4 && cross <= 9, 'it breathes: 8 to 18 breaths a minute, from empty to full', [Math.min(...br), Math.max(...br), cross]);
+  ok(rng(S.map((s) => s.back[1])) > 0.003 && rng(S.map((s) => s.back[1])) < 0.03, 'the back rises and sinks a little with the breath', rng(S.map((s) => s.back[1])));
+  ok(rng(S.map((s) => s.eL)) > 0.5 && rng(S.map((s) => s.eR)) > 0.5 && Math.max(...S.map((s) => Math.abs(s.eL - s.eR))) > 0.3, 'its ears turn, each by itself', [rng(S.map((s) => s.eL)), rng(S.map((s) => s.eR)), Math.max(...S.map((s) => Math.abs(s.eL - s.eR)))]);
+  ok(rng(S.map((s) => s.tail[0])) > 0.1, 'the tail swishes', rng(S.map((s) => s.tail[0])));
+  ok(rng(S.map((s) => s.croup[0])) > 0.012 && rng(S.map((s) => s.croup[0])) < 0.08, 'its weight goes from one hind leg to the other (the croup sways by centimetres)', rng(S.map((s) => s.croup[0])));
+  // hooves: where a hoof stands it stays; a leg that rests is lifted a little, never slid
+  let slide = 0, lift = 0;
+  for (let k = 0; k < 4; k++) { slide = Math.max(slide, rng(S.map((s) => s.hoof[k][0])), rng(S.map((s) => s.hoof[k][2]))); lift = Math.max(lift, rng(S.map((s) => s.hoof[k][1]))); }
+  ok(slide < 1e-6 && lift < 1e-6, 'no hoof ever slides over the ground or leaves it', [slide, lift]);
+  const give = [0, 1].map((q) => rng(S.map((s) => s.hock[q][2])));
+  ok(give[0] > 0.05 && give[1] > 0.05 && give[0] < 0.3, 'a hind leg is rested in turn: its hock gives forward (5 cm and more) while the toe stays down', give);
+  const base = [0, 1].map((q) => Math.min(...S.map((s) => s.hock[q][2]))); let both = 0; for (const s of S) if (s.hock[0][2] > base[0] + 0.03 && s.hock[1][2] > base[1] + 0.03) both++;
+  ok(both === 0, 'never both hind legs at once', both);
+  // nothing jumps
+  let step = 0, estep = 0; for (let i = 1; i < S.length; i++) { for (const n of ['poll', 'muzzle', 'back', 'croup']) step = Math.max(step, Math.hypot(S[i][n][0] - S[i - 1][n][0], S[i][n][1] - S[i - 1][n][1], S[i][n][2] - S[i - 1][n][2])); estep = Math.max(estep, Math.abs(S[i].eL - S[i - 1].eL), Math.abs(S[i].eR - S[i - 1].eR)); }
+  ok(step < 0.02 && estep < 0.35, 'nothing jumps from one frame to the next (the head under 2 cm, an ear under a fifth of its turn)', [step, estep]);
+  // the same moment is the same; another horse is another horse; a horse can be told to hold still
+  const A = run(3), B = run(8);
+  ok(A.every((s, i) => Math.abs(s.poll[1] - S[i].poll[1]) < 1e-9 && s.eL === S[i].eL && s.breath === S[i].breath), 'the same horse at the same moment is the same (frames can be drawn in any order)', 0);
+  let diff = 0; for (let i = 0; i < S.length; i++) diff += Math.abs(B[i].poll[1] - S[i].poll[1]) + Math.abs(B[i].breath - S[i].breath) * 0.01; 
+  ok(diff / S.length > 0.004, 'two horses are not in step', diff / S.length);
+  const D = run(3, { alive: 0 });
+  ok(rng(D.map((s) => s.poll[1])) < 0.025 && rng(D.map((s) => s.eL)) === 0 && rng(D.map((s) => s.hock[0][2])) < 1e-9, 'alive: 0 leaves a horse as still as it used to be', [rng(D.map((s) => s.poll[1])), rng(D.map((s) => s.eL))]);
+  // a horse that walks is not disturbed by any of it
+  const w = new Horse({ coat: '#2a2226', seed: 3 }); w.place([0, 0], 0, 3.3, 'walk', 5);
+  ok(w.breath !== undefined && w.ears && Math.abs(w.ears.L) < 0.5 && Math.abs(w.ears.R) < 0.5, 'a walking horse keeps its ears forward and still has breath', [w.breath, w.ears]);
+  // the body shows it: the barrel fills, the ears turn
+  const h1 = new Horse({ coat: '#2a2226', seed: 3 }).place([0, 0], 0, 0, 'stand', 0); h1.breath = -1; h1.ears = { L: 0, R: 0 };
+  const m0 = horseMeshes(h1, (c) => c); h1.breath = 1; h1.ears = { L: 1.2, R: 0 }; const m1 = horseMeshes(h1, (c) => c);
+  const wd = (ms2) => { const s2 = span(verts(part(ms2, 'trunk')), 0); return s2[1] - s2[0]; };
+  ok(wd(m1) > wd(m0) * 1.01 && wd(m1) < wd(m0) * 1.06, 'the barrel is fuller at the top of a breath (1 to 6 percent wider)', [wd(m0), wd(m1)]);
+  const tip = (ms2, nm) => { const vs = verts(part(ms2, nm)); return vs.reduce((a, b) => (b[1] > a[1] ? b : a)); };
+  ok(Math.hypot(...tip(m1, 'earL').map((v, i) => v - tip(m0, 'earL')[i])) > 0.04 && Math.hypot(...tip(m1, 'earR').map((v, i) => v - tip(m0, 'earR')[i])) < 1e-6, 'an ear that turns back is drawn turned back; the other stays', [tip(m0, 'earL'), tip(m1, 'earL')]);
 }
 
 if (fails.length) { console.error(`horse: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }

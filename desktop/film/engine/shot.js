@@ -9,6 +9,8 @@ import { loadBake, poseAt } from './bake.js';
 import { bodyOf } from './body.js';
 import { Character } from './character.js';
 import { V, clamp, hash, noise1 } from './core.js';
+import { enliven } from './life.js';
+export { enliven };
 import * as post from './post.js';
 import { dust, puff } from './fx.js';
 import { jolt, postLook, resolveLook, setLook } from './look.js';
@@ -26,19 +28,6 @@ export function autoBlink(t, seed = 1) {
     if (hash(k * 3.1 + seed) > 0.72) { const d2 = t - t0 - 0.26; if (d2 > 0 && d2 < 0.14) b = Math.max(b, Math.sin((d2 / 0.14) * Math.PI)); }
   }
   return b;
-}
-
-const BREATH = { spine03: 0.3, spine02: 0.7, spine01: 1, neck01: 1, neck03: 1, head: 1, 'head:tail': 1, 'eye.L': 1, 'eye.R': 1, 'jaw:tail': 1, 'clavicle.L': 1, 'clavicle.R': 1, 'upperarm01.L': 1, 'upperarm01.R': 1, 'lowerarm01.L': 0.6, 'lowerarm01.R': 0.6, 'wrist.L': 0.25, 'wrist.R': 0.25 };
-/** Breathing and the slow sway of balance, laid over a pose (so nobody is ever a statue). */
-export function enliven(pose, t, seed, amp = 1) {
-  const j = pose.j, k = pose.height / 1.8, ank = Math.min(j['foot.L'][1], j['foot.R'][1]), top = j.head[1] - ank;
-  const sx = (noise1(t * 0.23 + seed, 1) * 0.012 + noise1(t * 0.63 + seed, 2) * 0.004) * amp * k, sz = (noise1(t * 0.19 + seed, 3) * 0.01 + noise1(t * 0.55 + seed, 4) * 0.003) * amp * k;
-  const br = Math.sin(t * 2 * Math.PI * (0.21 + 0.06 * hash(seed)) + seed * 3), b = 0.0048 * amp * k;
-  for (const name in j) {
-    const p = j[name], u = clamp((p[1] - ank - 0.06 * k) / top), w = u * u * (3 - 2 * u);
-    p[0] += sx * w; p[2] += sz * w;
-    const bw = BREATH[name]; if (bw) p[1] += br * b * bw;
-  }
 }
 
 export class ShotRun {
@@ -91,10 +80,13 @@ export class ShotRun {
       // the real body of this actor, when the performance was solved with bodies (drawn by bodydraw.js)
       if (!a.simple && a.mesh !== false && !this.o.probe && !this.o.noMesh) { const B = bodyOf(a.bk, a.as ?? a.id); if (B) a.pose.body = { B, t: (a.t0 ?? 0) + t * (a.rate ?? 1), xf: xf ?? null, hands: typeof a.hands === 'function' ? a.hands(t, this.ctx) : a.hands }; }
       // a body that stands is never still: it breathes and its weight drifts over its feet
-      if (a.alive !== 0 && !this.o.probe) {
+      if (a.alive !== 0 && (!this.o.probe || this.o.life)) { // (a probe for fingerprints leaves life out: it must not depend on the frames asked for before)
         const r = a.pose.j.root, sp = a.lastRoot ? Math.hypot(r[0] - a.lastRoot[0], r[2] - a.lastRoot[2]) * this.fps : 0; a.lastRoot = [r[0], r[1], r[2]];
         a.still = (a.still ?? 1) + (clamp(1 - sp / 0.25) - (a.still ?? 1)) * 0.08;
-        if (a.still > 0.02) enliven(a.pose, (a.t0 ?? 0) + t, a.id.length * 3.1 + a.id.charCodeAt(a.id.length - 1) * 0.37, (a.alive ?? 1) * a.still);
+        // (how loud it speaks now: its open mouth, eased over a tenth of a second so the head rides the words, not the frames)
+        let open = 0; if (a.face && !this.o.probe) { try { open = a.face(t, this.ctx)?.mouthOpen ?? 0; } catch { open = 0; } }
+        a.speak = (a.speak ?? 0) + (clamp(open * 1.8) - (a.speak ?? 0)) * Math.min(1, 10 / this.fps);
+        if (a.still > 0.02 || a.speak > 0.02) enliven(a.pose, (a.t0 ?? 0) + t, a.id.length * 3.1 + a.id.charCodeAt(a.id.length - 1) * 0.37, Math.max((a.alive ?? 1) * a.still, a.speak > 0.02 ? 0.35 : 0), { speak: a.speak });
       }
       if (a.fit) a.fit(a.pose, t, this.ctx);
       a.gnd = typeof a.ground === 'function' ? a.ground(a.pose, t, this.ctx) : (a.gnd ?? 0); // the height of the ground under this actor (stairs, a dike)

@@ -2,6 +2,11 @@
 // shoulder, a body that rises, falls and pitches with the gait, mane and tail that follow. Drawn as cels like the people.
 import { inView } from './camera.js';
 import { V, clamp, lerp, hash, hex, noise1, shade as shadeHex, smooth } from './core.js';
+import { breathAt } from './life.js';
+
+/** Something a body does now and then (every `every` seconds or so, for `len` seconds): how far through it (0…1), or −1 between times. */
+const smoothstep01 = (u) => { const v = Math.max(0, Math.min(1, u)); return v * v * (3 - 2 * v); };
+function nowAndThen(t, every, len, seed) { const k = Math.floor(t / every), t0 = k * every + hash(k * 7.3 + seed * 13.1) * (every - len), u = (t - t0) / len; return u >= 0 && u <= 1 ? u : -1; }
 import { CelPainter } from './body.js';
 import { look } from './look.js';
 import { horseMeshes } from './horsemesh.js';
@@ -31,7 +36,11 @@ function give(top, to, total) {
 }
 
 export class Horse {
-  /** o: { coat, mane, sock, scale (1 = 1.6 m at the withers), cloth (barding colour), tack, seed } */
+  /**
+   * o: { coat, mane, sock, scale (1 = 1.6 m at the withers), cloth (barding colour), tack, seed, alive: 1 (a horse that
+   * stands is never a statue: it breathes, carries its head about, turns its ears, swishes its tail and rests a hind
+   * leg, each horse in its own time; 0 = it holds still) }
+   */
   constructor(o = {}) { this.o = { coat: '#4a3528', mane: '#1c1614', scale: 1, ...o }; this.s = 0; this.tail = null; this.t = 0; this.j = null; }
   /**
    * Put the horse somewhere: pos [x, z] on the ground (y = ground), yaw (radians, 0 = facing +Z like the people),
@@ -40,18 +49,33 @@ export class Horse {
   place(pos, yaw, dist, gait, t, o = {}) {
     const k = this.o.scale, G = GAITS[gait], f = [Math.sin(yaw), 0, Math.cos(yaw)], sd = [Math.cos(yaw), 0, -Math.sin(yaw)], gy = o.ground ?? 0;
     const cyc = dist / (G.stride * k), seed = this.o.seed ?? 1;
+    // ---- the life of a horse that stands (each from the time alone: frames can be drawn in any order)
+    const alive = this.o.alive ?? 1, live = gait === 'stand' ? alive : 0;
+    const breath = alive > 0 ? breathAt(t, seed + 40, { rate: 0.15 + 0.08 * hash(seed * 2.3 + 0.7) }).b : 0;
+    // its weight goes from one hind leg to the other; the leg that does not carry is rested (the hoof tipped up)
+    const ws = live ? clamp(1.8 * Math.sin(2 * Math.PI * (t / (14 + 8 * hash(seed * 5.1)) + hash(seed * 1.3))), -1, 1) * live : 0, sway = 0.016 * k * ws;
+    const rest = smoothstep01((Math.abs(ws) - 0.6) / 0.4), restLeg = ws > 0 ? 'RH' : 'LH';
+    // the head: carried a little higher and lower, dipped and lifted now and then, turned to look
+    const dip = live ? nowAndThen(t, 9, 1.8, seed + 3) : -1;
+    const idleNod = live ? (0.07 * noise1(t * 0.11, seed + 1) + 0.03 * noise1(t * 0.31, seed + 2) - (dip >= 0 ? 0.16 * Math.sin(Math.PI * dip) ** 2 : 0)) * live : 0;
+    const idleTurn = live ? (0.3 * noise1(t * 0.07, seed + 4) + 0.1 * noise1(t * 0.23, seed + 5)) * live : 0;
+    // the ears: each by itself, forward mostly, flicked back now and then
+    const ear = (sd0) => { if (!live) return gait === 'stand' ? 0 : 0.15; const fl = nowAndThen(t, 3.7 + sd0, 0.5, seed + 8 + sd0 * 3); return clamp(0.3 + 0.3 * noise1(t * 0.21, seed + 7 + sd0) + (fl >= 0 ? 0.75 * Math.sin(Math.PI * fl) : 0), 0, 1.4) * Math.min(1, live); };
+    this.breath = breath; this.ears = { L: ear(0), R: ear(1) };
     // the body: rises twice a stride at the trot, once at the gallop; pitches at the gallop
     const bobPh = gait === 'gallop' ? cyc * Math.PI * 2 : cyc * Math.PI * 4;
-    const bob = G.bob * k * Math.sin(bobPh + 0.6) + (gait === 'stand' ? Math.sin(t * 1.3 + seed) * 0.004 : 0), pitch = G.pitch * Math.sin(cyc * Math.PI * 2 + 2.2) + (o.rear ?? 0);
-    const W = (x, y, z) => { const c = Math.cos(pitch), s = Math.sin(pitch), yy = y - 1.25 * k, x2 = x * c - yy * s, y2 = x * s + yy * c + 1.25 * k + bob; return [pos[0] + f[0] * x2 + sd[0] * z, gy + y2, pos[1] + f[2] * x2 + sd[2] * z]; };
+    const bob = G.bob * k * Math.sin(bobPh + 0.6) + (gait === 'stand' ? (live ? breath * 0.004 * k * live : Math.sin(t * 1.3 + seed) * 0.004) : 0), pitch = G.pitch * Math.sin(cyc * Math.PI * 2 + 2.2) + (o.rear ?? 0);
+    // (the hindquarters go over the leg that carries: `sway` moves what lies behind the middle to the side)
+    const W = (x, y, z0) => { const c = Math.cos(pitch), s = Math.sin(pitch), yy = y - 1.25 * k, x2 = x * c - yy * s, y2 = x * s + yy * c + 1.25 * k + bob, z = z0 + (x < 0 ? sway * Math.min(1, -x / (0.7 * k)) : 0); return [pos[0] + f[0] * x2 + sd[0] * z, gy + y2, pos[1] + f[2] * x2 + sd[2] * z]; };
     const j = {};
     j.chest = W(0.58 * k, 1.22 * k, 0); j.belly = W(0, 1.08 * k, 0); j.croup = W(-0.62 * k, 1.32 * k, 0); j.withers = W(0.42 * k, 1.56 * k, 0); j.back = W(-0.1 * k, 1.47 * k, 0); j.dock = W(-0.78 * k, 1.36 * k, 0);
     // neck and head: nod with the gait, lower at the gallop, turn a little to where it looks
-    const nod = (gait === 'walk' ? 0.06 * Math.sin(cyc * Math.PI * 4) : gait === 'gallop' ? 0.1 * Math.sin(cyc * Math.PI * 2 + 0.8) - 0.22 : 0.02 * Math.sin(t * 0.7 + seed)) + (o.head ?? 0);
+    const nod = (gait === 'walk' ? 0.06 * Math.sin(cyc * Math.PI * 4) : gait === 'gallop' ? 0.1 * Math.sin(cyc * Math.PI * 2 + 0.8) - 0.22 : live ? idleNod : 0.02 * Math.sin(t * 0.7 + seed)) + (o.head ?? 0);
+    const turn = (o.turn ?? 0) + idleTurn;
     const na = 0.92 + nod, nl = 0.78 * k;
-    j.poll = W(0.42 * k + Math.cos(na) * nl + 0.12 * k, 1.5 * k + Math.sin(na) * nl, (o.turn ?? 0) * 0.25 * k);
+    j.poll = W(0.42 * k + Math.cos(na) * nl + 0.12 * k, 1.5 * k + Math.sin(na) * nl, turn * 0.25 * k);
     const ha = na - 1.75 - nod * 0.5, hl = 0.56 * k;
-    j.muzzle = V.add(j.poll, V.add(V.mul(f, Math.cos(ha) * hl * Math.cos(pitch)), V.add([0, Math.sin(ha) * hl, 0], V.mul(sd, (o.turn ?? 0) * 0.2 * k))));
+    j.muzzle = V.add(j.poll, V.add(V.mul(f, Math.cos(ha) * hl * Math.cos(pitch)), V.add([0, Math.sin(ha) * hl, 0], V.mul(sd, turn * 0.2 * k))));
     // legs
     // legs: [name, where the hoof stands at rest (forward of the middle), to the side, place in the gait, front?]
     const legs = [['LH', -0.70, 0.17, 0, false], ['RH', -0.70, -0.17, 1, false], ['LF', 0.56, 0.17, 2, true], ['RF', 0.56, -0.17, 3, true]];
@@ -76,9 +100,10 @@ export class Horse {
         // a hind leg is three bones: thigh (hip to stifle), gaskin (stifle to hock), cannon (hock to hoof). The
         // cannon stands nearly upright over a hoof that carries: the hock a little behind a hoof set forward, a
         // little ahead of one left far behind; a lifted leg folds at the hock. The stifle bends forwards.
-        const fold = clamp(hy / (0.35 * k)) * 0.9, th = 0.06 + 0.2 * reach - fold, lc = 0.616 * k;
+        // (a hind leg that rests keeps its toe on the ground: the hock gives forward and the hip on that side sinks)
+        const easy = name === restLeg ? rest : 0, fold = clamp(hy / (0.35 * k)) * 0.9 + 0.22 * easy, th = 0.06 + 0.2 * reach - fold, lc = 0.616 * k;
         const hock = V.add(hoof, V.add(V.mul(f, -Math.sin(th) * lc), [0, Math.cos(th) * lc, 0]));
-        const hip = give(W(-0.6 * k, 1.3 * k, lz * 0.9 * k), hock, 0.85 * k);
+        const hip = give(W(-0.6 * k, (1.3 - 0.02 * easy) * k, lz * 0.9 * k), hock, 0.85 * k);
         const stifle = knee(hip, hock, 0.31 * k, 0.54 * k, f, 1);
         j[name] = { top: hip, stifle, mid: hock, hoof, fet: V.lerp(hock, hoof, 0.76) };
       }
@@ -90,7 +115,8 @@ export class Horse {
     const n = 5; if (!this.tail || jump || V.dist(this.tail[0], j.dock) > 0.6) this.tail = Array.from({ length: n }, (_, i) => V.add(j.dock, [-f[0] * 0.035 * i * k, -0.215 * i * k, -f[2] * 0.035 * i * k]));
     this.tail[0] = j.dock;
     for (let i = 1; i < n; i++) {
-      const want = V.add(this.tail[i - 1], V.add(V.mul(f, -(gait === 'gallop' ? 0.2 : gait === 'trot' ? 0.09 : i === 1 ? 0.07 : 0.025) * k), [noise1(t * 2 + i, seed) * 0.02, -(gait === 'gallop' ? 0.1 : 0.2) * k, 0]));
+      const sw = live ? nowAndThen(t, 5.3, 0.9, seed + 9) : -1, swish = sw >= 0 ? Math.sin(2 * Math.PI * sw) * Math.sin(Math.PI * sw) * 0.11 * k * i * live : 0; // (a swish: out to one side, back through, to the other)
+      const want = V.add(V.add(this.tail[i - 1], V.mul(sd, swish)), V.add(V.mul(f, -(gait === 'gallop' ? 0.2 : gait === 'trot' ? 0.09 : i === 1 ? 0.07 : 0.025) * k), [noise1(t * 2 + i, seed) * 0.02, -(gait === 'gallop' ? 0.1 : 0.2) * k, 0]));
       this.tail[i] = V.lerp(this.tail[i], want, clamp(dt * 14));
       const d = V.sub(this.tail[i], this.tail[i - 1]), dl = V.len(d) || 1; this.tail[i] = V.add(this.tail[i - 1], V.mul(d, 0.22 * k / dl));
     }

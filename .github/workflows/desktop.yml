@@ -119,6 +119,7 @@ jobs:
           node devtests/takes.mjs                  # another take of a spoken line: asked for per language in script.json
           node devtests/horse.mjs                  # the horse is a rounded body with a horse's measures; tack
           node devtests/rider.mjs                  # a performed body is carried to the saddle and seated
+          node devtests/life.mjs                   # nobody is a statue: bodies breathe and sway, a speaker's head rides the words, the judge finds a body that holds still
           node library2d/build.mjs library2d/out   # the 2D library: 587 assets drawn by code (backgrounds, cut-out rigs, effects, props, faces, hands, pixel, stickman)
           node -e "const i=require('./library2d/out/index.json'); if (i.count < 500) { console.error('library too small', i.count); process.exit(1) } console.log('2D library', i.count, JSON.stringify(i.cats))"
           node runner/worker.mjs people '{}' | head -c 300

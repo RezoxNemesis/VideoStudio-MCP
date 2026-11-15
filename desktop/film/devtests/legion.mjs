@@ -93,12 +93,58 @@ const CAM = { pos: [0, 1.6, 0], target: [0, 1.0, -10], fov: 40 };
   ok(i1.size >= 1 && [...new Set(log.map((q) => q.i))].some((i) => !i0.has(i)), 'and the stride moves on with time', [[...i0], [...new Set(log.map((q) => q.i))]]);
 }
 
+// ---- 6. a STANDING legion is alive: men who wait shift, look about and settle, each in his own moment
+{
+  // a figure with a loop of waiting (`dur` seconds, played forth and back): the legion plays it by itself
+  const wait = (log) => ({ ...slab('#b02020', log), poses: 16, dur: 8, swing: true });
+  const log = [], men = []; for (let r = 0; r < 8; r++) for (let c = 0; c < 12; c++) men.push({ x: (c - 6) * 1.1, z: -30 - r * 1.2 });
+  const L = legion({ men, yaw: 0, figures: [wait(log)] });
+  shot(L, CAM, 0); const at0 = log.map((q) => q.i); log.length = 0;
+  ok(new Set(at0).size >= 6, 'men who stand are not in step: at one moment they are drawn from many moments of the wait', new Set(at0).size);
+  // the same man over time: follow one man alone
+  const one = [], solo = legion({ men: [{ x: 0, z: -30 }], yaw: 0, figures: [wait(one)], keep: 0 }), seen = []; // (keep: 0 — every moment is drawn anew, so the test sees which)
+  for (let t = 0; t < 20; t += 0.25) { one.length = 0; const before = seen.length; shot(solo, CAM, t); seen.push(one.length ? one[one.length - 1].i : seen[before - 1]); }
+  ok(new Set(seen).size >= 12, 'a man who waits goes through the moments of his wait as time passes', new Set(seen).size);
+  let jump = 0; for (let k = 1; k < seen.length; k++) jump = Math.max(jump, Math.abs(seen[k] - seen[k - 1]));
+  ok(jump <= 2, 'from one moment to the next, never a jump (the wait is played forth and back: it has no seam)', jump);
+  // near men are drawn from finer moments than far men
+  const nearLog = [], nearMan = legion({ men: [{ x: 0, z: -3.2 }], yaw: 0, figures: [wait(nearLog)] }), farLog = [], farMan = legion({ men: [{ x: 0, z: -60 }], yaw: 0, figures: [wait(farLog)] });
+  const kinds = (L2, lg) => { const set = new Set(); for (let t = 0; t < 2; t += 1 / 24) { lg.length = 0; shot(L2, CAM, t); for (const q of lg) set.add(q.i); } return set.size; };
+  const kn = kinds(nearMan, nearLog), kf = kinds(farMan, farLog);
+  ok(kn >= kf * 2 && kn >= 8, 'a man near the lens moves on finer moments than one far off (near: at least 8 drawings in two seconds)', [kn, kf]);
+  // a marching legion is still in step
+  const ml = [], M = legion({ men, yaw: 0, figures: [wait(ml)], state: (t) => ({ advance: t * 1.3, phase: t / 1.1 }) }); shot(M, CAM, 0.4);
+  ok(new Set(ml.map((q) => q.i)).size === 1, 'men who march stay in step', new Set(ml.map((q) => q.i)).size);
+  // the drawings kept do not grow without end
+  const big = [], B2 = legion({ men, yaw: 0, figures: [wait(big)], keep: 40 }); for (let t = 0; t < 30; t += 1 / 12) shot(B2, CAM, t);
+  ok(B2.kept() <= 40 + men.length, 'drawings no longer needed are let go (a long shot does not fill the memory)', B2.kept());
+  const s1 = shot(L, CAM, 3.3), s2 = shot(L, CAM, 3.3); let same = true; for (let i = 0; i < s1.d.length; i++) if (s1.d[i] !== s2.d[i]) { same = false; break; }
+  ok(same, 'and the same moment is still drawn the same', same);
+}
+
+// ---- which way a figure faces is MEASURED from his performance: a legion can never stand sideways because a number was left out
+{
+  const LG = await import('../kit/legions.js'), near = (a, b, tol) => Math.abs(a - b) <= tol;
+  const man = (yawDeg) => { const a = (yawDeg * Math.PI) / 180, side = [Math.cos(a), 0, -Math.sin(a)]; return { 'upperleg01.L': [side[0] * 0.1, 0.95, side[2] * 0.1], 'upperleg01.R': [-side[0] * 0.1, 0.95, -side[2] * 0.1], root: [0, 1, 0] }; };
+  const deg = (r) => ((((r * 180) / Math.PI) % 360) + 540) % 360 - 180;
+  ok(near(deg(LG.facingOf(man(0))), 0, 0.01) && near(deg(LG.facingOf(man(-90))), -90, 0.01) && near(deg(LG.facingOf(man(135))), 135, 0.01), 'the way a body faces is read from its hips (0 = +z, −90 = −x)', [0, -90, 135].map((y) => deg(LG.facingOf(man(y)))));
+  // a soldier performed facing −x (the Stage's yaw −90), laid down in a legion that faces −x: he is not turned again
+  ok(near(deg(LG.figureTurn(man(-90), -90)), 0, 0.01), 'a performer who already faces the legion\'s way is not turned', deg(LG.figureTurn(man(-90), -90)));
+  ok(near(deg(LG.figureTurn(man(0), -90)), -90, 0.01), 'one performed facing +z is turned a quarter to face −x', deg(LG.figureTurn(man(0), -90)));
+  ok(near(deg(LG.figureTurn(man(40), 180)), 140, 0.01), 'whatever way he was performed, he ends up facing the legion\'s way', deg(LG.figureTurn(man(40), 180)));
+  ok(near(deg(LG.figureTurn(man(-90), -90, 0)), -90, 0.01), 'a facing given by hand is still obeyed (a figure meant to stand askew)', deg(LG.figureTurn(man(-90), -90, 0)));
+}
+
 // ---- a performer is made before its performance may exist: a sequence's set is built before the Stage has solved it
 {
   const LG = await import('../kit/legions.js');
   let made = null, err = null;
   try { made = LG.performer({ bake: 'no_such_performance_yet', as: 'model', design: { name: 'x', top: { color: '#3a3038' } }, at: 1 }); } catch (e) { err = e; }
   ok(!!made && !err, 'performer() can be made before its performance is solved (it reads it when a figure is first drawn)', err ? String(err.message).slice(0, 80) : 0);
+  // a performer who WAITS: a stretch of his performance in which he stands (a captured wait: he shifts, looks about)
+  const w = LG.performer({ bake: 'no_such_performance_yet', as: 'model', design: { name: 'x', top: { color: '#3a3038' } }, wait: [2, 10] });
+  ok(w.dur === 8 && w.swing === true && w.poses === 16, 'a waiting performer gives the legion his wait: its length, played forth and back, two drawings a second', [w.dur, w.swing, w.poses]);
+  ok(made.dur === undefined && made.poses === 1, 'one who stands at a single moment is one drawing, as before', [made.dur, made.poses]);
   let asked = null; try { void made?.h; } catch (e) { asked = e; }
   ok(!!asked && /no_such_performance_yet/.test(String(asked.message)) && /not (been )?solved|build/i.test(String(asked.message)), 'asked for its figure before then, it says which performance is not solved yet', asked ? String(asked.message).slice(0, 120) : 0);
 }

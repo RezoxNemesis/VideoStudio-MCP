@@ -31,15 +31,21 @@ export function ranks(o) {
  *      face), figures: [{ h (m, a man's height), top (m, how high anything of his reaches: a spear), half (m, half his
  *      width with what he carries), poses (drawings in his loop), mark (his colour when he is only a mark),
  *      paint(g, cam, i, { at, yaw, sun }) draws drawing i of him standing at `at`, facing `yaw` }],
- *      state(t) → { advance (m gone forward), phase (how far through the stride, in strides) }, shadow: true }
- * Returns world items (one a rank, and the ground they darken) for a place or a shot's dyn list.
+ *      state(t) → { advance (m gone forward), phase (how far through the stride, in strides) }, shadow: true,
+ *      keepMB: 220 (how much memory the drawings may take; those not needed any more are let go) }
+ * A figure that WAITS ({ dur: seconds of its loop, swing: true = played forth and back, poses: drawings of it }) is
+ * played by the legion itself when there is no `state`: every man at his own moment of the wait and at his own pace
+ * (m.ph gives him one), near men on finer moments than far men — a standing army is never a still picture.
+ * Returns world items (one a rank, and the ground they darken) for a place or a shot's dyn list; `.kept()` says how
+ * many drawings are held.
  */
 export function legion(o) {
   const yawDeg = o.yaw ?? 0, yaw = (yawDeg * Math.PI) / 180, fwd = [Math.sin(yaw), 0, Math.cos(yaw)], figs = o.figures;
   // the men by rank (given, or by how far along their facing they stand)
   const rows = new Map();
-  for (const m of o.men) { const key = m.rank ?? Math.round((m.x * fwd[0] + m.z * fwd[2]) / 1.0); if (!rows.has(key)) rows.set(key, []); rows.get(key).push({ k: 1, fig: 0, ph: 0, ...m }); }
-  const sprites = new Map();
+  for (const m of o.men) { const key = m.rank ?? Math.round((m.x * fwd[0] + m.z * fwd[2]) / 1.0); if (!rows.has(key)) rows.set(key, []); rows.get(key).push({ k: 1, fig: 0, ...m }); }
+  const sprites = new Map(); let tick = 0, bytes = 0;
+  const budget = (o.keepMB ?? 220) * 1048576, keepN = o.keep ?? Infinity;
   /** the drawing of a figure at a size, from a side: { cv, ax, ay (where his feet are in it), ppm } */
   const sprite = (fi, i, azB, elB, S, sc) => {
     const key = `${fi}|${i}|${azB}|${elB}|${S}`;
@@ -51,10 +57,17 @@ export function legion(o) {
       const cam = makeCam({ pos, target: tgt, fov: (2 * Math.atan(h / 2 / (ppm * D)) * 180) / Math.PI }, w, h), cv = createCanvas(w, h), g = cv.getContext('2d');
       F.paint(g, cam, i, { at: [0, 0, 0], yaw: yawDeg, sun: sc.sun, sc });
       const a = cam.project([0, 0, 0]);
-      s = { cv, ax: a[0], ay: a[1], ppm: cam.f / a[2], tint: new Map() };
-      sprites.set(key, s);
+      s = { cv, ax: a[0], ay: a[1], ppm: cam.f / a[2], tint: new Map(), bytes: w * h * 4 };
+      sprites.set(key, s); bytes += s.bytes;
     }
+    s.used = tick;
     return s;
+  };
+  /** let go of drawings that no rank has asked for since the pass before last (a long shot must not fill the memory) */
+  const tidy = () => {
+    if (bytes <= budget && sprites.size <= keepN) return;
+    const old = [...sprites.entries()].filter(([, v]) => v.used < tick - rows.size * 2).sort((a, b) => a[1].used - b[1].used);
+    for (const [k, v] of old) { if (bytes <= budget * 0.8 && sprites.size <= keepN) break; sprites.delete(k); bytes -= v.bytes * (1 + v.tint.size); }
   };
   /** the same drawing as it looks through so much air (q eighths of the way to the colour of the air) */
   const aired = (s, q, sc) => {
@@ -63,7 +76,7 @@ export function legion(o) {
     if (!cv) {
       cv = createCanvas(s.cv.width, s.cv.height); const g = cv.getContext('2d');
       g.drawImage(s.cv, 0, 0); g.globalCompositeOperation = 'source-atop'; g.globalAlpha = q / 8; g.fillStyle = rgb(sc.haze); g.fillRect(0, 0, cv.width, cv.height);
-      s.tint.set(q, cv);
+      s.tint.set(q, cv); bytes += s.bytes;
     }
     return cv;
   };
@@ -74,7 +87,7 @@ export function legion(o) {
       p: (t) => { const a = o.state ? (o.state(t).advance ?? 0) : 0; return [cx + fwd[0] * a, 0, cz + fwd[2] * a]; },
       r: 14,
       draw(g, cam, sc, t) {
-        const st = o.state ? o.state(t) : {}, adv = st.advance ?? 0, phase = st.phase ?? 0, list = [];
+        const st = o.state ? o.state(t) : {}, adv = st.advance ?? 0, phase = st.phase ?? 0, list = []; tick++;
         for (const m of men) {
           const x = m.x + fwd[0] * adv, z = m.z + fwd[2] * adv, dx = x - cam.pos[0], dy = -cam.pos[1], dz = z - cam.pos[2];
           const zc = dx * cam.F[0] + dy * cam.F[1] + dz * cam.F[2]; if (zc < 0.8) continue;
@@ -97,10 +110,19 @@ export function legion(o) {
           let S = SIZES[SIZES.length - 1]; for (const v of SIZES) if (v >= hpx) { S = v; break; }
           let rel = (Math.atan2(-dx, -dz) - yaw) * (180 / Math.PI); rel = ((rel % 360) + 540) % 360 - 180;
           const azB = Math.round(rel / AZ), elD = (Math.atan2(cam.pos[1] - F.h * 0.5, d) * 180) / Math.PI, elB = elD < EL_TO[0] ? 0 : elD < EL_TO[1] ? 1 : elD < EL_TO[2] ? 2 : 3;
-          const u = phase + (m.ph ?? 0), i = Math.floor((u - Math.floor(u)) * F.poses) % F.poses;
+          let i;
+          if (o.state || !F.dur) { const u = phase + (m.ph ?? 0); i = Math.floor((u - Math.floor(u)) * F.poses) % F.poses; } // in step (a march), or one drawing
+          else {
+            // a man who waits: his own moment of the wait, at his own pace; near the lens on finer moments
+            const sub = S >= 192 ? 4 : S >= 96 ? 2 : 1, n = F.poses * sub, own = m.ph ?? hash(m.x * 7.31 + m.z * 3.17 + fi * 1.7), pace = 0.85 + 0.3 * hash(m.x * 1.93 + m.z * 5.71);
+            const u = ((t ?? 0) * pace) / F.dur + own * (F.swing ? 2 : 1);
+            if (F.swing) { const v = ((u % 2) + 2) % 2, w = v < 1 ? v : 2 - v; i = Math.min(n - 1, Math.floor(w * n)) / sub; }
+            else i = (Math.floor((u - Math.floor(u)) * n) % n) / sub;
+          }
           const s = sprite(fi, i, azB, elB, S, sc), k = hpx / F.h / s.ppm;
           g.drawImage(aired(s, q, sc), sx - s.ax * k, sy - s.ay * k, s.cv.width * k, s.cv.height * k);
         }
+        tidy();
       },
     });
   }
@@ -122,6 +144,7 @@ export function legion(o) {
       },
     });
   }
+  items.kept = () => sprites.size;
   return items;
 }
 void V; void clamp;

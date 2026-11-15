@@ -5,11 +5,29 @@ import { issue } from './rules.js';
 import { screenAt, onScreen } from './collect.js';
 import { bodyOf } from '../engine/body.js';
 import { trunkShape, wornChecks } from './geo.js';
+import { stillness } from '../engine/life.js';
 import { sub, dot, len, dist, norm, mid, lerp3, flat, angleBetween, yawBetween, segSeg, capsulesOf, SELF_PAIRS, partName, bodyFrames, robust, runs, mergeRuns, hull2, polyDist, cm, fmt } from './geo.js';
 
 const side = (s) => (s === 'L' ? 'left' : 'right');
 const HELD = ['sword', 'spear', 'staff', 'axe', 'torch', 'club', 'knife', 'dagger', 'bow', 'hammer', 'whip'];
 const t2 = (x) => Math.round(x * 100) / 100;
+
+/**
+ * The stretches in which a body is a statue: frames = its joints at every sample (null where it is not there), dt =
+ * seconds between samples, o: { win: 2 (seconds a hold must last to count), limit: 0.003 (m: under this its upper body
+ * has not moved against its hips) }. → [[first sample, last sample], …]
+ */
+export function stillRuns(frames, dt, o = {}) {
+  const win = Math.max(2, Math.round((o.win ?? 2) / dt)), hop = Math.max(1, Math.round(0.25 / dt)), sub = Math.max(1, Math.round(1 / 12 / dt)), limit = o.limit ?? 0.003, N = frames.length, mark = new Uint8Array(N);
+  for (let i0 = 0; i0 + win <= N; i0 += hop) {
+    const part = []; let whole = true;
+    for (let i = i0; i < i0 + win; i += sub) { if (!frames[i]) { whole = false; break; } part.push(frames[i]); }
+    if (whole && stillness(part).move < limit) mark.fill(1, i0, i0 + win);
+  }
+  const out = []; let a = -1;
+  for (let i = 0; i <= N; i++) { if (i < N && mark[i]) { if (a < 0) a = i; } else if (a >= 0) { out.push([a, i - 1]); a = -1; } }
+  return out;
+}
 
 /** severity lowered when the viewer can hardly see it (off the picture, tiny figure, foot out of frame) */
 function seen(D, a, i0, i1, pt, sev) {
@@ -141,6 +159,17 @@ export function motionChecks(D, B) {
         push({ sev: seen(D, a, i0, i1, p, 'should'), cat: 'anatomy', kind, actor: a.id, part, t0: t2(D.ts[i0]), t1: t2(D.ts[i1]), at: t2(D.ts[w]), pt: p, where: whereAt(D, w, p), value: Math.round(arr[w]), limit: lim, unit: '°',
           msg: `${a.id}'s ${what} ${Math.round(arr[w])}° away from the ${kind === 'neck-twist' ? 'chest' : 'hips'} (an owl turn; people stop near ${lim}°).`,
           fix: kind === 'neck-twist' ? `Turn the whole body toward what it looks at (a 'face' in the go action, or a turn) and let the head do the last 40°.` : `Turn the feet/hips with the chest (face on the action) instead of twisting the waist.` });
+      }
+    }
+    // ---------- a statue: a body the viewer looks at that does not move at all (as it is drawn: with the life the engine gives it)
+    {
+      const fr = Array.from({ length: N }, (_, i) => (a.vis[i] && a.size[i] >= 0.15 ? D.held?.[i]?.[a.id] ?? null : null));
+      for (const [i0, i1] of stillRuns(fr, dt, { win: B.statue[0], limit: B.statueMove * k })) {
+        const long = (i1 - i0) * dt; let big = 0; for (let i = i0; i <= i1; i++) big = Math.max(big, a.size[i]);
+        const w = Math.round((i0 + i1) / 2), pt = fr[w]?.spine01 ?? fr[w]?.head ?? a.J[w].root;
+        push({ sev: big >= 0.4 && long >= B.statue[1] ? 'must' : 'should', cat: 'motion', kind: 'statue', actor: a.id, part: 'chest', t0: t2(D.ts[i0]), t1: t2(D.ts[i1]), at: t2(D.ts[w]), pt, where: whereAt(D, w, pt), value: +long.toFixed(2), limit: B.statue[0], unit: 's',
+          msg: `${a.id} holds perfectly still for ${t2(long)} s (chest, shoulders and head move less than ${Math.round(B.statueMove * 1000)} mm): a statue in the picture.`,
+          fix: `Nobody alive holds still: leave the body's life on (do not give the actor alive: 0), and for a body that only stands give it a captured wait — stage.do { t, idle: true, clip: '137_28' } (shifts its weight, looks about) — or something to do: a look, a breath after effort (alive: 2.5), a hand that settles.` });
       }
     }
     // ---------- the body as it is dressed: an arm, a blade or something worn inside the real body's own outline

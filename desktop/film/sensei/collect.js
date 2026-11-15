@@ -11,7 +11,8 @@ const SCREEN_JOINTS = ['head:tail', 'head', 'neck01', 'wrist.L', 'wrist.R', 'low
 
 export function collect(P, sh, o = {}) {
   const W = P.config.width, H = P.config.height;
-  const run = new ShotRun(sh, P.CAST, { probe: true, W, H, fps: P.config.fps, lang: o.lang ?? P.config.langs[0] });
+  // (life: the bodies as they are drawn — with the breath and sway the engine lays over them — so a statue can be told from a living body)
+  const run = new ShotRun(sh, P.CAST, { probe: true, life: true, W, H, fps: P.config.fps, lang: o.lang ?? P.config.langs[0] });
   const N = Math.max(3, Math.round(sh.dur * HZ) + 1), dt = sh.dur / (N - 1);
   const ts = new Float64Array(N), tw = new Float64Array(N), cams = new Array(N), shown = new Array(N), faces = new Array(N), held = new Array(N);
   const warp = typeof sh.warpT === 'function' ? sh.warpT : null;

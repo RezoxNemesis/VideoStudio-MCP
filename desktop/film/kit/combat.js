@@ -5,6 +5,7 @@ import { V, clamp, lerp, smooth, hash, rng, qrot, hex, rgba, noise1 } from '../e
 import { Particles, glow } from '../engine/fx.js';
 import { loadBake, poseAt } from '../engine/bake.js';
 import { swordInHand } from '../engine/character.js';
+import { bendPose } from '../engine/bend.js';
 
 /* ---- bent time ------------------------------------------------------------------------------------------------ */
 /**
@@ -52,33 +53,24 @@ export function turnPose(pose, pivot, axis, ang) {
   if (pose.body) (pose.body.after ??= []).push({ turn: { pivot: [pivot[0], pivot[1], pivot[2]], axis: V.norm(axis), ang } });
   return pose;
 }
-/** The joints that hang on a bone, by name, when the pose carries no real body to ask: the limbs. */
-const HANGS = [
-  [/^upperleg01\.(L|R)$/, /^(upperleg02|lowerleg\d*|foot|toe[\w-]*)\.S/], [/^lowerleg01\.(L|R)$/, /^(lowerleg02|foot|toe[\w-]*)\.S/],
-  [/^upperarm01\.(L|R)$/, /^(upperarm02|lowerarm\d*|wrist|finger[\w-]*|metacarpal\d*)\.S/], [/^lowerarm01\.(L|R)$/, /^(lowerarm02|wrist|finger[\w-]*|metacarpal\d*)\.S/],
-];
+export { bendPose };
 /**
- * Bend a performed body at its joints, after the performance: bends: [{ bone, about: 'side' | 'fwd' | 'up', deg, props?:
- * [what is carried on what hangs there: 'spear'] }], in the body's own axes — about `side` a positive turn swings what
- * hangs on the bone backwards (a knee bends; a thigh or a forearm lifts forward with a negative one), about `fwd` out to
- * the body's left. The pose's joints and the named props turn at once; the real body is bent the same way when it is
- * drawn (engine/body.js bendBone). A rider's seat, a spear carried upright.
+ * Stand a spear on its butt: the shaft goes from the ground up through the hand that holds it, whatever the arm does
+ * (a captured wait moves the arm about; a soldier's spear at rest stands). o: { ground: 0 (height of the ground there),
+ * len: 2.4 (the spear's shaft), hand: 'R', lean: [right, forward] (m: where the butt stands from under the hand — a
+ * man's own way of leaning it; default all but plumb) }. For an actor: fit: (pose) => plantSpear(pose);
+ * for a legion's figure: performer({ …, fit: (pose) => plantSpear(pose) }).
  */
-export function bendPose(pose, bends) {
-  const hl = pose.j['upperleg01.L'], hr = pose.j['upperleg01.R'], B = pose.body?.B ?? null;
-  let sx = hl[0] - hr[0], sz = hl[2] - hr[2]; const n = Math.hypot(sx, sz) || 1; sx /= n; sz /= n;
-  const AX = { side: [sx, 0, sz], up: [0, 1, 0], fwd: [-sz, 0, sx] };
-  for (const b of bends) {
-    const piv = pose.j[b.bone]; if (!piv || !b.deg) continue;
-    const q = axisQ(AX[b.about ?? 'side'], (b.deg * Math.PI) / 180), r = (p) => V.add(piv, qrot(q, V.sub(p, piv)));
-    // what hangs on the bone: by the real body's own tree where it knows the joint, by the limbs' names otherwise
-    const h = HANGS.find(([re]) => re.test(b.bone)), re = h ? new RegExp(h[1].source.replace('\\.S', `\\.${b.bone.slice(-1)}`)) : null, b0 = B ? B.bi[b.bone] : undefined;
-    const under = (nm) => { let p = b0 !== undefined ? B.bi[nm] : undefined; if (p === undefined) return !!re && re.test(nm); p = B.parent[p]; while (p >= 0 && p !== b0) p = B.parent[p]; return p === b0; };
-    for (const nm in pose.j) { const base = nm.split(':')[0]; if ((base === b.bone && nm !== b.bone) || under(base)) pose.j[nm] = r(pose.j[nm]); }
-    for (const nm in pose.q ?? {}) if (nm === b.bone || under(nm)) pose.q[nm] = qmul(q, pose.q[nm]);
-    for (const nm of b.props ?? []) { const pr = pose.props?.[nm]; if (pr) { pr.pos = r(pr.pos); pr.q = qmul(q, pr.q); } }
-    if (pose.body) (pose.body.after ??= []).push({ bend: { bone: b.bone, about: b.about ?? 'side', deg: b.deg } });
-  }
+export function plantSpear(pose, o = {}) {
+  const sp = pose.props?.spear, hand = pose.j[`wrist.${o.hand ?? 'R'}`]; if (!sp || !hand) return pose;
+  const half = (o.len ?? 2.4) / 2, ax = qrot(sp.q, [0, 1, 0]), s = V.dot(V.sub(hand, sp.pos), ax), grip = V.add(sp.pos, V.mul(ax, s)); // (the place on the shaft the hand is at)
+  // the body's own right and forward on the ground (from its hips when it has them)
+  const hl = pose.j['upperleg01.L'], hr = pose.j['upperleg01.R']; let rx = 1, rz = 0;
+  if (hl && hr) { const n = Math.hypot(hr[0] - hl[0], hr[2] - hl[2]) || 1; rx = (hr[0] - hl[0]) / n; rz = (hr[2] - hl[2]) / n; }
+  const ln = o.lean ?? [0.02, -0.03], G = [grip[0] + rx * ln[0] + rz * ln[1], o.ground ?? 0, grip[2] + rz * ln[0] - rx * ln[1]]; // (forward of a body whose right is (rx, rz) is (rz, −rx))
+  const d = V.norm(V.sub(grip, G)), c = V.cross([0, 1, 0], d), sn = V.len(c), ang = Math.atan2(sn, d[1]);
+  sp.q = sn > 1e-9 ? axisQ(V.mul(c, 1 / sn), ang) : [0, 0, 0, 1];
+  sp.pos = V.add(G, V.mul(d, half));
   return pose;
 }
 /** A leap bigger than the body made it: lift = extra height at the top; between t0 and t1 (seconds), at time t. */

@@ -106,7 +106,7 @@ export function horseMeshes(horse, lit = (c) => c, q = {}) {
     return Array.from({ length: N }, (_, i) => {
       const a = (i / N) * Math.PI * 2, s = Math.sin(a), c = Math.cos(a);
       // narrower towards the spine, fullest a little below the middle
-      const wz = w * c * (s > 0 ? 1 - nar * s * s : 1 + 0.04 * s * s);
+      const wz = w * c * (s > 0 ? 1 - nar * s * s : 1 + 0.04 * s * s) * (1 + 0.016 * (horse.breath ?? 0)); // (the barrel fills with the breath)
       return W(x * k, (cy + ry * s - 0.03 * ry * c * c) * k, wz * k);
     });
   })) });
@@ -126,7 +126,9 @@ export function horseMeshes(horse, lit = (c) => c, q = {}) {
   out.push({ name: 'head', paint: coat, ...tube(headRings) });
   for (const [nm, sg] of [['earL', 1], ['earR', -1]]) {
     const base = V.add(V.add(poll, V.mul(brow, 0.085 * k)), V.add(V.mul(sd, sg * 0.055 * k), V.mul(hAx, 0.02 * k)));
-    const ax = V.norm(V.add(V.add(V.mul(up, 1), V.mul(brow, 0.25)), V.mul(sd, sg * 0.18))), e1 = V.norm(V.cross(ax, hAx)), e2 = V.norm(V.cross(ax, e1));
+    // (an ear turns: from pricked forward, back towards the neck by horse.ears.L / .R radians)
+    const et = (horse.ears?.[sg > 0 ? 'L' : 'R'] ?? 0) * 0.9, ax0 = V.norm(V.add(V.add(V.mul(up, 1), V.mul(brow, 0.25)), V.mul(sd, sg * 0.18))), bk = V.norm(V.sub(V.mul(hAx, -1), V.mul(ax0, -V.dot(hAx, ax0))));
+    const ax = et ? V.norm(V.add(V.mul(ax0, Math.cos(et)), V.mul(bk, Math.sin(et)))) : ax0, e1 = V.norm(V.cross(ax, hAx)), e2 = V.norm(V.cross(ax, e1));
     out.push({ name: nm, paint: coat, ...tube([[0, 0.038, 0.024], [0.4, 0.042, 0.022], [0.8, 0.024, 0.012], [1, 0.004, 0.003]].map(([u, r1, r2]) => ring(V.add(base, V.mul(ax, u * 0.18 * k)), e1, e2, r1 * k, r2 * k, 8))) });
   }
   for (const [nm, sg] of [['eyeL', 1], ['eyeR', -1]]) {

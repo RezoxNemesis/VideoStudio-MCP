@@ -26,6 +26,7 @@ const BASE = {
   kneeBack: 0.018,
   swing: 0.07, // metres of wrist swing while walking
   stillTalk: 2.5, // seconds of a speaker with frozen arms
+  statue: [2, 3], statueMove: 0.003, // seconds a visible body may hold perfectly still (should; must when it is large in the picture), and what still means (m)
   arcDev: 0.035, // straightness of a big gesture
   balance: 0.06,
   // camera

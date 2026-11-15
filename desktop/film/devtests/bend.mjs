@@ -2,7 +2,8 @@
 // A bone can be turned about its own joint after the performance is posed (a rider's thighs lie along the horse, a
 // soldier's forearm carries his spear upright): everything that hangs on the bone goes with it, nothing else moves.
 import { bendBone, bodyAxes } from '../engine/body.js';
-import { bendPose } from '../kit/combat.js';
+import { bendPose, plantSpear } from '../kit/combat.js';
+import { qrot } from '../engine/core.js';
 
 const fails = []; let checks = 0;
 const ok = (cond, what, got) => { checks++; if (!cond) fails.push(`${what} — got ${typeof got === 'number' ? got.toFixed(4) : JSON.stringify(got)}`); };
@@ -56,6 +57,27 @@ const pos = (B, n) => Array.from(B.P.subarray(B.bi[n] * 3, B.bi[n] * 3 + 3)), ne
   const plain = { height: 1.8, props: {}, q: {}, j: { 'upperleg01.L': [0.1, 0.95, 0], 'upperleg01.R': [-0.1, 0.95, 0], 'upperarm01.R': [-0.2, 1.4, 0], 'lowerarm01.R': [-0.2, 1.1, 0], 'wrist.R': [-0.2, 0.85, 0], 'wrist.L': [0.2, 0.85, 0] } };
   bendPose(plain, [{ bone: 'lowerarm01.R', about: 'side', deg: -90 }]);
   ok(near(plain.j['wrist.R'], [-0.2, 1.1, 0.25]) && near(plain.j['wrist.L'], [0.2, 0.85, 0]), 'a forearm raised: the hand comes forward, the other arm hangs', [plain.j['wrist.R'], plain.j['wrist.L']]);
+}
+
+// ---- a spear at rest stands on its butt: whatever the arm does, the shaft goes from the ground up through the hand
+{
+  const q45 = [Math.sin(Math.PI / 8), 0, 0, Math.cos(Math.PI / 8)]; // (leaning 45° forward: how a captured arm may hold it)
+  const mk = () => ({ height: 1.8, j: { 'wrist.R': [-0.25, 1.02, 0.3], 'upperleg01.L': [0.1, 0.95, 0], 'upperleg01.R': [-0.1, 0.95, 0], root: [0, 1, 0] }, props: { spear: { pos: [-0.25, 1.16, 0.44], q: q45 } } });
+  const p = mk(); plantSpear(p);
+  const ax = qrot(p.props.spear.q, [0, 1, 0]), butt = p.props.spear.pos.map((v, i) => v - ax[i] * 1.2), w = p.j['wrist.R'];
+  ok(Math.abs(butt[1]) < 1e-6, 'the butt stands on the ground', butt[1]);
+  ok(ax[1] > Math.cos((8 * Math.PI) / 180), 'the shaft stands upright (within 8° of plumb)', (Math.acos(ax[1]) * 180) / Math.PI);
+  const s = (w[0] - p.props.spear.pos[0]) * ax[0] + (w[1] - p.props.spear.pos[1]) * ax[1] + (w[2] - p.props.spear.pos[2]) * ax[2], on = p.props.spear.pos.map((v, i) => v + ax[i] * s);
+  ok(Math.hypot(on[0] - w[0], on[1] - w[1], on[2] - w[2]) < 0.03, 'and still passes through the hand that holds it', Math.hypot(on[0] - w[0], on[1] - w[1], on[2] - w[2]));
+  ok(Math.hypot(butt[0] - w[0], butt[2] - w[2]) < 0.15, 'its butt stands by the foot under the hand, not a stride away', Math.hypot(butt[0] - w[0], butt[2] - w[2]));
+  const hi = mk(); plantSpear(hi, { ground: 0.5 }); const ah = qrot(hi.props.spear.q, [0, 1, 0]);
+  ok(Math.abs(hi.props.spear.pos[1] - ah[1] * 1.2 - 0.5) < 1e-6, 'on higher ground it stands on that ground', hi.props.spear.pos[1] - ah[1] * 1.2);
+  const fw = mk(); plantSpear(fw, { lean: [0, 0.1] }); const af = qrot(fw.props.spear.q, [0, 1, 0]), bf = fw.props.spear.pos.map((v, i) => v - af[i] * 1.2);
+  ok(bf[2] > w[2] + 0.08 && Math.abs(bf[0] - w[0]) < 0.02, 'lean: [right, forward] is in the body\'s own directions (this one faces +z: forward is +z)', bf);
+  const lean = mk(); plantSpear(lean, { lean: [0.2, 0] }); const al = qrot(lean.props.spear.q, [0, 1, 0]);
+  ok(al[1] < ax[1] - 0.005 && al[1] > 0.9, 'a man can let it lean a little his own way', al[1]);
+  const none = { height: 1.8, j: { 'wrist.R': [0, 1, 0] }, props: {} }; plantSpear(none);
+  ok(Object.keys(none.props).length === 0, 'a body without a spear is left alone', 0);
 }
 
 if (fails.length) { console.log(`bend: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.log('  ✗ ' + f); process.exit(1); }
