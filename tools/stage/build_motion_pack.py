@@ -16,6 +16,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from packlib import write_pack
 
 FPS = 30
+# The performers recorded at 60 frames a second. The source's files carry no frame rate and its BVH conversion wrote
+# 1/120 s into every one (its READMEFIRST says so), so these played at DOUBLE speed: in their runs the hips fell at
+# about 4 g and a stride lasted 0.35 s. (77 holds the same data as 139, and 106 the same as 141.) Keep this list the
+# same as HALF_RATE in src/stage/engine/anim.js, which corrects a library packed before this was known.
+HALF_RATE = {75, 77, 88, 106, 139, 141, 143}
 KEEP = ['Hips', 'LowerBack', 'Spine', 'Spine1', 'Neck', 'Neck1', 'Head', 'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand', 'RightShoulder', 'RightArm', 'RightForeArm', 'RightHand',
         'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'LeftToeBase', 'RightUpLeg', 'RightLeg', 'RightFoot', 'RightToeBase']
 CHILD = {'Hips': 'LowerBack', 'LowerBack': 'Spine', 'Spine': 'Spine1', 'Spine1': 'Neck', 'Neck': 'Neck1', 'Neck1': 'Head', 'LeftShoulder': 'LeftArm', 'LeftArm': 'LeftForeArm', 'LeftForeArm': 'LeftHand',
@@ -97,6 +102,9 @@ def mat2quat(M):
 
 def convert(path):
     joints, D, dt = parse(path)
+    try:
+        if int(os.path.basename(os.path.dirname(path))) in HALF_RATE: dt *= 2   # recorded at 60, not 120
+    except ValueError: pass
     step = max(1, int(round(1 / (FPS * dt)))); D = D[::step]; n = len(D)
     name = {j['name']: i for i, j in enumerate(joints)}
     for k in KEEP + ['LeftFingerBase', 'RightFingerBase']:
@@ -176,7 +184,7 @@ def main():
         if only and subj not in only: continue
         files = sorted(glob.glob(os.path.join(d, '*.bvh')))
         if files: jobs.append((subj, files, a.out, desc))
-    index = {'fps': FPS, 'joints': KEEP, 'source': 'CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu), BVH conversion by B. Hahne', 'subjects': {}, 'clips': {}}
+    index = {'fps': FPS, 'joints': KEEP, 'source': 'CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu), BVH conversion by B. Hahne', 'timefix': 'packed', 'subjects': {}, 'clips': {}}
     total = 0; allbad = []
     with ProcessPoolExecutor(a.jobs) as ex:
         for subj, clips, skel, bad in ex.map(do_subject, jobs):
