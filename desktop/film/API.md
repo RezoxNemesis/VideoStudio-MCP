@@ -221,6 +221,18 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**Holding, giving, taking, setting down (kit/hold.js).** A thing in a hand lies IN the hand — across the palm, behind
+the knuckles, the fingers closed round it, the thumb over them — and it is ONE thing through a sequence: it lies, is
+taken, carried, given from hand to hand, set down; at no moment is it nowhere, and it never jumps.
+`const rose = prop({ id: 'rose', r: 0.003, at: 0.12, make: (p, dir) => …, life: [{ t: 0, on: [x, y, z], dir },
+{ t: 4.2, by: 'beti', hand: 'R' }, { t: 9, by: 'papa', hand: 'R', over: 0.5 }, { t: 14, on: [x, y, z] }] })`;
+the sequence draws it with `dyn: (ts, ctx) => [rose.item(ts, ctx)]`, and each actor who touches it takes
+`hands: (t) => rose.hands('papa')(t)` — the hand opens as it reaches, closes as it takes, and in a hand-off the
+taker has it before the giver lets go. `rose.where(ts, ctx)` says who has it and where (cameras, reaching hands);
+`wristFor(pose, 'R', point)` is where the wrist must be for the grip to close on a point; `gripFrame(pose, hand)` is the
+palm itself. A held state can lean the thing (`tilt`), carry it head down (`flip`) or pinch it (`style: 'pinch'`).
+Never draw a held thing as a free object near the wrist with the hand left open. Rules: `devtests/hold.mjs`.
+
 **The engine renews itself without an install.** Every release carries this engine as one small file
 (`film-kit.json.gz`, about 400 KB: engine/, kit/, runner/, sensei/, templates/, this handbook). `{"op":"kit.update"}`
 fetches the newest into the person's own folder, checks it against the release's checksum and draws with it from then
