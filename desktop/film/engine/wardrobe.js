@@ -163,7 +163,7 @@ export function dressBody(B, d) {
   const trunk = (y, m = mTrunk) => hullOf(section(S, m, [0, y, zC], UP, X, Z));
   const parts = [], lines = [], hide = new Set();
   const part = (name, group, mesh, bd, paint = {}) => { const pn = mesh.pos.length / 3, pos = Float32Array.from(mesh.pos); parts.push({ name, group, n: pn, pos, idx: Uint32Array.from(mesh.idx), si: bd.si, sw: bd.sw, out: new Float32Array(pn * 3), nrm: new Float32Array(pn * 3), ...paint }); return parts[parts.length - 1]; };
-  const line = (name, on, pts, cand, remap, o = {}) => { const pos = Float32Array.from(pts.flat()), bd = bind(B, sk, pos, cand, remap); lines.push({ name, on, n: pts.length, pos, si: bd.si, sw: bd.sw, out: new Float32Array(pts.length * 3), alpha: o.alpha ?? 0.6, lw: o.lw ?? 0.85 }); };
+  const line = (name, on, pts, cand, remap, o = {}) => { const pos = Float32Array.from(pts.flat()), bd = o.bone !== undefined ? rigid(pts.length, o.bone) : bind(B, sk, pos, cand, remap); lines.push({ name, on, n: pts.length, pos, si: bd.si, sw: bd.sw, out: new Float32Array(pts.length * 3), alpha: o.alpha ?? 0.6, lw: o.lw ?? 0.85 }); };
   const waistTop = hipY + 0.105 * k;
   let pelvR = null, pelvCand = null, beltTop = waistTop - 0.004 * k, beltLo = waistTop - 0.036 * k;
   const covered = new Uint8Array(n);
@@ -219,6 +219,8 @@ export function dressBody(B, d) {
       // the crease down the front of the leg; the side pocket
       const i0 = lv.findIndex((y) => uOf(y) > 0.24) + 1, cr = []; for (let i = Math.max(1, i0); i < rings.length; i++) { const p = rings[i][JF]; cr.push([p[0], p[1], p[2] + 0.001]); }
       line(`crease.${sd}`, 'trousers', cr, cand, remap, { alpha: 0.5, lw: 0.8 });
+      // the break: where the leg rests on the shoe the cloth folds once across its front
+      { const r2 = rings[rings.length - 2], bk = []; for (let q = -4; q <= 4; q++) { const p = r2[JF + q]; bk.push([p[0], p[1] - 0.012 * k * (1 - (q / 4) ** 2), p[2] + 0.001]); } line(`break.${sd}`, 'trousers', bk, cand, remap, { alpha: 0.5, lw: 0.75 }); }
       const pk = []; for (let q = 0; q <= 8; q++) { const u = q / 8, th = (sx > 0 ? lerp(34, 4, u) : lerp(146, 176, u)) * Math.PI / 180, y = lerp(waistTop - 0.04 * k, waistTop - 0.19 * k, u), r = pelvR(y, th) + 0.001; pk.push([r * Math.cos(th), y, zC + r * Math.sin(th)]); }
       line(`pocket.${sd}`, 'trousers', pk, pelvCand, remap, { alpha: 0.6, lw: 0.8 });
     }
@@ -268,6 +270,11 @@ export function dressBody(B, d) {
     const body = loft(rings), cand = list(mask((v) => arm(v) < 0.5 && headW[v] < 0.5 && P[v * 3 + 1] > hipY - 0.05 * k));
     part('shirt', 'shirt', body, bind(B, sk, Float32Array.from(body.pos), cand), { color: sw_.color, shade: sw_.shade, two: true, layer: 2 });
     for (let v = 0; v < n; v++) { if (!(arm(v) < 0.5 && headW[v] < 0.5) || P[v * 3 + 1] < waistTop - 0.012 * k) continue; const y = P[v * 3 + 1]; if (y < yTopH) covered[v] = 1; else if (y < neckY + 0.03 * k) { const th = Math.atan2(P[v * 3 + 2] - nz(y), P[v * 3]); if (Math.hypot(P[v * 3], P[v * 3 + 2] - nz(y)) > polar(rn0, th) + 0.004 * k) covered[v] = 1; } }
+    // where the body bends the cloth folds: two short lines from each armpit towards the chest, a few over the belt
+    { const on = (th, y) => { const r = shell(y, th) + 0.0012; return [r * Math.cos(th), y, zC + r * Math.sin(th)]; }, Dg = Math.PI / 180, fold = (name, a0, y0, a1, y1, sag = 0) => { const pts = []; for (let q = 0; q <= 6; q++) { const u = q / 6; pts.push(on(lerp(a0, a1, u) * Dg, lerp(y0, y1, u) - sag * Math.sin(Math.PI * u))); } line(name, 'shirt', pts, cand, null, { alpha: 0.45, lw: 0.75 }); };
+      for (const sx of [1, -1]) { const m = (a) => (sx > 0 ? a : 180 - a), sd = sx > 0 ? 'L' : 'R';
+        fold(`fold.pit1.${sd}`, m(22), shY - 0.1 * k, m(46), shY - 0.15 * k, 0.006 * k); fold(`fold.pit2.${sd}`, m(16), shY - 0.135 * k, m(37), shY - 0.195 * k, 0.006 * k); }
+      if (w.trousers) [[56, 0.05, 4], [80, 0.062, -3], [104, 0.055, 3], [127, 0.046, -4]].forEach(([a, h, lean], i) => fold(`fold.belt${i}`, a, beltTop + 0.006 * k, a + lean, beltTop + h * k)); }
     // sleeves: tubes round the upper arm that stand off it, each ending in a hem band
     const sleeves = [], sbind = [], cuffs = [], cbind = [], ins = [], ibind = [];
     for (const sx of [1, -1]) {
@@ -355,9 +362,13 @@ export function dressBody(B, d) {
         ring.push(pt(s, -wu * 0.5, th - 0.001), pt(s, wu * 0.5, th - 0.001)); ur.push(ring); }
       const so = loft(sr, { capA: true, capB: true }), up = loft(ur, { capA: true, capB: true });
       soles.push(so); sb.push(rigid(so.pos.length / 3, bone)); ups.push(up); ub.push(rigid(up.pos.length / 3, bone));
+      // the lines a leather shoe is drawn with: across the toe cap, and three laces over the instep
+      const over = (s, x0, x1, lift = 0.0012) => { const wu = Math.max(0.003 * k, wOf(s)), th = thOf(s), h = hOf(s), ex = s < 0.42 ? 0.55 : lerp(0.55, 0.8, clamp((s - 0.42) / 0.3)), pts = []; for (let q = 0; q <= 8; q++) { const x = lerp(x0, x1, q / 8), c = clamp(x, -0.999, 0.999), ph = Math.acos(Math.sign(c) * Math.pow(Math.abs(c), 1 / ex)); pts.push(pt(s, wu * c, th + h * Math.pow(Math.sin(ph), ex) + lift)); } return pts; };
+      line(`cap.${sd}`, 'shoe', over(0.8, -0.9, 0.9), null, null, { bone, alpha: 0.5, lw: 0.75 });
+      [0.5, 0.56, 0.62].forEach((sl, i) => line(`lace${i}.${sd}`, 'shoe', over(sl, -0.42, 0.42, 0.002), null, null, { bone, alpha: 0.6, lw: 0.75 }));
     }
     const cat = (ms, bs) => { const m = join(ms), si = new Uint16Array(m.pos.length / 3 * 4), sw2 = new Float32Array(m.pos.length / 3 * 4); let o = 0; for (const b of bs) { si.set(b.si, o); sw2.set(b.sw, o); o += b.si.length; } return [m, { si, sw: sw2 }]; };
-    part('shoe', 'shoe', ...cat(ups, ub), { color: sh.color ?? '#121214', leather: true, layer: 1 });
+    part('shoe', 'shoe', ...cat(ups, ub), { color: sh.color ?? '#30303a', shade: sh.shade, leather: true, layer: 1 });
     part('sole', 'sole', ...cat(soles, sb), { color: sh.sole ?? sh.color ?? '#0c0c0e', flat: true, layer: 1 });
     hide.add('shoes'); hide.add('boots');
     for (let v = 0; v < n; v++) if (arm(v) < 0.5 && P[v * 3 + 1] < 0.118 * k) covered[v] = 1; // the feet are in the shoes

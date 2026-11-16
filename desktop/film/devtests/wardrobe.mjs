@@ -144,6 +144,20 @@ const radiusAt = (p, y, th, c, half = 0.02, f = () => true) => { let best = 0, b
   for (const l of cr) { let y0 = 1e9, y1 = -1e9, back = 0; for (let v = 0; v < l.n; v++) { const y = l.pos[v * 3 + 1]; y0 = Math.min(y0, y); y1 = Math.max(y1, y); if (l.pos[v * 3 + 2] < 0.02) back++; }
     ok(l.n >= 8 && y1 > hipY - 0.32 * k && y0 < 0.12 * k && back === 0, 'from the thigh to the hem, on the front of the leg', [l.n, y1, y0, back]); ok(l.on === 'trousers' && l.sw.length === l.n * 4, 'it belongs to the trousers and hangs on the leg\'s bones', l.on); }
   ok(L.some((l) => l.name === 'fly') && L.filter((l) => /^pocket/.test(l.name)).length === 2, 'the fly and the two side pockets are drawn lines', L.map((l) => l.name));
+  // cloth bends where the body does: a few short fold lines at the armpits and over the belt, a break over each shoe
+  const folds = L.filter((l) => /^fold/.test(l.name) && l.on === 'shirt'), S = part('shirt'), belt = box(part('belt')), shY = B.head[B.bi['upperarm01.L'] * 3 + 1];
+  const yOf = (l) => Array.from({ length: l.n }, (_, v) => l.pos[v * 3 + 1]), lenOf = (l) => { let d = 0; for (let v = 1; v < l.n; v++) d += Math.hypot(l.pos[v * 3] - l.pos[v * 3 - 3], l.pos[v * 3 + 1] - l.pos[v * 3 - 2], l.pos[v * 3 + 2] - l.pos[v * 3 - 1]); return d; };
+  const pit = folds.filter((l) => Math.min(...yOf(l)) > shY - 0.26 * k && Math.abs(l.pos[0]) > 0.08 * k), over = folds.filter((l) => Math.max(...yOf(l)) < belt.hi[1] + 0.09 * k);
+  ok(pit.length >= 4 && pit.filter((l) => l.pos[0] > 0).length === pit.filter((l) => l.pos[0] < 0).length, 'two or more fold lines run from each armpit towards the chest', pit.length);
+  ok(over.length >= 3 && over.every((l) => Math.min(...yOf(l)) > belt.hi[1] - 0.002), 'three or more short ones stand over the belt, where the shirt is gathered', over.length);
+  ok(folds.every((l) => lenOf(l) > 0.025 * k && lenOf(l) < 0.12 * k), 'fold lines are short (3 to 12 cm): a few marks, not a net', folds.map((l) => +lenOf(l).toFixed(3)));
+  { let off = 0; for (const l of folds) for (let v = 0; v < l.n; v++) { const q = [l.pos[v * 3], l.pos[v * 3 + 1], l.pos[v * 3 + 2]], c = [0, -0.02], th = Math.atan2(q[2] - c[1], q[0] - c[0]); off = Math.max(off, Math.abs(Math.hypot(q[0] - c[0], q[2] - c[1]) - radiusAt(S, q[1], th, c, 0.02, (p) => Math.abs(p[0]) < 0.24))); } ok(off < 0.012, 'they lie on the cloth', off); }
+  const br = L.filter((l) => /^break/.test(l.name));
+  ok(br.length === 2 && br.every((l) => l.on === 'trousers' && Math.max(...yOf(l)) < 0.2 * k && Array.from({ length: l.n }, (_, v) => l.pos[v * 3 + 2]).every((z) => z > 0)), 'a break: one fold across the front of each leg just above the hem', br.map((l) => l.name));
+  // a leather shoe is drawn with its toe cap and its laces
+  const sh = L.filter((l) => l.on === 'shoe');
+  ok(sh.filter((l) => /^cap/.test(l.name)).length === 2 && sh.filter((l) => /^lace/.test(l.name)).length >= 6, 'each shoe has a line across the toe cap and three laces', sh.map((l) => l.name));
+  ok(sh.every((l) => { for (let v = 0; v < l.n; v++) if (l.sw[v * 4] !== 1 || l.si[v * 4] !== B.bi[l.pos[v * 3] > 0 ? 'foot.L' : 'foot.R']) return false; return true; }), 'they ride on the foot, as the shoe does', 0);
 }
 console.log(fails.length ? `WARDROBE: ${fails.length} of ${checks} rules broken\n  ✗ ${fails.join('\n  ✗ ')}` : `WARDROBE: all ${checks} rules hold`);
 process.exit(fails.length ? 1 : 0);

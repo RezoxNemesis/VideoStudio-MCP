@@ -172,10 +172,19 @@ export function faceDecals(M, o = {}) {
   const yM = M.mouth + 0.004 + 0.006 * ck, yS = -0.047 + 0.03 * ck, pw = 3.2 - 1.6 * ck, gap = bd ? bd.gap ?? 0 : 0, yTop = bd && bd.sideburn === false ? yS : sbTop;
   const tri = (v) => { const f = v - Math.floor(v); return f < 0.5 ? 4 * f - 1 : 3 - 4 * f; };
   const cheekY = (ax) => { const t = Math.min(1, Math.max(0, (ax - uxM) / (uxF - uxM))), t4 = t * t * t * t; return yM + (yTop - yM) * Math.pow(t, pw) + rough * (0.0013 * tri(ax / 0.0037) + 0.0008 * tri(ax / 0.0023 + 0.3)) * Math.min(1, t * 6) * (1 - t4); };
-  const mustTop = (ax) => M.sub - 0.0012 - 0.0045 * (ax / uxM) * (ax / uxM);
+  // with a beard the moustache runs out into it: its upper edge falls from under the nose to where the cheek's line
+  // begins beside the mouth — one line, no step (a moustache alone keeps its own end)
+  const joined = kBeard >= 0 && kMust >= 0 && !heavy && bStyle !== 'goatee', mT0 = M.sub - 0.0012;
+  const mustTop = (ax) => (joined ? mT0 - (mT0 - yM) * Math.pow(Math.min(1, ax / uxM), 2.2) : mT0 - 0.0045 * (ax / uxM) * (ax / uxM));
+  // the bare skin round the lips of a bearded face is a lens: its upper edge over the upper lip, its lower edge under the
+  // lower one, both closing on the corners of the mouth
+  const lwin = M.mouthW + 0.0015, sm01 = (v) => { v = Math.min(1, Math.max(0, v)); return v * v * (3 - 2 * v); };
+  const winTop = (ax) => { const q = Math.min(1, ax / lwin); return M.mouth + (M.lipTopEdge + 0.0008 - M.mouth) * (1 - q * q * q); };
+  const winLow = (ax) => { const q = Math.min(1, ax / lwin), arc = Math.max(M.dip + 0.001, M.lipEdge - 0.003 - 0.0045 * (1 - q * q)); return arc + (M.mouth - arc) * sm01((q - 0.55) / 0.45); };
   const hair = (ax, y) => {
     // the moustache: from under the nose down to the upper lip, thinner towards the corners of the mouth, where it turns down
-    if (kMust >= 0 && ax < uxM && ax >= gap && y < mustTop(ax)) {
+    if (joined && ax < uxM && ax >= gap && y < mustTop(ax)) { if (y > (ax < lwin ? winTop(ax) : M.mouth + 0.0045)) return kMust; }
+    else if (kMust >= 0 && ax < uxM && ax >= gap && y < mustTop(ax)) {
       const lo = ax < M.mouthW * 0.85 ? (heavy ? M.mouth + M.seamA * ax * ax + 0.0009 : M.lipTopEdge + 0.0008) : bStyle === 'mustache' ? (heavy ? M.mouth - 0.012 - 0.3 * (ax - M.mouthW * 0.85) : M.mouth - 0.004 - 0.02 * (ax - M.mouthW * 0.85)) : M.mouth + 0.0045;
       if (y > lo && (bStyle !== 'mustache' || ax < M.mouthW + (heavy ? 0.0085 : 0.007))) return kMust;
     }
@@ -184,7 +193,7 @@ export function faceDecals(M, o = {}) {
     if (ax < uxM) {
       // the chin and under it; under the lower lip the beard closes in an arc, leaving a crescent of bare skin below the lip
       const lw = M.mouthW + 0.0015, q = Math.min(1, ax / lw);
-      if (y < Math.max(M.dip + 0.001, M.lipEdge - 0.003 - 0.0045 * (1 - q * q))) return kBeard;
+      if (y < (joined ? winLow(ax) : Math.max(M.dip + 0.001, M.lipEdge - 0.003 - 0.0045 * (1 - q * q)))) return kBeard;
       if (ax >= lw && y < M.mouth + 0.0045) return kBeard;                        // beside the mouth, down from the moustache
       if (bd.soul !== false && y < M.lipEdge - 0.0012 && ax < 0.0052 * (0.45 + 0.55 * (M.lipEdge - y) / (M.lipEdge - M.dip))) return kBeard; // the tuft under the lip
       return -1;

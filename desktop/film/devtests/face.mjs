@@ -128,6 +128,19 @@ if (M && typeof F3.faceDecals === 'function') {
     ok(width(0.0) > 0.006 && width(0.0) < 0.014 && width(-0.03) > width(0.0) + 0.002, 'the sideburn is a narrow strip (about a centimetre) that widens downwards into the beard', [width(0.0), width(-0.03)]); }
   ok(full.at(sb - 0.024, -0.012) === 'skin', 'the cheek before the sideburn is bare', full.at(sb - 0.024, -0.012));
   // how high it grows on the cheek
+  // a drawn beard has ONE clean outline: its upper edge — moustache, then cheek — runs from under the nose to the
+  // sideburn without a step, and the bare skin round the lips is a lens with its corners at the corners of the mouth
+  { const clean = named({ beard: { style: 'full', strands: 0, rough: 0 } }), hairy = (x, y) => clean.at(x, y) === 'beard' || clean.at(x, y) === 'mustache';
+    const topOf = (x) => { for (let y = M.sub + 0.004; y > M.chin - 0.02; y -= 0.0002) if (hairy(x, y)) return y; return -1; };
+    let step = 0, at = 0, prev = topOf(0.002); for (let x = 0.0025; x < M.mouthW + 0.045; x += 0.0005) { const t = topOf(x); if (Math.abs(t - prev) > step) { step = Math.abs(t - prev); at = x; } prev = t; }
+    ok(step < 0.0016, 'the upper edge of a full beard runs from under the nose over the cheek without a step', [step, at]);
+    // the bare lens round the lips: how far out from the middle the skin is bare, at heights between the lips' edges
+    const bare = (y) => { let w = 0; for (let x = 0; x < M.mouthW + 0.02; x += 0.00025) { if (hairy(x, y)) break; w = x; } return w; };
+    const yU = (M.lipTopEdge + M.mouth) / 2, yL = (M.lipEdge + M.mouth) / 2;
+    ok(bare(M.mouth) > M.mouthW * 0.85 && bare(M.mouth) < M.mouthW + 0.004, 'the lips are bare to the corners of the mouth', [bare(M.mouth), M.mouthW]);
+    ok(bare(yU) < bare(M.mouth) - 0.002 && bare(yL) < bare(M.mouth) - 0.001 && bare(yU) > M.mouthW * 0.35, 'above and below the line of the mouth the bare skin narrows: a lens with its corners at the corners of the mouth, not a box', [bare(yU), bare(M.mouth), bare(yL)]);
+    let side = 0; for (let y = M.lipEdge; y < M.lipTopEdge; y += 0.0005) side = Math.max(side, Math.abs(bare(y) - bare(y + 0.0005)));
+    ok(side < 0.006, 'its sides close gradually (no upright edge beside the lips)', side); }
   const low = named({ beard: { style: 'full', cheek: 0, strands: 0 } }), high = named({ beard: { style: 'full', cheek: 1, strands: 0 } });
   ok(low.at(0.06, M.mouth + 0.012) === 'skin' && high.at(0.06, M.mouth + 0.012) === 'beard', 'cheek: 0 keeps it along the jaw, cheek: 1 lets it grow high on the cheek', [low.at(0.06, M.mouth + 0.012), high.at(0.06, M.mouth + 0.012)]);
   // other cuts
