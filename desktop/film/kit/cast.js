@@ -26,7 +26,7 @@ export function layeredHair(o = {}) {
   const L = [], line = o.line ?? HAIRLINE, cols = o.cols ?? [22, 50, 78, 106, 134, 162], lf = o.lift ?? 1, en = o.ends ?? 1, ear = (az) => !!o.ears && az > 62 && az < 128;
   for (const sd of [1, -1]) cols.forEach((az, c) => {
     const j = ((c * 7 + (sd > 0 ? 0 : 3)) % 5) / 4 - 0.5, a = sd * az; // (a steady little unevenness from lock to lock)
-    L.push({ from: [a * 0.22, 80 + 4 * j], via: [a * 0.7, 66 + 6 * j], to: [a, 34 + 8 * j], w: 0.074 + 0.012 * j, lift: [0.004, 0.022 * lf, (0.02 + 0.008 * j) * lf], broad: 0.8 });
+    L.push({ from: [a * 0.22, 80 + 4 * j], via: [a * 0.7, 66 + 6 * j], to: [a, (o.pointy ? 30 : 34) + 8 * j], w: (0.074 + 0.012 * j) * (o.pointy ? 0.8 : 1), lift: [0.004, 0.022 * lf, (0.02 + 0.008 * j) * lf * (o.pointy ? 1.6 : 1)], broad: o.pointy ? 0.35 : 0.8 });
     L.push({ from: [a * 0.75, 52 + 5 * j], via: [a * 0.96, 30], to: [a, lineAt(line, a) + 4], w: 0.078 - 0.01 * j, lift: [0.006, 0.016 * lf, 0.017 * lf], hang: az < 60 || ear(az) ? 0 : (0.024 + 0.01 * j) * en, flick: 0.55, broad: 0.85 });
   });
   L.push({ from: [180, 84], to: [180, 30], w: 0.078, lift: [0.004, 0.022 * lf, 0.02 * lf], broad: 0.8 }, { from: [180, 50], to: [180, lineAt(line, 180) + 4], w: 0.08, lift: [0.006, 0.016 * lf, 0.016 * lf], hang: 0.016 * en, flick: 0.8, broad: 0.85 });
@@ -86,7 +86,7 @@ export const HAIR_STYLES = {
   short: () => layeredHair({ vol: 0.012, lift: 0.6, ends: 0, fringe: false, strands: false, cols: [26, 62, 98, 134, 166], line: SHORT_LINE }),
   fringe: () => layeredHair({ vol: 0.014, lift: 0.7, ends: 0.2, strands: false, cols: [26, 62, 98, 134, 166], line: SHORT_LINE }), // short, with a fringe
   crop: () => ({ n: 0, mass: { vol: 0.007, flat: 0.1, line: SHORT_LINE }, locks: [] }),            // cut close: the mass alone
-  swept: () => layeredHair({ vol: 0.024, lift: 1.25, ends: 1.1, ears: true, line: EAR_LINE }),     // a model sheet's lead: full, messy on top, a fringe, the ears free
+  swept: () => layeredHair({ vol: 0.022, lift: 1.3, ends: 1.15, ears: true, line: EAR_LINE, pointy: true, cols: [18, 40, 62, 84, 106, 128, 150, 170] }),     // a model sheet's lead: full, messy on top, a fringe, the ears free
 };
 export const HAIR_COLORS = {
   black: { color: '#1d1a1e', shade: '#0b0a0d', shine: '#5c5866' }, dark: { color: '#221815', shade: '#0e0908', shine: '#7a5f52' }, brown: { color: '#4a3226', shade: '#2a1b14', shine: '#8f6c55' },
@@ -131,7 +131,7 @@ export const EYES = {
   almond: { w: 0.215, h: 0.092, tilt: 0.03, sharp: 0.45 }, round: { w: 0.2, h: 0.118, tilt: 0.0, sharp: 0.15 }, narrow: { w: 0.225, h: 0.074, tilt: 0.04, sharp: 0.6 },
   upturned: { w: 0.215, h: 0.09, tilt: 0.09, sharp: 0.5 }, downturned: { w: 0.215, h: 0.094, tilt: -0.04, sharp: 0.35 }, wide: { w: 0.235, h: 0.106, tilt: 0.02, sharp: 0.35 },
   // the anime lead's eye of a model sheet: larger, a heavy dark upper lash line, a big iris
-  anime: { w: 0.25, h: 0.122, tilt: 0.03, sharp: 0.42, lash: 0.5, iris: 0.62 },
+  anime: { w: 0.29, h: 0.14, tilt: 0.03, sharp: 0.42, lash: 0.6, iris: 0.64 },
 };
 export const BROWS = { thick: { thick: 0.42, arch: 0.02 }, straight: { thick: 0.34, arch: 0.0 }, arched: { thick: 0.32, arch: 0.07 }, thin: { thick: 0.2, arch: 0.03 }, heavy: { thick: 0.54, arch: 0.01 } };
 export const MOUTHS = {
@@ -157,7 +157,7 @@ export function man(o = {}) {
     name: o.name ?? 'Man', skin: o.skin ?? '#c08b63', headScale: 1.0, ink: '#241a1a', inkScale: 0.62,
     face: { shape: 'male', eye: { ...ey, color: o.eyeColor ?? '#4a3020', iris: ey.iris ?? 0.56, lash: ey.lash ?? 0.2, flick: 0.03 }, brow: { ...br, color: hc.shade }, eye3: { brow: 0.02 },
       lips: mo.lips, nose: 0.5, lines: age > 48 ? 0.45 : age > 34 ? 0.25 : 0, hairShadow: true, beard: bd ? { ...bd } : null },
-    hair: { ...hc, tufts: [], strands: 0.5, sheen: 0.6 }, hair3: hs(), beard: null,
+    hair: { ...hc, tufts: [], strands: o.hairStrands ?? 0.5, sheen: 0.6 }, hair3: hs(), beard: null,
     top: { type: 'tunic', color: wear.shirt.color, sleeve: 'short', hem: 0.06, collar: 'v' }, bottom: { type: 'pants', color: wear.trousers.color }, shoes: { color: wear.shoes.color, boot: 0 },
     wear,
   });
@@ -176,7 +176,7 @@ export const MEN = {
   // our own figure from the same three sides until the numbers agreed. 7.1 heads tall with his hair; chin 0.14 of the
   // height down, shoulders 0.22, hem of the T-shirt 0.46, the legs part at 0.54, fingertips 0.56; long legs, a short slim
   // trunk, a fine neck. The sculpt below is what brought the Stage's body to those numbers; the face and hair are our own.
-  kabir: { face: 'lean', eyes: 'anime', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'swept', hairColor: 'black', beard: 'none', outfit: 'tee',
+  kabir: { face: 'lean', eyes: 'anime', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'swept', hairStrands: 0.2, hairColor: 'black', beard: 'none', outfit: 'tee',
     palette: { shirt: '#f3f3f1', shirtShade: '#c9cbd3', trousers: '#26272c', hem: 0.105, shoeKind: 'sneaker' }, skin: '#d9a57e',
     detail: { 'armslegs/upperlegs-height-incr': 0.9, 'armslegs/lowerlegs-height-incr': 0.9, 'torso/torso-scale-vert-decr': 0.6, 'torso/torso-scale-horiz-decr': 0.5, 'torso/torso-muscle-dorsi-decr': 0.5, 'torso/torso-scale-depth-decr': 0.3,
       'neck/neck-scale-horiz-decr': 0.6, 'neck/neck-scale-depth-decr': 0.8, 'neck/neck-scale-vert-decr': 0.5, 'head/head-scale-vert-incr': 0.9, 'head/head-scale-horiz-incr': 0.45, 'head/head-scale-depth-incr': 0.65,
