@@ -32,8 +32,10 @@ looking at frames beside the reference, not by a number taken at one moment. Wha
 - Head one 7.5th of the height. Eyes on the middle line: almond, a strong upper lid line, brown iris darker at the top
   with one light; thick, slightly arched brows; nose by a line down one side, a nostril, a small shadow; mouth by a
   line with a soft shadow under the lower lip; the ear drawn with its inner lines; a defined jaw.
-- Beard: short and boxed, joined to the moustache, a dark mass with a soft, slightly ragged drawn edge (density about
-  0.6, never a slab). Tears: a clear line of light under the eye and down the cheek.
+- Beard: a dark mass in the hair's own colour (density about 0.9, rough 0.25 or less) with ONE clean outline: the
+  moustache runs out into the beard in one line, the bare skin round the lips is a lens with its corners at the corners
+  of the mouth, fine strand strokes inside (at 0.62 it was a brown stain with teeth; a bar of moustache and a box round
+  the lips read as stickers). Tears: a clear line of light under the eye and down the cheek.
 - Expression changes the brows, lids, mouth AND the cheeks; a reaction is held, then released.
 - **(to build: face shapes and feature sets as presets — oval, square, round …; ears; cheek and jaw shading.)**
 
@@ -48,8 +50,8 @@ looking at frames beside the reference, not by a number taken at one moment. Wha
   Built: `design.wear.shirt` (engine/wardrobe.js). **(to build: fold and shadow shapes on the cloth, long and rolled sleeves.)**
 - Tie: knot under the collar, loosened, blade to the belt, diagonal stripes. Belt: black, a buckle, loops.
 - Trousers: straight leg from the thigh (`bottom.fit: 'straight'`), a centre crease, a small break over the shoe, a
-  pocket line: built (`design.wear.trousers`, `belt`). Shoes: black derbies with a sole line, laces, a highlight
-  **(to build: laces, toe cap line, the highlight)**.
+  pocket line: built (`design.wear.trousers`, `belt`). Shoes: "black" leather is a dark grey (about #30303a) with a darker
+  shadow, so the toe cap line, the laces and the sole show (built). **(to build: a designed highlight on the toe.)**
 - Every outfit is an asset with its pieces, colours and lines (the wardrobe: casual, shirt, formal, suit, kurta …).
   **(to build: the wardrobe.)**
 

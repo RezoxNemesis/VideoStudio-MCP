@@ -156,6 +156,14 @@ with two hanging ends) }`. A tail hangs as hair does: off the tie in a curve, ro
 back (never through them), swaying with the walk. Painted with a brush: `hair: { strands: 0…1 }` lays darker strands and a lighter streak along
 every lock, `hair.sheen: 0…1` makes the band of light across the hair zigzag from lock to lock, `hair.shine` its colour.
 
+**The cast (kit/cast.js): people made of library parts.** `const P = father()` → `{ body, design }`: give `...P.body`
+to the motion actor (a bare Stage body) and `P.design` to the film's actor. `father({ young: true })` is the father of
+a memory. The parts: `OUTFITS.office({ shirt, tie (null: none, collar open), trousers, fit, sleeve, … })` → a `wear`;
+`layeredHair({ vol, lift, cols, ends, fringe, strands })` → a `hair3` (a mass with two layers of broad locks, a
+fringe, turned-out ends). New people are recipes of these parts; a part made better makes all of them better. The old
+`PEOPLE` library (kit/people.js) is the puppet-style cast of the fantasy films and is not at this standard.
+(Rules: devtests/cast.mjs)
+
 **A drawn head of hair (hair v2).** `hair3: { n: 0, mass: { vol: 0.02 (metres of body on top), flat: 0.1 (less at the
 sides), rim: 0.004, line: [[° round from the front, ° up]…] (the hairline) }, locks: [...] }` — ONE smooth shell over
 the scalp (no ridges, no clumps grown at random) with designed locks lying ON it (a lock's `lift` is measured from the

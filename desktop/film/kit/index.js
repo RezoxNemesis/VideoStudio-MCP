@@ -29,6 +29,7 @@ export * from './fights.js';
 export * from './sets.js';
 export * from './design.js';
 export * from './people.js';
+export * from './cast.js';
 export * from './props.js';
 export * from './places.js';
 export * from './combat.js';
