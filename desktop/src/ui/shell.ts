@@ -656,7 +656,7 @@ export class Shell {
       }
       const m = modal(
         `Update ${u.latest} is ready`,
-        h("div", { class: "col" }, h("p", { class: "hint" }, `You have ${u.current}. The update downloads (${Math.round((u.size ?? 0) / 1e6)} MB), your system asks for your password, and the app restarts.`), u.notes ? h("div", { class: "ops", style: "white-space:pre-wrap;max-height:200px;overflow:auto" }, u.notes) : null),
+        h("div", { class: "col" }, h("p", { class: "hint" }, u.img ? `You have ${u.current}. The update downloads (${Math.round((u.img.size ?? 0) / 1e6)} MB) into your own folder and the app restarts. No password is asked.` : `You have ${u.current}. The update downloads (${Math.round((u.size ?? 0) / 1e6)} MB), your system asks for your password, and the app restarts.`), u.notes ? h("div", { class: "ops", style: "white-space:pre-wrap;max-height:200px;overflow:auto" }, u.notes) : null),
         [
           b("Later", null, () => m.close()),
           b("Install now", "download", async () => {

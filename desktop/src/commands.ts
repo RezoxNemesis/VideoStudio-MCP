@@ -360,7 +360,7 @@ export function registerDesktopCommands(s: Studio): void {
 
   registerCommand("app.crashLog", "The app's own log of crashes, GPU process exits and Vulkan guard decisions (last 40 lines).", () => need().crashLog());
   registerCommand("app.version", "This app's version and whether a newer VideoStudio Desktop is published.", () => need().updateCheck());
-  registerCommand("app.update", "Download and install the newest VideoStudio Desktop (the person types their password in the system dialog), then restart the app.", () => need().updateInstall());
+  registerCommand("app.update", "Update VideoStudio Desktop to the newest release and restart it. On Linux the new version is unpacked into the person's own folder (~/.local/share/videostudio2) and started from there: NO password, nothing installed into the system. (Only a release without an AppImage is installed as a system package, with the password.)", () => need().updateInstall());
 
   registerCommand("ui.screenshot", "{max?=1600, save?=false, name?} See the VideoStudio window as it is now (JPEG). save:true writes a full-size PNG into Videos/VideoStudio/Screenshots and returns its path instead of the picture.", async (_s, a) => {
     // Let the window paint what earlier commands changed (workspace switches, new clips) before capturing —

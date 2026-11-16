@@ -98,7 +98,7 @@ export interface Vsd {
   needsConversion(p: string): Promise<boolean>;
   voice16k(p: string, from?: number, seconds?: number): Promise<Uint8Array>;
   crashLog(): Promise<string>;
-  updateCheck(): Promise<{ current: string; latest?: string; available: boolean; notes?: string; size?: number; name?: string }>;
+  updateCheck(): Promise<{ current: string; latest?: string; available: boolean; notes?: string; size?: number; name?: string; /** the release's AppImage: with it the update goes into the person's own folder, without a password */ img?: { name: string; url: string; size: number } | null; password?: boolean }>;
   updateInstall(): Promise<{ installed: boolean; version?: string; note: string }>;
   workWrite(name: string, bytes: Uint8Array): Promise<string>;
   workClean(): Promise<boolean>;

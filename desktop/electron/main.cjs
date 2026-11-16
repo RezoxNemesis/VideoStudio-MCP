@@ -13,6 +13,7 @@ const os = require("node:os");
 const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const crypto = require("node:crypto");
+const SELF = require("./self-update.cjs"); // the app in the person's own folder: updates without a password
 
 // VideoStudio 2 is a new app (new package, new name) that keeps the data of VideoStudio Desktop: projects, media
 // links and — above all — the Claude link key, so the connector the person already added keeps working untouched.
@@ -1082,15 +1083,20 @@ const newer = (a, b) => {
   for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
   return false;
 };
+// Started as an older system install while a newer app is unpacked in the person's own folder: that one runs instead.
+if (process.platform === "linux" && app.isPackaged && !process.argv.includes("--vsd-no-handover")) {
+  const h = SELF.handover(process.execPath, os.homedir(), app.getVersion(), newer);
+  if (h) { spawn(h.exe, SELF.startArgs(h.dir, process.argv.slice(1)), { detached: true, stdio: "ignore" }).unref(); app.exit(0); }
+}
 async function updateCheck() {
   const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=20`, { headers: { accept: "application/vnd.github+json", "user-agent": "VideoStudio" } });
   if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
   const list = await res.json();
   const rel = list.filter((r) => /^desktop-v\d/.test(r.tag_name) && !r.draft).sort((a, b) => (newer(a.tag_name, b.tag_name) ? -1 : 1))[0];
   if (!rel) return { current: app.getVersion(), available: false };
-  const deb = rel.assets.find((a) => a.name.endsWith(".deb"));
+  const deb = rel.assets.find((a) => a.name.endsWith(".deb")), img = process.platform === "linux" ? SELF.imageOf(rel) : null;
   const version = rel.tag_name.replace(/^desktop-v/, "");
-  return { current: app.getVersion(), latest: version, available: newer(version, app.getVersion()) && !!deb, notes: rel.body?.slice(0, 1500) ?? "", url: deb?.browser_download_url, size: deb?.size ?? 0, name: deb?.name };
+  return { current: app.getVersion(), latest: version, available: newer(version, app.getVersion()) && !!(deb || img), notes: rel.body?.slice(0, 1500) ?? "", url: deb?.browser_download_url, size: deb?.size ?? 0, name: deb?.name, img, password: !img };
 }
 // One install at a time: a second caller (the startup check plus a remote job, say) joins the first.
 let installing = null;
@@ -1101,6 +1107,21 @@ function updateInstall() {
 async function doUpdateInstall() {
   const u = await updateCheck();
   if (!u.available) return { installed: false, note: `Already up to date (${u.current}).` };
+  // Into the person's own folder (no system install, so no password): the release's AppImage is unpacked there and the
+  // app starts from it from now on. Only when a release has no AppImage is the system package installed (with the password).
+  if (u.img) {
+    const img = path.join(DIRS.downloads, u.img.name), had = await fsp.stat(img).catch(() => null);
+    if (!(had && u.img.size && had.size === u.img.size)) await downloadUpdate({ url: u.img.url, size: u.img.size }, img);
+    const runIn = (cmd, args, o = {}) => new Promise((resolve) => { const p = spawn(cmd, args, { cwd: o.cwd, stdio: ["ignore", "ignore", "pipe"] }); let err = ""; const t = setTimeout(() => p.kill("SIGKILL"), o.timeout ?? 15 * 60_000); p.stderr.on("data", (d) => { if (err.length < 8000) err += d; }); p.on("error", (e) => { clearTimeout(t); resolve({ code: 127, stderr: String(e.message) }); }); p.on("close", (code) => { clearTimeout(t); resolve({ code: code ?? 1, stderr: err }); }); });
+    const r = await SELF.installUserApp({ appImage: img, version: u.latest, home: os.homedir(), run: runIn });
+    await fsp.rm(img, { force: true }); // (unpacked: the download is not needed again)
+    setTimeout(() => {
+      spawn(r.exe, SELF.startArgs(r.dir, process.argv.slice(1).filter((a) => a !== "--vsd-relaunch-wait").concat(["--vsd-relaunch-wait"])), { detached: true, stdio: "ignore" }).unref();
+      clearGuard();
+      app.exit(0);
+    }, 1500);
+    return { installed: true, version: u.latest, where: r.dir, password: false, note: "Installed in your own folder, without a password — VideoStudio restarts now." };
+  }
   const file = path.join(DIRS.downloads, u.name);
   const have = await fsp.stat(file).catch(() => null);
   if (!(have && u.size && have.size === u.size)) await downloadUpdate(u, file);
