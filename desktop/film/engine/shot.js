@@ -45,6 +45,9 @@ export class ShotRun {
     this.look = resolveLook(shot.look ?? o.look ?? ENV.look); setLook(this.look);
     this.canvas = createCanvas(o.probe ? 2 : this.W, o.probe ? 2 : this.H); this.g = this.canvas.getContext('2d');
     this.ctx = { shot, t: 0, poses: {}, chars: {}, W: this.W, H: this.H, o };
+    // (the joints of an actor at ANY moment of the solved performance, on the sequence's clock: a thing thrown, caught or
+    //  kicked is placed from where the hands and feet were and will be — kit/ballplay.js)
+    this.ctx.jointsAt = (id, tb) => { const a = this.actors.find((q) => q.id === id); return a?.bk ? poseAt(a.bk, a.as ?? a.id, tb, null).j : null; };
     this.scene = o.probe ? null : shot.set(this.ctx); this.ctx.scene = this.scene;
     // a look that lives in the air (2.5D, 4D) thickens the haze with distance
     if (this.scene && this.look.fog) { this.scene.fogD /= this.look.fog; this.scene.fogMax = Math.min(0.94, this.scene.fogMax * 1.04); } // probe: poses, camera and faces only (for fingerprints)

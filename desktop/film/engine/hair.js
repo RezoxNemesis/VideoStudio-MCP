@@ -123,7 +123,9 @@ export function makeHair(B, spec, seed = 1) {
     const m = cut.mass === true ? {} : cut.mass, Dg = Math.PI / 180, V = m.vol ?? 0.022, rimV = m.rim ?? 0.004;
     const LINE = m.line ?? [[0, 27], [32, 25], [50, 13], [64, 2], [80, -8], [100, -14], [130, -26], [180, -36]];
     const lineAt = (az) => { const a = Math.abs(az) / Dg; for (let i = 0; i < LINE.length - 1; i++) if (a <= LINE[i + 1][0]) { const u = (a - LINE[i][0]) / (LINE[i + 1][0] - LINE[i][0]); return (LINE[i][1] + (LINE[i + 1][1] - LINE[i][1]) * u * u * (3 - 2 * u)) * Dg; } return LINE[LINE.length - 1][1] * Dg; };
-    massVol = (az, el) => { const u = clamp((el - lineAt(az)) / (30 * Dg)), side = 1 - (m.flat ?? 0.18) * Math.abs(Math.sin(az)) * (1 - clamp((el - 50 * Dg) / (30 * Dg))); return rimV + (V * side - rimV) * u * u * (3 - 2 * u); };
+    // (crown 0…1: the top stands that much higher — drawn hair has height over the skull; nape 0…1: the back thins into
+    //  the neck instead of ending in the hard edge of a bowl)
+    massVol = (az, el) => { const u = clamp((el - lineAt(az)) / (30 * Dg)), side = 1 - (m.flat ?? 0.18) * Math.abs(Math.sin(az)) * (1 - clamp((el - 50 * Dg) / (30 * Dg))), crown = 1 + (m.crown ?? 0) * clamp((el - 40 * Dg) / (40 * Dg)), nape = 1 - (m.nape ?? 0) * clamp(-Math.cos(az)) * (1 - clamp((el + 5 * Dg) / (40 * Dg))); return rimV + (V * side * crown * nape - rimV) * u * u * (3 - 2 * u); };
     const NA = 96, NE = 18, pos = [], idx = [];
     for (let i = 0; i <= NE; i++) for (let a = 0; a < NA; a++) { const az = (a / NA) * 2 * Math.PI - Math.PI, rim = lineAt(az), el = rim + (87 * Dg - rim) * Math.pow(i / NE, 0.9), q = HS.at(az, el, massVol(az, el)); pos.push(q[0], q[1], q[2]); }
     const top = HS.at(0, 90 * Dg, massVol(0, 90 * Dg)), ti = pos.length / 3; pos.push(top[0], top[1], top[2]);

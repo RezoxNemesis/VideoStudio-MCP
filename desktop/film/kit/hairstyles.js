@@ -61,18 +61,18 @@ const spikes = (o) => o.at.map((az, i) => lock([az, o.row[0] + 3 * jit(i)], [az 
 /** strays: a thin clump or two off the crown that breaks the outline. */
 const strays = (list) => list.map(([a, b]) => lock(a, b, { w: 0.02, lift: [0.004, 0.022, 0.034], broad: 0 }));
 
-const style = (vol, line, locks, extra = {}) => ({ n: 0, mass: { vol, flat: 0.12, line }, locks, ...extra });
+const style = (vol, line, locks, extra = {}) => ({ n: 0, mass: { vol, flat: 0.12, line, crown: extra.crown ?? 0.7, nape: extra.nape ?? 0.75 }, locks, ...Object.fromEntries(Object.entries(extra).filter(([k]) => k !== 'crown' && k !== 'nape')) });
 
 export const HAIR_DESIGNS = {
   /** messy (the default lead's hair): full on top, five bangs leaning one way, the ears half covered, tufts at the nape */
   messy: () => style(0.016, LINE_EARS, [
     ...topLayer({ from: [170, 84], at: [30, 60, 90, 118, 146, 172], end: (a) => (a < 50 ? 40 : a < 100 ? 4 : a < 140 ? -12 : -24), lift: 0.03, w: 0.075, hang: 0.014, flick: 0.8, vol: 1.3 }),
     ...sides({ at: [76], root: 50, to: -2, w: 0.05, hang: 0.012, flick: 0.6 }),
-    ...back({ to: -30, hang: 0.016, flick: 0.9 }),
+    ...back({ at: [-128, -150, -170, 170, 150, 128], to: -40, hang: 0.03, flick: 0.75, w: 0.055 }),   // (the nape: tufts that point down into the neck, not a bowl's edge)
     ...bangs({ across: [-30, -14, 1, 15, 29], low: 7, sweep: 10, w: 0.055 }),
     ...strays([[[160, 86], [100, 74]], [[-170, 86], [-120, 72]]]),
     ...spikes({ row: [86, 66], at: [150, -170, 120, -130], lift: 0.03, w: 0.07 }),
-  ]),
+  ], { crown: 1, nape: 0.9 }),
   /** neat / short: close on the sides, a little volume on top, a short fringe combed to one side */
   neat: () => style(0.012, LINE_SHORT, [
     ...topLayer({ from: [175, 86], at: [30, 64, 100, 136, 168], end: (a) => (a < 50 ? 44 : a < 110 ? 14 : -10), lift: 0.008, w: 0.08, vol: 0.6, broad: 0.7 }),

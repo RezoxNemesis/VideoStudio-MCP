@@ -853,3 +853,17 @@ Make a fixture of any character with `devtests/bodyinfo.mjs <film> shot@t actor 
 ## Placed shadows (look.paint.placed)
 
 In the anime look, the shadows an animator places on a figure whatever the key light does (under the chin on the neck, under a hem, under the arms, inside a collar) are cast by a *placed light*. That light stays above and a little in front of the figure as the camera sees it. `placed` (0–1) sets how deep these shadows are. A paint opts out with `placed: false`. Skin takes them only from a caster at least 4 cm off it, so the chin shades the neck but the nose never spots the lip.
+
+## Balls and boxes in play (kit/ballplay.js)
+
+`ballPlay({ kind: 'basket' | 'soccer' | 'plain' | 'box', life: [...] })` returns one thing, in one place at every moment, moved by the people of the film. Put it in a sequence's `dyn: (ts, ctx) => [ball(ts, ctx)]`. Hands and feet are read from the solved performance at any moment (`ctx.jointsAt(id, t)`, on the sequence's clock). Each key of its life (seconds, sequence clock) is one of:
+- `{ t, hold: 'both' | 'L' | 'R', by }`: held between the palms, or on one palm.
+- `{ t, fly: true, from? }`: it flies on the arc that brings it to the next key exactly in time. With `from`, it is thrown in by someone out of the picture.
+- `{ t, away: { k, lift, v? } }`: let go. It leaves with the hands' (or foot's) speed times `k`, plus `lift` m/s upward, falls, bounces and rolls to a stop.
+- `{ t, dribble: 'R', by, until }`: bounced on the ground under that hand, struck at each lowest point of the hand.
+- `{ t, foot: 'R', by }`: at the foot, the contact of a kick, then `away`.
+- `{ t, on: [x, y, z] }` or `{ t, lies: { by, foot | hands, at } }`: it lies there. `lies` puts it where that foot or those hands will come to it at `at`.
+
+Before its first key it is nowhere, unless it lies somewhere. Measure the moments on the solve: catch where the two wrists meet, throw at the wrist's speed peak, kick at the foot's fastest swing. The drawing is an animator's ball (flat colour, one shade, seams or patches, an ink line, its shadow on the ground); a box is drawn as a box.
+
+Rules: `devtests/ballplay.mjs` (14).

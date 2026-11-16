@@ -36,6 +36,7 @@ export * from './combat.js';
 export * from './dance.js';
 export * from './things.js';
 export * from './hold.js';
+export * from './ballplay.js';
 export * from './pictures.js';
 export * from './orbs.js';
 export * from './moves.js';
