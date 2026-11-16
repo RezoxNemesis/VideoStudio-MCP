@@ -26,7 +26,15 @@ function setupFilm(o) {
   let pool = null;
   const farm = () => {
     if (!filmDir) throw new Error("The film engine is not part of this installation.");
-    if (!pool) pool = new FilmPool({ script: path.join(filmDir, "runner", "worker.mjs"), execPath: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" }, ffmpeg: o.ffmpeg, ffprobe: o.ffprobe });
+    if (!pool) {
+      // (an engine whose workers cannot start: said in the app's log; a fetched one is set aside and the installation's
+      //  own engine draws from the next job on — the app never hangs on a bad engine)
+      const onBroken = (log) => {
+        try { o.log && o.log(`film engine ${kit.version} (${kit.source}) could not start: ${String(log || "").replace(/\s+/g, " ").slice(0, 600)}`); } catch { /* the log is a nicety */ }
+        if (kit.source === "fetched" && BUILTIN) { try { KIT.setAside(kitOpts(), kit.version, log); } catch { /* the folder may be read-only */ } kit = { dir: BUILTIN, version: o.appVersion || "", source: "built-in" }; filmDir = BUILTIN; const old = pool; pool = null; setTimeout(() => old && old.close(), 0); }
+      };
+      pool = new FilmPool({ script: path.join(filmDir, "runner", "worker.mjs"), execPath: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" }, ffmpeg: o.ffmpeg, ffprobe: o.ffprobe, onBroken });
+    }
     return pool;
   };
   const ROOT = o.root;

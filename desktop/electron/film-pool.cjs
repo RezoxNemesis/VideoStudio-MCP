@@ -9,14 +9,18 @@ class Worker {
   constructor(pool, name) { this.pool = pool; this.name = name; this.busy = null; this.proc = null; this.ready = null; this.seq = 0; this.start(); }
   start() {
     const p = this.pool;
+    if (p.broken) { if (this.wait) this.wait.rej(new Error(p.brokenMsg())); return; }
+    p.onStart && p.onStart(this.name);
     this.proc = fork(p.script, [], { execPath: p.execPath, env: { ...process.env, ...p.env }, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "advanced" });
-    let log = "";
+    let log = "", up = false, fail = null;
     const keep = (d) => { log = (log + d).slice(-4000); };
     this.proc.stdout.on("data", keep); this.proc.stderr.on("data", keep);
-    this.ready = new Promise((res) => {
-      const first = (m) => { if (m && m.ready) { this.proc.off("message", first); res(true); } };
-      this.proc.on("message", first);
-    }).then(() => this.send("init", { ffmpeg: p.ffmpeg, ffprobe: p.ffprobe }));
+    // (one promise of readiness lasts through restarts: a job waiting on a worker that is being started again waits for the
+    //  new one, and fails only when the pool gives up)
+    if (!this.wait) { let res, rej; const pr = new Promise((a, b2) => { res = a; rej = b2; }); pr.catch(() => {}); this.wait = { pr, res, rej }; this.ready = pr.then(() => this.send("init", { ffmpeg: p.ffmpeg, ffprobe: p.ffprobe })); this.ready.catch(() => {}); }
+    const W = this.wait; fail = W.rej;
+    const first = (m) => { if (m && m.ready) { up = true; p.startFails = 0; this.proc.off("message", first); this.wait = null; W.res(true); } };
+    this.proc.on("message", first);
     this.proc.on("message", (m) => {
       const b = this.busy; if (!b || !m || m.id !== b.id) return;
       if (m.event) { try { b.onEvent && b.onEvent(m); } catch { /* a listener must not break the farm */ } return; }
@@ -27,7 +31,18 @@ class Worker {
     this.proc.on("exit", (code, sig) => {
       const b = this.busy; this.busy = null;
       if (b) b.reject(new Error(`The film worker stopped while working (${sig || "code " + code}).${log ? "\n" + log.split("\n").slice(-6).join("\n") : ""}`));
-      if (!p.closed) { this.start(); p.pump(); }
+      if (p.closed) return;
+      // A worker that dies before it is ready is an engine that cannot start (a missing module, a broken file). It was
+      // started again at once, for ever: six workers forked in a loop and the app stopped answering (16 Nov 2026, after
+      // kit.update on the owner's PC). Now it waits longer each time and gives up after three tries, says why, and the
+      // jobs fail with that reason instead of waiting for ever.
+      if (!up) {
+        p.startFails = (p.startFails || 0) + 1; p.lastLog = log.trim().split("\n").slice(-8).join("\n");
+        if (p.startFails >= 3) { p.broken = true; p.giveUp(); return; }
+        setTimeout(() => { if (p.closed) return; if (p.broken) { this.wait && this.wait.rej(new Error(p.brokenMsg())); return; } this.start(); p.pump(); }, 300 * 2 ** p.startFails);
+        return;
+      }
+      setTimeout(() => { if (!p.closed) { this.start(); p.pump(); } }, 150);
     });
   }
   /** Send one request; the caller makes sure the worker is free. */
@@ -48,6 +63,15 @@ class FilmPool {
     const threads = os.cpus().length, mem = os.totalmem() / 2 ** 30;
     this.size = Math.max(1, Math.min(o.size || Math.max(1, Math.floor(threads / 2)), 8, Math.max(1, Math.floor((mem - 3) / 1.2))));
     this.closed = false; this.queue = []; this.workers = []; this.desk = null; this.cancelled = new Set();
+    this.onBroken = o.onBroken || null; this.onStart = o.onStart || null; this.startFails = 0; this.broken = false; this.lastLog = "";
+  }
+  brokenMsg() { return `The film engine could not start (${this.script}).${this.lastLog ? "\n" + this.lastLog : ""}`; }
+  /** The engine cannot start: every waiting job fails with the reason, and whoever made the pool is told (once). */
+  giveUp() {
+    if (this.toldBroken) return; this.toldBroken = true;
+    for (const job of this.queue.splice(0)) job.reject(new Error(this.brokenMsg()));
+    for (const w of [this.desk, ...this.workers]) if (w) { if (w.wait) w.wait.rej(new Error(this.brokenMsg())); w.kill(); }
+    try { this.onBroken && this.onBroken(this.lastLog); } catch { /* a listener must not break the farm */ }
   }
   boot() {
     if (this.desk) return;
@@ -58,7 +82,7 @@ class FilmPool {
   ask(method, params, onEvent) { this.boot(); return this.enqueue({ lane: "desk", method, params, onEvent }); }
   /** Heavy work, done by whichever farm worker is free. `group` lets a whole job be cancelled. */
   work(method, params, onEvent, group) { this.boot(); return this.enqueue({ lane: "farm", method, params, onEvent, group }); }
-  enqueue(job) { return new Promise((resolve, reject) => { this.queue.push({ ...job, resolve, reject }); this.pump(); }); }
+  enqueue(job) { return new Promise((resolve, reject) => { if (this.broken) { reject(new Error(this.brokenMsg())); return; } this.queue.push({ ...job, resolve, reject }); this.pump(); }); }
   pump() {
     for (let i = 0; i < this.queue.length; i++) {
       const job = this.queue[i];

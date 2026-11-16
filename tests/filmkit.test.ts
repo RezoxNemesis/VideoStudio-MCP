@@ -51,6 +51,15 @@ describe("the film engine as one file", () => {
     expect(K.activeKit({ userData: home(), builtin, appVersion: "2.5.75" })).toMatchObject({ dir: builtin, version: "2.5.75", source: "built-in" });
   });
 
+  it("is set aside when its workers could not start on this computer, and the installation's own draws", () => {
+    const builtin = engine("old"), user = home();
+    K.installKit(K.packKit(engine("new"), "2.5.80", "2.5.75"), { userData: user, builtin, appVersion: "2.5.75" });
+    expect(K.activeKit({ userData: user, builtin, appVersion: "2.5.75" }).source).toBe("fetched");
+    K.setAside({ userData: user }, "2.5.80", "Cannot find package");
+    expect(K.activeKit({ userData: user, builtin, appVersion: "2.5.75" })).toMatchObject({ dir: builtin, source: "built-in" });
+    K.installKit(K.packKit(engine("new"), "2.5.81", "2.5.75"), { userData: user, builtin, appVersion: "2.5.75" });
+    expect(K.activeKit({ userData: user, builtin, appVersion: "2.5.75" })).toMatchObject({ version: "2.5.81", source: "fetched" });   // (a newer one is tried)
+  });
   it("is refused when it needs a newer app than this one, and says so", () => {
     const builtin = engine("old"), user = home();
     expect(() => K.installKit(K.packKit(engine("new"), "2.5.95", "2.5.90"), { userData: user, builtin, appVersion: "2.5.75" })).toThrow(/2\.5\.90/);

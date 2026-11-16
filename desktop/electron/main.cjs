@@ -1381,7 +1381,7 @@ function setupIpc() {
   // Code Studio: films written as code, drawn by the film farm.
   filmHost = require("./film.cjs").setupFilm({
     handle, mustAllow, ffmpeg: FFMPEG, ffprobe: FFPROBE, root: path.join(OUT.Movies, "Code"), userData: app.getPath("userData"), resources: process.resourcesPath,
-    appVersion: app.getVersion(), repo: REPO, fetch: (url, init) => net.fetch(url, init),
+    appVersion: app.getVersion(), repo: REPO, fetch: (url, init) => net.fetch(url, init), log: (m) => crashLog(m),
     send: (channel, msg) => { if (win && !win.isDestroyed()) win.webContents.send(channel, msg); },
   });
   // Sensei: the judge's brain (language models, the internet, a local Ollama it can install and run).

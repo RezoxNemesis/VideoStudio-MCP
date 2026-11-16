@@ -80,11 +80,17 @@ function installKit(buf, o) {
   return { version: k.version, dir };
 }
 
+/** A fetched engine whose workers could not start on this computer: never used again (until a newer one is fetched). */
+function setAside(o, version, why) { fs.mkdirSync(kitRoot(o.userData), { recursive: true }); fs.writeFileSync(path.join(kitRoot(o.userData), "bad.json"), JSON.stringify({ version: String(version), why: String(why || "").slice(-2000), at: new Date().toISOString() })); }
+const setAsideVersion = (o) => { try { return JSON.parse(fs.readFileSync(path.join(kitRoot(o.userData), "bad.json"), "utf8")).version; } catch { return null; } };
+
 /** Which engine draws. o: { userData, builtin, appVersion } → { dir, version, source: 'fetched' | 'built-in' }. */
 function activeKit(o) {
   const builtIn = { dir: o.builtin, version: String(o.appVersion), source: "built-in" };
   try {
-    const cur = JSON.parse(fs.readFileSync(path.join(kitRoot(o.userData), "current.json"), "utf8")), dir = path.join(kitRoot(o.userData), String(cur.dir).replace(/[^\w.-]/g, ""));
+    const cur = JSON.parse(fs.readFileSync(path.join(kitRoot(o.userData), "current.json"), "utf8"));
+    if (setAsideVersion(o) === String(cur.version)) return builtIn;
+    const dir = path.join(kitRoot(o.userData), String(cur.dir).replace(/[^\w.-]/g, ""));
     if (works(dir) && newer(cur.version, o.appVersion) && !newer(cur.minApp, o.appVersion) && BORROWED.every((b) => !fs.existsSync(path.join(o.builtin, b)) || fs.existsSync(path.join(dir, b)))) return { dir, version: String(cur.version), source: "fetched" };
   } catch { /* none fetched, or not readable: the installation's own */ }
   return builtIn;
@@ -118,4 +124,4 @@ async function updateKit(o) {
   return { updated: now.version !== was.version, version: now.version, source: now.source, was: was.version, latest: pick.version };
 }
 
-module.exports = { ASSET, newer, packKit, listKit, verifyKit, installKit, activeKit, chooseRelease, updateKit, kitRoot };
+module.exports = { ASSET, newer, packKit, listKit, verifyKit, installKit, activeKit, chooseRelease, updateKit, kitRoot, setAside };
