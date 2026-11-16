@@ -137,7 +137,7 @@ export const EYES = {
   almond: { w: 0.215, h: 0.092, tilt: 0.03, sharp: 0.45 }, round: { w: 0.2, h: 0.118, tilt: 0.0, sharp: 0.15 }, narrow: { w: 0.225, h: 0.074, tilt: 0.04, sharp: 0.6 },
   upturned: { w: 0.215, h: 0.09, tilt: 0.09, sharp: 0.5 }, downturned: { w: 0.215, h: 0.094, tilt: -0.04, sharp: 0.35 }, wide: { w: 0.235, h: 0.106, tilt: 0.02, sharp: 0.35 },
   // the anime lead's eye of a model sheet: larger, a heavy dark upper lash line, a big iris
-  anime: { w: 0.29, h: 0.14, tilt: 0.03, sharp: 0.42, lash: 0.6, iris: 0.64 },
+  anime: { w: 0.31, h: 0.155, tilt: 0.03, sharp: 0.42, lash: 0.7, iris: 0.64 },
 };
 export const BROWS = { thick: { thick: 0.42, arch: 0.02 }, straight: { thick: 0.34, arch: 0.0 }, arched: { thick: 0.32, arch: 0.07 }, thin: { thick: 0.2, arch: 0.03 }, heavy: { thick: 0.54, arch: 0.01 } };
 export const MOUTHS = {
@@ -182,7 +182,7 @@ export const MEN = {
   // our own figure from the same three sides until the numbers agreed. 7.1 heads tall with his hair; chin 0.14 of the
   // height down, shoulders 0.22, hem of the T-shirt 0.46, the legs part at 0.54, fingertips 0.56; long legs, a short slim
   // trunk, a fine neck. The sculpt below is what brought the Stage's body to those numbers; the face and hair are our own.
-  kabir: { face: 'lean', eyes: 'anime', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'messy', hairColor: 'black', beard: 'none', outfit: 'tee',
+  kabir: { face: 'heart', eyes: 'anime', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'messy', hairColor: 'black', beard: 'none', outfit: 'tee',
     palette: { shirt: '#f3f3f1', shirtShade: '#c9cbd3', trousers: '#26272c', hem: 0.105, shoeKind: 'sneaker' }, skin: '#d9a57e',
     detail: { 'armslegs/upperlegs-height-incr': 0.9, 'armslegs/lowerlegs-height-incr': 0.35, 'torso/torso-scale-vert-decr': 0.25, 'torso/torso-scale-horiz-decr': 0.12, 'torso/torso-muscle-dorsi-decr': 0.2, 'torso/torso-scale-depth-decr': 0.3,
       'neck/neck-scale-horiz-decr': 0.6, 'neck/neck-scale-depth-decr': 0.8, 'neck/neck-scale-vert-decr': 0.5, 'head/head-scale-vert-incr': 0.25, 'head/head-scale-horiz-incr': 0.12, 'head/head-scale-depth-incr': 0.2,
