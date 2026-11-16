@@ -252,7 +252,10 @@ export function dressBody(B, d) {
     const g = (open ? 22 : 8) * Math.PI / 180, bandH = 0.034 * k;
     // the neck, for the collar's band: its outline at its base and a little higher, round its own (leaning) axis
     const n3 = J('neck03') ?? add(neck, [0, 0.1, 0.035]), nz = (y) => neck[2] + (y - neckY) * (n3[2] - neck[2]) / Math.max(0.02, n3[1] - neck[1]);
-    const rn0 = hullOf(section(S, mNoArm, [0, neckY, nz(neckY)], UP, X, Z)) ?? new Float32Array(NR).fill(0.062 * k), rn1 = hullOf(section(S, mNoArm, [0, neckY + 0.022 * k, nz(neckY + 0.022 * k)], UP, X, Z)) ?? rn0;
+    // (the neck alone: on a short neck under a big head the chin hangs down to this height, and measured with it the band
+    //  stood 7–9 cm in front of the throat — what the head carries is left out)
+    const mNeck = mask((v) => arm(v) < 0.5 && !(headW[v] >= 0.5 && P[v * 3 + 2] > nz(P[v * 3 + 1]) + 0.07 * k));
+    const rn0 = hullOf(section(S, mNeck, [0, neckY, nz(neckY)], UP, X, Z)) ?? new Float32Array(NR).fill(0.062 * k), rn1 = hullOf(section(S, mNeck, [0, neckY + 0.022 * k, nz(neckY + 0.022 * k)], UP, X, Z)) ?? rn0;
     // how high the body stands at a place (the highest skin of the trunk — the shoulders, not the neck's own column — within `rad` of it, seen from above) — cloth round the neck lies ON the shoulders
     const topAt = (x, z, rad, rMin = 0) => { let top = -1; for (let v = 0; v < n; v++) { if (arm(v) >= 0.5 || headW[v] >= 0.5) continue; const y = P[v * 3 + 1]; if (y < top || y > neckY + 0.04 * k || y < neckY - 0.16 * k) continue; const dx = P[v * 3] - x, dz = P[v * 3 + 2] - z; if (dx * dx + dz * dz > rad * rad) continue; if (rMin && Math.hypot(P[v * 3], P[v * 3 + 2] - nz(y)) < rMin) continue; top = y; } return top; };
     const design = (th) => neckY - 0.012 * k - drop - (tee ? 0.019 : 0.012) * k * Math.sin(th);

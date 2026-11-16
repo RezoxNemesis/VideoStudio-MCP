@@ -9,8 +9,8 @@ import { dressBody } from '../engine/wardrobe.js';
 
 const fails = []; let checks = 0;
 const ok = (cond, what, got) => { checks++; if (!cond) fails.push(`${what} — got ${typeof got === 'number' ? got.toFixed(4) : JSON.stringify(got)}`); };
-function body() {
-  const J = JSON.parse(gunzipSync(readFileSync(new URL('./fixtures/body_man.json.gz', import.meta.url))));
+function body(file = 'body_man') {
+  const J = JSON.parse(gunzipSync(readFileSync(new URL(`./fixtures/${file}.json.gz`, import.meta.url))));
   const buf = (s) => { const b = Buffer.from(s, 'base64'); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
   const sk = J.skin, pos = new Float32Array(buf(sk.pos)), idx = new Uint32Array(buf(sk.idx)), si = new Uint16Array(buf(sk.si)), sw = new Float32Array(buf(sk.sw));
   const bi = {}; J.names.forEach((n, i) => { bi[n] = i; });
@@ -197,6 +197,13 @@ const radiusAt = (p, y, th, c, half = 0.02, f = () => true) => { let best = 0, b
   const ln = W5.lines.filter((l) => l.on === 'shoe').map((l) => l.name);
   ok(ln.filter((n) => /^lace/.test(n)).length >= 10 && ln.filter((n) => /^cap/.test(n)).length === 2 && ln.filter((n) => /^panel/.test(n)).length >= 4 && ln.filter((n) => /^tongue/.test(n)).length === 2, 'drawn as a sneaker: five laces, the toe cap, the tongue\'s edge and the seams of its side panels on each shoe', ln);
   ok(!p5('shoe').leather, 'canvas, not polished leather: no shine', p5('shoe').leather);
+}
+{ // ---- a T-shirt's neck band lies on the throat, also on a body with a short neck and a big head (Kabir, 16 Nov 2026:
+  //      the chin hung low enough to be measured as part of the neck, and the band stood 7–9 cm in front of the throat)
+  const B6 = body('body_kabir'), W6 = dressBody(B6, { wear: { shirt: { kind: 'tee', color: '#fff', sleeve: 'short' }, trousers: WEAR.trousers, shoes: WEAR.shoes } });
+  const rb = box(W6.parts.find((q) => q.name === 'rib'), (q) => Math.abs(q[0]) < 0.02), sk6 = B6.parts.find((p) => p.material === 'skin');
+  let throat = -1; for (let v = 0; v < sk6.n; v++) { const x = sk6.pos[v * 3], y = sk6.pos[v * 3 + 1], z = sk6.pos[v * 3 + 2]; if (Math.abs(x) < 0.015 && y > rb.lo[1] - 0.01 && y < rb.lo[1] + 0.025) throat = Math.max(throat, z); }
+  ok(rb.hi[2] - throat < 0.03, 'the band in front stands at most 3 cm off the throat (its thickness and a little air)', [rb.hi[2], throat]);
 }
 console.log(fails.length ? `WARDROBE: ${fails.length} of ${checks} rules broken\n  ✗ ${fails.join('\n  ✗ ')}` : `WARDROBE: all ${checks} rules hold`);
 process.exit(fails.length ? 1 : 0);
