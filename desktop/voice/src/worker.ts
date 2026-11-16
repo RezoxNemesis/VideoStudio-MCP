@@ -6,7 +6,9 @@
  */
 import { createWriteStream, existsSync, mkdirSync, openSync, readSync, closeSync, renameSync, statSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { availableParallelism } from "node:os";
+import { availableParallelism, setPriority } from "node:os";
+import { execFileSync } from "node:child_process";
+import { voiceThreads, cudaReady } from "./threads";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -88,8 +90,14 @@ function load(): Promise<StudioModels> {
     const dir = path.join(modelDir(), "onnx");
     const aligned = path.join(dir, "language_model_q4_align.onnx");
     if (!existsSync(aligned)) await writeFile(aligned, exposeAlignment(new Uint8Array(await readFile(path.join(dir, "language_model_q4.onnx")))));
-    const opts: ort.InferenceSession.SessionOptions = { graphOptimizationLevel: "all", intraOpNumThreads: availableParallelism() };
-    const open = (f: string, o = opts) => ort.InferenceSession.create(path.join(dir, f), o) as unknown as Promise<OrtSession>;
+    try { setPriority(10); } catch { /* not allowed: keep the normal priority */ }
+    const opts: ort.InferenceSession.SessionOptions = { graphOptimizationLevel: "all", intraOpNumThreads: voiceThreads(availableParallelism()) };
+    let ld = ""; try { ld = execFileSync("ldconfig", ["-p"], { encoding: "utf8", timeout: 3000 }); } catch { /* no ldconfig: CPU */ }
+    const gpu = cudaReady(process.platform, ld);
+    const open = async (f: string, o = opts) => {
+      if (gpu) { try { return (await ort.InferenceSession.create(path.join(dir, f), { ...o, executionProviders: ["cuda", "cpu"] })) as unknown as OrtSession; } catch { /* the GPU would not take it: the CPU does */ } }
+      return (await ort.InferenceSession.create(path.join(dir, f), o)) as unknown as OrtSession;
+    };
     // The decoder's graph is huge: onnxruntime 1.31's sequential planner takes minutes on it, the parallel one seconds.
     const [embed, lm, decoder] = await Promise.all([open("embed_tokens.onnx"), open("language_model_q4_align.onnx"), open("conditional_decoder.onnx", { ...opts, executionMode: "parallel", interOpNumThreads: 1 })]);
     let enc: Promise<OrtSession> | null = null;

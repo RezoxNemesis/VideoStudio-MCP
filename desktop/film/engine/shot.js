@@ -216,7 +216,7 @@ export class ShotRun {
 export async function renderVideo(shot, cast, out, o = {}) {
   const run = new ShotRun(shot, cast, { noGrain: true, ...o }), n = Math.round(shot.dur * run.fps), t0 = Date.now();
   const tmp = out.replace(/\.mp4$/, '.part.mp4');
-  const ff = spawn(ENV.ffmpeg, ['-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${run.W}x${run.H}`, '-r', String(run.fps), '-i', '-', '-c:v', 'libx264', '-preset', o.preset ?? 'veryfast', '-crf', String(o.crf ?? 13), '-pix_fmt', 'yuv420p', '-movflags', '+faststart', tmp], { stdio: ['pipe', 'inherit', 'inherit'] });
+  const ff = spawn(ENV.ffmpeg, ['-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${run.W}x${run.H}`, '-r', String(run.fps), '-i', '-', '-c:v', 'libx264', '-threads', '2', '-preset', o.preset ?? 'veryfast', '-crf', String(o.crf ?? 13), '-pix_fmt', 'yuv420p', '-movflags', '+faststart', tmp], { stdio: ['pipe', 'inherit', 'inherit'] });
   const done = new Promise((res, rej) => { ff.on('close', (c) => (c === 0 ? res() : rej(new Error(`ffmpeg exit ${c}`)))); ff.on('error', rej); });
   for (let f = 0; f < n; f++) {
     const cv = run.draw(f / run.fps), buf = cv.data();

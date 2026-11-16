@@ -7,6 +7,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { register } from 'node:module';
 import crypto from 'node:crypto';
+import os from 'node:os';
+// drawing is background work: a lower priority keeps the desktop (and whatever else runs) smooth while shots are drawn
+try { os.setPriority(10); } catch { /* not allowed: keep the normal priority */ }
 import { GlobalFonts, createCanvas } from '@napi-rs/canvas';
 import { setEnv, ENV } from '../engine/env.js';
 import { ShotRun, renderVideo, renderSheet } from '../engine/shot.js';
