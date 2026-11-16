@@ -1187,6 +1187,8 @@ function createWindow() {
   win.setMenuBarVisibility(false);
   win.once("ready-to-show", () => {
     setTimeout(() => fs.rm(GUARD, { force: true }, () => {}), 12_000);
+    // (the app in the person's own folder has come up: from now on an older system install may hand over to it)
+    if (process.platform === "linux" && SELF.isUserSpace(process.execPath, os.homedir())) setTimeout(() => SELF.markOk(os.homedir(), app.getVersion()), 8_000);
     win.show();
     if (process.env.VSD_MAXIMIZE !== "0") win.maximize();
   });

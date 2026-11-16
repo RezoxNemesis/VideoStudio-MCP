@@ -30,7 +30,12 @@ async function writeLauncher({ home, exe, dir, systemApps = "/usr/share/applicat
       if (new RegExp(`^Exec=.*[/"\\s]${exeName}(["\\s]|$)`, "m").test(t) || new RegExp(`^Exec=${exeName}(\\s|$)`, "m").test(t)) { name = f; text = t; break; }
     }
   } catch { /* no system entry: one is written from nothing */ }
-  const cmd = `Exec="${exe}" ${startArgs(dir).join(" ")} %U`;
+  // The launcher starts a small script: the unpacked app — and, should that end at once with an error (it cannot start
+  // on this machine), the app that is installed in the system, told not to hand back. The person is never left without an app.
+  const sysExe = text ? (/^Exec="?([^"\s]+)"?/m.exec(text) || [])[1] : null, script = path.join(rootOf(home), "run.sh"), q = (v) => `'${String(v).replace(/'/g, "'\\''")}'`;
+  await fsp.mkdir(rootOf(home), { recursive: true });
+  await fsp.writeFile(script, `#!/bin/sh\n# VideoStudio 2 — started from your own folder (written by the app's updater; safe to delete: the installed app starts instead)\nT0=$(date +%s)\n${q(exe)} ${startArgs(dir).join(" ")} "$@"\nRC=$?\n[ $RC -eq 0 ] && exit 0\n[ $(( $(date +%s) - T0 )) -lt 20 ] || exit $RC\n${sysExe && sysExe.startsWith("/") ? `[ -x ${q(sysExe)} ] && exec ${q(sysExe)} --vsd-no-handover "$@"\n` : ""}exit $RC\n`, { mode: 0o755 });
+  const cmd = `Exec="${script}" %U`;
   if (text) text = text.replace(/^Exec=.*$/gm, cmd).replace(/^TryExec=.*\n/gm, "");
   else {
     const icon = [path.join(dir, `${exeName}.png`), path.join(dir, ".DirIcon")].find((p) => fs.existsSync(p)) || exeName;
@@ -71,11 +76,18 @@ async function installUserApp(o) {
   return { version: o.version, dir, exe, launcher };
 }
 
-/** Started as an OLDER system install while a newer app is unpacked in the person's folder: that one is to run instead. */
+/** The unpacked app has come up (its window is there): noted, so that a system install may hand over to it. */
+function markOk(home, version) {
+  try { const f = path.join(rootOf(home), "current.json"), j = JSON.parse(fs.readFileSync(f, "utf8")); if (j.version !== version || j.ok) return; fs.writeFileSync(f, JSON.stringify({ ...j, ok: true })); } catch { /* nothing unpacked */ }
+}
+/**
+ * Started as an OLDER system install while a newer app is unpacked in the person's folder: that one is to run instead —
+ * but only one that has shown it can start on this machine (markOk).
+ */
 function handover(execPath, home, appVersion, newer) {
   if (isUserSpace(execPath, home)) return null;
   const c = currentOf(home);
-  return c && newer(c.version, appVersion) ? c : null;
+  return c && c.ok === true && newer(c.version, appVersion) ? c : null;
 }
 
-module.exports = { rootOf, currentOf, isUserSpace, imageOf, startArgs, writeLauncher, installUserApp, handover };
+module.exports = { rootOf, currentOf, isUserSpace, imageOf, startArgs, writeLauncher, installUserApp, markOk, handover };

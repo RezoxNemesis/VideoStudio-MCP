@@ -36,9 +36,26 @@ describe("the app in the person's own folder", () => {
     const r = await S.installUserApp({ appImage: appImage("2.5.90"), version: "2.5.90", home: h, run, systemApps: sys });
     const f = path.join(h, ".local/share/applications/videostudio.desktop"), text = fs.readFileSync(f, "utf8");
     expect(text).toContain("Name=VideoStudio 2");
-    expect(text).toMatch(new RegExp(`^Exec="?${r.exe.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"? .*%U$`, "m"));
-    expect(text).not.toContain("/opt/VideoStudio");
-    expect(text).toContain("--no-sandbox"); // (unpacked, the sandbox helper is not the system's: the app is started as a portable one is)
+    expect(text).toMatch(/^Exec="?[^"\n]*videostudio2\/app\/run\.sh"? %U$/m);
+    expect(text).not.toContain("Exec=/opt/VideoStudio");
+    const sh = fs.readFileSync(path.join(h, ".local/share/videostudio2/app/run.sh"), "utf8");
+    expect(sh).toContain(r.exe);
+    expect(sh).toContain("--no-sandbox"); // (unpacked, the sandbox helper is not the system's: the app is started as a portable one is)
+  });
+  it("starts through a small script that falls back to the installed app if the unpacked one cannot start", async () => {
+    const h = home(), sys = path.join(h, "sys-apps"), opt = path.join(h, "opt"); fs.mkdirSync(sys); fs.mkdirSync(opt);
+    fs.writeFileSync(path.join(opt, "videostudio"), '#!/bin/sh\necho system "$@" > "$(dirname "$0")/ran"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(sys, "videostudio.desktop"), `[Desktop Entry]\nName=VideoStudio 2\nExec=${path.join(opt, "videostudio")} %U\nType=Application\n`);
+    const r = await S.installUserApp({ appImage: appImage("2.5.90"), version: "2.5.90", home: h, run, systemApps: sys });
+    const text = fs.readFileSync(path.join(h, ".local/share/applications/videostudio.desktop"), "utf8"), script = /^Exec="?([^" ]+)"?/m.exec(text)?.[1] ?? "";
+    expect(script).toBe(path.join(h, ".local/share/videostudio2/app/run.sh"));
+    // the unpacked app starts and ends well: the installed one is not started
+    expect((await run(script, [])).code).toBe(0);
+    expect(fs.existsSync(path.join(opt, "ran"))).toBe(false);
+    // it cannot start (it ends at once with an error): the installed app is started instead, told not to hand back
+    fs.writeFileSync(r.exe, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    await run(script, ["file.vsd"]);
+    expect(fs.readFileSync(path.join(opt, "ran"), "utf8")).toMatch(/system --vsd-no-handover file\.vsd/);
   });
   it("keeps the version before (to go back to) and removes older ones", async () => {
     const h = home();
@@ -54,6 +71,8 @@ describe("the app in the person's own folder", () => {
   });
   it("an older system install hands over to the newer app in the person's folder when it is started", async () => {
     const h = home(), r = await S.installUserApp({ appImage: appImage("2.5.90"), version: "2.5.90", home: h, run });
+    expect(S.handover("/opt/VideoStudio/videostudio", h, "2.5.80", newer)).toBeNull(); // not until that app has shown it can start
+    S.markOk(h, "2.5.90");
     expect(S.handover("/opt/VideoStudio/videostudio", h, "2.5.80", newer)).toMatchObject({ exe: r.exe });
     expect(S.handover("/opt/VideoStudio/videostudio", h, "2.5.90", newer)).toBeNull();   // not newer: stay
     expect(S.handover(r.exe, h, "2.5.80", newer)).toBeNull();                              // already the one in the folder
