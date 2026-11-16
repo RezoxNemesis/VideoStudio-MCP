@@ -207,7 +207,8 @@ export function motionChecks(D, B) {
       }
     }
     // ---------- a statue: a body the viewer looks at that does not move at all (as it is drawn: with the life the engine gives it)
-    {
+    // (a shot marked `freeze: true` is a freeze-frame on purpose — the picture is held, not the body forgotten)
+    if (!D.sh?.freeze) {
       const fr = Array.from({ length: N }, (_, i) => (a.vis[i] && a.size[i] >= 0.15 ? D.held?.[i]?.[a.id] ?? null : null));
       for (const [i0, i1] of stillRuns(fr, dt, { win: B.statue[0], limit: B.statueMove * k })) {
         const long = (i1 - i0) * dt; let big = 0; for (let i = i0; i <= i1; i++) big = Math.max(big, a.size[i]);

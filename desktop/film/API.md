@@ -106,6 +106,7 @@ Actions chain: each starts where the last left the body. `at: { pos, yaw }` jump
   never a one-frame flash. `hide: ['id']` / `only: ['id']` choose who is drawn; `note` is a reminder.
 - `top: (g, cam, sc, t, ctx, u) => caption(g, cam.W, cam.H, u, 'The park', { sub: 'morning' })` draws lettering on the
   picture (`mainTitle(g, W, H, u, { word: 'MY FILM', sub: 'A SHORT STORY' })` for a title card); `over` draws under it.
+- `freeze: true` marks a deliberate freeze-frame (with `hold: () => 999`): the judge does not call the held bodies statues.
 - `hold: 2` holds every drawing for two frames ("on twos", the rhythm of drawn animation; cameras, cloth and effects
   still move on every frame); a function `(t, ctx) => 1 | 2 | 3` puts fast action on ones. `seq.hold` sets it for all shots.
 - `warp: ramps(dur, [{ at, slow: 0.15, len: 0.5 }])` bends the shot's clock: slow motion and hit-stops at the moments that
