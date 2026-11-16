@@ -51,8 +51,8 @@ const LEGS = /^(root|upperleg|lowerleg|foot|toe|pelvis)/;
   }
   ok([...names].every((n) => !LEGS.test(n)), 'life never bends the legs or moves the hips (the feet stay where they stand)', [...names]);
   ok(['spine03', 'spine02', 'clavicle.L', 'clavicle.R', 'neck01'].every((n) => names.has(n)), 'it is in the trunk, the collar bones and the neck', [...names]);
-  ok(maxDeg > 0.6 && maxDeg < 4.5, 'by degrees one can see and nobody notices: more than half a degree, less than four and a half', maxDeg);
-  ok(maxStep < 0.3, 'never more than a third of a degree between two frames', maxStep);
+  ok(maxDeg > 2 && maxDeg < 9, 'by degrees one can SEE at film distance and that never look like acting: more than two, less than nine', maxDeg);
+  ok(maxStep < 0.5, 'never more than half a degree between two frames', maxStep);
   ok(lifeBends(3, 5, 0).length === 0, 'a body whose life is switched off is left as it was performed', lifeBends(3, 5, 0).length);
   ok(JSON.stringify(lifeBends(7.25, 5, 1)) === JSON.stringify(lifeBends(7.25, 5, 1)), 'the same moment is always the same (frames can be drawn in any order)', 0);
 }
@@ -61,7 +61,7 @@ const LEGS = /^(root|upperleg|lowerleg|foot|toe|pelvis)/;
 {
   const range = (seed, amp, name, T = 16) => { const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9]; for (let t = 0; t < T; t += 1 / 12) { const p = poseOf(); enliven(p, t, seed, amp); const q = p.j[name]; for (let i = 0; i < 3; i++) { lo[i] = Math.min(lo[i], q[i]); hi[i] = Math.max(hi[i], q[i]); } } return [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]]; };
   const sh = range(2, 1, 'upperarm01.L'), hd = range(2, 1, 'head'), wr = range(2, 1, 'wrist.L'), ft = range(2, 1, 'foot.L'), kn = range(2, 1, 'lowerleg01.R'), rt = range(2, 1, 'root');
-  ok(sh[1] > 0.006 && sh[1] < 0.02, 'the shoulders ride up and down with the breath: 6 to 20 mm on a grown body', sh[1]);
+  ok(sh[1] > 0.012 && sh[1] < 0.035, 'the shoulders ride up and down with the breath: 12 to 35 mm on a grown body (a sigh is the deepest)', sh[1]);
   ok(Math.hypot(...hd) > 0.006 && Math.hypot(...hd) < 0.05, 'the head is never quite still, and never wanders', Math.hypot(...hd));
   ok(Math.hypot(...wr) < 0.04, 'hanging hands go with the shoulders, they do not swing about', Math.hypot(...wr));
   ok(Math.hypot(...ft) === 0 && Math.hypot(...kn) === 0 && Math.hypot(...rt) === 0, 'feet, knees and hips stay exactly where they were performed', [ft, kn, rt]);
@@ -111,6 +111,23 @@ const LEGS = /^(root|upperleg|lowerleg|foot|toe|pelvis)/;
   ok(stillRuns(frames(false, 1.2), dt, { win: 2, limit: 0.003 }).length === 0, 'a hold shorter than the window is not a statue (a beat may be held)', 0);
   const gaps = frames(false, 5); for (let i = 60; i < 120; i++) gaps[i] = null;
   ok(stillRuns(gaps, dt, { win: 2, limit: 0.003 }).every(([a, b]) => a >= 120 || b < 60), 'moments in which the body is not there are not counted', stillRuns(gaps, dt, { win: 2, limit: 0.003 }));
+}
+
+// ---- a moving hold that is SEEN. The Papa film came back "extremely static" (16 Nov 2026) although every body in it
+// breathed: by half a degree, which nobody sees at film distance. A held pose lives when the shoulders ride a centimetre
+// on the breath, the head is never still by centimetres, and now and then a breath is a sigh.
+{
+  const span = (seed, name, T = 16) => { let lo = 1e9, hi = -1e9, far = 0; const p0 = poseOf().j[name]; for (let t = 0; t < T; t += 1 / 12) { const p = poseOf(); enliven(p, t, seed, 1); const q = p.j[name]; lo = Math.min(lo, q[1]); hi = Math.max(hi, q[1]); far = Math.max(far, Math.hypot(q[0] - p0[0], q[1] - p0[1], q[2] - p0[2])); } return { rise: hi - lo, far }; };
+  for (const seed of [2, 5, 9]) {
+    const sh = span(seed, 'upperarm01.L'), hd = span(seed, 'head');
+    ok(sh.rise > 0.012 && sh.rise < 0.035, `the shoulders rise and fall with the breath by 12 mm to 3.5 cm (body ${seed})`, sh.rise);
+    ok(hd.far > 0.012 && hd.far < 0.06, `the head travels 12 mm to 6 cm in a quarter of a minute (body ${seed})`, hd.far);
+  }
+  // the sigh: among the breaths of a minute some are half as deep again as the usual one
+  const peaks = []; let last = -1, pk = 0;
+  for (let t = 0; t < 60; t += 1 / 30) { const br = breathAt(t, 5), n = Math.floor(t * br.rate + 1e-9), c = Math.abs((lifeBends(t, 5, 1).find((b) => b.bone === 'clavicle.L') ?? { deg: 0 }).deg); if (n !== last) { if (last >= 0) peaks.push(pk); pk = 0; last = n; } pk = Math.max(pk, c); }
+  const usual = [...peaks].sort((x, y) => x - y)[Math.floor(peaks.length / 2)], sighs = peaks.filter((x) => x > usual * 1.5).length;
+  ok(sighs >= 1 && sighs <= peaks.length / 2, 'now and then a breath is a sigh: half as deep again as the usual one', [sighs, peaks.length]);
 }
 
 if (fails.length) { console.error(`life: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }

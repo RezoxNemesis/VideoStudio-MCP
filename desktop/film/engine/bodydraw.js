@@ -395,7 +395,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const L = V.norm(V.add(V.mul(sun, 0.78), V.add(V.mul(cam.F, -0.34), V.mul(cam.U, 0.22))));
   const ss = hpx > 900 ? 2 : hpx > 240 ? 2 : 3;
   const pm = look()?.paint?.mode === 'paint';
-  const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * (pm ? 2.1 : 1.75), lwIn: lwB * (pm ? 1.05 : 0.95) });
+  const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * (pm ? 2.1 : 1.75), lwIn: lwB * (pm ? 1.05 : 0.95), rimColor: typeof o.rim === 'string' ? hex(o.rim) : Array.isArray(o.rim) ? o.rim : undefined, rimAmt: o.rimAmt }); // (the scene's rim light gives the rim its colour: a warm lamp, a cold moon)
+  const hemPx = clamp(0.0055 * ppm, 1.2, 16); // hems and hairlines: notches of the mesh edge narrower than half a centimetre are closed
   const handOw = handLineWeight(0.016 * (pose.height / 1.8) * ppm);
   const limbIds = new Set(), eyeIds = new Set(), faceIds = new Set(), handIds = new Set(); // faceIds: the skin of the face itself (with the tones drawn on it); handIds: the bare skin of arms and hands
   const rgbOf = (c) => hex(lit(c)), fd = d.face ?? {}, lmk = B.landmarks, eyeY = lmk.eyeL?.[1] ?? 0, eyeZ = lmk.eyeL?.[2] ?? 0;
@@ -433,11 +434,12 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       continue;
     }
     if (real && p.name === 'beard' && !bodyBeard(d)) continue;
-    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.name === 'haircap' && d.hair.sideburns === false ? capWithoutSideburns(B) : p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard' }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
+    if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.name === 'haircap' && d.hair.sideburns === false ? capWithoutSideburns(B) : p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard', hem: hemPx }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
     // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it
     if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;
     const paint = paintOf(ch, B, p, lit), nr = normalsOf(p.out, p.idx, p.nrm);
+    if (p.material !== 'skin' && paint.hem === undefined) paint.hem = hemPx; // a garment's mesh ends in teeth (a short sleeve, a shirt's lower edge): drawn, its edge is smooth
     // a top cut like a robe (crossed lapels over an under-robe, set-in sleeves): painted by a map of its cut, front and back each by itself
     if (p.name === 'tunic' && (d.body?.collar || d.body?.sleeves)) {
       const T = topMeasures(B, p, d), tp = topPaint({ ...paint, group: paint.group ?? p.name }, d, T.G, rgbOf);

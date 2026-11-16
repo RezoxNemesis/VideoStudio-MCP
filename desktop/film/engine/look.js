@@ -36,7 +36,7 @@ export const LOOKS = {
   soft3d: { about: '3D render: smooth shading, no lines, soft bloom', paint: { mode: 'smooth', lines: false }, post: ['bloom'] },
   cel3d: { about: 'Cel-shaded 3D: three tones, rim light, an outer line, fine inner lines', paint: { mode: 'tri', inner: 0.5, rim: true }, post: ['bloom'] },
   immersive: { about: '4D: cel-shaded 3D with light shafts, bloom, depth haze, floating motes and a breathing camera', paint: { mode: 'tri', inner: 0.5, rim: true }, post: ['rays', 'bloom', 'motes', 'fringe'], fog: 1.6, breathe: 1, autoDof: 1.6 },
-  multiplane: { about: '2.5D multiplane: anime drawing in layered depth, haze and a soft far background', fog: 1.8, autoDof: 2.4, post: ['bloom'], bloom: 0.5 },
+  multiplane: { about: '2.5D multiplane: painted anime drawing (soft brush, rim light) in layered depth, haze and a soft far background', paint: { mode: 'paint', rim: true, soft: 0.5 }, fog: 1.8, autoDof: 2.4, post: ['bloom'], bloom: 0.5 },
 };
 
 /** The look a name or an object asks for, with its settings filled in. */

@@ -34,7 +34,7 @@ export class ShotRun {
   /**
    * shot: { id, dur, set(ctx) → Scene, actors: [{ id, design, bake, as, t0, rate, xf, face(t, ctx), ground, rim, show(t), simple }],
    *         cam(t, ctx) → { pos, target, fov, roll, shake: { amp, freq } }, dof(t, ctx) → { near, far, blur } | null,
-   *         fx(ctx) → [{ step(dt, t, scene), items() }], under/over(g, cam, scene, t, ctx), post: { vignette, grain, fadeIn, fadeOut, wash }, subs(t) → text }
+   *         fx(ctx) → [{ step(dt, t, scene), items() }], under/over(g, cam, scene, t, ctx), post: { vignette, grain, fadeIn, fadeOut, fadeColor, dissolve (seconds: open on the last picture of the shot before), wash }, subs(t) → text }
    * cast: name → design
    */
   constructor(shot, cast, o = {}) {
@@ -195,6 +195,11 @@ export class ShotRun {
     if (shot.top) shot.top(g, cam, scene, t, ctx);
     if (ps.fadeIn && t < ps.fadeIn) post.fade(g, W, H, 1 - t / ps.fadeIn, ps.fadeColor);
     if (ps.fadeOut && t > shot.dur - ps.fadeOut) post.fade(g, W, H, (t - (shot.dur - ps.fadeOut)) / ps.fadeOut, ps.fadeOutColor ?? ps.fadeColor);
+    // a dissolve: the shot opens on the last picture of the shot before it (shot.prev draws it, once) and lets it go, eased
+    if (ps.dissolve && shot.prev && t + (shot.into ?? 0) < ps.dissolve) {
+      if (this.prevFrame === undefined) { try { const c0 = shot.prev(W, H, { lang: this.o.lang, look: this.o.look }), c = createCanvas(W, H); c.getContext('2d').drawImage(c0, 0, 0, W, H); this.prevFrame = c; } catch { this.prevFrame = null; } setLook(L); }
+      if (this.prevFrame) { const k = (t + (shot.into ?? 0)) / ps.dissolve; g.save(); g.globalAlpha = 1 - k * k * k * (k * (k * 6 - 15) + 10); g.drawImage(this.prevFrame, 0, 0, W, H); g.restore(); }
+    }
     if (shot.subs && !this.ctx.o.noSubs) { const s = shot.subs(t, ctx); if (s) post.subtitle(g, W, H, s.text ?? s, s); }
     this.frame++;
     return this.canvas;

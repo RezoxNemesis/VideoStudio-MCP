@@ -24,8 +24,11 @@ export function breathAt(t, seed = 1, o = {}) {
  */
 export function lifeBends(t, seed = 1, amp = 1, o = {}) {
   if (!(amp > 0)) return [];
-  const a = Math.min(amp, 3), s = Math.min(amp, 1.5), b = breathAt(t, seed, { amp }).b * a, n = (f, k) => noise1(t * f + seed * 1.9, k + seed);
-  const sway = n(0.11, 1) * 0.45 * s, rock = n(0.09, 2) * 0.35 * s;
+  const a = Math.min(amp, 3), s = Math.min(amp, 1.5), br = breathAt(t, seed, { amp }), n = (f, k) => noise1(t * f + seed * 1.9, k + seed);
+  // a sigh: about one breath in five is deeper — the shoulders ride higher on it and the head sinks as it goes out
+  const u = t * br.rate + hash(seed * 3.3 + 7.1) * 8, nb = Math.floor(u), f = u - nb, sigh = hash(nb * 12.9898 + seed * 4.1) < 0.21 ? Math.sin(Math.PI * f) ** 2 : 0;
+  const b = br.b * a * (1 + 0.85 * sigh);
+  const sway = n(0.11, 1) * 0.9 * s, rock = n(0.09, 2) * 0.75 * s;
   // speaking: on a loud syllable the head dips (now and then lifts), turns a hair, and the chest comes forward with it
   const sp = Math.max(0, Math.min(1, o.speak ?? 0)), way = n(0.9, 6) > -0.55 ? 1 : -0.7;
   const talk = sp ? [{ bone: 'neck01', about: 'side', deg: -2.6 * sp * way }, { bone: 'neck01', about: 'up', deg: 1.6 * sp * n(1.3, 7) }, { bone: 'spine02', about: 'side', deg: -0.7 * sp }] : [];
@@ -34,13 +37,15 @@ export function lifeBends(t, seed = 1, amp = 1, o = {}) {
     // the trunk sways over the hips (balance is never finished)
     { bone: 'spine05', about: 'fwd', deg: sway }, { bone: 'spine05', about: 'side', deg: rock },
     // the breath: the upper chest lifts and draws back as it fills
-    { bone: 'spine03', about: 'side', deg: 0.5 * b }, { bone: 'spine02', about: 'side', deg: 0.5 * b },
+    { bone: 'spine03', about: 'side', deg: 0.9 * b }, { bone: 'spine02', about: 'side', deg: 0.9 * b },
     // the shoulders ride up on it; the arms go on hanging
-    { bone: 'clavicle.L', about: 'fwd', deg: 1.6 * b }, { bone: 'clavicle.R', about: 'fwd', deg: -1.6 * b },
-    { bone: 'upperarm01.L', about: 'fwd', deg: -1.3 * b }, { bone: 'upperarm01.R', about: 'fwd', deg: 1.3 * b },
-    // the neck gives back what the chest took: the head stays level — and looks about by a hair
-    { bone: 'neck01', about: 'side', deg: -0.9 * b - rock + n(0.17, 3) * 0.7 * s }, { bone: 'neck01', about: 'fwd', deg: -sway * 0.8 },
-    { bone: 'neck01', about: 'up', deg: (n(0.13, 4) * 1.4 + n(0.37, 5) * 0.5) * s },
+    { bone: 'clavicle.L', about: 'fwd', deg: 2.7 * b }, { bone: 'clavicle.R', about: 'fwd', deg: -2.7 * b },
+    { bone: 'upperarm01.L', about: 'fwd', deg: -2.2 * b }, { bone: 'upperarm01.R', about: 'fwd', deg: 2.2 * b },
+    { bone: 'upperarm01.L', about: 'side', deg: -1.5 * b }, { bone: 'upperarm01.R', about: 'side', deg: -1.5 * b }, // (and do not tip back with the chest)
+    // the neck gives back what the chest took: the head stays level — and is never still: it drifts, tilts and turns
+    // slowly by degrees one can see, and sinks a little with a sigh
+    { bone: 'neck01', about: 'side', deg: -1.62 * b - rock + (n(0.085, 3) * 2.1 + n(0.31, 9) * 0.5) * s - 2.2 * sigh * s }, { bone: 'neck01', about: 'fwd', deg: -sway * 0.8 + n(0.06, 8) * 1.5 * s },
+    { bone: 'neck01', about: 'up', deg: (n(0.075, 4) * 3.0 + n(0.33, 5) * 0.7) * s },
   ].filter((x) => x.deg);
 }
 

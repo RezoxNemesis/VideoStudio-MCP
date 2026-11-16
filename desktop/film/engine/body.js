@@ -405,7 +405,8 @@ export function normalsOf(pos, idx, nrm) {
  *            group? (no line between parts of one group), joins? (a group this part grows out of: no line there,
  *            but a line against its neighbours — fingers on a palm),
  *            ow? (the weight of this part's outline against the figure's, 0…1: a small form — a hand — is drawn finer),
- *            two? (true: seen from both sides — cloth), flat? (no shadow tone), castHair? / recvHair? (hair, and the
+ *            two? (true: seen from both sides — cloth), flat? (no shadow tone), hem? (picture px: the teeth of this
+ *            part's mesh edge against the figure's other surface are closed to a smooth drawn edge — a sleeve, a hairline), castHair? / recvHair? (hair, and the
  *            skin its shadow falls on: a fringe on the brow) }
  * o: { ss (fineness, default 2), light: unit vector towards the light (world), ink: [r,g,b], lw (outline, picture px),
  *      lwIn (inner lines), pad, soft (0…1, the painted look only: how gradually light turns to shadow — the brush of a
@@ -486,6 +487,29 @@ export class CelPainter {
     // ---- bands: stripes of another paint across a part (a sash round the waist, a hem, a cuff)
     if (ub) for (let q = 0; q < N; q++) { const p = this.paints[ib[q]]; if (!p || !p.bands) continue; const u = ub[q]; for (let k = 0; k < p.bands.length; k++) if (u >= p.bands[k][0] && u < p.bands[k][1]) { ib[q] = p.bandIds[k]; break; } }
     if (xb) for (let q = 0; q < N; q++) { const p = this.paints[ib[q]]; if (!p || !p.map) continue; const k = p.map(xb[q], yb[q]); if (k >= 0) ib[q] = p.mapIds[k]; }
+    // ---- hems: a garment and a cap of hair end where their triangles end, in teeth; the drawn edge is the smooth line
+    // round them. paint.hem (picture px): the notches narrower than that are filled with the garment (never the empty
+    // picture, never an eye or a mouth: only other surface of the figure).
+    for (let id = 1; id < this.paints.length; id++) {
+      const hp = this.paints[id]; if (!hp || !(hp.hem > 0)) continue;
+      const R = Math.max(1, Math.round(hp.hem * SS)); let bx0 = w, by0 = h, bx1 = -1, by1 = -1;
+      for (let y = 0; y < h; y++) for (let x = 0, q = y * w; x < w; x++, q++) if (ib[q] === id) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+      if (bx1 < 0) continue;
+      bx0 = Math.max(0, bx0 - R); by0 = Math.max(0, by0 - R); bx1 = Math.min(w - 1, bx1 + R); by1 = Math.min(h - 1, by1 + R);
+      const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1, m = new Float32Array(bw * bh), tmp = new Float32Array(bw * bh);
+      for (let round = 0; round < 2; round++) { // (twice: the second round closes what the first left of a deep tooth)
+      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) m[y * bw + x] = ib[(y + by0) * w + x + bx0] === id ? 1 : 0;
+      for (let pass = 0; pass < 2; pass++) { // a box blur twice: a soft round brush
+        for (let y = 0; y < bh; y++) { let sum = 0; const o2 = y * bw; for (let x = -R; x < bw; x++) { const xa = x + R, xr = x - R - 1; if (xa < bw) sum += m[o2 + xa]; if (xr >= 0) sum -= m[o2 + xr]; if (x >= 0) tmp[o2 + x] = sum / (2 * R + 1); } }
+        for (let x = 0; x < bw; x++) { let sum = 0; for (let y = -R; y < bh; y++) { const ya = y + R, yr = y - R - 1; if (ya < bh) sum += tmp[ya * bw + x]; if (yr >= 0) sum -= tmp[yr * bw + x]; if (y >= 0) m[y * bw + x] = sum / (2 * R + 1); } }
+      }
+      for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+        if (m[y * bw + x] <= 0.5) continue; const q = (y + by0) * w + x + bx0, was = ib[q]; if (!was || was === id) continue;
+        const up = this.paints[was]; if (!up || up.flat || up.group === 'eye' || up.group === 'mouth' || up.hem > 0 || up.noHem) continue;
+        ib[q] = id;
+      }
+      }
+    }
     // ---- lines: the outline (figure against nothing), part against part, a break in depth
     const outR = (o.lw ?? 2.6) * SS * 0.5, inR = (o.lwIn ?? 1.5) * SS * 0.5, ink = new Float32Array(N), inkI = this.mode === 'paint' ? new Float32Array(N) : ink; // painted: inner lines are coloured by what they divide
     const stamp = (x, y, r, buf = ink) => {
@@ -637,7 +661,7 @@ export class CelPainter {
         }
         if (p.hi && !p.flat && c === p.fill) { const hh = (l + v) * 0.5; if (hh > (p.hiAt ?? 0.86) && l > 0.2) c = p.hi; }
         if (mode === 'paint') {
-          if (rimC && v < 0.3 && v > -0.05 && !p.flat) { const rr = (1 - Math.max(0, v) / 0.3) ** 2 * (o.rimAmt ?? 0.5), rc = Array.isArray(rimC) ? rimC : (p._rim ??= [Math.min(255, p.fill[0] + 70), Math.min(255, p.fill[1] + 62), Math.min(255, p.fill[2] + 50)]); if (c !== tone) { tone[0] = c[0]; tone[1] = c[1]; tone[2] = c[2]; c = tone; } for (let m = 0; m < 3; m++) tone[m] += (rc[m] - tone[m]) * rr; }
+          const rw = p.hairy ? 0.15 : 0.3; if (rimC && v < rw && v > -0.05 && !p.flat) { const rr = (1 - Math.max(0, v) / rw) ** 2 * (o.rimAmt ?? 0.5), rc = Array.isArray(rimC) ? rimC : (p._rim ??= rimTone(p.fill, o.rimColor ?? undefined)); if (c !== tone) { tone[0] = c[0]; tone[1] = c[1]; tone[2] = c[2]; c = tone; } for (let m = 0; m < 3; m++) tone[m] += (rc[m] - tone[m]) * rr; }
           const ii = inkI[q]; if (ii > 0 && ia < ii) { const dk = 0.38; r += c[0] + (c[0] * dk - c[0]) * ii * 0.9; g += c[1] + (c[1] * dk - c[1]) * ii * 0.9; b += c[2] + (c[2] * dk + 6 - c[2]) * ii * 0.9; al += 1; continue; }
         } else if (rimC && v < 0.34 && l < (p.thr ?? 0.08) + 0.5 && !p.flat) c = l > (p.thr ?? 0.08) ? c : rimC === true ? p.fill : c;
         if (ia > 0) { r += c[0] + (ik[0] - c[0]) * ia; g += c[1] + (ik[1] - c[1]) * ia; b += c[2] + (ik[2] - c[2]) * ia; } else { r += c[0]; g += c[1]; b += c[2]; }
@@ -650,6 +674,14 @@ export class CelPainter {
     const cv = createCanvas(ow, oh); cv.getContext('2d').putImageData(new ImageData(img, ow, oh), 0, 0);
     return { canvas: cv, x: x0, y: y0, w: ow, h: oh, depthAt: (px, py) => { const X = Math.floor((px - x0) * SS), Y = Math.floor((py - y0) * SS); if (X < 0 || Y < 0 || X >= w || Y >= h) return Infinity; const z = zb[Y * w + X]; return z > 0 ? 1 / z : Infinity; }, zb, ib, sw: w, sh: h, ss: SS };
   }
+}
+/**
+ * The tone of a rim of light on a surface of colour `fill`: the surface taking the colour of the light that grazes it
+ * (light: [r,g,b], by default a warm white), so black hair gets a grey edge of light — not a brown one, as a brighter
+ * hair colour would be.
+ */
+export function rimTone(fill, light = [255, 244, 228], amt = 0.36) {
+  return [0, 1, 2].map((m) => Math.round(Math.min(255, fill[m] + (light[m] - fill[m]) * amt + 10)));
 }
 export const rgb255 = (c) => (typeof c === 'string' ? hex(c) : c.map((v) => Math.round(255 * Math.pow(clamp(v), 1 / 2.2))));
 

@@ -70,7 +70,7 @@ export function runnerShot(seq, sh, off = 0) {
   const post = { ...(seq.post ?? {}), ...(sh.post ?? {}) };
   if (off > 0 && post.fadeIn) post.fadeIn = Math.max(0, post.fadeIn - off) || undefined;
   return {
-    ...sh, id: `${seq.id}_${sh.id}`, seq: seq.id, seqT: seq.T, dur: sh.t1 - T0, t0: T0, lip: sh.lip,
+    ...sh, id: `${seq.id}_${sh.id}`, seq: seq.id, seqT: seq.T, dur: sh.t1 - T0, t0: T0, into: off, lip: sh.lip,
     set: (ctx) => seq.set({ ...(seq.setOpts ?? {}), ...(sh.setOpts ?? {}) }, ctx),
     actors,
     warpT: sh.warp ? wt : null, warpInv: sh.warp?.inv ?? null,

@@ -100,7 +100,10 @@ Actions chain: each starts where the last left the body. `at: { pos, yaw }` jump
   `at(ctx, 'mira', 'head' | 'chest' | 'hips' | 'feet', [dx, dy, dz])` is a point of a body right now.
   `move(camA, camB, t, t0, t1)` eases from one set-up to another; `breathe(cam, t, 0.005)` adds a living drift.
 - `dof: (t, ctx) => ({ near, far, blur: 6 })` soft focus outside near…far metres from the lens.
-- `post: { fadeIn: 1, fadeOut: 1.2 }`; `hide: ['id']` / `only: ['id']` choose who is drawn; `note` is a reminder.
+- `post: { fadeIn: 1, fadeOut: 1.2, fadeColor: '#fff8ea' }`; `post: { dissolve: 1.2 }` — the shot opens on the last picture of the shot
+  before it (also across sequences) and lets it go, eased: **use it for every change of time or place** (day → night, into a
+  memory and back); a fade through a colour is `fadeOut` + `fadeOutColor` on one shot and `fadeIn` + `fadeColor` on the next —
+  never a one-frame flash. `hide: ['id']` / `only: ['id']` choose who is drawn; `note` is a reminder.
 - `top: (g, cam, sc, t, ctx, u) => caption(g, cam.W, cam.H, u, 'The park', { sub: 'morning' })` draws lettering on the
   picture (`mainTitle(g, W, H, u, { word: 'MY FILM', sub: 'A SHORT STORY' })` for a title card); `over` draws under it.
 - `hold: 2` holds every drawing for two frames ("on twos", the rhythm of drawn animation; cameras, cloth and effects
@@ -218,10 +221,24 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**What a drawn figure needs (learnt on the Papa film, 16 Nov 2026 — it came back for "hard polygonal patches", ragged
+edges, a night too dark to read and people "extremely static"):**
+- Every look that draws anime **paints** (`paint.mode: 'paint'`): one designed shadow shape per form with a soft brushed
+  edge. Plain two-tone cel (`classic`) follows the polygons of the body and reads as accidental patches — do not use it for
+  real bodies. Draw one close-up and look at the shirt and the cheek before building anything.
+- **Rim light**: every painted look puts a thin rim of light on the side turned from the lens; it takes the colour of the
+  scene's `rim` (`new Scene({ rim: '#ffc890' })`: a warm lamp at night) and is what lifts black hair and dark trousers off a
+  dark background. Never switch it off to cure a hair fault.
+- **Hems and hairlines** are closed by themselves (`paint.hem`): a short sleeve, a shirt's lower edge and the cap of hair no
+  longer end in the teeth of their triangles.
+- **Nobody is a statue**: at rest the shoulders ride 1–3 cm on the breath, about one breath in five is a sigh, the head
+  drifts, tilts and turns by a few degrees. It is the floor, not the acting: a held pose still needs eyes that move
+  (`look` keys), a blink on a change of gaze, and a small change of pose every few seconds.
+
 | look | |
 |---|---|
 | `anime` (`2d`) | the default: cel tones, ink lines |
-| `multiplane` (`2.5d`) | anime drawing in layered depth: haze, a soft far background |
+| `multiplane` (`2.5d`) | painted anime drawing (soft brush `soft: 0.5`, rim light) in layered depth: haze, a soft far background |
 | `soft3d` (`3d`) | a 3D render: smooth light, no lines, soft bloom |
 | `cel3d` (`3.5d`) | cel-shaded 3D: three tones, rim light, an outer line, fine inner lines |
 | `immersive` (`4d`) | cel-shaded 3D with light in the air: sun shafts, bloom, haze, floating motes, a breathing camera |

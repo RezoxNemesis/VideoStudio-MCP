@@ -116,5 +116,46 @@ const turn = (row) => { const L = row.map(lum), hi = Math.max(...L.slice(4, 30))
   ok(darkest(1) > 150 * 0.9, 'soft: it stays close to the shadow tone (no dark blots where the jaw meets the neck)', darkest(1));
 }
 
+// ---- the 2.5D look is painted too. The Papa film (16 Nov 2026) asked for "multiplane" and was drawn in plain two-tone
+// cel, whose terminator follows the polygons: "hard polygonal patches that look accidental". 2.5D is anime drawing in
+// layered depth, so it gets the brush by itself.
+{
+  const { resolveLook } = await import('../engine/look.js'), { rimTone } = await import('../engine/body.js');
+  for (const name of ['multiplane', '2.5d']) { const L = resolveLook(name); ok(L.paint?.mode === 'paint' && L.paint?.soft > 0.3 && L.paint?.rim === true, `the ${name} look paints with the soft brush and a rim of light`, L.paint ?? null); }
+  ok(resolveLook({ style: 'multiplane', paint: { soft: 0.85 } }).paint.mode === 'paint', 'a film that only sets the softness still gets the brush', 0);
+  // a rim of light on black hair is light, not brown: it takes the colour of the light, not a brighter hair colour
+  const r = rimTone([21, 16, 14]);
+  ok(r[0] - r[2] < 26 && r[0] > 70 && r[0] < 150, 'the rim on black hair is a grey light, neither brown nor white', r);
+  const sk = rimTone([200, 150, 120]);
+  ok(sk[0] > 205 && sk[1] > 165 && sk[2] > 135, 'on skin it is lighter skin', sk);
+  const warm = rimTone([21, 16, 14], [255, 190, 110]);
+  ok(warm[0] - warm[2] > 30, 'under a warm lamp the rim is warm (the light gives the colour)', warm);
+}
+
+// ---- hems: a garment (a short sleeve, a shirt's lower edge) and a cap of hair end where their triangles end, in
+// teeth. Drawn, the edge is the smooth line round the teeth (paint.hem, picture px): "hair silhouettes and clothing
+// edges appear uneven" (the Papa film, 16 Nov 2026).
+{
+  const { CelPainter } = await import('../engine/body.js'), { makeCam } = await import('../engine/camera.js');
+  const cam = makeCam({ pos: [0, 0, -2], target: [0, 0, 0], fov: 30 }, 400, 300);
+  const skin = { pos: new Float32Array([-0.5, -0.4, 0, 0.5, -0.4, 0, 0.5, 0.4, 0, -0.5, 0.4, 0]), idx: [0, 2, 1, 0, 3, 2] };
+  // a sleeve over it whose lower edge is a row of teeth 4 cm wide and 3 cm deep
+  const P = [], I = [], n = 20, x0 = -0.4, dx = 0.04;
+  for (let i = 0; i < n; i++) { const a = x0 + i * dx, b = a + dx, k = P.length / 3; P.push(a, 0.3, -0.01, b, 0.3, -0.01, b, 0, -0.01, a, 0, -0.01, a + dx / 2, -0.03, -0.01); I.push(k, k + 2, k + 1, k, k + 3, k + 2, k + 3, k + 4, k + 2); }
+  const edge = (hem) => {
+    const cp = new CelPainter(cam, { ss: 2, light: [0, 0.3, -1], lines: false });
+    cp.add(skin.pos, skin.idx, { fill: [200, 150, 120], shade: [150, 100, 80], skin: true, group: 'skin' });
+    const id = cp.add(new Float32Array(P), I, { fill: [240, 240, 250], shade: [180, 180, 200], group: 'tunic', two: true, hem });
+    const r = cp.finish(), ys = [];
+    for (let x = Math.round(r.sw * 0.3); x < r.sw * 0.7; x++) { let y = r.sh - 1; while (y > 0 && r.ib[y * r.sw + x] !== id) y--; ys.push(y); }
+    let rough = 0; for (let i = 1; i < ys.length - 1; i++) rough += Math.abs(ys[i - 1] - 2 * ys[i] + ys[i + 1]); const lo = Math.min(...ys), hi = Math.max(...ys);
+    return { rough: rough / ys.length, depth: hi - lo, area: r.ib.reduce((m, v) => m + (v === id ? 1 : 0), 0) };
+  };
+  const raw = edge(0), hemmed = edge(7);
+  ok(raw.depth > 8, 'without a hem the teeth of the triangles show (else the test shows nothing)', raw.depth);
+  ok(hemmed.depth < raw.depth * 0.45, 'a hem closes the teeth: the edge is less than half as deep', [raw.depth, hemmed.depth]);
+  ok(hemmed.area >= raw.area && hemmed.area < raw.area * 1.12, 'it only fills the notches: the garment grows by a few percent at most', [raw.area, hemmed.area]);
+}
+
 if (fails.length) { console.error(`brush: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`brush: ${checks} rules hold`);
