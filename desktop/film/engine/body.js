@@ -369,7 +369,8 @@ export function poseBody(B, t, xf = null, hands = null, face = null, after = nul
       }
     }
   }
-  for (const p of B.parts) {
+  // (the clothes the engine made for this body — engine/wardrobe.js — and the lines drawn on them hang on the same bones)
+  for (const p of B.wear ? [...B.parts, ...B.wear.parts, ...B.wear.lines] : B.parts) {
     const { n, pos, si, sw, out } = p;
     for (let v = 0; v < n; v++) {
       const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2]; let ox = 0, oy = 0, oz = 0;

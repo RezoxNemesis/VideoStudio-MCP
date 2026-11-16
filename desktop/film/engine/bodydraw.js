@@ -11,6 +11,7 @@ import { pauldronMeshes } from './armour.js';
 import { look } from './look.js';
 import { finishFigure } from './finish.js';
 import { tailorBody } from './tailor.js';
+import { dressBody } from './wardrobe.js';
 import { faceMarksOf, faceDecals, decalPaints, noseLine, unfoldX, FACE_FRONT } from './face3.js';
 import { knuckleMarks, handLineWeight } from './hand3.js';
 
@@ -392,6 +393,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   // the eyes and brows of a real head are drawn (large, clear, the way drawn faces have them) unless the sheet asks for the sculpted ones
   const drawn = real && (d.face?.eyes3 ?? 'drawn') === 'drawn';
   tailorBody(B, d); // the cut of its clothes (design.bottom.fit): once for each cut, in the body's rest shape
+  const wear = dressBody(B, d), wearIds = {}; // clothes made by the engine for this body (design.wear): once for each set
   poseBody(B, pb.t, pb.xf, handsFor(pose, pb.hands), real ? (drawn ? { ...(face ?? {}), eyeOpen: 1, blink: 0, eyeSmile: 0, browTilt: 0, browL: 0, browR: 0 } : (face ?? {})) : null, Array.isArray(pb.after) ? pb.after : null);
   if (typeof pb.after === 'function') pb.after(B); // a film's own change to the posed body (moves and turns of kit/combat.js are applied by poseBody)
   const sun = V.norm(o.sun ?? [-0.45, 0.7, 0.5]);
@@ -439,12 +441,14 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       else cp.add(p.out, p.idx, { fill: hex(ink), shade: hex(ink), flat: true, two: true, bias: 0.002, line: false, group: 'eye' }, nr);
       continue;
     }
+    if (wear && wear.hide.has(p.name)) continue; // the Stage's own garment under clothes the engine made
     if (real && p.name === 'beard' && !bodyBeard(d)) continue;
     if (real && (p.name === 'haircap' || p.name === 'beard') && d.hair) { const hc = p.name === 'beard' ? (d.beard?.color ?? d.hair.color) : d.hair.color; cp.add(p.out, p.name === 'haircap' && d.hair.sideburns === false ? capWithoutSideburns(B) : p.idx, { fill: rgbOf(hc), shade: rgbOf(d.hair.shade ?? shadeHex(hc, -0.3)), two: true, bias: 0.003, group: 'hair', noAO: true, recv: false, castHair: p.name !== 'beard', hem: hemPx }, rounded(p.out, normalsOf(p.out, p.idx, p.nrm), 0.6)); continue; }
     if (SKIP.has(p.name)) continue;
     // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it
     if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;
     const paint = paintOf(ch, B, p, lit); let nr = normalsOf(p.out, p.idx, p.nrm);
+    const sk = wear && p.material === 'skin', iCore = sk ? wear.skin.idxCore : p.idxCore, iLimb = sk ? wear.skin.idxLimb : p.idxLimb; // (skin under the engine's clothes is not drawn)
     // the trunk is lit as one round form (proxy normals: a cylinder round the spine), so a shirt gets one clean shadow
     // shape instead of a patch on every fold; how much each bit of a part hangs on the spine is found once
     if (trunkAxis && p.si && p.sw && d.body?.proxy !== false) {
@@ -467,8 +471,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     // armour of small plates (design.body.plates): the part's body is painted by a map of its plates, laid round it
     const pl8 = d.body?.plates?.[p.name];
     if (pl8 && p.idxCore.length) cp.add(p.out, p.idxCore, platePaint({ ...paint, group: paint.group ?? p.name }, pl8, rgbOf), nr, p.u, girthXY(p));
-    else if (p.idxCore.length) cp.add(p.out, p.idxCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
-    if (p.idxLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, p.idxLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); if (p.material === 'skin') handIds.add(id); }
+    else if (iCore.length) cp.add(p.out, iCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
+    if (iLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, iLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); if (p.material === 'skin') handIds.add(id); }
     // fingers: each its own part of the skin, so two that lie side by side have a line between them (none where they leave the palm)
     // the hand itself and each finger: parts of the skin of their own, drawn with a finer outline (a hand is a small form);
     // two fingers side by side have a line between them, a finger or the thumb one only where it lies over the hand
@@ -501,6 +505,23 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: d.face?.hairShadow !== false, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
       eyeIds.add(fid); faceIds.add(fid); for (const k of fp.mapIds ?? []) faceIds.add(k);
       if (p.idxMouth.length) cp.add(p.out, p.idxMouth, { fill: rgbOf('#4a1c22'), shade: rgbOf('#2a0e12'), line: false, group: 'mouth', flat: true }, nr);
+    }
+  }
+  // the clothes the engine made (design.wear): smooth shells, each piece a thing of its own with its drawn line
+  if (wear) {
+    const skinP = B.parts.find((q) => q.material === 'skin'), sp = skinP ? paintOf(ch, B, skinP, lit) : null;
+    for (const p of wear.parts) {
+      const nr = normalsOf(p.out, p.idx, p.nrm), bias = 0.0012 * (p.layer ?? 1); let paint;
+      if (p.skin && sp) paint = { ...sp, bands: undefined, group: 'skin', bias, two: true };
+      else {
+        const base = p.dark ? shadeHex(p.color, -p.dark) : p.color, f = rgbOf(base), s2 = rgbOf(p.shade && !p.dark ? p.shade : shadeHex(base, -0.24));
+        paint = { fill: f, shade: p.flat ? f : s2, flat: !!p.flat, two: !!p.two, group: p.group, bias, thr: 0.05, noAO: !!p.flat };
+        if (p.metal) paint = { ...paint, hi: rgbOf(shadeHex(base, 0.5)), hiAt: 0.8, metal: true, soft: 0 };
+        if (p.leather) paint = { ...paint, hi: rgbOf(shadeHex(base, 0.42)), hiAt: 0.9, soft: 0 };
+        if (p.bands?.length) paint.bands = p.bands.map(([a, b, c]) => [a, b, { fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.24)) }]);
+      }
+      const id = cp.add(p.out, p.idx, paint, nr, p.u ?? null), ids = (wearIds[p.group] ??= new Set()); ids.add(id); for (const b of paint.bandIds ?? []) ids.add(b);
+      if (p.limb) { limbIds.add(id); for (const b of paint.bandIds ?? []) limbIds.add(b); }
     }
   }
   // hair: clumps on the scalp (design: hair3 = a cut's name or its fields; default by the old sheet's look)
@@ -549,6 +570,8 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (fin) { const sx = V.dot(sun, cam.R), sy = -V.dot(sun, cam.U), sl = Math.hypot(sx, sy); finishFigure(g, spr, fin, { H: cam.H, light2: sl < 0.15 ? [-0.5, -0.86] : [sx / sl, sy / sl], shade: hex(lit('#6a72a6')), glow: typeof o.rim === 'string' ? hex(o.rim) : hex(lit('#fff2dc')) }); }
     g.drawImage(spr.canvas, spr.x, spr.y);
   }
+  // the lines drawn on its clothes (a crease, a fly, a pocket's edge), inked on their own cloth
+  if (wear && spr) for (const l of wear.lines) { const ids = wearIds[l.on]; if (!ids) continue; const pts = []; for (let v = 0; v < l.n; v++) pts.push([l.out[v * 3], l.out[v * 3 + 1], l.out[v * 3 + 2]]); inkOn(g, spr, cam, [{ pts, alpha: l.alpha, lw: Math.max(0.9, lwB * l.lw) }], ids, { ink, tol: 0.02 }); }
   // the knuckles of a closed hand, inked on its own skin (never over a sleeve or a blade in front of it)
   if (real && spr && handIds.size && B.fingers) for (const s of ['L', 'R']) {
     const wj = pose.j[`wrist.${s}`]; if (!wj) continue; const px = 0.0068 * (pose.height / 1.8) * cam.ppm(cam.project(wj)[2]); if (px < 1.6) continue; // too small in the picture to be drawn

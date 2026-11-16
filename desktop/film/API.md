@@ -156,6 +156,22 @@ with two hanging ends) }`. A tail hangs as hair does: off the tie in a curve, ro
 back (never through them), swaying with the walk. Painted with a brush: `hair: { strands: 0…1 }` lays darker strands and a lighter streak along
 every lock, `hair.sheen: 0…1` makes the band of light across the hair zigzag from lock to lock, `hair.shine` its colour.
 
+**Clothes cut by the engine (`design.wear`).** The Stage's own garments are the body's skin let out a little: they follow
+every muscle and have no collar, placket, pocket, belt or shoe. With `wear` the engine cuts clothes for the body
+(engine/wardrobe.js): smooth shells measured from the body's rest shape, with ease, hanging from the chest and the
+thigh; every piece a drawing of clothes is made of is a thing of its own with its drawn line. Give the Stage a BARE
+body for it (`garments: []` on the motion actor, no `outfit`): the Stage removes the skin under its own garments, and
+the engine's clothes need the body under them. `wear: { shirt: { color, shade?, sleeve: 'short' | 'long', ease?,
+pocket?, collar: { open?, point? } }, tie: { color, stripe?, loose? }, trousers: { color, shade?, fit: 'slim' |
+'straight' | 'loose' }, belt: { color, buckle? }, shoes: { kind: 'derby', color, sole? } }` — any piece may be left
+out. What it makes: trousers (seat + two legs that hang round a straight middle line, hem at the ankle, a crease down
+each leg, fly and side pockets as ink lines), belt and buckle, shirt (tucked in, a little cloth over the belt), sleeves
+whose heads are balls round the shoulder joints, a hem band on each sleeve, a collar on a band with two pointed leaves
+(open: the top button undone, a V of skin), placket, buttons, a patch pocket, a tie (knot and striped blade), low
+shoes on soles. Skin under the clothes is not drawn, so nothing comes through them. The same design with other
+colours, fits and pieces is another outfit: the wardrobe of the library is made of these pieces. Body numbers for
+cutting: `node devtests/bodyinfo.mjs <film> shot@t actor` (bones, parts, landmarks). (Rules: devtests/wardrobe.mjs)
+
 **A shirt.** `design.body.collar: { style: 'shirt', depth: 0.1, w: 0.03, buttons: 0.085 (metres between them), button:
 '#eef0f4', pocket: true, tie: { color, stripe, len: 0.38, w: 0.03, loose: 0.035 (the knot pulled down: a loosened tie) } }`
 opens the neck on the wearer's own skin (or `inner`), lays a collar's two leaves along the opening, stitches a placket

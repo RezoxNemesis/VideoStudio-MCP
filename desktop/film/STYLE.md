@@ -45,10 +45,11 @@ looking at frames beside the reference, not by a number taken at one moment. Wha
 ## Clothes (the father's set)
 - Shirt: a pointed collar on a band, top button open, placket with buttons, chest pocket, short sleeves that stand off
   the arm and end in a hem band, 6–8 cm of ease round the body, tucked in with a little cloth over the belt.
-  **(to build: collar, placket, pocket, sleeve hems, ease of the shirt body.)**
+  Built: `design.wear.shirt` (engine/wardrobe.js). **(to build: fold and shadow shapes on the cloth, long and rolled sleeves.)**
 - Tie: knot under the collar, loosened, blade to the belt, diagonal stripes. Belt: black, a buckle, loops.
 - Trousers: straight leg from the thigh (`bottom.fit: 'straight'`), a centre crease, a small break over the shoe, a
-  pocket line. **(to build: crease, break, pocket line.)** Shoes: black derbies with a sole line, laces, a highlight.
+  pocket line: built (`design.wear.trousers`, `belt`). Shoes: black derbies with a sole line, laces, a highlight
+  **(to build: laces, toe cap line, the highlight)**.
 - Every outfit is an asset with its pieces, colours and lines (the wardrobe: casual, shirt, formal, suit, kurta …).
   **(to build: the wardrobe.)**
 
