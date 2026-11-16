@@ -133,6 +133,14 @@ jobs:
         working-directory: desktop
         run: npm run dist
 
+      - name: Code Studio — the film engine as one release file, fetched by kit.update (no install, no password)
+        working-directory: desktop
+        run: |
+          set -e
+          node build/pack-kit.cjs release
+          test -s release/film-kit.json.gz && test -s release/film-kit.json.gz.sha256
+          (cd release && sha256sum -c film-kit.json.gz.sha256)
+
       - name: Smoke test — the packaged app starts and renders its window
         working-directory: desktop
         run: |
@@ -220,4 +228,4 @@ jobs:
           From 2.0: native media core, professional player, video scopes, live view of every step Claude takes.
 
           Built from ${GITHUB_SHA::7}."
-          gh release create "$tag" desktop/release/*.deb desktop/release/*.AppImage --title "VideoStudio ${VERSION}" --notes "$notes" --target "$GITHUB_SHA" --latest=false
+          gh release create "$tag" desktop/release/*.deb desktop/release/*.AppImage desktop/release/film-kit.json.gz desktop/release/film-kit.json.gz.sha256 --title "VideoStudio ${VERSION}" --notes "$notes" --target "$GITHUB_SHA" --latest=false

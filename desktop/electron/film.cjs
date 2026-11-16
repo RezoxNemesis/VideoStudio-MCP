@@ -10,13 +10,19 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
 const { FilmPool } = require("./film-pool.cjs");
+const KIT = require("./film-kit.cjs");
 
 const TEXT = /\.(js|mjs|json|md|txt|srt)$/i;
 const safeName = (s) => String(s || "").replace(/[^\p{L}\p{N} _.-]+/gu, "").trim().replace(/\s+/g, " ").slice(0, 60);
 
-/** o: { handle, mustAllow, ffmpeg, ffprobe, root (where films live), userData, send(channel, msg), resources } */
+/** o: { handle, mustAllow, ffmpeg, ffprobe, root (where films live), userData, send(channel, msg), resources,
+ *       appVersion, repo, fetch — for renewing the film engine without an install (film-kit.cjs) } */
 function setupFilm(o) {
-  const filmDir = [path.join(o.resources || "", "film"), path.join(__dirname, "..", "film")].find((d) => d && fs.existsSync(path.join(d, "runner", "worker.mjs")));
+  const BUILTIN = [path.join(o.resources || "", "film"), path.join(__dirname, "..", "film")].find((d) => d && fs.existsSync(path.join(d, "runner", "worker.mjs")));
+  // the engine that draws: a newer one fetched into the person's own folder (no install, no password), else the installation's
+  const kitOpts = () => ({ userData: o.userData, builtin: BUILTIN, appVersion: o.appVersion || "0.0.0", repo: o.repo, fetch: o.fetch });
+  let kit = BUILTIN && o.userData && o.appVersion ? KIT.activeKit(kitOpts()) : { dir: BUILTIN, version: o.appVersion || "", source: "built-in" };
+  let filmDir = kit.dir;
   let pool = null;
   const farm = () => {
     if (!filmDir) throw new Error("The film engine is not part of this installation.");
@@ -47,6 +53,14 @@ function setupFilm(o) {
   const h = o.handle;
   h("film.info", async () => ({ root: ROOT, engine: !!filmDir, templates: templates(), workers: farm().size, reference: filmDir ? path.join(filmDir, "API.md") : null }));
   h("film.reference", async () => fsp.readFile(path.join(filmDir, "API.md"), "utf8"));
+  h("film.kit", async () => ({ version: kit.version, source: kit.source, app: o.appVersion || "" }));
+  // one fetch at a time; the film farm is started again on the new engine (nothing is being drawn while a command runs this)
+  let fetching = null;
+  h("film.kitUpdate", async () => {
+    if (!BUILTIN || !o.fetch || !o.repo) throw new Error("This installation cannot fetch a film engine.");
+    if (!fetching) fetching = KIT.updateKit(kitOpts()).then((r) => { const now = KIT.activeKit(kitOpts()); if (now.dir !== filmDir) { if (pool) { pool.close(); pool = null; } kit = now; filmDir = now.dir; } return { ...r, app: o.appVersion || "" }; }).finally(() => { fetching = null; });
+    return fetching;
+  });
   h("film.list", async () => {
     const out = [];
     try {
@@ -241,7 +255,7 @@ function setupFilm(o) {
     const a = asset2d(id), files = [a.file, ...(a.layers ?? []).map((l) => l.file), ...Object.values(a.parts ?? {}).map((p) => p.file)], f = file && files.includes(file) ? file : a.file;
     return { svg: await fsp.readFile(path.join(lib2dIndex().dir, f), "utf8"), file: f };
   });
-  return { close: () => pool && pool.close(), filmDir };
+  return { close: () => pool && pool.close(), get filmDir() { return filmDir; }, get kit() { return kit; } };
 }
 
 module.exports = { setupFilm };

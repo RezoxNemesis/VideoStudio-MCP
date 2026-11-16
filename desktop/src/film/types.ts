@@ -145,6 +145,10 @@ export interface LibraryPerson {
 export interface FilmApi {
   info(): Promise<{ root: string; engine: boolean; templates: { id: string; name: string; about: string }[]; workers: number; reference: string | null }>;
   reference(): Promise<string>;
+  /** The film engine that draws: its version and whether it is the installation's own or one fetched since. */
+  kit(): Promise<{ version: string; source: "built-in" | "fetched"; app: string }>;
+  /** Fetch the newest film engine into the person's own folder and draw with it (no install, no password). */
+  kitUpdate(): Promise<{ updated: boolean; version: string; source: "built-in" | "fetched"; was: string; latest: string | null; app: string }>;
   list(): Promise<{ dir: string; name: string; width: number; height: number; fps: number; langs: string[]; changed: number }[]>;
   create(name: string, template?: string, config?: Partial<FilmConfig>): Promise<string>;
   open(dir: string): Promise<FilmOpen>;

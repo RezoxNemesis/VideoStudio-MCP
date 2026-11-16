@@ -82,6 +82,8 @@ contextBridge.exposeInMainWorld("vsd", {
   film: {
     info: () => call("film.info"),
     reference: () => call("film.reference"),
+    kit: () => call("film.kit"),
+    kitUpdate: () => call("film.kitUpdate"),
     list: () => call("film.list"),
     create: (name, template, config) => call("film.create", name, template, config),
     open: (dir) => call("film.open", dir),

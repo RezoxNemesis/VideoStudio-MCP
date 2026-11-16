@@ -221,6 +221,14 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**The engine renews itself without an install.** Every release carries this engine as one small file
+(`film-kit.json.gz`, about 400 KB: engine/, kit/, runner/, sensei/, templates/, this handbook). `{"op":"kit.update"}`
+fetches the newest into the person's own folder, checks it against the release's checksum and draws with it from then
+on — no installer, no password; `{"op":"kit.info"}` says which engine draws (`built-in` or `fetched`). The canvas
+library, fonts, sounds and the 2D library stay with the installation. Only when an engine needs something new in the app
+itself (a new command, a change to the Stage's solver) must the app be installed once: raise `minApp` in `film/KIT.json`
+to that release, and `kit.update` will say so in a sentence. (electron/film-kit.cjs; tests/filmkit.test.ts)
+
 **Rolls, dives and falls: nothing under the ground.** A capture is fitted to our body by its feet; in a roll the hips,
 a shoulder and the hands can sink into the floor. `fit: (pose) => grounded(pose)` on the actor lifts the whole body onto
 it, eased in (kit/combat.js; rules in `devtests/ground.mjs`). Moves `dive-roll` and `backflip` in the code collection
