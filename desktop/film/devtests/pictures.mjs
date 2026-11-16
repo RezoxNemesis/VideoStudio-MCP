@@ -30,6 +30,9 @@ onFace(g, F('#404060'), img, 0, 0, 1, 1);
 ok(at(60, 100)[0] < 90 && at(60, 100)[0] > 30, 'it is lit like the face it is on (a photograph at night is dark)', at(60, 100));
 onFace(g, F('#ffffff'), img, 0.5, 0, 1, 1, { fit: 'fill' });
 ok(at(110, 100)[0] > 240 && at(140, 100)[2] > 240 && at(60, 100)[0] < 90, 'it can cover a part of the face, stretched to it', [at(110, 100), at(140, 100)]);
+// a face that does not know its size in metres (a free quad) is still filled from edge to edge
+{ const cv2 = createCanvas(200, 200), g2 = cv2.getContext('2d'); g2.fillStyle = '#00ff00'; g2.fillRect(0, 0, 200, 200); onFace(g2, { uv: (u, v) => [50 + u * 100, 150 - v * 50], col: () => '#ffffff' }, img, 0, 0, 1, 1); const a2 = (x, y) => [...g2.getImageData(x, y, 1, 1).data.slice(0, 3)];
+  ok(a2(55, 125)[0] > 240 && a2(145, 125)[2] > 240 && a2(100, 90)[1] > 240, 'a face without metres is filled from edge to edge, no more', [a2(55, 125), a2(145, 125), a2(100, 90)]); }
 fs.unlinkSync(file);
 
 if (fails.length) { console.error(`pictures: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }

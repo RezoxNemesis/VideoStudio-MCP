@@ -23,13 +23,15 @@ export function picture(file) {
  * default) | 'fill' (stretched), lit: false (keep the picture's own colours: a screen that glows), alpha }.
  */
 export function onFace(g, F, img, u0 = 0, v0 = 0, u1 = 1, v1 = 1, o = {}) {
-  const p0 = F.uv(u0, v1), px = F.uv(u0 + 1 / F.w, v1), py = F.uv(u0, v1 + 1 / F.h), ex = [px[0] - p0[0], px[1] - p0[1]], ey = [py[0] - p0[0], py[1] - p0[1]];
-  const w = (u1 - u0) * F.w, h = (v1 - v0) * F.h; if (Math.hypot(ex[0], ex[1]) * w < 2) return; // too small to see
+  // the part of the face as the picture sees it: its top left corner, the way along its top, the way down its side
+  const p0 = F.uv(u0, v1), pu = F.uv(u1, v1), pv = F.uv(u0, v0), ex = [pu[0] - p0[0], pu[1] - p0[1]], ey = [pv[0] - p0[0], pv[1] - p0[1]];
+  if (Math.hypot(ex[0], ex[1]) < 2 || Math.hypot(ey[0], ey[1]) < 2) return; // too small to see
+  // its true shape in metres where the face knows it (so a face seen at a slant is not cropped by its squashed picture)
+  const w = (u1 - u0) * (F.w > 0 ? F.w : Math.hypot(ex[0], ex[1])), h = (v1 - v0) * (F.h > 0 ? F.h : Math.hypot(ey[0], ey[1]));
   let sx = 0, sy = 0, sw = img.width, sh = img.height;
   if ((o.fit ?? 'cover') === 'cover') { const ra = w / h, ri = sw / sh; if (ri > ra) { const nw = sh * ra; sx = (sw - nw) / 2; sw = nw; } else { const nh = sw / ra; sy = (sh - nh) / 2; sh = nh; } }
-  // (drawn in the picture's own pixels, the face's metres folded into the transform: a canvas does not draw a picture a fifth of a unit wide)
-  const kx = w / sw, ky = h / sh;
-  g.save(); g.transform(ex[0] * kx, ex[1] * kx, -ey[0] * ky, -ey[1] * ky, p0[0], p0[1]);
+  // (drawn in the picture's own pixels, the face folded into the transform: a canvas does not draw a picture a fifth of a unit wide)
+  g.save(); g.transform(ex[0] / sw, ex[1] / sw, ey[0] / sh, ey[1] / sh, p0[0], p0[1]);
   if (o.alpha !== undefined) g.globalAlpha *= o.alpha;
   g.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
   // lit like the face it is on: the light that falls on a white card there is multiplied over it
