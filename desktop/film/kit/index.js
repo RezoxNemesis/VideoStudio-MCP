@@ -7,6 +7,7 @@
 export * from '../engine/core.js';
 export * from '../engine/scene.js';
 export * from '../engine/paintland.js';
+export * from '../engine/surface.js';
 export { post as pole } from '../engine/scene.js'; // a thin upright (the kit's own `post` is the picture finishing)
 export * from '../engine/fx.js';
 export * from '../engine/sim.js';

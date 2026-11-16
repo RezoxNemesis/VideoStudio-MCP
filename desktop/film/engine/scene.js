@@ -409,11 +409,12 @@ export class Mesh {
       }
       const lw = clamp(cam.f / d * 0.018, 0, 2.2);
       if (f.ink !== false && lw > 0.35) { g.lineJoin = 'round'; g.lineWidth = lw; g.strokeStyle = sc.col(f.ink ?? shadeHex(tone, -0.45), d); g.stroke(); } else { g.lineWidth = 0.8; g.strokeStyle = fill; g.stroke(); }
-      if (f.detail && cam.f / d > (f.lod ?? 6)) {
+      if (f.detail && cam.f / d > (f.lod ?? f.detail.lod ?? 6)) {
         // a point of the face by its own two edges: uv(0,0) = first corner, u along the first edge, v along the last
         const o0 = f.p[0], eu = V.sub(f.p[1], o0), ev = V.sub(f.p[f.p.length - 1], o0);
-        const F = { uv: (u, v) => cam.project([o0[0] + eu[0] * u + ev[0] * v, o0[1] + eu[1] * u + ev[1] * v, o0[2] + eu[2] * u + ev[2] * v]), proj: (p) => cam.project(p), w: V.len(eu), h: V.len(ev), d, lw: Math.max(0.5, lw), col: (c) => sc.col(l > 0.3 ? c : l > -0.12 ? shadeHex(c, -0.13) : shadeHex(c, -0.3), d), tone, px: cam.f / d };
-        if (s.every((q) => q[2] > 0.3)) { g.save(); g.clip(); f.detail(g, F); g.restore(); }
+        const F = { uv: (u, v) => cam.project([o0[0] + eu[0] * u + ev[0] * v, o0[1] + eu[1] * u + ev[1] * v, o0[2] + eu[2] * u + ev[2] * v]), proj: (p) => cam.project(p), w: V.len(eu), h: V.len(ev), d, lw: Math.max(0.5, lw), col: (c) => sc.col(l > 0.3 ? c : l > -0.12 ? shadeHex(c, -0.13) : shadeHex(c, -0.3), d), tone, px: cam.f / d,
+          at: (u, v) => [o0[0] + eu[0] * u + ev[0] * v, o0[1] + eu[1] * u + ev[1] * v, o0[2] + eu[2] * u + ev[2] * v], o0, eu, ev, n: side > 0 ? f.n : V.mul(f.n, -1), lit: l, sc, cam };
+        if (f.detail.near || s.every((q) => q[2] > 0.3)) { g.save(); g.clip(); f.detail(g, F); g.restore(); }
       }
     }
   }
