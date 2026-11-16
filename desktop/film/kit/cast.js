@@ -7,6 +7,7 @@
 // The first of the cast is the father of the Papa film. (Rules: devtests/cast.mjs; the sheet to judge on: a film with
 // one person standing in even light, whole, to the waist, the face, the profile.)
 import { makeDesign } from '../engine/character.js';
+import { HAIR_DESIGNS } from './hairstyles.js';
 
 const shadeOf = (hex, k) => { const n = parseInt(hex.slice(1), 16), f = (v) => Math.max(0, Math.min(255, Math.round(v + (k < 0 ? v * k : (255 - v) * k)))); return '#' + [n >> 16 & 255, n >> 8 & 255, n & 255].map((v) => f(v).toString(16).padStart(2, '0')).join(''); };
 
@@ -87,7 +88,12 @@ export const HAIR_STYLES = {
   fringe: () => layeredHair({ vol: 0.014, lift: 0.7, ends: 0.2, strands: false, cols: [26, 62, 98, 134, 166], line: SHORT_LINE }), // short, with a fringe
   crop: () => ({ n: 0, mass: { vol: 0.007, flat: 0.1, line: SHORT_LINE }, locks: [] }),            // cut close: the mass alone
   swept: () => layeredHair({ vol: 0.022, lift: 1.3, ends: 1.15, ears: true, line: EAR_LINE, pointy: true, cols: [18, 40, 62, 84, 106, 128, 150, 170] }),     // a model sheet's lead: full, messy on top, a fringe, the ears free
+  // the styles drawn the animator's way (kit/hairstyles.js: big clumps from the crown in four layers, painted clean) —
+  // messy, neat, spiky, wavy, middlePart, sidePart, longTied, longLoose ('neat' is now the drawn one)
+  ...HAIR_DESIGNS,
 };
+/** the drawn styles are painted the anime way: flat, one shade, one band of shine, ink round the outline and the tips */
+export const DRAWN_HAIR = new Set(Object.keys(HAIR_DESIGNS));
 export const HAIR_COLORS = {
   black: { color: '#1d1a1e', shade: '#0b0a0d', shine: '#5c5866' }, dark: { color: '#221815', shade: '#0e0908', shine: '#7a5f52' }, brown: { color: '#4a3226', shade: '#2a1b14', shine: '#8f6c55' },
   auburn: { color: '#6a3524', shade: '#3e1d13', shine: '#a8674c' }, grey: { color: '#77757b', shade: '#4c4b53', shine: '#bdbcc4' }, white: { color: '#c9c8cc', shade: '#9a99a2', shine: '#f2f2f4' },
@@ -157,7 +163,7 @@ export function man(o = {}) {
     name: o.name ?? 'Man', skin: o.skin ?? '#c08b63', headScale: 1.0, ink: '#241a1a', inkScale: 0.62,
     face: { shape: 'male', eye: { ...ey, color: o.eyeColor ?? '#4a3020', iris: ey.iris ?? 0.56, lash: ey.lash ?? 0.2, flick: 0.03 }, brow: { ...br, color: hc.shade }, eye3: { brow: 0.02 },
       lips: mo.lips, nose: 0.5, lines: age > 48 ? 0.45 : age > 34 ? 0.25 : 0, hairShadow: true, beard: bd ? { ...bd } : null },
-    hair: { ...hc, tufts: [], strands: o.hairStrands ?? 0.5, sheen: 0.6 }, hair3: hs(), beard: null,
+    hair: { ...hc, tufts: [], strands: o.hairStrands ?? 0.5, sheen: 0.6, ...(o.hairPaint ?? (DRAWN_HAIR.has(o.hair ?? 'layered') ? 'clean' : null) ? { paint: o.hairPaint ?? 'clean' } : {}), ...(DRAWN_HAIR.has(o.hair ?? 'layered') ? { strands: 0 } : {}) }, hair3: hs(), beard: null,
     top: { type: 'tunic', color: wear.shirt.color, sleeve: 'short', hem: 0.06, collar: 'v' }, bottom: { type: 'pants', color: wear.trousers.color }, shoes: { color: wear.shoes.color, boot: 0 },
     wear,
   });
@@ -176,7 +182,7 @@ export const MEN = {
   // our own figure from the same three sides until the numbers agreed. 7.1 heads tall with his hair; chin 0.14 of the
   // height down, shoulders 0.22, hem of the T-shirt 0.46, the legs part at 0.54, fingertips 0.56; long legs, a short slim
   // trunk, a fine neck. The sculpt below is what brought the Stage's body to those numbers; the face and hair are our own.
-  kabir: { face: 'lean', eyes: 'anime', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'swept', hairStrands: 0.2, hairColor: 'black', beard: 'none', outfit: 'tee',
+  kabir: { face: 'lean', eyes: 'anime', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'messy', hairColor: 'black', beard: 'none', outfit: 'tee',
     palette: { shirt: '#f3f3f1', shirtShade: '#c9cbd3', trousers: '#26272c', hem: 0.105, shoeKind: 'sneaker' }, skin: '#d9a57e',
     detail: { 'armslegs/upperlegs-height-incr': 0.9, 'armslegs/lowerlegs-height-incr': 0.9, 'torso/torso-scale-vert-decr': 0.6, 'torso/torso-scale-horiz-decr': 0.5, 'torso/torso-muscle-dorsi-decr': 0.5, 'torso/torso-scale-depth-decr': 0.3,
       'neck/neck-scale-horiz-decr': 0.6, 'neck/neck-scale-depth-decr': 0.8, 'neck/neck-scale-vert-decr': 0.5, 'head/head-scale-vert-incr': 0.9, 'head/head-scale-horiz-incr': 0.45, 'head/head-scale-depth-incr': 0.65,

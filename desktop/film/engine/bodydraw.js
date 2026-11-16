@@ -535,8 +535,12 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
       const hp = hairPaint(d, rgbOf, { edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 });
-      const tieC = d.hair.tie ?? '#9c1f26', tieP = { fill: rgbOf(tieC), shade: rgbOf(shadeHex(tieC, -0.32)), thr: 0.05, group: 'tie', bias: 0.003, noAO: true, recv: false };
-      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) { if (m.tie) { eyeIds.add(cp.add(m.pos, m.idx, tieP)); continue; } const id = cp.add(m.pos, m.idx, m.mass ? { ...hp, bands: undefined, bias: 0.001 } : m.set !== undefined ? { ...hp, group: m.set ? 'hair-b' : 'hair-a' } : hp, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82), hp.bands ? m.u ?? null : null); eyeIds.add(id); for (const b of hp.bandIds ?? []) eyeIds.add(b); }
+      const tieC = d.hair.tie ?? (d.hair.paint === 'clean' ? '#2b2b31' : '#9c1f26'), tieP = { fill: rgbOf(tieC), shade: rgbOf(shadeHex(tieC, -0.32)), thr: 0.05, group: 'tie', bias: 0.003, noAO: true, recv: false };
+      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) { if (m.tie) { eyeIds.add(cp.add(m.pos, m.idx, tieP)); continue; } // (hair.paint 'clean' — the anime way: the whole head of hair is ONE form in ONE colour: one terminator over all of
+      //  it, one band of shine, ink only round its outline; no strokes, no streaks, no line round every lock — 16 Nov 2026,
+      //  the owner: hair "full of paint")
+      const clean = d.hair.paint === 'clean', hq = clean ? { ...hp, bands: undefined, group: 'hair', bias: m.mass ? 0.001 : 0.002, zig: 0, edge: 0.45, lap: 0.007, ring: [0.6, 0.63, 0.67, 0.71], hiAt: 2 } : null;
+      const id = cp.add(m.pos, m.idx, clean ? hq : m.mass ? { ...hp, bands: undefined, bias: 0.001 } : m.set !== undefined ? { ...hp, group: m.set ? 'hair-b' : 'hair-a' } : hp, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), clean ? (m.tail ? 0.35 : 1) : 0.82), !clean && hp.bands ? m.u ?? null : null); eyeIds.add(id); for (const b of hp.bandIds ?? []) eyeIds.add(b); }
       ch.hairT = ch.t;
     }
   }

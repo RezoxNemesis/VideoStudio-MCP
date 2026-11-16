@@ -829,3 +829,13 @@ sways over the hips and a head that is never quite still, at its own pace; a spe
 - One sequence per place and stretch of story; shared helpers in their own file.
 - People are drawn whole, nearest last. For a hand on a far shoulder give the nearer one `actor: { id: { bias: 0.5 } }`.
 - Nothing in `.vs` needs care: delete it and everything is made again from the code.
+
+## Hair drawn the animator's way
+
+`man({ hair: 'messy' | 'neat' | 'spiky' | 'wavy' | 'middlePart' | 'sidePart' | 'longTied' | 'longLoose' })`. These styles come from `kit/hairstyles.js`. Each one is a few large clumps that grow from the crown, or from the parting, in four layers: top, bangs (3 to 5 pointed clumps), sides framing the face, and back tufts at the nape. Clumps are solid wedges that come to a point (`th`, `thTip`); `wave: [amp, n]` makes a clump run in an S, and `hang`/`flick` let its end fall and turn out. All of them are painted `hair.paint: 'clean'`:
+
+- one flat colour and one soft shade, with the terminator falling over the whole head as one form;
+- one narrow band of shine (`ring`);
+- ink round the outline, and between clumps only where one stands off another (`lap`), so the lines land at the tips and never along the roots.
+
+The rules are in `devtests/hairdesign.mjs`. They check that the eight outlines all differ, and that each style is what its name says.

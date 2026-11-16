@@ -165,13 +165,16 @@ export function makeHair(B, spec, seed = 1) {
     for (let i = 0; i <= M; i++) { const u = i / M, d = dv ? slerp(slerp(d0, dv, u), slerp(dv, d1, u), u) : slerp(d0, d1, u); dirs.push(d); rad.push(HS.r(Math.atan2(d[0], d[2]), Math.asin(clamp(d[1], -1, 1)))); }
     // (the head's own bumps — a brow, an ear — are smoothed along the lock: hair lies over them in one sweep)
     const line = dirs.map((d, i) => { let a = 0, n = 0, mx = 0; for (let j = -4; j <= 4; j++) { const q = Math.max(0, Math.min(M, i + j)); a += rad[q]; n++; if (Math.abs(j) <= 1) mx = Math.max(mx, rad[q]); } const u = i / M, sm = a / n, ends = Math.min(1, Math.min(u, 1 - u) * 8); return add(HS.c, mul(d, Math.max(rad[i], sm * ends + rad[i] * (1 - ends), mx - 0.004) + liftAt(u) + (massVol ? massVol(Math.atan2(d[0], d[2]), Math.asin(clamp(d[1], -1, 1))) : 0))); });
+    // (wave: [amplitude m, how many waves] — the lock runs in an S, across itself and in and out from the head, so the
+    //  outline of wavy hair waves too)
+    if (k.wave) { const [amp, nw] = k.wave, src = line.map((p) => p.slice()); for (let i = 1; i <= M; i++) { const u = i / M, tg = norm(sub(src[Math.min(M, i + 1)], src[i - 1])), out = norm(sub(src[i], HS.c)), sd = norm(cross(tg, out)), ph = 2 * Math.PI * nw * u, env = Math.min(1, u * 3); line[i] = add(src[i], add(mul(sd, amp * Math.sin(ph) * env), mul(out, amp * 0.5 * (1 - Math.cos(ph)) * env))); } }
     if ((k.hang ?? 0) > 0) {
       let p = line[M], dir = norm(sub(line[M], line[M - 2])); const step = 0.005, clear = Math.max(0.004, lf[2] * 0.6);
       // (flick 0…1: past where it is led to, the lock turns its tip OUT from the head instead of hanging straight — the ends at ear and nape of drawn hair)
       for (let g2 = 0; g2 < k.hang; g2 += step) { dir = norm(add(mul(dir, 0.72), [0, -0.28, 0])); if (k.flick) dir = norm(add(dir, mul(norm([p[0] - HS.c[0], 0.25, p[2] - HS.c[2]]), k.flick * 0.6 * (0.3 + 0.7 * g2 / k.hang)))); p = HS.out(add(p, mul(dir, step)), clear); line.push(p); }
     }
     const ev = evenly(line, S), fr = frameAlong(ev.pts);
-    clumps.push({ pts: ev.pts, wides: fr.wides, nrms: fr.nrms, w: k.w ?? 0.03, len: ev.len, th: k.th ?? 0.011, stiff: k.stiff ?? (k.hang ? 1 : 2.2), ph: R() * 6.28, lock: true, taper: k.taper ?? null, broad: k.broad ?? 0 });
+    clumps.push({ pts: ev.pts, wides: fr.wides, nrms: fr.nrms, w: k.w ?? 0.03, len: ev.len, th: k.th ?? 0.011, stiff: k.stiff ?? (k.hang ? 1 : 2.2), ph: R() * 6.28, lock: true, taper: k.taper ?? null, broad: k.broad ?? 0, thTip: k.thTip ?? 0.25 }); // (thTip: how thick a lock still is at its point — a drawn clump comes to a point every way)
   }
   for (const v of toTie ? [] : roots) {
     const r0 = pt(v), nn = nrm(v);
@@ -258,7 +261,7 @@ export function hairMeshes(H, B, dt, t, wind = null) {
       // (hair drawn back, and a designed lock, begin as a stroke begins — from a point, thin and flat — and are full a little way along)
       const rootK = c.back || c.lock ? clamp(0.12 + u / 0.26) : 1;
       const u0 = 0.3 + 0.48 * (c.broad ?? 0); // (a broad lock — `broad` 0…1 — keeps its width nearly to its end and closes in a short point)
-      const wv2 = c.w * 0.5 * (c.back || c.lock ? rootK * (u < u0 ? 1 : Math.pow(1 - (u - u0) / (1 - u0), c.broad ? 0.8 : 0.7)) : u < 0.3 ? 0.72 + 0.28 * (u / 0.3) : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) + 0.0006, th = c.th * (1 - 0.75 * u) * rootK + 0.0005, o = (ci * S + i) * 12;
+      const wv2 = c.w * 0.5 * (c.back || c.lock ? rootK * (u < u0 ? 1 : Math.pow(1 - (u - u0) / (1 - u0), c.broad ? 0.8 : 0.7)) : u < 0.3 ? 0.72 + 0.28 * (u / 0.3) : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) + 0.0006, th = c.th * (1 - (1 - (c.thTip ?? 0.25)) * u) * rootK + 0.0005, o = (ci * S + i) * 12;
       pos[o] = p[0] - wd[0] * wv2; pos[o + 1] = p[1] - wd[1] * wv2; pos[o + 2] = p[2] - wd[2] * wv2;
       pos[o + 3] = p[0] + nn[0] * th; pos[o + 4] = p[1] + nn[1] * th; pos[o + 5] = p[2] + nn[2] * th;
       pos[o + 6] = p[0] + wd[0] * wv2; pos[o + 7] = p[1] + wd[1] * wv2; pos[o + 8] = p[2] + wd[2] * wv2;

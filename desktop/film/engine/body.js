@@ -563,7 +563,9 @@ export class CelPainter {
           const q0 = d ? q - w : q - 1, q3 = d ? q2 + w : q2 + 1; const s0 = q0 >= 0 && ib[q0] === a ? Math.abs(1 / zb[q0] - za) : 0, s1 = q3 < N && ib[q3] === a ? Math.abs(1 / zb[q3] - z2) : 0; if (dz > 3 * Math.max(s0, s1) + zk * 0.5 * (P[a].edge ?? 1)) stamp(x, y, inR); } continue; }
         if (!a || !b) { stamp(d ? x : (a ? x : x + 1), d ? (a ? y : y + 1) : y, outR * (P[a || b].ow ?? 1)); continue; }
         if (P[a].line === false && P[b].line === false) continue;
-        if (P[a].group && P[a].group === P[b].group) continue;
+        // (parts of one group that LAP — locks of hair over the mass and each other — are divided by a line only where one
+        //  stands off the other: at the tips of the clumps, never along their roots)
+        if (P[a].group && P[a].group === P[b].group) { if (P[a].lap && P[b].lap && Math.abs(1 / zb[q] - 1 / zb[q2]) > Math.min(P[a].lap, P[b].lap)) stamp(x, y, inR * 0.85, inkI); continue; }
         if (P[a].joins && P[a].joins === P[b].group || P[b].joins && P[b].joins === P[a].group) { // a part that grows out of another (a finger out of the palm): no line where they join —
           const za = 1 / zb[q], z2 = 1 / zb[q2]; if (Math.abs(za - z2) < (o.joinEdge ?? 0.005)) continue; }                                 //   only where it lies over it (a thumb across the fist, a fingertip on the palm)
         // faces of one material that only differ by a shade (a model's colour atlas) are one surface: no line between them
@@ -693,7 +695,7 @@ export class CelPainter {
             if (occ > 0.25 && k > 0) for (let m = 0; m < 3; m++) tone[m] += (dp[m] - tone[m]) * (occ - 0.25) * 0.22 * k; // only deep tucks darken the light a little
             if (p.skin && kForm > 0 && kForm < 1) { const band = 4 * kForm * (1 - kForm) * 0.85 * (1 - 0.45 * sf) * (k / kForm); /* the warmth where the form itself turns from the light — not along a cast shadow */ tone[0] += 26 * band; tone[1] -= 4 * band; tone[2] -= 12 * band; }
             if (p.metal) { const sp = sstep(0.8, 0.95, l * 0.5 + v * 0.5) * 0.7; const dk = sstep(0.16, 0.3, l) * (1 - sstep(0.3, 0.46, l)); const hi = p.hi ?? [250, 250, 252]; for (let m = 0; m < 3; m++) { tone[m] += (hi[m] - tone[m]) * sp; tone[m] *= 1 - dk * 0.3; } }
-            if (p.hairy && k > 0.5) { const l2 = p.zig && ub ? l + p.zig * (Math.abs(ub[q]) - 0.5) : l, ring = sstep(0.5, 0.58, l2) * (1 - sstep(0.62, 0.72, l2)) * sstep(0.35, 0.6, v); /* zig: the sheen stands higher on the ridge of a lock than at its edges */ if (ring > 0) { const hi = p._sheen ??= p.fill.map((f, m) => f + ((p.hi ?? lt)[m] - f) * 0.45); for (let m = 0; m < 3; m++) tone[m] += (hi[m] - tone[m]) * ring * 0.8; } }
+            if (p.hairy && k > 0.5) { const l2 = p.zig && ub ? l + p.zig * (Math.abs(ub[q]) - 0.5) : l, rg = p.ring ?? [0.5, 0.58, 0.62, 0.72], ring = sstep(rg[0], rg[1], l2) * (1 - sstep(rg[2], rg[3], l2)) * sstep(0.35, 0.6, v); /* ring: where on the lit side the band of sheen lies (a narrow one: the clean anime band) */ /* zig: the sheen stands higher on the ridge of a lock than at its edges */ if (ring > 0) { const hi = p._sheen ??= p.fill.map((f, m) => f + ((p.hi ?? lt)[m] - f) * 0.45); for (let m = 0; m < 3; m++) tone[m] += (hi[m] - tone[m]) * ring * 0.8; } }
             c = tone;
           }
         }
