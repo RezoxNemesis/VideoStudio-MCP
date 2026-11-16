@@ -1212,8 +1212,13 @@ function createWindow() {
   win.webContents.on("render-process-gone", (_e, d) => {
     crashLog(`window gone: ${d.reason} code=${d.exitCode}`);
     if (d.reason !== "clean-exit") setTimeout(() => win && !win.isDestroyed() && win.reload(), 1500);
+    // (a page killed by the watchdog comes back with reason "killed": reloaded the same way)
   });
-  win.webContents.on("unresponsive", () => crashLog("window unresponsive"));
+  // (a window that stays frozen 12 s is restarted: the app never sits frozen, whatever the graphics card is doing —
+  //  electron/watchdog.cjs; render-process-gone below reloads it)
+  const dog = require("./watchdog.cjs").watchdog({ ms: 12_000, onHang: () => { crashLog(`window frozen for 12 s: restarted`); try { win.webContents.forcefullyCrashRenderer(); } catch { try { win.reload(); } catch { /* gone */ } } } });
+  win.webContents.on("unresponsive", () => { crashLog("window unresponsive"); dog.unresponsive(); });
+  win.webContents.on("responsive", () => dog.responsive());
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -1440,6 +1445,10 @@ app.on("child-process-gone", (_e, d) => {
   crashLog(`child gone: ${d.type} ${d.reason} code=${d.exitCode}`);
   if (d.type === "GPU") {
     gpuRestarts++;
+    // (the graphics card is busy or full — another program's render: Chromium falls back to drawing in software after
+    //  repeated losses; the page is reloaded once that has happened, so the window comes back on it instead of waiting on
+    //  a picture from a GPU that is gone. The film workers draw and encode on the CPU and are not touched.)
+    if (gpuRestarts === 3) { crashLog("GPU lost three times: the window is reloaded to draw in software (CPU and RAM)"); setTimeout(() => win && !win.isDestroyed() && win.reload(), 2500); }
     // Tell the window so the viewer rebuilds its picture as soon as the GPU process is back.
     for (const ms of [800, 3000]) setTimeout(() => win && !win.isDestroyed() && win.webContents.send("gpu:lost", { reason: d.reason, code: d.exitCode, restarts: gpuRestarts }), ms);
   }
