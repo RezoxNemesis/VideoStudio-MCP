@@ -51,10 +51,18 @@ export function finishFigure(g, spr, F, env = {}) {
   }
   keepOutline(sg, own, w, h);
 }
-/** Laying a layer over a soft edge thickens it: give every point of the figure back the cover it had. */
+/**
+ * Laying a layer over a soft edge thickens it: give every point of the figure back the cover it had. And the ink stays
+ * ink: a line (a near-black point of the figure) keeps its own colour, so the light laid over the figure never turns the
+ * line art grey (16 Nov 2026: against a light ground every outline read as a soft grey-brown).
+ */
 function keepOutline(sg, own, w, h) {
   const im = sg.getImageData(0, 0, w, h), d = im.data; let changed = false;
-  for (let i = 3; i < d.length; i += 4) if (d[i] !== own[i]) { d[i] = own[i]; changed = true; }
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] !== own[i + 3]) { d[i + 3] = own[i + 3]; changed = true; }
+    const l = own[i] * 0.3 + own[i + 1] * 0.59 + own[i + 2] * 0.11;
+    if (own[i + 3] > 0 && l < 58) { const k = 1 - Math.max(0, (l - 38) / 20); for (let c = 0; c < 3; c++) { const v = Math.round(d[i + c] + (own[i + c] - d[i + c]) * k); if (v !== d[i + c]) { d[i + c] = v; changed = true; } } }
+  }
   if (changed) sg.putImageData(im, 0, 0);
 }
 

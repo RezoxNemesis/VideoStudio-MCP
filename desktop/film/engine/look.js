@@ -26,7 +26,7 @@ const ALIAS = { 'anime-classic': 'classic', cel: 'classic', '2d': 'anime', '2.5d
  * post: passes over the finished frame; grain / vignette: multipliers of the usual amounts
  */
 export const LOOKS = {
-  anime: { about: '2D anime, painted: crisp cel shadows with soft light across the lit side, deeper tones where forms tuck in, warm skin at the turn of the light, polished metal, hair sheen, rim light, ink outlines and inner lines tinted by their colours, a soft glow on lights', paint: { mode: 'paint', rim: true }, finish: { wrap: 0.5, para: 0.18 }, post: ['bloom', 'grade', 'diffuse'], diffuse: 0.25, bloom: 0.35 },
+  anime: { about: '2D anime, painted: crisp cel shadows with soft light across the lit side, deeper tones where forms tuck in, warm skin at the turn of the light, polished metal, hair sheen, rim light, ink outlines and inner lines tinted by their colours, a soft glow on lights', paint: { mode: 'paint', rim: true }, finish: { wrap: 0.2, para: 0.18 }, post: ['bloom', 'grade', 'diffuse'], diffuse: 0.1, bloom: 0.35 }, // (16 Nov 2026: a wrap of 0.5 and a glow of 0.25 turned every ink line grey against a light ground; line art reads crisp and dark)
   classic: { about: '2D anime, classic: two flat cel tones and black ink (the look before 2.5)' },
   paper: { about: 'Paper cut: flat paper colours with pale cut edges, layered shadows, paper grain, on threes', paint: { mode: 'flat', ink: [244, 236, 220], outer: 0.6, inner: 0.4 }, hold: 3, layers: { blur: 8, dx: 4, dy: 6, a: 0.38 }, post: ['paper'], grain: 0.4 },
   puppet: { about: 'Cut-out puppet theatre: paper pieces that jolt from drawing to drawing, on threes', paint: { mode: 'flat', ink: [236, 226, 206], outer: 0.7, inner: 0.5 }, hold: 3, jitter: 2.2, layers: { blur: 6, dx: 5, dy: 7, a: 0.4 }, post: ['paper'], grain: 0.4 },
@@ -174,7 +174,13 @@ function bloom(g, W, H, amt, src) {
   for (let i = 0; i < d.length; i += 4) { const l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255, k = clamp((l - 0.72) / 0.28); d[i] *= k; d[i + 1] *= k; d[i + 2] *= k; }
   ga.putImageData(im, 0, 0);
   gb.clearRect(0, 0, w, h); gb.filter = `blur(${(6 * H / 1080).toFixed(1)}px)`; gb.drawImage(a, 0, 0); gb.filter = 'none';
+  // (ink stays ink: the glow of a light ground must not grey the dark line beside it — 16 Nov 2026, every outline
+  //  against a pale sky or wall read as soft grey-brown; a near-black point keeps its own value)
+  const before = g.getImageData(0, 0, W, H);
   g.save(); g.globalCompositeOperation = 'screen'; g.globalAlpha = clamp(amt); g.drawImage(b, 0, 0, W, H); g.restore();
+  const after = g.getImageData(0, 0, W, H), o = before.data, n = after.data; let ch = false;
+  for (let i = 0; i < n.length; i += 4) { const l = o[i] * 0.3 + o[i + 1] * 0.59 + o[i + 2] * 0.11; if (l < 62) { const k = 1 - Math.max(0, (l - 40) / 22); for (let c = 0; c < 3; c++) { const v = Math.round(n[i + c] + (o[i + c] - n[i + c]) * k); if (v !== n[i + c]) { n[i + c] = v; ch = true; } } } }
+  if (ch) g.putImageData(after, 0, 0);
 }
 
 /** Light shafts: the bright sky round the sun smeared towards it, the way light hangs in dusty air. */
