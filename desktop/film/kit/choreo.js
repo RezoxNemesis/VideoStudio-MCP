@@ -12,6 +12,7 @@
 //   shots: () => beatShots(C, { id: 'm' })             // a camera for every beat; beatLabel(C, t) names what is done
 // Yaw is in degrees: 0 faces +z, 90 faces +x (a body's left is the side its yaw grows towards).
 import { FACTS } from './movefacts.js';
+import { loadBake } from '../engine/bake.js';
 export { FACTS };
 const D2R = Math.PI / 180, r3 = (x) => Math.round(x * 1000) / 1000, wrap = (a) => ((a + 540) % 360) - 180;
 
@@ -111,8 +112,10 @@ export function choreo(o = {}) {
       const p = me(id), t = Math.max(g.t ?? now, p.free), gait = g.gait ?? 'walk', speed = g.speed ?? SPEED[gait] ?? 1.3, D = Math.hypot(to[0] - p.x, to[1] - p.z);
       const heading = D > 1e-3 ? Math.atan2(to[0] - p.x, to[1] - p.z) / D2R : p.yaw, turned = Math.abs(wrap(heading - p.yaw)) > 57;
       // (the Stage: a turn first when he faces away, the stride grows and settles, then he turns to `face`)
-      const t1 = t + D / speed + 0.45 + (turned ? 0.42 : 0) + (g.face !== undefined && Math.abs(wrap(g.face - heading)) > 8 ? 0.7 : 0.15);
-      push(p, { t: r3(t), go: [r3(to[0]), r3(to[1])], gait, speed, ...(g.face !== undefined ? { face: r3(g.face) } : {}), ...(g.clip ? { clip: g.clip } : {}) }, { x: to[0], z: to[1], yaw: g.face ?? heading }, r3(t1));
+      // (through: he does not stop there — the next movement takes him over while he is still at speed, a little short of the mark)
+      const t1 = g.through ? t + D / speed + (turned ? 0.42 : 0) + 0.1 : t + D / speed + 0.45 + (turned ? 0.42 : 0) + (g.face !== undefined && Math.abs(wrap(g.face - heading)) > 8 ? 0.7 : 0.15);
+      const short = g.through && D > 0.8 ? Math.min(0.35, speed * 0.09) : 0, end = [to[0] - Math.sin(heading * D2R) * short, to[1] - Math.cos(heading * D2R) * short];
+      push(p, { t: r3(t), go: [r3(to[0]), r3(to[1])], gait, speed, ...(g.face !== undefined ? { face: r3(g.face) } : {}), ...(g.clip ? { clip: g.clip } : {}) }, { x: end[0], z: end[1], yaw: g.through ? heading : g.face ?? heading }, r3(t1));
       return { t0: r3(t), t1: r3(t1) };
     },
     do(id, move, d = {}) {
@@ -143,8 +146,12 @@ export function choreo(o = {}) {
       const pa = me(a), at = d.at ?? [pa.x, pa.z], yaw = d.yaw ?? pa.yaw, c = Math.cos(yaw * D2R), s = Math.sin(yaw * D2R), q = F.pair;
       const bAt = [at[0] + (q.side * c + q.fwd * s) * leg, at[1] + (-q.side * s + q.fwd * c) * leg], bYaw = wrap(yaw + q.yaw);
       const moved = (p, to) => Math.hypot(p.x - to[0], p.z - to[1]) > 0.03;
+      // (their ways to the marks may cross: then the second goes round — by a point beside the middle of his way, on the side away from the first)
+      const pb0 = me(b), La = Math.hypot(at[0] - pa.x, at[1] - pa.z), Lb = Math.hypot(bAt[0] - pb0.x, bAt[1] - pb0.z); let nearest = 9;
+      for (let u = 0; u <= 1.001; u += 0.05) { const ta = Math.min(1, u * Math.max(La, Lb) / Math.max(La, 1e-3)), tb = Math.min(1, u * Math.max(La, Lb) / Math.max(Lb, 1e-3)); nearest = Math.min(nearest, Math.hypot(pa.x + (at[0] - pa.x) * ta - pb0.x - (bAt[0] - pb0.x) * tb, pa.z + (at[1] - pa.z) * ta - pb0.z - (bAt[1] - pb0.z) * tb)); }
+      const round = nearest < 0.9 && Lb > 1 ? (() => { const mx = (pb0.x + bAt[0]) / 2, mz = (pb0.z + bAt[1]) / 2, nx = -(bAt[1] - pb0.z) / Lb, nz = (bAt[0] - pb0.x) / Lb, am = [(pa.x + at[0]) / 2, (pa.z + at[1]) / 2], sgn = (am[0] - mx) * nx + (am[1] - mz) * nz > 0 ? -1 : 1; let w = [mx + nx * 1.5 * sgn, mz + nz * 1.5 * sgn]; if (w[1] < area.z[0] + 0.3 || w[1] > area.z[1] - 0.3 || w[0] < area.x[0] + 0.3 || w[0] > area.x[1] - 0.3) w = [mx - nx * 1.5 * sgn, mz - nz * 1.5 * sgn]; return w; })() : null;
       if (moved(pa, at) || Math.abs(wrap(pa.yaw - yaw)) > 1) C.go(a, at, { face: yaw, t: d.t, gait: d.gait });
-      const pb = me(b); if (moved(pb, bAt) || Math.abs(wrap(pb.yaw - bYaw)) > 1) C.go(b, bAt, { face: bYaw, t: d.t, gait: d.gait });
+      const pb = me(b); if (round) C.go(b, round, { t: d.t, gait: d.gait, through: true }); if (moved(pb, bAt) || Math.abs(wrap(pb.yaw - bYaw)) > 1) C.go(b, bAt, { face: bYaw, t: d.t, gait: d.gait });
       const t = Math.max(d.t ?? now, pa.free, pb.free) + (d.settle ?? 0.25);
       const A = C.do(a, move, { t, face: yaw, quiet: true, rate: d.rate }), B = C.do(b, m.with, { t, face: bYaw, quiet: true, rate: d.rate });
       const beat = { n: beats.length + 1, id: move, name: d.name ?? m.name, kind: m.kind, by: [a, b], t0: A.t0, t1: Math.max(A.t1, B.t1), from: A.from, to: A.to, fromB: B.from, toB: B.to }; beats.push(beat); return beat;
@@ -152,6 +159,12 @@ export function choreo(o = {}) {
     both(move, ids, d = {}) {
       const t = Math.max(d.t ?? now, ...ids.map((i) => me(i).free)), R = ids.map((i) => C.do(i, move, { ...d, t, quiet: true }));
       const beat = { n: beats.length + 1, id: move, name: d.name ?? MOVEMENTS[move].name, kind: MOVEMENTS[move].kind, by: [...ids], t0: Math.min(...R.map((r) => r.t0)), t1: Math.max(...R.map((r) => r.t1)), from: R[0].from, to: R[0].to, fromB: R[1]?.from, toB: R[1]?.to }; beats.push(beat); return beat;
+    },
+    /** Several movements as ONE beat (two performers doing different things at once; or a run of small ones): group('name', () => { C.do(…); C.do(…); }) */
+    group(name, fn) {
+      const n0 = beats.length; fn(C); const made = beats.splice(n0); if (!made.length) return null;
+      const beat = { ...made[0], n: n0 + 1, name: name ?? [...new Set(made.map((q) => q.name))].join(' · '), by: [...new Set(made.flatMap((q) => q.by))], t0: Math.min(...made.map((q) => q.t0)), t1: Math.max(...made.map((q) => q.t1)), parts: made };
+      beats.push(beat); return beat;
     },
     /** the Stage's commands: one list of actions for each body (a standing body between two movements breathes) */
     steps() {
@@ -190,17 +203,17 @@ export function beatLabel(C, t) {
   const b = C.beats.find((q) => t >= q.t0 - 1e-6 && t < q.t1); return b ? { n: b.n, id: b.id, name: b.name, kind: KINDS[b.kind], by: b.by, u: t - b.t0 } : null;
 }
 
-const VIEWS = ['front', 'left', 'right'], AZ = { front: 0, left: -28, right: 28 };
+const VIEWS = ['front', 'left', 'right'], AZ = { front: 0, left: -16, right: 16 };
 /**
  * A camera for every beat of a choreography. o: { id: prefix of the shot ids, side: the camera's side of the floor in degrees (0: it
  * stands at +z looking towards −z), fov, far: extra metres back, h: its height, long: seconds after which a beat is cut in two,
- * top / over / post / hold: given to every shot, each: (shot, beat) => more for one shot }
+ * top / over / post / hold: given to every shot, each: (shot, beat) => more for one shot, who: (i, beat, t0, t1) => ids the i-th shot frames (default: the beat's performers) }
  * The lens stands off to the side the floor is watched from, level with the hips; it goes with the performers along the ground
  * only (its height is held: a jump reads against a level frame), and every cut changes the view (front, left, right).
  */
 export function beatShots(C, o = {}) {
   const cuts = [0], long = o.long ?? 6.5;
-  for (const b of C.beats) { if (b.t0 - cuts.at(-1) > 1.2) cuts.push(b.t0); }
+  for (const b of [...C.beats].sort((p, q) => p.t0 - q.t0)) { if (b.t0 - cuts.at(-1) > 1.2) cuts.push(b.t0); }
   cuts.push(C.dur);
   // (a beat too short to hold a shot is joined to the one before; a stretch too long is cut in equal parts)
   const spans = [];
@@ -209,18 +222,56 @@ export function beatShots(C, o = {}) {
   const side = (o.side ?? 0) * D2R, rot = (v, a) => [v[0] * Math.cos(a) + v[2] * Math.sin(a), 0, -v[0] * Math.sin(a) + v[2] * Math.cos(a)];
   return spans.map(([t0, t1], i) => {
     const mid = (t0 + t1) / 2, beat = C.beats.find((b) => mid >= b.t0 && mid < b.t1) ?? C.beats.filter((b) => b.t0 <= mid).at(-1) ?? C.beats[0];
-    const who = beat?.by ?? C.ids(), view = VIEWS[i % 3], dir = rot([0, 0, 1], side + AZ[view] * D2R);
+    const who = o.who?.(i, beat, t0, t1) ?? beat?.by ?? C.ids(), view = VIEWS[i % 3], dir = rot([0, 0, 1], side + AZ[view] * D2R);
     // how much ground the shot must hold: where its performers go while it lasts, as laid out
     let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; for (const id of who) for (let t = t0; t <= t1 + 1e-6; t += 0.25) { const p = C.where(id, t); x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
-    const span = Math.hypot(x1 - x0, z1 - z0), fov = o.fov ?? 34, dist = (o.far ?? 0) + Math.max(4.6, 3.9 + span * 0.62), h = o.h ?? 1.05;
+    // how far back the lens must stand so that everyone it frames is IN the picture all through the shot: the picture is
+    // 1.09 × the distance wide (fov 34°, 16:9). A lens that goes with the performers must hold how far apart they are;
+    // a lens that stands still must hold all the ground they cover. Two at different depths are seen a little from above,
+    // so the one behind stands clear of the one in front.
+    const span = Math.hypot(x1 - x0, z1 - z0), fov = o.fov ?? 34, follow = span > 3.2, wide = 2 * Math.tan((fov * D2R) / 2) * (16 / 9);
+    let apart = 0, deep = 0; if (who.length > 1) for (let t = t0; t <= t1 + 1e-6; t += 0.25) { const ps = who.map((id) => C.where(id, t)); for (const p of ps) for (const q of ps) { apart = Math.max(apart, Math.hypot(p.x - q.x, p.z - q.z)); deep = Math.max(deep, Math.abs((p.x - q.x) * dir[0] + (p.z - q.z) * dir[2])); } }
+    // (someone who leaves the ground needs air over his head: the lens stands farther back and looks a little higher)
+    const air = Math.max(0, ...C.beats.flatMap((q) => q.parts ?? [q]).filter((q) => q.t0 < t1 && q.t1 > t0 && q.by.some((id) => who.includes(id))).map((q) => FACTS[q.id]?.up ?? 0));
+    const need = follow ? apart + (who.length > 1 ? 2.6 : 0) + 1.2 : span + 2.8, dist = (o.far ?? 0) + Math.max(air > 0.15 ? 5.8 : 4.6, need / wide), h = o.h ?? (deep > 0.6 ? 1.75 : 1.05), aimY = air > 0.15 ? 1.15 : 0.95;
     const cam = (t, ctx) => {
-      // the middle of the performers' hips on the ground; when they travel far the lens goes with them, eased
+      // the middle of the performers' hips on the ground; when they travel far the lens goes with them
       const ps = who.map((id) => ctx.poses[id]?.j?.root).filter(Boolean), m = ps.length ? [ps.reduce((s, p) => s + p[0], 0) / ps.length, 0, ps.reduce((s, p) => s + p[2], 0) / ps.length] : [(x0 + x1) / 2, 0, (z0 + z1) / 2];
-      const k = span > 3 ? 0.85 : 0.35, cx = (x0 + x1) / 2 * (1 - k) + m[0] * k, cz = (z0 + z1) / 2 * (1 - k) + m[2] * k;
-      return { pos: [cx + dir[0] * dist, h, cz + dir[2] * dist], target: [cx, 0.95, cz], fov };
+      const k = follow ? 1 : 0.3, cx = (x0 + x1) / 2 * (1 - k) + m[0] * k, cz = (z0 + z1) / 2 * (1 - k) + m[2] * k;
+      return { pos: [cx + dir[0] * dist, h, cz + dir[2] * dist], target: [cx, aimY, cz], fov };
     };
     const sh = { id: `${o.id ?? 'm'}_${String(i + 1).padStart(2, '0')}`, t0: r3(t0), t1: r3(t1), view, beat: beat?.n, cam, note: beat ? `${beat.n} ${beat.name} (${view})` : view };
     for (const k of ['top', 'over', 'post', 'hold', 'dof']) if (o[k] !== undefined) sh[k] = o[k];
     return o.each ? { ...sh, ...(o.each(sh, beat) ?? {}) } : sh;
   });
+}
+
+/**
+ * The sound of feet from a performance itself: a step each time a foot comes down, a landing when the body comes down
+ * from the air. contact: one byte a frame (bit 1 = left foot down, bit 2 = right), as the Stage solved it.
+ * o: { gain: 0.25, pan, air: seconds off the ground that make a landing (0.16) } → [{ t, sfx: 'step' | 'land', gain, pitch, pan }]
+ */
+export function footfallsOf(contact, fps, o = {}) {
+  const out = [], g = o.gain ?? 0.25, airMin = o.air ?? 0.16; let airFrom = -1, last = -1;
+  for (let i = 1; i < contact.length; i++) {
+    const was = contact[i - 1], is = contact[i], t = i / fps;
+    if (was && !is) airFrom = i;
+    if (!was && is && airFrom >= 0 && (i - airFrom) / fps >= airMin) { const air = (i - airFrom) / fps; out.push({ t: r3(t), sfx: 'land', gain: r3(Math.min(1, g * (1.5 + air * 1.6))), pitch: 0.9, pan: o.pan ?? 0 }); airFrom = -1; last = i; continue; }
+    if (is) airFrom = -1;
+    const rise = is & ~was; if (!rise || (i - last) / fps < 0.12) continue; // (the same foot fidgeting is not a step)
+    if (was === 0 && is) { last = i; out.push({ t: r3(t), sfx: 'step', gain: r3(g * 0.9), pitch: rise & 1 ? 0.96 : 1.05, pan: o.pan ?? 0 }); continue; }
+    last = i; out.push({ t: r3(t), sfx: 'step', gain: r3(g * (rise === 3 ? 1 : 0.85)), pitch: rise & 1 ? 0.96 : 1.05, pan: o.pan ?? 0 });
+  }
+  return out;
+}
+/** footfallsOf for the solved performance of a sequence: footfalls('m01', ['a', 'b'], { gain }) — nothing until it has been solved once. */
+export function footfalls(bakeName, ids, o = {}) {
+  let B = null; try { B = loadBake(bakeName); } catch { return []; }
+  return ids.flatMap((id, i) => { const A = B?.actors?.[id]; return A?.contact ? footfallsOf(A.contact, B.fps, { ...o, pan: o.pan ?? (i % 2 ? 0.25 : -0.25) }) : []; });
+}
+
+/** What everyone is doing at a moment: [{ who, name, kind, n (the movement's number in the order they begin), u }] — a pair or a "both" is one entry for both. */
+export function doingAt(C, t) {
+  const all = C.beats.flatMap((b) => b.parts ?? [b]).sort((p, q) => p.t0 - q.t0 || (p.by[0] < q.by[0] ? -1 : 1));
+  return all.map((p, i) => ({ p, n: i + 1 })).filter(({ p }) => t >= p.t0 - 1e-6 && t < p.t1).map(({ p, n }) => ({ who: p.by, id: p.id, name: p.name, kind: KINDS[p.kind], n, u: t - p.t0 }));
 }

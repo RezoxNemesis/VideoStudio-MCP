@@ -69,3 +69,23 @@ looking at frames beside the reference, not by a number taken at one moment. Wha
 1. Draw the sheet (whole figure front and side, waist-up, face) in even light; put it beside the reference.
 2. Name every gap in words; fix the engine with a rule first (devtests), then the design; draw again.
 3. Only then light it for the scene. Keep the sheet with the character.
+
+
+## The order a character is made in (the owner's diagram, 16 Nov 2026)
+
+A drawn character is built in seven steps, and no step is begun before the one under it is right:
+1. **Stick figure**: pose and height. (Ours: the Stage's skeleton; 7.5 to 8 heads tall, 7.1 with the hair's volume.)
+2. **Simple volumes**: a box for the trunk, cylinders for arms and legs, a circle with a cross for the head.
+3. **A clean body**. (Ours: the sculpted body, its proportions FITTED BY MEASURE: `devtests/measure.mjs` lays green
+   horizontal and red vertical lines over a reference and over our figure from the same sides; the sculpt is corrected
+   until the numbers agree. A reference is measured, never traced.)
+4. **Clothes, only after the body is correct**. (Ours: `design.wear`, cut over the body.)
+5. **Hair and face**: the head from the circle and cross, front and then side: the ear sits between the lines of the eye
+   and the nose and is SEEN from the side; hair is a designed shape of locks with a silhouette, not a cap.
+6. **The final line**: one clean, dark, confident line; no soft grey edge.
+7. **Shading last, and simple**: under the neck, a few folds of the shirt (chest, waist), the knees of the trousers.
+   Shadows are PLACED where form and cloth ask for them, a few clear shapes, never soft shading everywhere.
+
+Where VideoStudio stands (16 Nov 2026): steps 1 to 4 are built and measured (Kabir). Steps 5 to 7 are not at the
+standard yet: hair reads as a cap, no ear in profile, small plain eyes, a soft grey outline, no placed fold shadows,
+and a T-shirt's neck band stands off a slim throat seen from the side. These are the next engine work.

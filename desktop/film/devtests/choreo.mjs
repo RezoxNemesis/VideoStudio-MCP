@@ -6,7 +6,7 @@
 // worked out by trial solves.
 import fs from 'node:fs';
 import * as KIT from '../kit/index.js';
-import { MOVEMENTS, KINDS, FACTS, after, choreo, beatShots, beatLabel } from '../kit/choreo.js';
+import { MOVEMENTS, KINDS, FACTS, after, choreo, beatShots, beatLabel, footfallsOf } from '../kit/choreo.js';
 
 const fails = []; let checks = 0;
 const ok = (cond, what, got) => { checks++; if (!cond) fails.push(`${what} — got ${JSON.stringify(got)}`); };
@@ -92,6 +92,14 @@ if (library()) {
   ok(q.t0 >= p.t1 - 1e-6 && C.steps().every((s) => s.actions.some((x) => x.clip === MOVEMENTS.jump.clip && near(x.t, q.t0))), 'both: the same movement by both at once', q);
 }
 
+/* 6b. two whose ways to their marks cross do not walk through each other */
+{
+  const C = choreo({ leg: 0.975 }); C.actor('a', { at: [2, 2], yaw: -90 }); C.actor('b', { at: [-2, 2], yaw: 90 });   // each must get to the other's side
+  C.pair('handshake', 'a', 'b', { at: [-1, 2], yaw: 90 });
+  let nearest = 9; for (let t = 0; t < C.beats[0].t0; t += 0.1) { const a = C.where('a', t), b = C.where('b', t); nearest = Math.min(nearest, Math.hypot(a.x - b.x, a.z - b.z)); }
+  ok(nearest > 0.8, 'walking to their marks they pass each other at arm\'s length or more (the second goes round)', nearest);
+}
+
 /* 7. cameras and lettering for every beat */
 {
   const C = choreo({ leg: 0.88 }); C.actor('a', { at: [-3, 0], yaw: 90 }); C.actor('b', { at: [3, 0], yaw: -90 });
@@ -104,8 +112,36 @@ if (library()) {
   const ctx = { poses: Object.fromEntries(['a', 'b'].map((id, i) => [id, { j: { root: [i ? 2 : -2, 0.95, 0], head: [i ? 2 : -2, 1.62, 0], 'eye.L': [i ? 2 : -2, 1.62, 0.1], 'eye.R': [i ? 2 : -2, 1.62, 0.1], neck01: [i ? 2 : -2, 1.5, 0] } }])) };
   const c = sh[0].cam(sh[0].t0 + 0.5, ctx, 0.5);
   ok(Array.isArray(c.pos) && Array.isArray(c.target) && c.fov > 15 && c.fov < 60 && near(c.target[1], sh[0].cam(sh[0].t0 + 1, ctx, 1).target[1]), 'a camera looks at the performer, its height held still (a jump reads against a level frame)', c);
+  { // everyone a shot frames is in the picture: its width at the performers' distance holds them with room to spare
+    const C7 = choreo({ leg: 0.975, area: { x: [-8, 8], z: [0, 5] } }); C7.actor('a', { at: [-6, 1.5], yaw: 90 }); C7.actor('b', { at: [6, 3], yaw: -90 });
+    C7.group(null, () => { C7.do('a', 'happy-walk', { toward: 90 }); C7.do('b', 'wave'); });
+    const s7 = beatShots(C7, { id: 'w' })[0], pose = (id, t) => { const w = C7.where(id, t); return { j: { root: [w.x, 0.95, w.z] } }; };
+    let worst = 0; for (let t = s7.t0; t < s7.t1; t += 0.25) { const ctx7 = { poses: { a: pose('a', t), b: pose('b', t) } }, c7 = s7.cam(t, ctx7), half = Math.hypot(c7.pos[0] - c7.target[0], c7.pos[2] - c7.target[2]) * Math.tan(c7.fov * D2R / 2) * (16 / 9); for (const id of ['a', 'b']) { const w = C7.where(id, t); worst = Math.max(worst, (Math.abs(w.x - c7.target[0]) + 0.6) / half); } }
+    ok(worst < 1, 'two far apart: the lens stands back until both are in the picture, with room for their arms', worst);
+  }
   const L = beatLabel(C, C.beats[0].t0 + 0.5);
   ok(L && L.n === 1 && L.name === MOVEMENTS.bow.name && L.kind === KINDS[MOVEMENTS.bow.kind], 'beatLabel: the number, the name and the kind of what is being done at a moment', L);
+}
+
+/* 7b. one beat for two doing different things; a run that does not stop */
+{
+  const C = choreo({ leg: 0.88 }); C.actor('a', { at: [-3, 0], yaw: 90 }); C.actor('b', { at: [3, 1], yaw: -90 });
+  const g = C.group(null, () => { C.do('a', 'bow'); C.do('b', 'wave'); C.do('b', 'jump'); });
+  ok(C.beats.length === 1 && g.by.join() === 'a,b' && near(g.t0, 0) && near(g.t1, Math.max(FACTS.bow.dur, FACTS.wave.dur + FACTS.jump.dur)) && /Bow/.test(g.name) && /Wave/.test(g.name) && g.parts.length === 3, 'group: what two do at the same time is ONE beat (its name names both, its length is the longer)', [C.beats.length, g.name, g.t0, g.t1]);
+  C.then(); const r = C.go('a', [3, 0], { gait: 'run', through: true }), s2 = C.go('b', [-3, 1], { gait: 'run' });
+  ok(r.t1 - r.t0 < s2.t1 - s2.t0 - 0.3 && C.where('a', r.t1).x < 3 && C.where('a', r.t1).x > 2.5, 'go … through: true — he is still running when the next movement takes him over, a little short of the mark', [r, C.where('a', r.t1)]);
+}
+
+/* 8. the sound of feet, from the performance itself (never from a guessed rhythm) */
+{
+  const fps = 30, c = new Uint8Array(150).fill(3); // standing
+  for (let i = 30; i < 90; i++) c[i] = Math.floor((i - 30) / 10) % 2 ? 1 : 2;      // a walk: one foot, then the other, changing every third of a second
+  for (let i = 100; i < 115; i++) c[i] = 0;                                         // in the air for half a second, then both feet
+  const ev = footfallsOf(c, fps, { gain: 0.3 }), steps = ev.filter((e) => e.sfx === 'step'), lands = ev.filter((e) => e.sfx === 'land');
+  ok(steps.length >= 5 && steps.every((e) => e.t > 0.9 && e.t < 3.2 && e.gain > 0 && e.gain <= 0.3), 'a step sounds each time a foot comes down in a walk', steps.map((e) => e.t));
+  ok(lands.length === 1 && Math.abs(lands[0].t - 115 / fps) < 0.04 && lands[0].gain > steps[0].gain, 'coming down from the air is a landing, louder than a step', lands);
+  ok(!ev.some((e) => e.t < 0.9), 'standing still makes no sound', ev.filter((e) => e.t < 0.9));
+  ok(steps.some((e) => e.pitch !== steps[0].pitch), 'left and right do not sound alike', steps.map((e) => e.pitch));
 }
 
 console.log(`choreo: ${checks} rules checked, ${fails.length} broken (${ids.length} movements)`);
