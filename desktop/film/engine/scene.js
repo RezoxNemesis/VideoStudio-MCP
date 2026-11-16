@@ -504,7 +504,7 @@ export const DET = {
     }
   },
   /** several details in order */
-  all: (...fs) => (g, F) => { for (const f of fs) f(g, F); },
+  all: (...fs) => Object.assign((g, F) => { for (const f of fs) f(g, F); }, { lod: Math.min(...fs.map((f) => f.lod ?? 6)), near: fs.every((f) => f.near) }), // (drawn as soon as the finest of its parts would be)
   /** a paper screen: a grid of thin bars */
   lattice: (nu, nv, c) => (g, F) => { if (F.px < 14) return; g.beginPath(); for (let i = 1; i < nu; i++) seg(g, F, i / nu, 0, i / nu, 1); for (let i = 1; i < nv; i++) seg(g, F, 0, i / nv, 1, i / nv); g.lineWidth = F.lw * 0.8; g.strokeStyle = F.col(c); g.stroke(); },
 };
