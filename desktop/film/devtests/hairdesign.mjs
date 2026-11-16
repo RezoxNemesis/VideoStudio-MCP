@@ -56,6 +56,9 @@ for (let i = 0; i < NAMES.length; i++) for (let j = i + 1; j < NAMES.length; j++
   ok(H.wavy.spec.locks.filter((l) => l.wave).length >= 8, 'wavy: its clumps run in waves', H.wavy.spec.locks.filter((l) => l.wave).length);
   ok(H.messy.spec.locks.some((l) => l.hang && l.flick >= 0.6), 'messy: the ends at ear and nape turn out', null);
 }
+// short hair does not swing like long hair: a short cut's long lock flying at a run read as a ponytail (v2a, 16 Nov)
+for (const n of ['messy', 'neat', 'spiky', 'wavy', 'middlePart', 'sidePart']) ok(H[n].spec.locks.every((l) => (l.stiff ?? 0) >= 5), `"${n}": short hair is stiff (it bounces, it does not fly out)`, H[n].spec.locks.map((l) => l.stiff).slice(0, 4));
+ok(H.longLoose.spec.locks.every((l) => l.stiff === undefined), 'long, loose: long hair hangs and swings freely', null);
 // every style is a part of the cast, painted clean
 for (const n of NAMES) ok(typeof HAIR_STYLES[n] === 'function', `the cast offers "${n}"`, Object.keys(HAIR_STYLES));
 { const p = man({ hair: 'spiky' }); ok(p.design.hair.paint === 'clean' && p.design.hair3.locks.length > 10, 'a man of the cast with a drawn style is painted clean', p.design.hair.paint); }

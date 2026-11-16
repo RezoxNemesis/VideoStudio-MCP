@@ -56,12 +56,14 @@ const sides = (o) => both((sd) => (o.at ?? [72]).map((az, i) => lock([sd * (az -
 const back = (o) => (o.at ?? [-150, -170, 170, 150]).map((az, i) => lock([az * 0.92, o.root ?? 30], [az, o.to + 5 * jit(i, 4)], { w: o.w ?? 0.06, lift: [0.004, 0.014, o.lift ?? 0.014], broad: 0.4, ...(o.hang ? { hang: o.hang * (1 + 0.3 * jit(i, 1)), flick: o.flick ?? 0.7 } : {}) }));
 
 /** spikes: a row of wedges round the head, each lying on it from one height to a lower one and standing off in a point. */
-const spikes = (o) => o.at.map((az, i) => lock([az, o.row[0] + 3 * jit(i)], [az + 8 * jit(i, 2), o.row[1] + 5 * jit(i, 1)], { w: o.w * (1 + 0.2 * jit(i, 3)), lift: [0.004, o.lift * 0.45, o.lift * (1 + 0.3 * jit(i, 4))], broad: 0, th: o.lift * 0.8, stiff: 4 }));
+const spikes = (o) => o.at.map((az, i) => lock([az, o.row[0] + 3 * jit(i)], [az + 8 * jit(i, 2), o.row[1] + 5 * jit(i, 1)], { w: o.w * (1 + 0.2 * jit(i, 3)), lift: [0.004, o.lift * 0.45, o.lift * (1 + 0.3 * jit(i, 4))], broad: 0, th: o.lift * 0.8, stiff: 7 }));
 
 /** strays: a thin clump or two off the crown that breaks the outline. */
 const strays = (list) => list.map(([a, b]) => lock(a, b, { w: 0.02, lift: [0.004, 0.022, 0.034], broad: 0 }));
 
-const style = (vol, line, locks, extra = {}) => ({ n: 0, mass: { vol, flat: 0.12, line, crown: extra.crown ?? 0.7, nape: extra.nape ?? 0.75 }, locks, ...Object.fromEntries(Object.entries(extra).filter(([k]) => k !== 'crown' && k !== 'nape')) });
+// (short hair is stiff: a long lock of a short cut that swings at a run reads as a ponytail — Movement Study v2a, 16 Nov.
+//  Only long hair (flow: true) hangs and swings freely.)
+const style = (vol, line, locks, extra = {}) => ({ n: 0, mass: { vol, flat: 0.12, line, crown: extra.crown ?? 0.7, nape: extra.nape ?? 0.75 }, locks: extra.flow ? locks : locks.map((l) => ({ ...l, stiff: l.stiff ?? 6 })), ...Object.fromEntries(Object.entries(extra).filter(([k]) => k !== 'crown' && k !== 'nape' && k !== 'flow')) });
 
 export const HAIR_DESIGNS = {
   /** messy (the default lead's hair): full on top, five bangs leaning one way, the ears half covered, tufts at the nape */
@@ -100,7 +102,7 @@ export const HAIR_DESIGNS = {
   ]),
   /** side part: parted over the left eye, the big side swept across the forehead, the small side neat */
   sidePart: () => style(0.018, LINE_EARS, [
-    ...[18, -10, -40, -70, -104, -140, -172].map((az, i) => lock([42, 80 - i], [az, az > 0 ? 36 : az > -60 ? 22 + 4 * jit(i) : az > -120 ? -2 : -18], { via: [(42 + az) / 2, 64], w: 0.085, lift: [0.004, 0.022, 0.014], broad: 0.55, ...(az < -60 ? { hang: 0.01, flick: 0.5 } : {}) })),
+    ...[18, -10, -40, -70, -104, -140, -172].map((az, i) => lock([42, 80 - i], [az, az > 0 ? 36 : az > -60 ? 22 + 4 * jit(i) : az > -120 ? -2 : -18], { via: [(42 + az) / 2, 64], w: 0.085, lift: [0.004, 0.022, 0.014], broad: 0.55 })),
     ...[74, 108, 142, 174].map((az, i) => lock([50, 78], [az, az < 90 ? 6 : az < 130 ? -6 : -20 + 3 * jit(i)], { via: [(50 + az) / 2, 58], w: 0.075, lift: [0.004, 0.012, 0.01], broad: 0.6 })),
     ...bangs({ across: [-34, -18, -2], low: 14, sweep: -26, w: 0.06, root: 76, broad: 0.4 }),
   ]),
@@ -108,11 +110,11 @@ export const HAIR_DESIGNS = {
   longTied: () => style(0.012, LINE_LONG, [
     ...both((sd) => [0, 30, 62, 96, 132].map((az) => lock([sd * az, az < 50 ? 30 : az < 80 ? 6 : -10], [sd * 172, -18], { via: [sd * (az + 180) / 2, az < 80 ? 72 : 30], w: 0.085, lift: [0.002, 0.01, 0.004], broad: 0.75 }))),
     ...both((sd) => [lock([sd * 30, 60], [sd * 44, 10], { via: [sd * 34, 34], w: 0.035, lift: [0.004, 0.012, 0.01], broad: 0.2, hang: 0.07, flick: 0.1 })]),
-  ], { tail: { len: 0.3, w: 0.075, at: [180, -10], up: -1.6, locks: 5, tie: true } }),
+  ], { flow: true, tail: { len: 0.3, w: 0.075, at: [180, -10], up: -1.6, locks: 5, tie: true } }),
   /** long, loose: to the shoulders, falling from a parting in long clumps, bangs over the brow */
   longLoose: () => style(0.022, LINE_LONG, [
     ...topLayer({ part: 6, at: [40, 70, 100, 130, 158, 178], end: (a) => (a < 60 ? 10 : -20), lift: 0.016, w: 0.085, hang: 0.17, flick: 0.12 }),
     ...bangs({ across: [-30, -12, 8, 26], low: 8, sweep: 8, w: 0.055, broad: 0.35 }),
     ...back({ at: [-140, -165, 165, 140], to: -36, hang: 0.18, flick: 0.1, w: 0.075 }),
-  ]),
+  ], { flow: true }),
 };
