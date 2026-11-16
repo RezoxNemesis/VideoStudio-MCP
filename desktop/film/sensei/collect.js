@@ -31,7 +31,9 @@ export function collect(P, sh, o = {}) {
       run.ctx.t = ts[i]; run.ctx.tw = tw[i];
       const xf = typeof a.xf === 'function' ? a.xf(tw[i], run.ctx) : a.xf;
       const p = poseAt(a.bk, id, time, xf ?? null), pl = poseAt(a.bk, id, time, null);
-      J[i] = p.j; Lc[i] = pl.j; C[i] = p.contact; props[i] = p.props;
+      // (the body as it is DRAWN — after the film's fits, life and the engine's own corrections — is what is judged; the
+      //  solved performance alone (pl) still tells how the feet stand)
+      J[i] = held[i]?.[a.id] ?? p.j; Lc[i] = pl.j; C[i] = p.contact; props[i] = p.props;
       try { hands[i] = typeof a.hands === 'function' ? a.hands(tw[i], run.ctx) : a.hands ?? null; } catch { hands[i] = null; }
       // where it is in the picture
       const cam = cams[i]; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, inside = 0, front = 0;

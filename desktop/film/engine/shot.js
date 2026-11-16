@@ -10,6 +10,7 @@ import { bodyOf } from './body.js';
 import { Character } from './character.js';
 import { V, clamp, hash, noise1 } from './core.js';
 import { enliven } from './life.js';
+import { clearArms } from './clear.js';
 export { enliven };
 import * as post from './post.js';
 import { dust, puff } from './fx.js';
@@ -89,6 +90,8 @@ export class ShotRun {
         if (a.still > 0.02 || a.speak > 0.02) enliven(a.pose, (a.t0 ?? 0) + t, a.id.length * 3.1 + a.id.charCodeAt(a.id.length - 1) * 0.37, Math.max((a.alive ?? 1) * a.still, a.speak > 0.02 ? 0.35 : 0), { speak: a.speak });
       }
       if (a.fit) a.fit(a.pose, t, this.ctx);
+      // arms rest ON the body as it is dressed, never in it (engine/clear.js; an actor can opt out: clearArms: false)
+      if (a.clearArms !== false && !a.simple && a.mesh !== false) { const B = a.pose.body?.B ?? bodyOf(a.bk, a.as ?? a.id); if (B) clearArms(a.pose, { B }); }
       a.gnd = typeof a.ground === 'function' ? a.ground(a.pose, t, this.ctx) : (a.gnd ?? 0); // the height of the ground under this actor (stairs, a dike)
       this.ctx.poses[a.id] = a.pose;
     }

@@ -649,6 +649,19 @@ cannot stay on it is refused by name. A standing body between two movements is g
 What a clip does, in numbers: `node devtests/clipfacts.mjs 127_23 88_01:0.45 --line`, `--pair 18_01 19_01`.
 (Rules: devtests/choreo.mjs)
 
+## Bodies that stand and touch as real ones do (16 Nov 2026, solver 8)
+
+- **Feet hold the ground.** While a performance is solved, a foot the capture marks as standing is held by the middle
+  of its sole where it came down (it can still roll from heel to toe). It leaves its spot only as a STEP — lifted,
+  carried, set down in 0.16–0.3 s — when the capture lifts it, when the body has gone beyond the leg's reach, when the
+  legs would cross (a body turned on its feet), or when the pose would put it elsewhere from one frame to the next. Joins,
+  turns to a new facing, walks begun from a stand and clips played faster or slower no longer skate (Movement Study:
+  94 serious foot slides → 0). Nothing to write in a film.
+- **Arms rest on the body, never in it.** Each drawn frame, an arm whose elbow, forearm or hand lies inside the trunk as
+  it is dressed is opened at the shoulder by the least angle that brings it its own thickness outside (engine/clear.js).
+  An actor can opt out with `clearArms: false`.
+- **The judge measures the body as it is drawn** (after fits, life and these corrections), not the bare solve.
+
 ## Measuring a figure with lines (devtests/measure.mjs)
 
 `node devtests/measure.mjs <picture> <out.jpg> --views front,side,back --json out.json` lays GREEN horizontal lines
