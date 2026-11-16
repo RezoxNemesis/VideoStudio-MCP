@@ -10,7 +10,7 @@ import { bodyOf } from './body.js';
 import { Character } from './character.js';
 import { V, clamp, hash, noise1 } from './core.js';
 import { enliven } from './life.js';
-import { clearArms } from './clear.js';
+import { clearArms, clearLegs, thighOverlap } from './clear.js';
 export { enliven };
 import * as post from './post.js';
 import { dust, puff } from './fx.js';
@@ -91,7 +91,7 @@ export class ShotRun {
       }
       if (a.fit) a.fit(a.pose, t, this.ctx);
       // arms rest ON the body as it is dressed, never in it (engine/clear.js; an actor can opt out: clearArms: false)
-      if (a.clearArms !== false && !a.simple && a.mesh !== false) { const B = a.pose.body?.B ?? bodyOf(a.bk, a.as ?? a.id); if (B) clearArms(a.pose, { B }); }
+      if (a.clearArms !== false && !a.simple && a.mesh !== false) { const B = a.pose.body?.B ?? bodyOf(a.bk, a.as ?? a.id); if (B) clearArms(a.pose, { B }); const tb = (a.t0 ?? 0) + t * (a.rate ?? 1), id = a.as ?? a.id, hk = (a.bk.actors[id]?.height ?? 1.8) / 1.8; clearLegs(a.pose, { depth: Math.min(...[-0.12, 0, 0.12].map((d) => thighOverlap(poseAt(a.bk, id, Math.max(0, tb + d), null).j, hk))) }); }
       a.gnd = typeof a.ground === 'function' ? a.ground(a.pose, t, this.ctx) : (a.gnd ?? 0); // the height of the ground under this actor (stairs, a dike)
       this.ctx.poses[a.id] = a.pose;
     }
