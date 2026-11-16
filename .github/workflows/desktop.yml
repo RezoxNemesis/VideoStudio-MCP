@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      VERSION: "2.5.${{ github.run_number }}"
+      VERSION: "2.6.${{ github.run_number }}"
     steps:
       - uses: actions/checkout@v4
 
@@ -168,6 +168,8 @@ jobs:
         run: |
           tag="desktop-v${VERSION}"
           notes="VideoStudio ${VERSION} for Linux (Kubuntu/Ubuntu/OREZ). Installs over VideoStudio 2.0 (and replaces VideoStudio Desktop 1.0.x); projects and the Claude link are kept.
+
+          New: hair drawn the animator's way, and figures measured in heads. Eight hairstyles (messy, neat, spiky, wavy, middle part, side part, long tied, long loose) are built from a few big clumps that grow from the crown in four layers, and painted clean: one flat colour, one soft shade, one band of shine, and ink only round the outline and at the tips. A figure is measured in heads against an animator's proportions guide (7.5 to 8 heads, shoulders, chest, waist, hips, crotch at half the height, knees, hands at mid-thigh). Painted figures get placed shadows under the chin, the hem and the arms whatever the light does, and clothes are lit by their big form: no more stepped patches on the back of a shirt. Fixed: updates. GitHub lists releases by their name as text, so 2.5.100 stood behind 2.5.99 and was never offered; the app now reads the whole list and counts versions as numbers, and versions go on as 2.6.
 
           Fixed: feet where two captured actions are joined. Where one action ends on standing feet and the next begins on standing feet, a foot that has to move now takes a step (lifted, carried, set down) instead of being dragged across the ground while the bodies blend, as it already did into a fighting stance. And a foot that was still in the air when the first action ended is treated as landing through the blend, but only when it really is off the ground (three centimetres above the standing foot): a foot on the ground that moves is still reported as a slide. In the practice run this removed the last serious foot slide, where the boy turns from picking up the bag into his start. The same now holds when a fight is the first thing a body does: two swordsmen who stood and then took their stances slid all four feet 30 centimetres apart, because the step-in only ran after another action; now they step.
 

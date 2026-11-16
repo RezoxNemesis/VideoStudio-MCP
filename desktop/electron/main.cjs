@@ -1089,7 +1089,7 @@ if (process.platform === "linux" && app.isPackaged && !process.argv.includes("--
   if (h) { spawn(h.exe, SELF.startArgs(h.dir, process.argv.slice(1)), { detached: true, stdio: "ignore" }).unref(); app.exit(0); }
 }
 async function updateCheck() {
-  const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=20`, { headers: { accept: "application/vnd.github+json", "user-agent": "VideoStudio" } });
+  const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`, { headers: { accept: "application/vnd.github+json", "user-agent": "VideoStudio" } });
   if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
   const list = await res.json();
   const rel = list.filter((r) => /^desktop-v\d/.test(r.tag_name) && !r.draft).sort((a, b) => (newer(a.tag_name, b.tag_name) ? -1 : 1))[0];

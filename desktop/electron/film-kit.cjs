@@ -106,7 +106,7 @@ function chooseRelease(list) {
  */
 async function updateKit(o) {
   const was = activeKit(o), head = { accept: "application/vnd.github+json", "user-agent": "VideoStudio" };
-  const res = await o.fetch(`https://api.github.com/repos/${o.repo}/releases?per_page=20`, { headers: head });
+  const res = await o.fetch(`https://api.github.com/repos/${o.repo}/releases?per_page=100`, { headers: head });
   if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
   const pick = chooseRelease(await res.json());
   if (!pick || !newer(pick.version, was.version)) return { updated: false, version: was.version, source: was.source, was: was.version, latest: pick?.version ?? null };

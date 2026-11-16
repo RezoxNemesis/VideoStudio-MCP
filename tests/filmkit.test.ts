@@ -100,6 +100,15 @@ describe("which release to fetch the engine from", () => {
   it("is none when no release carries one", () => {
     expect(K.chooseRelease([rel("2.5.75", false)])).toBeNull();
   });
+  it("counts versions as numbers, though GitHub lists tags as text (desktop-v2.5.99 before desktop-v2.5.102)", () => {
+    expect(K.chooseRelease([rel("2.5.99"), rel("2.5.97"), rel("2.5.102"), rel("2.5.100")])?.version).toBe("2.5.102");
+    expect(K.chooseRelease([rel("2.6.103"), rel("2.5.99")])?.version).toBe("2.6.103");
+  });
+  it("asks GitHub for a whole page of releases: the newest can stand far down a list sorted as text", async () => {
+    let asked = "";
+    await K.updateKit({ fetch: async (u: string) => { asked = u; return { ok: true, json: async () => [] }; }, repo: "o/r", userData: fs.mkdtempSync(path.join(os.tmpdir(), "vsk-")), builtin: fs.mkdtempSync(path.join(os.tmpdir(), "vsb-")), appVersion: "2.5.75" }).catch(() => {});
+    expect(asked).toMatch(/per_page=100/);
+  });
 });
 
 describe("fetching the newest engine", () => {
