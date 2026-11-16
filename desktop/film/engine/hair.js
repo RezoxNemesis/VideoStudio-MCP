@@ -114,7 +114,24 @@ export function makeHair(B, spec, seed = 1) {
   // a tail gathered at the back or on top (a strand that swings as one)
   let tail = null;
   if (cut.tail) { const place = Array.isArray(cut.tail.at), at = place ? headSurface(B).at(cut.tail.at[0] * Math.PI / 180, cut.tail.at[1] * Math.PI / 180, 0.01) : cut.tail.at === 'top' ? [0, L.crown[1] + 0.012, L.crown[2] + 0.005] : cut.tail.at === 'low' ? [0, L.nape[1] + 0.03, L.nape[2] - 0.03] : [0, (L.crown[1] + L.nape[1]) / 2 + 0.035, L.nape[2] - 0.035]; const tie = cut.tail.tie; tail = { at, len: cut.tail.len, w: cut.tail.w ?? 0.05, dir: cut.tail.at === 'top' ? [0, 1, -0.25] : [0, cut.tail.up ?? -0.15, -1], tie: !!tie, ends: tie && typeof tie === 'object' ? { n: tie.ends ?? 0, len: tie.len ?? 0.2 } : null, bow: tie && typeof tie === 'object' && tie.bow > 0 ? tie.bow : 0, locks: cut.tail.locks ?? 0, seed: seed * 17 + 3, st: null }; }
-  const HS = (cut.flow === 'tie' && tail) || cut.locks?.length ? headSurface(B) : null;
+  const HS = (cut.flow === 'tie' && tail) || cut.locks?.length || cut.mass ? headSurface(B) : null;
+  // a body of hair (cut.mass: { vol: 0.022 (metres on top), rim: 0.004, line: [[° round from the front, ° up]…] — the
+  // hairline }): ONE smooth shell over the scalp, the mass a drawn head of hair is; designed locks lie on it. With
+  // `n: 0` nothing else is grown: the whole cut is the mass and its locks.
+  let mass = null, massVol = null;
+  if (cut.mass && HS) {
+    const m = cut.mass === true ? {} : cut.mass, Dg = Math.PI / 180, V = m.vol ?? 0.022, rimV = m.rim ?? 0.004;
+    const LINE = m.line ?? [[0, 27], [32, 25], [50, 13], [64, 2], [80, -8], [100, -14], [130, -26], [180, -36]];
+    const lineAt = (az) => { const a = Math.abs(az) / Dg; for (let i = 0; i < LINE.length - 1; i++) if (a <= LINE[i + 1][0]) { const u = (a - LINE[i][0]) / (LINE[i + 1][0] - LINE[i][0]); return (LINE[i][1] + (LINE[i + 1][1] - LINE[i][1]) * u * u * (3 - 2 * u)) * Dg; } return LINE[LINE.length - 1][1] * Dg; };
+    massVol = (az, el) => { const u = clamp((el - lineAt(az)) / (30 * Dg)), side = 1 - (m.flat ?? 0.18) * Math.abs(Math.sin(az)) * (1 - clamp((el - 50 * Dg) / (30 * Dg))); return rimV + (V * side - rimV) * u * u * (3 - 2 * u); };
+    const NA = 96, NE = 18, pos = [], idx = [];
+    for (let i = 0; i <= NE; i++) for (let a = 0; a < NA; a++) { const az = (a / NA) * 2 * Math.PI - Math.PI, rim = lineAt(az), el = rim + (87 * Dg - rim) * Math.pow(i / NE, 0.9), q = HS.at(az, el, massVol(az, el)); pos.push(q[0], q[1], q[2]); }
+    const top = HS.at(0, 90 * Dg, massVol(0, 90 * Dg)), ti = pos.length / 3; pos.push(top[0], top[1], top[2]);
+    const tri = (a, b, c) => { const A = [pos[a * 3], pos[a * 3 + 1], pos[a * 3 + 2]], n3 = cross(sub([pos[b * 3], pos[b * 3 + 1], pos[b * 3 + 2]], A), sub([pos[c * 3], pos[c * 3 + 1], pos[c * 3 + 2]], A)); if (dot(n3, sub(A, HS.c)) < 0) idx.push(a, c, b); else idx.push(a, b, c); };
+    for (let i = 0; i < NE; i++) for (let a = 0; a < NA; a++) { const v00 = i * NA + a, v01 = i * NA + (a + 1) % NA, v10 = v00 + NA, v11 = v01 + NA; tri(v00, v01, v11); tri(v00, v11, v10); }
+    for (let a = 0; a < NA; a++) tri(NE * NA + a, NE * NA + (a + 1) % NA, ti);
+    mass = { pos: Float32Array.from(pos), idx: Uint32Array.from(idx) };
+  }
   const frameAlong = (pts) => { const wides = [], nrms = []; for (let i = 0; i < pts.length; i++) { const tg = norm(sub(pts[Math.min(pts.length - 1, i + 1)], pts[Math.max(0, i - 1)])); let out = sub(pts[i], HS.c); out = sub(out, mul(tg, dot(out, tg))); out = len(out) < 1e-4 ? [0, 0, 1] : norm(out); const w = norm(cross(tg, out)); wides.push(w); nrms.push(norm(cross(w, tg))); } return { wides, nrms }; };
   // hair swept back: with flow: 'tie' every clump runs from its root over the head to where the tail is tied
   const toTie = cut.flow === 'tie' && tail ? (() => { tail.at = HS.out(tail.at, 0.012); return tail.at; })() : null;
@@ -147,13 +164,14 @@ export function makeHair(B, spec, seed = 1) {
     const M = 40, rad = [], dirs = [];
     for (let i = 0; i <= M; i++) { const u = i / M, d = dv ? slerp(slerp(d0, dv, u), slerp(dv, d1, u), u) : slerp(d0, d1, u); dirs.push(d); rad.push(HS.r(Math.atan2(d[0], d[2]), Math.asin(clamp(d[1], -1, 1)))); }
     // (the head's own bumps — a brow, an ear — are smoothed along the lock: hair lies over them in one sweep)
-    const line = dirs.map((d, i) => { let a = 0, n = 0, mx = 0; for (let j = -4; j <= 4; j++) { const q = Math.max(0, Math.min(M, i + j)); a += rad[q]; n++; if (Math.abs(j) <= 1) mx = Math.max(mx, rad[q]); } const u = i / M, sm = a / n, ends = Math.min(1, Math.min(u, 1 - u) * 8); return add(HS.c, mul(d, Math.max(rad[i], sm * ends + rad[i] * (1 - ends), mx - 0.004) + liftAt(u))); });
+    const line = dirs.map((d, i) => { let a = 0, n = 0, mx = 0; for (let j = -4; j <= 4; j++) { const q = Math.max(0, Math.min(M, i + j)); a += rad[q]; n++; if (Math.abs(j) <= 1) mx = Math.max(mx, rad[q]); } const u = i / M, sm = a / n, ends = Math.min(1, Math.min(u, 1 - u) * 8); return add(HS.c, mul(d, Math.max(rad[i], sm * ends + rad[i] * (1 - ends), mx - 0.004) + liftAt(u) + (massVol ? massVol(Math.atan2(d[0], d[2]), Math.asin(clamp(d[1], -1, 1))) : 0))); });
     if ((k.hang ?? 0) > 0) {
       let p = line[M], dir = norm(sub(line[M], line[M - 2])); const step = 0.005, clear = Math.max(0.004, lf[2] * 0.6);
-      for (let g2 = 0; g2 < k.hang; g2 += step) { dir = norm(add(mul(dir, 0.72), [0, -0.28, 0])); p = HS.out(add(p, mul(dir, step)), clear); line.push(p); }
+      // (flick 0…1: past where it is led to, the lock turns its tip OUT from the head instead of hanging straight — the ends at ear and nape of drawn hair)
+      for (let g2 = 0; g2 < k.hang; g2 += step) { dir = norm(add(mul(dir, 0.72), [0, -0.28, 0])); if (k.flick) dir = norm(add(dir, mul(norm([p[0] - HS.c[0], 0.25, p[2] - HS.c[2]]), k.flick * 0.6 * (0.3 + 0.7 * g2 / k.hang)))); p = HS.out(add(p, mul(dir, step)), clear); line.push(p); }
     }
     const ev = evenly(line, S), fr = frameAlong(ev.pts);
-    clumps.push({ pts: ev.pts, wides: fr.wides, nrms: fr.nrms, w: k.w ?? 0.03, len: ev.len, th: k.th ?? 0.011, stiff: k.stiff ?? (k.hang ? 1 : 2.2), ph: R() * 6.28, lock: true, taper: k.taper ?? null });
+    clumps.push({ pts: ev.pts, wides: fr.wides, nrms: fr.nrms, w: k.w ?? 0.03, len: ev.len, th: k.th ?? 0.011, stiff: k.stiff ?? (k.hang ? 1 : 2.2), ph: R() * 6.28, lock: true, taper: k.taper ?? null, broad: k.broad ?? 0 });
   }
   for (const v of toTie ? [] : roots) {
     const r0 = pt(v), nn = nrm(v);
@@ -194,7 +212,7 @@ export function makeHair(B, spec, seed = 1) {
     }
     clumps.push({ pts, wides, nrms, w: (cut.w ?? 0.036) * (0.85 + 0.4 * R()) * (1 + 0.35 * wB) * (lenC > 0.2 ? 1.5 : 1), len: lenC, th: 0.012 + 0.006 * R(), stiff: 1 + spike * 2, ph: R() * 6.28 });
   }
-  return { clumps, tail, cut };
+  return { clumps, tail, cut, mass, massAt: massVol ? (az, el) => HS.r(az, el) + massVol(az, el) : null };
 }
 
 /**
@@ -239,7 +257,8 @@ export function hairMeshes(H, B, dt, t, wind = null) {
       // a leaf-shaped section: widest a third of the way along, a point at the end; thick enough to take light and shadow
       // (hair drawn back, and a designed lock, begin as a stroke begins — from a point, thin and flat — and are full a little way along)
       const rootK = c.back || c.lock ? clamp(0.12 + u / 0.26) : 1;
-      const wv2 = c.w * 0.5 * (c.back || c.lock ? rootK * (u < 0.3 ? 1 : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) : u < 0.3 ? 0.72 + 0.28 * (u / 0.3) : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) + 0.0006, th = c.th * (1 - 0.75 * u) * rootK + 0.0005, o = (ci * S + i) * 12;
+      const u0 = 0.3 + 0.48 * (c.broad ?? 0); // (a broad lock — `broad` 0…1 — keeps its width nearly to its end and closes in a short point)
+      const wv2 = c.w * 0.5 * (c.back || c.lock ? rootK * (u < u0 ? 1 : Math.pow(1 - (u - u0) / (1 - u0), c.broad ? 0.8 : 0.7)) : u < 0.3 ? 0.72 + 0.28 * (u / 0.3) : Math.pow(1 - (u - 0.3) / 0.7, 0.7)) + 0.0006, th = c.th * (1 - 0.75 * u) * rootK + 0.0005, o = (ci * S + i) * 12;
       pos[o] = p[0] - wd[0] * wv2; pos[o + 1] = p[1] - wd[1] * wv2; pos[o + 2] = p[2] - wd[2] * wv2;
       pos[o + 3] = p[0] + nn[0] * th; pos[o + 4] = p[1] + nn[1] * th; pos[o + 5] = p[2] + nn[2] * th;
       pos[o + 6] = p[0] + wd[0] * wv2; pos[o + 7] = p[1] + wd[1] * wv2; pos[o + 8] = p[2] + wd[2] * wv2;
@@ -248,7 +267,11 @@ export function hairMeshes(H, B, dt, t, wind = null) {
       if (i < S - 1) for (let k = 0; k < 4; k++) { const a = (ci * S + i) * 4 + k, b = (ci * S + i) * 4 + (k + 1) % 4, c2 = a + 4, d = b + 4; idx.push(a, c2, b, b, c2, d); }
     }
   });
-  out.push({ pos, idx: Uint32Array.from(idx), u: across });
+  // (on a mass the locks are drawn as locks: every second one is of another set, so neighbours get a line between them)
+  if (H.mass) { const per = (S - 1) * 4 * 6, ia = [], ib = []; for (let q = 0; q < idx.length; q++) (Math.floor(q / per) % 2 ? ib : ia).push(idx[q]); out.push({ pos, idx: Uint32Array.from(ia), u: across, set: 0 }, { pos, idx: Uint32Array.from(ib), u: across, set: 1 }); }
+  else out.push({ pos, idx: Uint32Array.from(idx), u: across });
+  // the body of the hair rides on the head
+  if (H.mass) { const n = H.mass.pos.length / 3, mp = new Float32Array(n * 3); for (let v = 0; v < n; v++) { const q = onBone(B, 'head', [H.mass.pos[v * 3], H.mass.pos[v * 3 + 1], H.mass.pos[v * 3 + 2]]); mp[v * 3] = q[0]; mp[v * 3 + 1] = q[1]; mp[v * 3 + 2] = q[2]; } out.push({ pos: mp, idx: H.mass.idx, mass: true }); }
   if (H.tail) {
     const T = H.tail, n = T.locks > 0 ? 13 : 9, base = onBone(B, 'head', T.at), d0 = norm(dirOnBone(B, 'head', norm(T.dir))), seg = T.len / (n - 1);
     // what a tail cannot pass through: the head itself (as hair meets it), and the back — a row of large balls that touch it from inside

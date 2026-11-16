@@ -530,7 +530,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (!ch.hair3.none) {
       const hp = hairPaint(d, rgbOf, { edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 });
       const tieC = d.hair.tie ?? '#9c1f26', tieP = { fill: rgbOf(tieC), shade: rgbOf(shadeHex(tieC, -0.32)), thr: 0.05, group: 'tie', bias: 0.003, noAO: true, recv: false };
-      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) { if (m.tie) { eyeIds.add(cp.add(m.pos, m.idx, tieP)); continue; } const id = cp.add(m.pos, m.idx, hp, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82), hp.bands ? m.u ?? null : null); eyeIds.add(id); for (const b of hp.bandIds ?? []) eyeIds.add(b); }
+      for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) { if (m.tie) { eyeIds.add(cp.add(m.pos, m.idx, tieP)); continue; } const id = cp.add(m.pos, m.idx, m.mass ? { ...hp, bands: undefined, bias: 0.001 } : m.set !== undefined ? { ...hp, group: m.set ? 'hair-b' : 'hair-a' } : hp, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), 0.82), hp.bands ? m.u ?? null : null); eyeIds.add(id); for (const b of hp.bandIds ?? []) eyeIds.add(b); }
       ch.hairT = ch.t;
     }
   }

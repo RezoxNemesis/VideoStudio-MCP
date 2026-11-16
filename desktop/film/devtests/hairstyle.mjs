@@ -337,5 +337,43 @@ for (const [name, tail] of [['a short knot', { len: 0.02, w: 0.13, at: [180, -22
   ok(tipOut(flicked) > tipOut(makeHair(B, cutOf({ wave: 0.5 }), 3)) + 0.08, 'with flick the tips turn outwards', [tipOut(makeHair(B, cutOf({ wave: 0.5 }), 3)), tipOut(flicked)]);
 }
 
+// ---- 12. a drawn head of hair: a smooth MASS over the scalp with designed locks lying on it (no clumps grown at random)
+{
+  const HSf = HAIR.headSurface(B), MASS = { vol: 0.024 }, cut = { n: 0, mass: MASS, locks: [{ from: [0, 80], via: [50, 55], to: [78, 0], w: 0.06, lift: 0.006, hang: 0.03 }, { from: [0, 80], via: [50, 55], to: [78, 0], w: 0.06, lift: 0.006, hang: 0.05, flick: 0.9 }] };
+  const H = makeHair(B, cut, 3), M = H?.mass;
+  ok(!!M && M.pos.length / 3 > 300 && M.idx.length > 600, 'a cut with `mass` has a body of hair: one smooth shell over the scalp', M ? M.pos.length / 3 : 0);
+  ok(H && H.clumps.length === 2 && H.clumps.every((c) => c.lock), 'with n: 0 nothing is grown at random: only the designed locks', H?.clumps?.length);
+  if (M) {
+    const V = []; for (let v = 0; v < M.pos.length / 3; v++) V.push([M.pos[v * 3], M.pos[v * 3 + 1], M.pos[v * 3 + 2]]);
+    const pol = (p) => { const d = [p[0] - HSf.c[0], p[1] - HSf.c[1], p[2] - HSf.c[2]], l = Math.hypot(...d); return { az: Math.atan2(d[0], d[2]), el: Math.asin(d[1] / l), r: l }; };
+    let thin = 1, deep = 0, face = 0, crown = 0; for (const p of V) { const q = pol(p), o = q.r - HSf.r(q.az, q.el); thin = Math.min(thin, o); deep = Math.max(deep, o); if (Math.abs(q.az) < 40 * D && q.el < 18 * D) face++; if (q.el > 70 * D) crown = Math.max(crown, o); }
+    ok(thin > 0.002 && deep < 0.045, 'it stands off the scalp everywhere (never inside the head, never a balloon)', [thin, deep]);
+    ok(crown > 0.018, 'with body on top (about 2 cm)', crown);
+    ok(face === 0, 'and leaves the face clear: nothing of it below the hairline in front', face);
+    // smooth: along every edge of its mesh the height above the scalp changes little (no ridges, no teeth)
+    let rough = 0; for (let t = 0; t < M.idx.length; t += 3) for (let e = 0; e < 3; e++) { const a = V[M.idx[t + e]], b2 = V[M.idx[t + (e + 1) % 3]], qa = pol(a), qb = pol(b2); rough = Math.max(rough, Math.abs((qa.r - HSf.r(qa.az, qa.el)) - (qb.r - HSf.r(qb.az, qb.el)))); }
+    ok(rough < 0.008, 'it is smooth: no ridge or tooth between neighbouring points', rough);
+    // at the back it comes down to the nape; at the sides over the top of the ears
+    const low = (f) => Math.min(...V.filter((p) => f(pol(p).az)).map((p) => pol(p).el)) / D;
+    ok(low((az) => Math.abs(az) > 160 * D) < -25 && low((az) => Math.abs(Math.abs(az) - 90 * D) < 12 * D) < 0, 'it covers the back of the head to the nape and the sides to the ears', [low((az) => Math.abs(az) > 160 * D), low((az) => Math.abs(Math.abs(az) - 90 * D) < 12 * D)]);
+    // the locks lie ON it
+    const P = pts(H.clumps[0]); let under = 0; for (const p of P.slice(1, 6)) { const q = pol(p); if (q.r < H.massAt(q.az, q.el) + 0.001) under++; }
+    ok(under === 0, 'a designed lock lies on the mass, not buried in it', under);
+    const tip = (c) => { const Q = pts(c), t = Q[Q.length - 1]; return Math.hypot(t[0] - HSf.c[0], t[2] - HSf.c[2]); };
+    ok(tip(H.clumps[1]) > tip(H.clumps[0]) + 0.012, 'a lock with `flick` turns its tip out from the head', [tip(H.clumps[0]), tip(H.clumps[1])]);
+    const ms = hairMeshes(H, B, 1 / 30, 0).filter((m) => m.mass);
+    ok(ms.length === 1 && ms[0].pos.length === M.pos.length, 'the mass is drawn with the hair, riding on the head', ms.length);
+  }
+  // on a mass the locks are drawn as locks: neighbours belong to two sets, so each gets a line against the next and against the mass
+  { const ms = hairMeshes(H, B, 1 / 30, 0).filter((m) => !m.mass && !m.tie), one = hairMeshes(makeHair(B, { cut: 'short' }, 3), B, 1 / 30, 0).filter((m) => !m.tie);
+    ok(ms.length === 2 && ms[0].set === 0 && ms[1].set === 1 && ms[0].idx.length > 0 && ms[1].idx.length > 0 && ms[0].pos === ms[1].pos, 'the locks on a mass come as two sets (every second lock), to be outlined against each other', ms.map((m) => [m.set, m.idx.length]));
+    ok(one.length === 1 && one[0].set === undefined, 'hair without a mass is one piece, as before', one.length); }
+  ok(!makeHair(B, { cut: 'short' }, 3)?.mass, 'a cut without `mass` has none (as before)', 0);
+  // a broad lock (broad 0…1) keeps its width nearly to its end and closes in a short point — a drawn lock, not a whip
+  const wAt = (hh, ci, i) => { const m = hairMeshes(hh, B, 1 / 30, 0)[0], o = (ci * 9 + i) * 12; return Math.hypot(m.pos[o] - m.pos[o + 6], m.pos[o + 1] - m.pos[o + 7], m.pos[o + 2] - m.pos[o + 8]); };
+  const Hb = makeHair(B, { n: 0, locks: [{ from: [0, 80], to: [78, 0], w: 0.06, lift: 0.01 }, { from: [0, 80], to: [78, 0], w: 0.06, lift: 0.01, broad: 1 }] }, 3);
+  ok(wAt(Hb, 1, 6) > 0.85 * wAt(Hb, 1, 3) && wAt(Hb, 0, 6) < 0.7 * wAt(Hb, 0, 3) && wAt(Hb, 1, 8) < 0.2 * wAt(Hb, 1, 3), 'a broad lock keeps its width to three quarters of its length and ends in a point', [wAt(Hb, 0, 6) / wAt(Hb, 0, 3), wAt(Hb, 1, 6) / wAt(Hb, 1, 3), wAt(Hb, 1, 8) / wAt(Hb, 1, 3)]);
+}
+
 if (fails.length) { console.error(`hairstyle: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`hairstyle: ${checks} rules hold`);

@@ -25,8 +25,8 @@ looking at frames beside the reference, not by a number taken at one moment. Wha
 - A mass with a clear outline built of 12–20 big locks that end in points; locks curve (C and S), lie in layers,
   some fall over the brow, the ends at ear and nape turn out; two or three loose strands at the crown.
 - Inside the mass: few strand lines along the flow, a darker underside, lighter streaks in groups where light falls.
-- **(to build: a smooth hair mass with designed locks, strand lines and a highlight band — the clump ribbons give a
-  helmet of ridges or a torn mop.)**
+- Built: `hair3.mass` + broad designed locks with outlines (hair v2). **(to build: a library of styles made this way;
+  pointed ends that break the outline more; a designed highlight band; the father's own style is still a round cap.)**
 
 ## Face (the father: adult Indian man)
 - Head one 7.5th of the height. Eyes on the middle line: almond, a strong upper lid line, brown iris darker at the top

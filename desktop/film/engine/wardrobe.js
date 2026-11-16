@@ -299,6 +299,8 @@ export function dressBody(B, d) {
         const fall = fb + (ft - fb) * Math.pow(1 - smooth(s / 0.45), 1.6), out = 0.014 * k + 0.022 * k * (1 - smooth(s / 0.5)), spread = 0.034 * k * (1 - smooth(s / 0.3));
         const o = lay([f[0] + er[0] * out + t[0] * spread, f[1] - fall, f[2] + er[2] * out + t[2] * spread], 0.005 * k), m = lay(add(mix(f, o, 0.5), mul(er, 0.004 * k)), 0.007 * k);
         F.push(f); M.push(m); O.push(o); }
+      // (laid on the cloth point by point, the leaf's edge takes every step of the shell under it: drawn, it is one clean line)
+      for (const row of [O, M]) for (let it = 0; it < 3; it++) { const c = row.map((q) => q.slice()); for (let q = 2; q < row.length - 1; q++) for (let a = 0; a < 3; a++) row[q][a] = 0.25 * c[q - 1][a] + 0.5 * c[q][a] + 0.25 * c[q + 1][a]; }
       cm.push(sheet([F, M, O], outw));
     }
     const col = join(cm); part('collar', 'collar', col, bind(B, sk, Float32Array.from(col.pos), ncand), { color: sw_.color, shade: sw_.shade, two: true, layer: 5 });

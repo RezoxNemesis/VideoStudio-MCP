@@ -156,6 +156,15 @@ with two hanging ends) }`. A tail hangs as hair does: off the tie in a curve, ro
 back (never through them), swaying with the walk. Painted with a brush: `hair: { strands: 0…1 }` lays darker strands and a lighter streak along
 every lock, `hair.sheen: 0…1` makes the band of light across the hair zigzag from lock to lock, `hair.shine` its colour.
 
+**A drawn head of hair (hair v2).** `hair3: { n: 0, mass: { vol: 0.02 (metres of body on top), flat: 0.1 (less at the
+sides), rim: 0.004, line: [[° round from the front, ° up]…] (the hairline) }, locks: [...] }` — ONE smooth shell over
+the scalp (no ridges, no clumps grown at random) with designed locks lying ON it (a lock's `lift` is measured from the
+mass). A lock can be `broad: 0…1` (it keeps its width nearly to its end and closes in a short point — a drawn lock,
+not a whip) and with `hang` can `flick: 0…1` (its tip turns out from the head, the ends at ear and nape). On a mass
+the locks are outlined: every second lock is of another set, so each gets a line against its neighbours and the mass.
+Lay locks in layers by rule (an upper layer off the parting whose tips stand off the head, a lower layer down to the
+hairline with turned-out ends): see the father's `layered()` in the Papa film's seq/set.js. (Rules: devtests/hairstyle.mjs 12)
+
 **Clothes cut by the engine (`design.wear`).** The Stage's own garments are the body's skin let out a little: they follow
 every muscle and have no collar, placket, pocket, belt or shoe. With `wear` the engine cuts clothes for the body
 (engine/wardrobe.js): smooth shells measured from the body's rest shape, with ease, hanging from the chest and the
