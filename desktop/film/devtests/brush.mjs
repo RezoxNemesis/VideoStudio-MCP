@@ -157,5 +157,24 @@ const turn = (row) => { const L = row.map(lum), hi = Math.max(...L.slice(4, 30))
   ok(hemmed.area >= raw.area && hemmed.area < raw.area * 1.12, 'it only fills the notches: the garment grows by a few percent at most', [raw.area, hemmed.area]);
 }
 
+// ---- proxy normals: the light on a trunk is read from a simple round form (a cylinder round the spine), not from
+// every fold of the shirt — so the line between light and shadow is one clean shape that moves slowly. (What studios
+// that draw 3D as anime do: normals mixed towards a cylinder on the torso, a sphere on the head. Researched 16 Nov 2026.)
+{
+  const { proxyNormals } = await import('../engine/body.js');
+  const n = 400, pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), w = new Float32Array(n).fill(1), ideal = [];
+  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5; };
+  for (let i = 0; i < n; i++) { const a = (i / n) * 6.283 * 5, y = 0.9 + 0.5 * (i / n), r = [Math.cos(a), 0, Math.sin(a)]; pos.set([r[0] * 0.15, y, r[2] * 0.15], i * 3); ideal.push(r);
+    const v = [r[0] + rnd() * 0.9, rnd() * 0.9, r[2] + rnd() * 0.9], l = Math.hypot(...v); nrm.set(v.map((q) => q / l), i * 3); } // a shirt full of folds
+  const axis = [[0, 0.8, 0], [0, 1.1, 0], [0, 1.5, 0]];
+  const dev = (N) => { let s = 0; for (let i = 0; i < n; i++) s += Math.acos(Math.max(-1, Math.min(1, N[i * 3] * ideal[i][0] + N[i * 3 + 1] * ideal[i][1] + N[i * 3 + 2] * ideal[i][2]))); return (s / n) * 57.3; };
+  const before = dev(nrm), out = proxyNormals(pos, nrm, axis, w, 0.55), after = dev(out);
+  ok(before > 18, 'the folds turn the normals by tens of degrees (else the test shows nothing)', before);
+  ok(after < before * 0.55, 'mixed towards the cylinder round the spine they lie within about half of that', [before, after]);
+  let len = 0; for (let i = 0; i < n; i++) len = Math.max(len, Math.abs(Math.hypot(out[i * 3], out[i * 3 + 1], out[i * 3 + 2]) - 1)); ok(len < 1e-4, 'they stay unit normals', len);
+  const w0 = new Float32Array(n), same = proxyNormals(pos, nrm, axis, w0, 0.55); let d = 0; for (let i = 0; i < n * 3; i++) d = Math.max(d, Math.abs(same[i] - nrm[i]));
+  ok(d < 1e-6, 'what does not hang on the trunk (an arm, a leg) keeps its own normals', d);
+}
+
 if (fails.length) { console.error(`brush: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`brush: ${checks} rules hold`);

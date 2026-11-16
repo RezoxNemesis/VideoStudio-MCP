@@ -3,7 +3,7 @@
 // arm, a hand or a blade passes in front of the face.
 import { createCanvas } from '@napi-rs/canvas';
 import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
-import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn } from './body.js';
+import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn, proxyNormals } from './body.js';
 import { swordInHand } from './character.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes, capWithoutSideburns } from './hair.js';
@@ -381,6 +381,7 @@ export function handsFor(pose, asked) { return asked ? { ...autoHands(pose), ...
  * Draw a character whose pose carries its real body (pose.body = { B, t, xf, hands }). Same arguments as Character.draw;
  * o.sun: the light's direction in the world. Returns false when the body cannot be drawn (the caller falls back).
  */
+const TRUNK = ['root', 'spine05', 'spine04', 'spine03', 'spine02', 'spine01', 'neck01']; // the line a trunk is round about, from the hips to the neck
 export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const d = ch.d, F = ch.frame(pose), k = F.k, pb = pose.body, B = pb.B;
   const zc = cam.toCam(F.pel)[2]; if (zc < 0.15) return true;
@@ -414,6 +415,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     return out;
   };
   const mouthShut = !face || (faceShapes(face).w['mouth-open'] ?? 0) < 0.06;
+  const trunkNames = TRUNK.filter((n) => B.bi[n] !== undefined), trunkIds = new Set(trunkNames.map((n) => B.bi[n])), trunkAxis = trunkNames.length > 2 && B.P ? trunkNames.map((n) => { const i = B.bi[n]; return onBone(B, i, [B.P[i * 3], B.P[i * 3 + 1], B.P[i * 3 + 2]]); }) : null;
   for (const p of B.parts) {
     if (real && (p.name === 'eyes' || p.name === 'teeth' || p.name === 'tongue' || p.name === 'lashes')) {
       const nr = normalsOf(p.out, p.idx, p.nrm);
@@ -438,7 +440,13 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (SKIP.has(p.name)) continue;
     // wrist wraps of the body model lie under a long sleeve: without a colour of their own on the sheet they would only poke through it
     if (p.name === 'wraps' && d.top?.sleeve === 'long' && !(d.body?.wraps ?? d.armor?.bracer ?? d.top?.wrap)) continue;
-    const paint = paintOf(ch, B, p, lit), nr = normalsOf(p.out, p.idx, p.nrm);
+    const paint = paintOf(ch, B, p, lit); let nr = normalsOf(p.out, p.idx, p.nrm);
+    // the trunk is lit as one round form (proxy normals: a cylinder round the spine), so a shirt gets one clean shadow
+    // shape instead of a patch on every fold; how much each bit of a part hangs on the spine is found once
+    if (trunkAxis && p.si && p.sw && d.body?.proxy !== false) {
+      if (p.trunkW === undefined) { const a = new Float32Array(p.n); let any = false; for (let v = 0; v < p.n; v++) { let w = 0; for (let k = 0; k < 4; k++) if (trunkIds.has(p.si[v * 4 + k])) w += p.sw[v * 4 + k]; a[v] = w; if (w > 0.02) any = true; } p.trunkW = any ? a : null; }
+      if (p.trunkW) nr = proxyNormals(p.out, nr, trunkAxis, p.trunkW, d.body?.proxy ?? 0.5);
+    }
     if (p.material !== 'skin' && paint.hem === undefined) paint.hem = hemPx; // a garment's mesh ends in teeth (a short sleeve, a shirt's lower edge): drawn, its edge is smooth
     // a top cut like a robe (crossed lapels over an under-robe, set-in sleeves): painted by a map of its cut, front and back each by itself
     if (p.name === 'tunic' && (d.body?.collar || d.body?.sleeves)) {

@@ -221,6 +221,11 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**Pictures on surfaces** (a photograph in a hand, a poster, a face in the sky): keep the file in the film's `assets/`,
+`const PHOTO = await picture(new URL('../assets/photo.png', import.meta.url))` at the top of the sequence file, then in a
+face's detail `onFace(g, F, PHOTO, u0, v0, u1, v1)` (cropped to fill, lit like the face) or in a shot's `top`:
+`g.drawImage(PHOTO, x, y, w, h)` (with `g.globalCompositeOperation = 'screen'` for something made of light).
+
 **What a drawn figure needs (learnt on the Papa film, 16 Nov 2026 — it came back for "hard polygonal patches", ragged
 edges, a night too dark to read and people "extremely static"):**
 - Every look that draws anime **paints** (`paint.mode: 'paint'`): one designed shadow shape per form with a soft brushed
@@ -229,6 +234,8 @@ edges, a night too dark to read and people "extremely static"):**
 - **Rim light**: every painted look puts a thin rim of light on the side turned from the lens; it takes the colour of the
   scene's `rim` (`new Scene({ rim: '#ffc890' })`: a warm lamp at night) and is what lifts black hair and dark trousers off a
   dark background. Never switch it off to cure a hair fault.
+- **The trunk is lit as one round form** (proxy normals: a cylinder round the spine, as the head is lit as a ball): a
+  shirt gets one clean shadow shape that moves slowly, not a patch on every fold. `design.body.proxy: 0…1` (0.5; false: off).
 - **Hems and hairlines** are closed by themselves (`paint.hem`): a short sleeve, a shirt's lower edge and the cap of hair no
   longer end in the teeth of their triangles.
 - **Nobody is a statue**: at rest the shoulders ride 1–3 cm on the breath, about one breath in five is a sigh, the head

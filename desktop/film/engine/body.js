@@ -676,6 +676,28 @@ export class CelPainter {
   }
 }
 /**
+ * Proxy normals: the normals of a surface mixed towards those of a simple round form — a cylinder round `axis` (a line of
+ * points: the spine from hips to neck). w: one number per vertex, 0…1, how much it belongs to that form (0: untouched);
+ * k: how far to mix (0.5 is plenty). The light then reads the trunk as one round form: one clean shadow shape instead of
+ * a patch on every fold. → a new array.
+ */
+export function proxyNormals(pos, nrm, axis, w, k = 0.5) {
+  const out = new Float32Array(nrm), n = nrm.length / 3;
+  for (let v = 0; v < n; v++) {
+    const wk = (w ? w[v] : 1) * k; if (!(wk > 0)) continue;
+    const px = pos[v * 3], py = pos[v * 3 + 1], pz = pos[v * 3 + 2]; let best = 1e9, rx = 0, ry = 0, rz = 0;
+    for (let i = 0; i < axis.length - 1; i++) { // the nearest point of the line
+      const a = axis[i], b = axis[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], t = Math.max(0, Math.min(1, ((px - a[0]) * dx + (py - a[1]) * dy + (pz - a[2]) * dz) / (dx * dx + dy * dy + dz * dz || 1)));
+      const qx = px - a[0] - dx * t, qy = py - a[1] - dy * t, qz = pz - a[2] - dz * t, d = qx * qx + qy * qy + qz * qz;
+      if (d < best) { best = d; const dl = Math.hypot(dx, dy, dz) || 1, al = (qx * dx + qy * dy + qz * dz) / dl; rx = qx - (dx / dl) * al; ry = qy - (dy / dl) * al; rz = qz - (dz / dl) * al; } // (straight out from the line, also beyond its ends)
+    }
+    const rl = Math.hypot(rx, ry, rz); if (rl < 1e-6) continue;
+    const nx = nrm[v * 3] * (1 - wk) + (rx / rl) * wk, ny = nrm[v * 3 + 1] * (1 - wk) + (ry / rl) * wk, nz = nrm[v * 3 + 2] * (1 - wk) + (rz / rl) * wk, l = Math.hypot(nx, ny, nz) || 1;
+    out[v * 3] = nx / l; out[v * 3 + 1] = ny / l; out[v * 3 + 2] = nz / l;
+  }
+  return out;
+}
+/**
  * The tone of a rim of light on a surface of colour `fill`: the surface taking the colour of the light that grazes it
  * (light: [r,g,b], by default a warm white), so black hair gets a grey edge of light — not a brown one, as a brighter
  * hair colour would be.
