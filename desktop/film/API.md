@@ -867,3 +867,11 @@ In the anime look, the shadows an animator places on a figure whatever the key l
 Before its first key it is nowhere, unless it lies somewhere. Measure the moments on the solve: catch where the two wrists meet, throw at the wrist's speed peak, kick at the foot's fastest swing. The drawing is an animator's ball (flat colour, one shade, seams or patches, an ink line, its shadow on the ground); a box is drawn as a box.
 
 Rules: `devtests/ballplay.mjs` (14).
+
+## Fonts (2.6.112)
+
+`g.font` can name: Poppins, Inter, Lora (the kit's), **Baloo 2** (rounded, Latin and Devanagari: use it for Hindi
+lettering), **Bebas Neue** and **Anton** (tall condensed headlines), **Montserrat** (geometric, 100–900 weights),
+**Bangers** and **Luckiest Guy** (comic, for jokes; Luckiest Guy has no ₹). Variable fonts take any weight:
+`g.font = '800 96px "Baloo 2"'`. A film may bring its own: every .ttf / .otf in its `fonts/` folder is loaded
+when the film opens. All bundled fonts are under the SIL Open Font License or Apache 2.0 (assets/fonts/licenses).

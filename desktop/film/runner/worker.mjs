@@ -37,10 +37,17 @@ const HERE = path.dirname(new URL(import.meta.url).pathname), ASSETS = path.join
 for (const f of fs.existsSync(path.join(ASSETS, 'fonts')) ? fs.readdirSync(path.join(ASSETS, 'fonts')) : []) { try { GlobalFonts.registerFromPath(path.join(ASSETS, 'fonts', f)); } catch { /* a font that does not load is not fatal */ } }
 
 let P = null, Pkey = '';
+// A film may bring its own fonts: every .ttf / .otf in its fonts/ folder can be named in g.font like the kit's own
+// (Poppins, Inter, Lora, Baloo 2 (Latin and Devanagari), Bebas Neue, Anton, Montserrat, Bangers, Luckiest Guy).
+const filmFontsDone = new Set();
+function filmFonts(dir) {
+  const d = path.join(dir, 'fonts'); let list = []; try { list = fs.readdirSync(d).filter((f) => /\.(ttf|otf)$/i.test(f)); } catch { return; }
+  for (const f of list) { const p = path.join(d, f); if (filmFontsDone.has(p)) continue; filmFontsDone.add(p); try { GlobalFonts.registerFromPath(p); } catch { /* a font that does not load is not fatal */ } }
+}
 /** The project in `dir`, loaded once and again whenever one of its source files changed. */
 async function project(dir) {
   const key = dir + '|' + sources(dir).map((f) => f.file + f.hash).join('') + '|' + JSON.stringify(readConfig(dir)) + '|' + stamp(dirs(dir).vo) + stamp(dirs(dir).bake);
-  if (!P || Pkey !== key) { P = await openProject(dir); Pkey = key; }
+  if (!P || Pkey !== key) { filmFonts(dir); P = await openProject(dir); Pkey = key; }
   return P;
 }
 /** Changes when voices or bakes were written (they decide timing and poses). */
