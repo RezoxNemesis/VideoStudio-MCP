@@ -98,6 +98,11 @@ if (library()) {
   C.pair('handshake', 'a', 'b', { at: [-1, 2], yaw: 90 });
   let nearest = 9; for (let t = 0; t < C.beats[0].t0; t += 0.1) { const a = C.where('a', t), b = C.where('b', t); nearest = Math.min(nearest, Math.hypot(a.x - b.x, a.z - b.z)); }
   ok(nearest > 0.8, 'walking to their marks they pass each other at arm\'s length or more (the second goes round)', nearest);
+  // (also on a short way: two who change sides after standing close — measured in the Movement Study, 16 Nov: their bellies passed through each other)
+  const C2 = choreo({ leg: 0.975 }); C2.actor('a', { at: [0.6, 2.36], yaw: -90 }); C2.actor('b', { at: [-0.2, 2.07], yaw: 90 });
+  C2.pair('jumping-jacks', 'a', 'b', { at: [-0.9, 2.0], yaw: 0 });
+  let n2 = 9; for (let t = 0; t < C2.beats[0].t0; t += 0.1) { const a = C2.where('a', t), b = C2.where('b', t); n2 = Math.min(n2, Math.hypot(a.x - b.x, a.z - b.z)); }
+  ok(n2 > 0.6, 'and when they change sides over a short way', n2);
 }
 
 /* 7. cameras and lettering for every beat */
