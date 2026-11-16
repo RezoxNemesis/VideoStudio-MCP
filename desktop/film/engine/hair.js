@@ -249,9 +249,13 @@ export function hairMeshes(H, B, dt, t, wind = null) {
     // what a tail cannot pass through: the head itself (as hair meets it), and the back — a row of large balls that touch it from inside
     const HSt = B.landmarks?.crown && B.landmarks?.nape && B.landmarks?.eyeL ? headSurface(B) : null, balls = backOf(B), rad = T.w * 0.3 + 0.004;
     const hb = B.bi.head, ho = hb * 9, Rh = B.R, Th = B.T, s2 = Rh[ho] * Rh[ho] + Rh[ho + 3] * Rh[ho + 3] + Rh[ho + 6] * Rh[ho + 6] || 1, sc = Math.sqrt(s2);
-    const clear = (p) => {
-      if (HSt) { const x = p[0] - Th[hb * 3], y = p[1] - Th[hb * 3 + 1], z = p[2] - Th[hb * 3 + 2], lp = [(Rh[ho] * x + Rh[ho + 3] * y + Rh[ho + 6] * z) / s2, (Rh[ho + 1] * x + Rh[ho + 4] * y + Rh[ho + 7] * z) / s2, (Rh[ho + 2] * x + Rh[ho + 5] * y + Rh[ho + 8] * z) / s2], lo = HSt.out(lp, rad / sc); if (lo !== lp) p = onBone(B, 'head', lo); }
-      for (const b of balls) { const c = onBone(B, b.bone, b.c), d = sub(p, c), l = len(d), need = (b.r + rad) * sc; if (l < need && l > 1e-6) p = add(c, mul(d, need / l)); }
+    // (a thread can be no further from head and back than it has run from its tie: asked for more — a knot shorter than
+    // its own breadth, a tie that lies inside the back of a bowed head — it is asked for the impossible and thrashes. Its
+    // clearance grows along it, half of what it has run; and it leaves what its tie is in no faster than that)
+    const clear = (p, run = 1e9) => {
+      const r = Math.min(rad, run * 0.5);
+      if (HSt) { const x = p[0] - Th[hb * 3], y = p[1] - Th[hb * 3 + 1], z = p[2] - Th[hb * 3 + 2], lp = [(Rh[ho] * x + Rh[ho + 3] * y + Rh[ho + 6] * z) / s2, (Rh[ho + 1] * x + Rh[ho + 4] * y + Rh[ho + 7] * z) / s2, (Rh[ho + 2] * x + Rh[ho + 5] * y + Rh[ho + 8] * z) / s2], lo = HSt.out(lp, r / sc); if (lo !== lp) p = onBone(B, 'head', lo); }
+      for (const b of balls) { const c = onBone(B, b.bone, b.c), d = sub(p, c), l = len(d), need = Math.min((b.r + r) * sc, len(sub(base, c)) + run * 0.5); if (l < need && l > 1e-6) p = add(c, mul(d, need / l)); }
       return p;
     };
     // a hanging thread, in small steps of time (so it comes to rest the same at any number of pictures a second): each
@@ -270,7 +274,7 @@ export function hairMeshes(H, B, dt, t, wind = null) {
       for (let it = 0; it < 8; it++) {
         // spans keep their length: both ends give way alike (the tie does not)
         for (let i = 1; i < n; i++) { const a = N2[i - 1].p, b = N2[i].p, d = sub(b, a), l = len(d) || 1, k = (l - seg) / l, wa = i === 1 ? 0 : 0.5, wb = 1 - wa; for (let c = 0; c < 3; c++) { a[c] += d[c] * k * wa; b[c] -= d[c] * k * wb; } }
-        for (let i = 1; i < n; i++) { const f = N2[i].p, c = clear(f); if (c !== f) { const q = N2[i].q; q[0] += c[0] - f[0]; q[1] += c[1] - f[1]; q[2] += c[2] - f[2]; N2[i].p = c; } }
+        for (let i = 1; i < n; i++) { const f = N2[i].p, c = clear(f, i * seg); if (c !== f) { const q = N2[i].q; q[0] += c[0] - f[0]; q[1] += c[1] - f[1]; q[2] += c[2] - f[2]; N2[i].p = c; } }
       }
     };
     let N2 = T.st;
@@ -286,7 +290,12 @@ export function hairMeshes(H, B, dt, t, wind = null) {
     { const from = N2[0].p, ns = Math.max(1, Math.min(8, Math.round(h * 120))), hs = h / ns, damp = Math.pow(0.2, hs), w2 = [wv[0] * 1.2, 0, wv[2] * 1.2];
       for (let k = 0; k < ns && h > 0; k++) { const u = (k + 1) / ns; N2[0].p = [from[0] + (base[0] - from[0]) * u, from[1] + (base[1] - from[1]) * u, from[2] + (base[2] - from[2]) * u]; step(hs, damp, w2); } }
     N2[0].p = base;
-    const frameAt = (i) => { const a = N2[Math.max(0, i - 1)].p, b = N2[Math.min(n - 1, i + 1)].p, ax = norm(sub(b, a)); let e1 = cross(ax, [0, 1, 0]); e1 = len(e1) < 0.05 ? [1, 0, 0] : norm(e1); return { ax, e1, e2: cross(ax, e1) }; };
+    // the frame across the tail is carried from the tie down the thread — the head's own side, kept square to each span in
+    // turn — never taken afresh from "up": a tail that hangs straight down has no side of its own, and its sheaf of locks
+    // turned about it from picture to picture
+    const FRM = []; { let e1 = norm(dirOnBone(B, 'head', [1, 0, 0]));
+      for (let i = 0; i < n; i++) { const a = N2[Math.max(0, i - 1)].p, b = N2[Math.min(n - 1, i + 1)].p, ax = norm(sub(b, a)), k = e1[0] * ax[0] + e1[1] * ax[1] + e1[2] * ax[2]; let e = [e1[0] - ax[0] * k, e1[1] - ax[1] * k, e1[2] - ax[2] * k]; if (len(e) < 0.05) { e = cross(ax, [0, 0, 1]); if (len(e) < 0.05) e = cross(ax, [0, 1, 0]); } e1 = norm(e); FRM.push({ ax, e1, e2: cross(ax, e1) }); } }
+    const frameAt = (i) => FRM[i];
     if (T.locks > 0) {
       // a sheaf of locks: gathered at the tie, fullest a little below it, each running out to a tip of its own
       const Rk = rng(T.seed), K = T.locks, FR = N2.map((_, i) => frameAt(i));

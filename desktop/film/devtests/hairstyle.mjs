@@ -269,5 +269,56 @@ const pts = (c) => c.pts;
   }
 }
 
+// ---- a short tied knot holds still on a still head, and no tail is ever longer than itself. The father of the Papa
+// film wears a knot 2 cm long and 13 cm wide: its threads were thrown up to 40 cm from the tie, differently on every
+// picture — one of them crossed the lens for a single frame (a black flash at 66.6 s of the first revised draft, 16 Nov 2026)
+for (const [name, tail] of [['a short knot', { len: 0.02, w: 0.13, at: [180, -22], up: -1, locks: 9 }], ['a long tail', { len: 0.6, w: 0.08, at: 'high', tie: true, locks: 7 }],
+  // (a sheaf that hangs straight down must not turn about itself from picture to picture: its locks kept changing places)
+  ['a broad tail hanging straight down from the nape', { len: 0.1, w: 0.13, at: [180, -22], up: -1, locks: 9 }], ['a longer one', { len: 0.2, w: 0.13, at: [180, -22], up: -1, locks: 9 }], ['a single tail at the nape', { len: 0.2, w: 0.06, at: [180, -22], up: -1 }], ['a thin sheaf at the nape', { len: 0.3, w: 0.05, at: [180, -22], up: -1, locks: 5 }]]) {
+  const H = makeHair(B, { cut: 'tied', flow: 'tie', n: 72, tail }, 3);
+  let far = 0, stir = 0, prev = null;
+  for (let f = 0; f < 75; f++) {
+    const tails = hairMeshes(H, B, 1 / 30, f / 30, null).filter((m) => m.tail), at = H.tail.at, now = [];
+    for (const m of tails) for (let i = 0; i < m.pos.length; i += 3) { const p = [m.pos[i], m.pos[i + 1], m.pos[i + 2]]; far = Math.max(far, dist(p, at)); now.push(p); }
+    if (prev && f > 8) for (let i = 0; i < now.length; i++) stir = Math.max(stir, dist(now[i], prev[i]));
+    prev = now;
+  }
+  ok(far <= H.tail.len + (tail.w ?? 0.07) * 0.75 + 0.01, `${name} never reaches further from its tie than its own length and breadth`, far);
+  ok(stir < 0.001, `${name} hangs still on a head that holds still (under a millimetre from picture to picture)`, stir);
+}
+
+// ---- the same knot on a bowed head, where its tie lies INSIDE what stands for the back (a man sitting with his head
+// down, the Papa film): it cannot be asked to leave what its tie is in — it stays its own length and holds still
+{
+  const H = makeHair(B, { cut: 'tied', flow: 'tie', n: 72, tail: { len: 0.02, w: 0.13, at: [180, -22], up: -1, locks: 9 } }, 3), at = H.tail.at;
+  B.backBalls = [{ bone: 0, c: [at[0], at[1] - 0.1, at[2] + 0.12], r: 0.22 }, { bone: 0, c: [at[0], at[1] - 0.2, at[2] + 0.02], r: 0.22 }];
+  let far = 0, stir = 0, prev = null;
+  for (let f = 0; f < 60; f++) {
+    const now = []; for (const m of hairMeshes(H, B, 1 / 30, f / 30, null).filter((q) => q.tail)) for (let i = 0; i < m.pos.length; i += 3) { const p = [m.pos[i], m.pos[i + 1], m.pos[i + 2]]; far = Math.max(far, dist(p, at)); now.push(p); }
+    if (prev && f > 8) for (let i = 0; i < now.length; i++) stir = Math.max(stir, dist(now[i], prev[i]));
+    prev = now;
+  }
+  delete B.backBalls;
+  ok(far <= 0.02 + 0.13 * 0.75 + 0.01, 'a knot whose tie lies inside the back stays its own length and breadth', far);
+  ok(stir < 0.001, 'and holds still there', stir);
+}
+
+// ---- a sheaf that swings through the vertical does not turn itself inside out: hanging straight down it has no side
+// of its own to take from "up" (taken so, its side changed from left to right each time the tail swung past the
+// vertical, and every lock jumped across to the other side in one picture) — its side is carried down from the tie
+{
+  const H = makeHair(B, { cut: 'tied', flow: 'tie', n: 72, tail: { len: 0.2, w: 0.13, at: [180, -22], up: -1, locks: 9 } }, 3);
+  let worst = 0, prev = null, pn = null;
+  for (let f = 0; f < 120; f++) {
+    const t = f / 30; B.T[2] = 0.03 * Math.sin(t * 6.3); B.T[0] = 0.008 * Math.sin(t * 3.1);
+    const now = []; for (const m of hairMeshes(H, B, 1 / 30, t, null).filter((q) => q.tail)) for (let i = 0; i < m.pos.length; i += 3) now.push([m.pos[i], m.pos[i + 1], m.pos[i + 2]]);
+    const nn = H.tail.st.map((q) => [...q.p]);
+    if (prev && f > 15) { let thread = 0, lock = 0; for (let i = 0; i < nn.length; i++) thread = Math.max(thread, dist(nn[i], pn[i])); for (let i = 0; i < now.length; i++) lock = Math.max(lock, dist(now[i], prev[i])); worst = Math.max(worst, lock - thread); }
+    prev = now; pn = nn;
+  }
+  B.T[0] = B.T[1] = B.T[2] = 0;
+  ok(worst < 0.02, 'the locks of a swinging sheaf move with its thread (none jumps across it in one picture)', worst);
+}
+
 if (fails.length) { console.error(`hairstyle: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`hairstyle: ${checks} rules hold`);

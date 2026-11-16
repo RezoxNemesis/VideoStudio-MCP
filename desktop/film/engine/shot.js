@@ -197,7 +197,7 @@ export class ShotRun {
     if (ps.fadeOut && t > shot.dur - ps.fadeOut) post.fade(g, W, H, (t - (shot.dur - ps.fadeOut)) / ps.fadeOut, ps.fadeOutColor ?? ps.fadeColor);
     // a dissolve: the shot opens on the last picture of the shot before it (shot.prev draws it, once) and lets it go, eased
     if (ps.dissolve && shot.prev && t + (shot.into ?? 0) < ps.dissolve) {
-      if (this.prevFrame === undefined) { try { const c0 = shot.prev(W, H, { lang: this.o.lang, look: this.o.look }), c = createCanvas(W, H); c.getContext('2d').drawImage(c0, 0, 0, W, H); this.prevFrame = c; } catch { this.prevFrame = null; } setLook(L); }
+      if (this.prevFrame === undefined) { try { const c0 = shot.prev(W, H, { lang: this.o.lang, look: this.o.look }), c = createCanvas(W, H); c.getContext('2d').drawImage(c0, 0, 0, W, H); this.prevFrame = c; } catch (e) { throw new Error(`The dissolve into ${shot.id ?? 'this shot'} could not draw the shot before it: ${e?.message ?? e}`); } finally { setLook(L); } }
       if (this.prevFrame) { const k = (t + (shot.into ?? 0)) / ps.dissolve; g.save(); g.globalAlpha = 1 - k * k * k * (k * (k * 6 - 15) + 10); g.drawImage(this.prevFrame, 0, 0, W, H); g.restore(); }
     }
     if (shot.subs && !this.ctx.o.noSubs) { const s = shot.subs(t, ctx); if (s) post.subtitle(g, W, H, s.text ?? s, s); }

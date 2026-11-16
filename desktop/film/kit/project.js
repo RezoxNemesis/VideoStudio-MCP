@@ -2,6 +2,7 @@
 // (music and sound) and .vs/ (everything made from them: solved motion, voices, sound, rendered shots).
 import { readPaint, paintKey } from './paint.js';
 import { resolveLook } from '../engine/look.js';
+import { ShotRun } from '../engine/shot.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -87,10 +88,12 @@ export async function openProject(dir) {
   // fixes painted over shots in Animate (paint/<shot>.json): drawn with the shot, part of its fingerprint
   for (const sh of shots) sh.paint = readPaint(dir, sh.id);
   // MOTIONS: performances that are not a sequence of their own (stunt and fight libraries): solved once, used by any shot through `bake: name`
-  return { dir, D, config, FILM, CAST, shots, total: t, src, shared, MOTIONS: Array.isArray(mod.MOTIONS) ? mod.MOTIONS : [] };
+  return linkDissolves({ dir, D, config, FILM, CAST, shots, total: t, src, shared, MOTIONS: Array.isArray(mod.MOTIONS) ? mod.MOTIONS : [] });
 }
 
 /** A shot of the film starting `off` seconds in (for looking at one frame). */
+/** Every shot of a project that opens with a dissolve knows the shot before it (the renderer takes its shots from here). */
+export function linkDissolves(P) { for (const sh of P.shots) withPrev(P, sh, sh.id, 0); return P; }
 /** A shot that opens with a dissolve (post.dissolve) is told how to draw the last picture of the shot before it in the film. */
 function withPrev(P, r, id, off) {
   if (!(r.post?.dissolve > off)) return;
