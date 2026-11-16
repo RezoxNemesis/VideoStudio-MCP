@@ -45,6 +45,8 @@ export class DesktopLink {
   private listeners = new Set<() => void>();
   private timer = 0;
   private polling = false;
+  /** jobs run one after another, but the link keeps polling while one runs: the connector sees the app alive during a long build */
+  private chain: Promise<void> = Promise.resolve();
   private abort: AbortController | null = null;
   private lastInfo = 0;
   private lastPoll = 0;
@@ -153,7 +155,7 @@ export class DesktopLink {
       else if (res.ok) {
         this.set("online");
         const body = (await res.json()) as { jobs?: { id: string; commands: Command[]; continueOnError?: boolean }[] };
-        for (const job of body.jobs ?? []) await this.runJob(job);
+        for (const job of body.jobs ?? []) this.chain = this.chain.then(() => this.runJob(job)).catch(() => {});
       } else throw new Error(`The link answered ${res.status}`);
       this.lastError = "";
     } catch (e) {
