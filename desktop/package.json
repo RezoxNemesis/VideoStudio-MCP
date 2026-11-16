@@ -58,7 +58,7 @@
           "Name": "VideoStudio",
           "Comment": "Edit, animate and render — with Claude",
           "Categories": "AudioVideo;Video;AudioVideoEditing;Graphics;",
-          "StartupWMClass": "VideoStudio"
+          "StartupWMClass": "videostudio"
         }
       }
     },
@@ -145,5 +145,6 @@
       }
     ],
     "afterPack": "build/afterPack.cjs"
-  }
+  },
+  "desktopName": "videostudio.desktop"
 }

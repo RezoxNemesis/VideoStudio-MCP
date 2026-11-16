@@ -42,6 +42,17 @@ describe("the app in the person's own folder", () => {
     expect(sh).toContain(r.exe);
     expect(sh).toContain("--no-sandbox"); // (unpacked, the sandbox helper is not the system's: the app is started as a portable one is)
   });
+  it("names the window's app in the launcher, so the desktop shows VideoStudio, not org.chromium.Chromium", async () => {
+    const h = home(), sys = path.join(h, "sys-apps"); fs.mkdirSync(sys);
+    fs.writeFileSync(path.join(sys, "videostudio.desktop"), "[Desktop Entry]\nName=VideoStudio 2\nExec=/opt/VideoStudio/videostudio %U\nType=Application\nStartupWMClass=VideoStudio\n");
+    await S.installUserApp({ appImage: appImage("2.5.90"), version: "2.5.90", home: h, run, systemApps: sys });
+    const text = fs.readFileSync(path.join(h, ".local/share/applications/videostudio.desktop"), "utf8");
+    expect(text.match(/^StartupWMClass=.*$/gm)).toEqual(["StartupWMClass=videostudio"]);
+    const h2 = home(), sys2 = path.join(h2, "sys-apps"); fs.mkdirSync(sys2);
+    fs.writeFileSync(path.join(sys2, "videostudio.desktop"), "[Desktop Entry]\nName=VideoStudio 2\nExec=/opt/VideoStudio/videostudio %U\nType=Application");
+    await S.installUserApp({ appImage: appImage("2.5.90"), version: "2.5.90", home: h2, run, systemApps: sys2 });
+    expect(fs.readFileSync(path.join(h2, ".local/share/applications/videostudio.desktop"), "utf8")).toMatch(/^StartupWMClass=videostudio$/m);
+  });
   it("starts through a small script that falls back to the installed app if the unpacked one cannot start", async () => {
     const h = home(), sys = path.join(h, "sys-apps"), opt = path.join(h, "opt"); fs.mkdirSync(sys); fs.mkdirSync(opt);
     fs.writeFileSync(path.join(opt, "videostudio"), '#!/bin/sh\necho system "$@" > "$(dirname "$0")/ran"\n', { mode: 0o755 });

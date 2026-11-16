@@ -47,6 +47,14 @@ if (process.argv.includes("--vsd-relaunch-wait")) {
     /* short busy wait before any profile access */
   }
 }
+// Who the window is: on Linux the desktop shows a Chromium-based app as "org.chromium.Chromium" unless it is told its
+// own name — and a person who sees that in the System Monitor may end it, not knowing it is VideoStudio (16 Nov 2026:
+// a film's render was stopped three times that way). The class and desktop name match the launcher (self-update.cjs).
+if (process.platform === "linux") {
+  process.env.CHROME_DESKTOP = "videostudio.desktop";
+  try { app.setDesktopName("videostudio.desktop"); } catch { /* older Electron */ }
+  app.commandLine.appendSwitch("class", "videostudio");
+}
 let firstInstance = app.requestSingleInstanceLock();
 // (a first copy that hangs — its session marker untouched for two minutes — is ended by a new start, which then opens in
 //  its place: before, the app could not be opened at all until it was killed from a terminal. electron/stuck.cjs)
@@ -1477,11 +1485,17 @@ for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"])
   });
 if (!firstInstance) app.quit();
 else {
+  // Opening the app again while it runs (busy with a render, minimised or behind other windows) brings its window to
+  // the front: shown, restored, raised and focused — on KDE Wayland a plain focus() is refused, so it is raised by
+  // briefly keeping it on top, and the taskbar entry asks for attention.
   app.on("second-instance", () => {
-    if (win) {
+    if (!win || win.isDestroyed()) { createWindow(); return; }
+    try {
+      if (!win.isVisible()) win.show();
       if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+      win.setAlwaysOnTop(true); win.moveTop(); win.focus(); setTimeout(() => { try { win.setAlwaysOnTop(false); } catch { /* closed */ } }, 1500);
+      win.flashFrame(true); setTimeout(() => { try { win.flashFrame(false); } catch { /* closed */ } }, 4000);
+    } catch { /* the window is going away */ }
   });
   app.whenReady().then(() => {
     setupProtocols();

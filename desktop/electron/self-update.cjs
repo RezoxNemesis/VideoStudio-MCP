@@ -37,9 +37,12 @@ async function writeLauncher({ home, exe, dir, systemApps = "/usr/share/applicat
   await fsp.writeFile(script, `#!/bin/sh\n# VideoStudio 2 — started from your own folder (written by the app's updater; safe to delete: the installed app starts instead)\nT0=$(date +%s)\n${q(exe)} ${startArgs(dir).join(" ")} "$@"\nRC=$?\n[ $RC -eq 0 ] && exit 0\n[ $(( $(date +%s) - T0 )) -lt 20 ] || exit $RC\n${sysExe && sysExe.startsWith("/") ? `[ -x ${q(sysExe)} ] && exec ${q(sysExe)} --vsd-no-handover "$@"\n` : ""}exit $RC\n`, { mode: 0o755 });
   const cmd = `Exec="${script}" %U`;
   if (text) text = text.replace(/^Exec=.*$/gm, cmd).replace(/^TryExec=.*\n/gm, "");
+  // the window says it is this app (main.cjs gives it the class and desktop name `${exeName}`), so the taskbar and the
+  // System Monitor show "VideoStudio 2" with its icon — not "org.chromium.Chromium", which a person may end, not knowing it is the app
+  if (text) text = /^StartupWMClass=/m.test(text) ? text.replace(/^StartupWMClass=.*$/gm, `StartupWMClass=${exeName}`) : text.replace(/\n?$/, `\nStartupWMClass=${exeName}\n`);
   else {
     const icon = [path.join(dir, `${exeName}.png`), path.join(dir, ".DirIcon")].find((p) => fs.existsSync(p)) || exeName;
-    text = `[Desktop Entry]\nName=VideoStudio 2\n${cmd}\nIcon=${icon}\nType=Application\nTerminal=false\nCategories=AudioVideo;Video;\nStartupWMClass=VideoStudio\n`;
+    text = `[Desktop Entry]\nName=VideoStudio 2\n${cmd}\nIcon=${icon}\nType=Application\nTerminal=false\nCategories=AudioVideo;Video;\nStartupWMClass=${exeName}\n`;
   }
   const apps = path.join(home, ".local", "share", "applications");
   await fsp.mkdir(apps, { recursive: true });
