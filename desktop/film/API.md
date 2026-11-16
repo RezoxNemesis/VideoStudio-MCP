@@ -221,6 +221,11 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**Rolls, dives and falls: nothing under the ground.** A capture is fitted to our body by its feet; in a roll the hips,
+a shoulder and the hands can sink into the floor. `fit: (pose) => grounded(pose)` on the actor lifts the whole body onto
+it, eased in (kit/combat.js; rules in `devtests/ground.mjs`). Moves `dive-roll` and `backflip` in the code collection
+hold the clips, their moments, the yaw each needs to travel along the actor's heading, and where a thing in the way goes.
+
 **The finish (engine/finish.js) — what anime calls photography.** A painted figure is not pasted on its background:
 where it is laid down, the background's light bleeds a little over its edge (`wrap`, light only, just short of being
 noticed) and a soft gradient goes over it, lighter and warmer towards the scene's light, deeper and cooler away from it

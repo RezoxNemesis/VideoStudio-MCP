@@ -53,6 +53,35 @@ export const MOVES = [
     check: ['where.mjs: he stands where the next action needs him', 'no foot-slide MUST in the judge'],
   },
   {
+    id: 'dive-roll', name: 'A running dive over something low into a roll', tags: ['dive', 'roll', 'parkour', 'vault', 'jump', 'obstacle', 'stunt', 'tumble'],
+    use: 'A runner goes over a kerb, a pipe or a fallen thing on his hands, rolls over one shoulder and runs on.',
+    rules: [
+      'A capture travels the way its performer went, not the way your actor faces: this one goes OPPOSITE to the actor\'s yaw — give the action its own at: { yaw } (for an actor heading +x at yaw 90: yaw -90) and read where he goes with where.mjs.',
+      'Put the thing in the way where the real flight passes: the feet leave 1.4 m into the clip\'s travel, the hands pass 0.35 m further on at 0.4 m height and come down 0.45 m beyond that; the legs pass at 0.6–0.9 m. So: something no higher than 0.3 m, 0.2 m deep, 0.35 m past the take-off.',
+      'A roll is fitted to the body by its feet only, so hips, shoulder and hands sink up to 14 cm INTO the ground: fit: (pose) => grounded(pose) lifts the whole body onto it.',
+      'Low camera going with him (0.4 m): the height of the dive reads against the horizon.',
+    ],
+    clips: [{ clip: '127_23', note: 'Run Dive Over Roll Run, 2.9 s: in the air 0.57–1.10 s, travels 5.2 m, up and running again by 1.9 s' }],
+    needs: ['stage.do', 'grounded', 'where.mjs'],
+    code: `{ t: tDive, clip: '127_23', at: { yaw: -90 }, blend: 0.25 }    // after a go … gait: 'run'; actor: fit: (pose) => grounded(pose)`,
+    check: ['where.mjs: he goes on along his run', 'devtests/ground.mjs rules; no joint of hips, shoulders, wrists under the ground as drawn', 'no foot-slide MUST in the judge'],
+  },
+  {
+    id: 'backflip', name: 'A standing backflip, and a cartwheel into a backflip', tags: ['backflip', 'flip', 'somersault', 'cartwheel', 'acrobat', 'parkour', 'stunt', 'tumble', 'gymnast'],
+    use: 'An athlete shows what he can do; the end of a tumbling run.',
+    rules: [
+      'A real back tuck: the hips dip 13–30 cm with the arms back, the arms are thrown up, he leaves the ground nearly upright, is 0.53 s in the air, the hips rise 45 cm, he is upside down in the middle, tucked (feet 42 cm from the hips), and lands 1.1 m BEHIND where he stood; the hips sink 15–19 cm on landing.',
+      'He travels backwards relative to the way he faces: leave room behind him, and let the clip keep the facing the action before left him with (a forced yaw at the join skated the feet 34 cm).',
+      'The cartwheel into backflip covers 5 m and is 0.70 s in the air, hips 61 cm up; it also goes opposite to the actor\'s yaw (at: { yaw: -90 } for +x).',
+      'Camera: low and still for the standing flip (he rises over the lens); from the side and level for the tumbling run, following his hips along the ground only, so the arc reads against the sky.',
+      'The judge calls the arm throw at take-off an arm-flare: for a flip that finding is the action itself.',
+    ],
+    clips: [{ clip: '88_01', in: 0.45, note: 'backflip: leaves the ground 0.8 s after the action starts' }, { clip: '88_05', note: 'cartwheel into backflip, 1.9 s as played' }, { clip: '87_03', note: 'another performer\'s backflip' }],
+    needs: ['stage.do', 'where.mjs'],
+    code: `{ t: tFlip, clip: '88_01', in: 0.45, blend: 0.4 }, { t: tFlip + 1.75, idle: true, blend: 0.45 }    // tumbling: { t, clip: '88_05', at: { yaw: -90 }, blend: 0.3 }; another performer's flip: clip: '87_03'`,
+    check: ['in the air about half a second; lands on both feet; no foot-slide MUST at the joins'],
+  },
+  {
     id: 'pick-up', name: 'Picking something up from the ground', tags: ['pick', 'up', 'take', 'grab', 'lift', 'bag', 'box', 'prop', 'reach'],
     use: 'Someone walks or runs up to a thing on the ground, bends, takes it and goes on with it in the hand.',
     rules: [

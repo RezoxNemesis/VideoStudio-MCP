@@ -44,6 +44,20 @@ export function shiftPose(pose, d) {
   if (pose.body) (pose.body.after ??= []).push({ shift: [d[0], d[1], d[2]] }); // the real body goes with its joints
   return pose;
 }
+/**
+ * Nothing of a body under the ground. A captured roll, dive or fall is fitted to our body by its feet; hips, back,
+ * shoulders and hands can end up IN the floor. This lifts the whole body (nothing is bent) just enough that each of
+ * those parts lies on the ground by its own thickness — eased in, so a body that sinks to the ground is not jolted
+ * when it first touches. Feet are left to the solver. For an actor: fit: (pose) => grounded(pose).
+ * o: { ground: 0 (its height), soft: 0.03 (metres over which the lift eases in) }.
+ */
+const GROUND_R = { root: 0.1, spine01: 0.09, spine02: 0.09, spine03: 0.09, spine04: 0.09, spine05: 0.09, neck01: 0.06, head: 0.09, 'upperarm01.L': 0.06, 'upperarm01.R': 0.06, 'lowerarm01.L': 0.04, 'lowerarm01.R': 0.04, 'wrist.L': 0.025, 'wrist.R': 0.025, 'upperleg01.L': 0.09, 'upperleg01.R': 0.09, 'lowerleg01.L': 0.05, 'lowerleg01.R': 0.05 };
+export function grounded(pose, o = {}) {
+  const k = (pose.height ?? 1.8) / 1.8, gy = o.ground ?? 0, soft = (o.soft ?? 0.03) * k; let need = -1e9;
+  for (const n in GROUND_R) { const p = pose.j[n]; if (p) need = Math.max(need, gy + GROUND_R[n] * k - p[1]); }
+  const lift = need <= -soft ? 0 : need >= soft ? need : (need + soft) ** 2 / (4 * soft);
+  return lift > 1e-6 ? shiftPose(pose, [0, lift, 0]) : pose;
+}
 /** Turn a whole body about a point (a wall-run, a dive, a body thrown through the air). axis: unit vector, ang: radians. */
 export function turnPose(pose, pivot, axis, ang) {
   const q = axisQ(V.norm(axis), ang), r = (p) => V.add(pivot, qrot(q, V.sub(p, pivot)));
