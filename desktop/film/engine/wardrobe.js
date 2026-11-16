@@ -365,6 +365,28 @@ export function dressBody(B, d) {
     hide.add('tunic');
   }
 
+  // ================= ears (a drawn ear: the rim's C, its inner fold and the lobe — the body model's ear is modelled too
+  // finely and too flat for a line of its own to come out of it; 16 Nov 2026, Kabir's profile showed no ear at all)
+  const lm = B.landmarks, hb = B.bi.head;
+  if (lm?.eyeL && hb !== undefined && w.ears !== false) {
+    const ey = lm.eyeL[1], ez = lm.eyeL[2];
+    for (const sx of [1, -1]) {
+      // the ear: where the head reaches furthest out at the side, between the brow's height and the nose's foot, behind the eye
+      let best = 0; const pts0 = [];
+      for (let v = 0; v < n; v++) { const y = P[v * 3 + 1], x = P[v * 3] * sx, z = P[v * 3 + 2]; if (y > ey + 0.02 * k || y < ey - 0.07 * k || z > ez - 0.04 * k || z < ez - 0.16 * k || headW[v] < 0.5) continue; if (x > best) best = x; pts0.push([x, y, z]); }
+      if (best <= 0) continue;
+      const out = pts0.filter((q) => q[0] > best - 0.008 * k); if (out.length < 3) continue;
+      const c = out.reduce((a2, q) => [a2[0] + q[0] / out.length, a2[1] + q[1] / out.length, a2[2] + q[2] / out.length], [0, 0, 0]);
+      const X = best + 0.004 * k, hy = 0.033 * k, hz = 0.019 * k, cy = c[1] - 0.006 * k, cz = c[2] - 0.012 * k; // (above the jaw's hind corner: a little behind where the head reaches furthest out)
+      // (in the head's side plane: u forward (+z), v up)
+      const at = (u, v, dx = 0) => [sx * (X + dx), cy + v * hy, cz + u * hz];
+      const rim = []; for (let i = 0; i <= 14; i++) { const a2 = (-35 + (i / 14) * 250) * Math.PI / 180; rim.push(at(0.55 - 0.95 * Math.cos(a2) * (a2 < Math.PI ? 1 : 0.8), 0.95 * Math.sin(a2) * (a2 > Math.PI ? 1.15 : 1))); }
+      const fold = []; for (let i = 0; i <= 8; i++) { const a2 = (40 + (i / 8) * 160) * Math.PI / 180; fold.push(at(0.25 - 0.45 * Math.cos(a2), 0.5 * Math.sin(a2) - 0.05, -0.001 * k)); }
+      const sd = sx > 0 ? 'L' : 'R';
+      line(`ear.${sd}`, 'face', rim, null, null, { bone: hb, alpha: 0.9, lw: 0.75 });
+      line(`earIn.${sd}`, 'face', fold, null, null, { bone: hb, alpha: 0.55, lw: 0.6 });
+    }
+  }
   // ================= shoes
   if (w.shoes) {
     const sh = w.shoes, ups = [], soles = [], ub = [], sb = [];

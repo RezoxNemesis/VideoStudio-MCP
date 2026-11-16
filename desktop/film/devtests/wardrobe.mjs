@@ -205,5 +205,16 @@ const radiusAt = (p, y, th, c, half = 0.02, f = () => true) => { let best = 0, b
   let throat = -1; for (let v = 0; v < sk6.n; v++) { const x = sk6.pos[v * 3], y = sk6.pos[v * 3 + 1], z = sk6.pos[v * 3 + 2]; if (Math.abs(x) < 0.015 && y > rb.lo[1] - 0.01 && y < rb.lo[1] + 0.025) throat = Math.max(throat, z); }
   ok(rb.hi[2] - throat < 0.03, 'the band in front stands at most 3 cm off the throat (its thickness and a little air)', [rb.hi[2], throat]);
 }
+{ // ---- a drawn ear on each side of the head: behind the eye, between brow and nose, at the head's side
+  const B7 = body('body_kabir'), W7 = dressBody(B7, { wear: { shirt: { kind: 'tee', color: '#fff', sleeve: 'short' } } }), e = B7.landmarks.eyeL;
+  for (const sd of ['L', 'R']) {
+    const l = W7.lines.find((q) => q.name === `ear.${sd}`), f = W7.lines.find((q) => q.name === `earIn.${sd}`);
+    ok(!!l && !!f && l.on === 'face', `an ear is drawn on the ${sd === 'L' ? 'left' : 'right'}: its rim and its inner fold, on the face's skin`, [!!l, !!f, l?.on]);
+    if (!l) continue; const bx = box(l), sx = sd === 'L' ? 1 : -1;
+    ok(bx.lo[0] * sx > 0.07 && bx.hi[2] < e[2] - 0.03 && bx.hi[1] < e[1] + 0.05 && bx.lo[1] > e[1] - 0.1, 'at the side of the head, behind the eye, between brow and jaw', [bx.lo, bx.hi, e]);
+    ok(bx.hi[1] - bx.lo[1] > 0.05 && bx.hi[1] - bx.lo[1] < 0.08, 'about 6 cm tall, as an ear is', bx.hi[1] - bx.lo[1]);
+  }
+  ok(!dressBody(body('body_kabir'), { wear: { shirt: { kind: 'tee', color: '#fff' }, ears: false } }).lines.some((q) => /^ear/.test(q.name)), 'wear.ears: false leaves them out (under a helmet, long hair)', null);
+}
 console.log(fails.length ? `WARDROBE: ${fails.length} of ${checks} rules broken\n  ✗ ${fails.join('\n  ✗ ')}` : `WARDROBE: all ${checks} rules hold`);
 process.exit(fails.length ? 1 : 0);

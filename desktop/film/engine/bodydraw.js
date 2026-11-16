@@ -577,7 +577,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     g.drawImage(spr.canvas, spr.x, spr.y);
   }
   // the lines drawn on its clothes (a crease, a fly, a pocket's edge), inked on their own cloth
-  if (wear && spr) for (const l of wear.lines) { const ids = wearIds[l.on]; if (!ids) continue; const pts = []; for (let v = 0; v < l.n; v++) pts.push([l.out[v * 3], l.out[v * 3 + 1], l.out[v * 3 + 2]]); inkOn(g, spr, cam, [{ pts, alpha: l.alpha, lw: Math.max(0.9, lwB * l.lw) }], ids, { ink, tol: 0.02 }); }
+  if (wear && spr) for (const l of wear.lines) { const ids = l.on === 'face' ? faceIds : wearIds[l.on]; if (!ids || !ids.size) continue; const pts = []; for (let v = 0; v < l.n; v++) pts.push([l.out[v * 3], l.out[v * 3 + 1], l.out[v * 3 + 2]]); inkOn(g, spr, cam, [{ pts, alpha: l.alpha, lw: Math.max(0.9, lwB * l.lw) }], ids, { ink, tol: 0.02 }); }
   // the knuckles of a closed hand, inked on its own skin (never over a sleeve or a blade in front of it)
   if (real && spr && handIds.size && B.fingers) for (const s of ['L', 'R']) {
     const wj = pose.j[`wrist.${s}`]; if (!wj) continue; const px = 0.0068 * (pose.height / 1.8) * cam.ppm(cam.project(wj)[2]); if (px < 1.6) continue; // too small in the picture to be drawn
