@@ -23,4 +23,4 @@ all.push(...cutChecks(sums, B));
 const by = {}; for (const i of all) { const k = `${i.sev} ${i.kind}`; by[k] = (by[k] ?? 0) + 1; }
 console.log(`${shots.length} shots in ${((Date.now() - t0) / 1000).toFixed(1)} s, ${all.length} findings`);
 console.log(Object.entries(by).sort().map(([k, v]) => `${k}: ${v}`).join('\n'));
-if (process.env.SHOW) for (const i of all.filter((x) => x.kind === process.env.SHOW).slice(0, 12)) console.log(i.shot, i.t0, '-', i.t1, i.sev, i.msg);
+if (process.env.SHOW) for (const i of all.filter((x) => x.kind === process.env.SHOW && (!process.env.SEV || x.sev === process.env.SEV)).slice(0, +(process.env.N ?? 12))) console.log(i.shot, i.t0, '-', i.t1, i.sev, i.msg);

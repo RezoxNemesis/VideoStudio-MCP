@@ -100,6 +100,40 @@ export function stepFoot(from, to, local, k = 0, o = {}) {
   const u = clamp((local - k * 0.2) / 0.24, 0, 1), e = smooth(0, 1, u), air = u > 0 && u < 1, lift = air ? Math.sin(Math.PI * u) * Math.min(0.09, 0.03 + 0.3 * D) : 0;
   return { p: [from[0] + (to[0] - from[0]) * e, to[1] + lift, from[1] + (to[2] - from[1]) * e], air, done: u >= 1 };
 }
+/**
+ * A foot on the ground stays where it came down. Called every frame, in order, for one foot:
+ *   lock: what the last frame left (null, a spot { x, z, y }, or a step under way { …, rel, from, dur }),
+ *   o: { foot: [x, y, z] where the pose has the foot now, down: the capture says it is on the ground, t, reach: how far
+ *        the body may carry the pose's foot from its spot before the foot must step after it }
+ * → { lock, p: [x, y, z] where the foot is to go (null: leave the pose as it is), air: it is lifted (a step) }
+ * A foot leaves its spot only as a step: lifted, carried and set down in 0.16–0.3 s, never slid along the ground.
+ */
+export function lockFoot(lock, o) {
+  const f = o.foot, t = o.t;
+  if (lock && lock.rel !== undefined) {
+    const u = clamp((t - lock.rel) / lock.dur, 0, 1), e = smooth(0, 1, u), [fx, fy, fz] = lock.from, D = Math.hypot(f[0] - fx, f[2] - fz);
+    if (u >= 1) return o.down ? { lock: { x: f[0], z: f[2], y: f[1] }, p: null, air: false } : { lock: null, p: null, air: false };
+    const lift = Math.sin(Math.PI * u) * Math.min(0.09, 0.03 + 0.3 * D);
+    return { lock, p: [fx + (f[0] - fx) * e, fy + (f[1] - fy) * e + lift, fz + (f[2] - fz) * e], air: u > 0 };
+  }
+  if (lock) {
+    const D = Math.hypot(f[0] - lock.x, f[2] - lock.z);
+    if (!o.down || o.force || D > (o.reach ?? 0.5)) {
+      // (a foot that has only a little way to go is let go at once; anything more becomes a step)
+      if (D < 0.03) return { lock: null, p: null, air: false };
+      const s = { x: lock.x, z: lock.z, y: lock.y, rel: t, from: [lock.x, f[1], lock.z], dur: clamp(D / 2.2, 0.16, 0.3) };
+      return { lock: s, p: [lock.x, f[1], lock.z], air: true };
+    }
+    return { lock, p: [lock.x, f[1], lock.z], air: false };
+  }
+  // a foot the pose would put somewhere else from one frame to the next (the end of a blend, a hand-over between two
+  // ways of placing it) goes there as a step. Measured against where its own motion was taking it (o.prev: the frame
+  // before last), so a foot that is simply moving fast is let be.
+  const l = o.last, q = o.prev, pr = l && q ? [2 * l[0] - q[0], 2 * l[2] - q[2]] : l ? [l[0], l[2]] : null, J = pr ? Math.hypot(f[0] - pr[0], f[2] - pr[1]) : 0;
+  if (!o.down && !(l && J > (o.jump ?? 0.08) && f[1] - l[1] < 0.1)) return { lock: null, p: null, air: false };
+  if (l && J > (o.down ? (o.jump ?? 0.06) : (o.jump ?? 0.08))) { const s = { x: f[0], z: f[2], y: f[1], rel: t, from: [l[0], l[1], l[2]], dur: clamp(J / 2.2, 0.16, 0.3) }; return { lock: s, p: [l[0], l[1], l[2]], air: true }; }
+  return { lock: { x: f[0], z: f[2], y: f[1] }, p: null, air: false };
+}
 export function floorLift(a, y, pts = [['root', 0.11], ['spine03', 0.1], ['spine01', 0.1], ['head', 0.1], ['upperarm01.L', 0.05], ['upperarm01.R', 0.05], ['lowerarm01.L', 0.04], ['lowerarm01.R', 0.04], ['lowerleg01.L', 0.055], ['lowerleg01.R', 0.055], ['foot.L', 0.04], ['foot.R', 0.04]]) { const h = a.h, s = h.root.scale.y; h.root.updateMatrixWorld(true); let low = 1e9; for (const [b, r] of pts) low = Math.min(low, h.wpos(b).y - r * s * h.height / 1.8); const up = liftToFloor(low, y); if (up > 0) { h.B.root.position.y += up / s; h.root.updateMatrixWorld(true); } }
 export function floorFix(a, y, pts = [['lowerleg01.L', 0.055], ['lowerleg01.R', 0.055], ['foot.L', 0.04], ['foot.R', 0.04], ['toe2-1.L', 0.02], ['toe2-1.R', 0.02]]) { const h = a.h, s = h.root.scale.y; h.root.updateMatrixWorld(true); let low = 1e9; for (const [b, r] of pts) low = Math.min(low, h.wpos(b).y - r * s * h.height / 1.8); h.B.root.position.y += (y - low) / s; h.root.updateMatrixWorld(true); }
 /** single close-up: camera `dist` metres from the actor's eyes, on the line towards `toward` swung by `yaw` (rad). o: dist, yaw, lift, dy, side, fov, range, max, shake */

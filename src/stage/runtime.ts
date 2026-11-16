@@ -121,6 +121,11 @@ interface ActorRt {
   /** Feet in the air while stepping into a stance (bit 1 = left, 2 = right), for the frame at stepAt. */
   stepping?: number;
   stepAt?: number;
+  /** Feet held where they came down (frames played in order): per foot the lock, and what the last frame did. */
+  locks?: { t: number; L: Any; R: Any; p: { L: number[] | null; R: number[] | null }; last?: { L: number[] | null; R: number[] | null }; prev?: { L: number[] | null; R: number[] | null } };
+  /** Which feet really are on the ground at downAt (the capture's marks, less a foot it marks while still coming down). */
+  down?: number;
+  downAt?: number;
 }
 
 /** Seconds a stance takes to step into after another action: the feet go one after the other, lifted. */
@@ -795,7 +800,7 @@ export class StageRuntime {
 
   /* ---------- one actor, one frame ---------- */
 
-  private poseActor(rt: ActorRt, sa: StageActor, t: number): void {
+  private poseActor(rt: ActorRt, sa: StageActor, t: number, inOrder = false): void {
     const a = rt.a, h = a.h, mo = a.mo;
     const bl = sa.blocks;
     const anchors = this.chain(rt, sa);
@@ -950,6 +955,8 @@ export class StageRuntime {
     // (an idle after a captured clip settles over its crossfade: a clip can float a little, and dropping it in one frame pops)
     const settle = b && b.kind === "idle" && i > 0 && !A.cut && local < (b.blend ?? 0.3) ? smooth(0, b.blend ?? 0.3, local) : 1;
     mo.groundFix(this.ground(a.root.position.x, a.root.position.z) + A.y, !b || b.kind === "idle", settle);
+    // a foot on the ground stays where it came down, and leaves it only as a step (frames played in order: a bake)
+    if (inOrder) this.lockFeet(rt, sa, b, t, local);
 
     // face: mood, overlays, speech
     let open = 0;
@@ -967,6 +974,75 @@ export class StageRuntime {
     h.B.spine04.quaternion.multiply(_q.setFromAxisAngle(_v2.set(1, 0, 0), 0.006 * br));
     h.applyFace(t);
     h.root.updateMatrixWorld(true);
+  }
+
+  /**
+   * Feet that stand stay where they came down (16 Nov 2026: the Movement Study's judge found 70 feet skating 15–75 cm:
+   * where a walk began from a stand, where a movement was turned to a new facing, where a clip's pace did not match the
+   * ground it covered). The capture's own marks say which foot stands; a standing foot is held on its spot by the leg;
+   * when the capture lifts it, or the body has gone beyond the leg's reach, it steps (lockFoot). Only when frames come
+   * in order; a stance (solved feet) and a fall are left as they are; a foot stepping into a join is the step's.
+   */
+  private lockFeet(rt: ActorRt, sa: StageActor, b: Block | null, t: number, local = 1e9): void {
+    const a = rt.a, h = a.h, mo = a.mo;
+    const S = (rt.locks ??= { t: -1, L: null, R: null, p: { L: null, R: null } });
+    const same = Math.abs(t - S.t) < 1e-6, inOrder = t > S.t + 1e-6 && t - S.t < 0.07;
+    const off = !b || b.kind === "stance" || b.kind === "fall" || !!rt.solved;
+    if (off || (!same && !inOrder)) { S.L = S.R = null; S.p = { L: null, R: null }; S.last = undefined; S.prev = undefined; S.t = t; return; }
+    const sc = h.root.scale.y || 1, reach = 0.28 * (h.height ?? 1.75) * sc;
+    // while one action blends into the next, a foot that stood at the end of the one before still stands: it leaves its
+    // spot as a step when the new action lifts it (a body turned to a new facing turns on its feet, never on skates)
+    let contact = this.motionAt0(sa, t)?.contact ?? 0;
+    if (b && local < (b.blend ?? 0.3)) contact |= this.motionAt0(sa, b.t - 1 / 60)?.contact ?? 0;
+    const stepping = rt.stepping && rt.stepAt === t ? rt.stepping : 0;
+    h.root.updateMatrixWorld(true);
+    let air = 0, onGround = 3;
+    // held feet must not cross: when the body turns on its feet, the leg that would pass over the other steps round
+    // (measured across the hips: a held left foot may not come within 6 cm of the right foot's side)
+    const force = { L: false, R: false };
+    if (h.B["upperleg01.L"] && h.B["upperleg01.R"] && S.L && S.R && S.L.rel === undefined && S.R.rel === undefined) {
+      const hl = h.wpos("upperleg01.L", new THREE.Vector3()), hr = h.wpos("upperleg01.R", new THREE.Vector3());
+      const ax = new THREE.Vector3(hl.x - hr.x, 0, hl.z - hr.z).normalize(), side = (x: number, z: number) => (x - hr.x) * ax.x + (z - hr.z) * ax.z;
+      if (side(S.L.x, S.L.z) - side(S.R.x, S.R.z) < 0.06 * sc) {
+        // the foot to step is the one its pose has moved furthest from
+        const pl = h.wpos("foot.L", new THREE.Vector3()), pr = h.wpos("foot.R", new THREE.Vector3());
+        const dl = Math.hypot(pl.x - S.L.x, pl.z - S.L.z), dr = Math.hypot(pr.x - S.R.x, pr.z - S.R.z);
+        force[dl >= dr ? "L" : "R"] = true;
+      }
+    }
+    for (const s of ["L", "R"] as const) {
+      const bit = s === "L" ? 1 : 2, name = `foot.${s}`, B = h.B[name];
+      if (!B || !B.parent) continue;
+      if (stepping & bit) {
+        // (a step into a stance or a join has this foot: from where it is, the hold takes over again afterwards)
+        S[s] = null; S.p[s] = null;
+        const at = h.wpos(name, new THREE.Vector3()), tq = h.B[`toe2-1.${s}`] ? h.wpos(`toe2-1.${s}`, new THREE.Vector3()) : at;
+        const L0 = (S.last ??= { L: null, R: null }), P0 = (S.prev ??= { L: null, R: null });
+        P0[s] = L0[s]; L0[s] = [(at.x + tq.x) / 2, at.y, (at.z + tq.z) / 2];
+        continue;
+      }
+      // (the foot is held by the middle of its sole — between ankle and toes — so it can roll from heel to toe on it)
+      const ank = h.wpos(name, new THREE.Vector3()), toe = h.B[`toe2-1.${s}`] ? h.wpos(`toe2-1.${s}`, new THREE.Vector3()) : ank.clone();
+      const cur = new THREE.Vector3((ank.x + toe.x) / 2, ank.y, (ank.z + toe.z) / 2), off = new THREE.Vector3(ank.x - cur.x, 0, ank.z - cur.z);
+      let p = S.p[s];
+      if (!same) {
+        const down = !!(contact & bit) && cur.y - this.ground(cur.x, cur.z) <= (mo.ankleY ?? 0.07) * sc + 0.04;
+        if (!down) onGround &= ~bit;
+        const r = SK.lockFoot(S[s], { foot: [cur.x, cur.y, cur.z], down, t, reach, force: force[s], last: S.last?.[s] ?? undefined, prev: S.prev?.[s] ?? undefined }) as { lock: Any; p: number[] | null; air: boolean };
+        S[s] = r.lock;
+        p = S.p[s] = r.p;
+        if (r.air) air |= bit;
+      }
+      if (!same) { (S.prev ??= { L: null, R: null })[s] = S.last?.[s] ?? null; (S.last ??= { L: null, R: null })[s] = p ? [p[0]!, p[1]!, p[2]!] : [cur.x, cur.y, cur.z]; }
+      if (!p || (Math.hypot(p[0]! - cur.x, p[2]! - cur.z) < 0.002 && Math.abs(p[1]! - cur.y) < 0.002)) continue;
+      const wq = B.getWorldQuaternion(new THREE.Quaternion());
+      setHandle(a, name, new THREE.Vector3(p[0]! + off.x, p[1]!, p[2]! + off.z), 1);
+      B.quaternion.copy(B.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(wq));
+      h.root.updateMatrixWorld(true);
+    }
+    S.t = t;
+    if (!same) { rt.down = onGround; rt.downAt = t; }
+    if (air) { rt.stepping = (rt.stepping && rt.stepAt === t ? rt.stepping : 0) | air; rt.stepAt = t; }
   }
 
   /** Reaches and gazes: these need everyone posed first. */
@@ -1294,7 +1370,7 @@ export class StageRuntime {
       const rt = this.actors.get(sa.id);
       if (!rt) continue;
       try {
-        this.poseActor(rt, sa, tPose);
+        this.poseActor(rt, sa, tPose, true);
       } catch (err) {
         this.problems.push(`${sa.id}: ${(err as Error).message}`);
       }
@@ -1469,6 +1545,8 @@ export class StageRuntime {
     // a foot in the air while stepping into a stance is not planted
     const rt = this.actors.get(sa.id);
     if (rt?.stepping && rt.stepAt === t) free |= rt.stepping;
+    // a foot the capture marks as down while it is still coming down (a blend, a body made taller) is not standing yet
+    if (rt?.down !== undefined && rt.downAt === t) free |= 3 & ~rt.down;
     for (const ov of sa.overlays) {
       if (t < ov.t0 - 1e-6 || t > ov.t1 + 1e-6) continue;
       if (ov.kind === "strike" && ov.limb.startsWith("foot")) free |= ov.limb.endsWith(".L") ? 1 : 2;
