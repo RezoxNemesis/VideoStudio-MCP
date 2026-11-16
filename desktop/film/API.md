@@ -221,6 +221,10 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**Check the finished film for flashes:** `node devtests/flash.mjs <video>` reads its brightness frame by frame and names
+every one- or two-frame flash (never right) and every cut where the whole picture jumps in brightness (day ↔ night, into
+white: right only when meant — else `post.dissolve` or a fade). Run it on every draft before it is shown.
+
 **Pictures on surfaces** (a photograph in a hand, a poster, a face in the sky): keep the file in the film's `assets/`,
 `const PHOTO = await picture(new URL('../assets/photo.png', import.meta.url))` at the top of the sequence file, then in a
 face's detail `onFace(g, F, PHOTO, u0, v0, u1, v1)` (cropped to fill, lit like the face) or in a shot's `top`:
