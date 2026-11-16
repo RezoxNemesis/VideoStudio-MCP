@@ -477,6 +477,8 @@ export class CelPainter {
   finish() {
     const cam = this.cam, o = this.o, SS = o.ss ?? 2, L = o.light ?? [0.4, 0.8, 0.45];
     const { pos: cp, R: cr, U: cu, F: cf, f: fl, cx, cy } = cam;
+    // (castPaint false: in the painted look a cloth throws no key-light shadow — on itself its lumps drew stepped patches;
+    //  the placed light draws the shadows a cloth should throw)
     // the PLACED light (step 7 of a drawn figure): the shadows an animator puts in whatever the key light does — under the
     // chin on the neck, under a hem, under the arms, inside a collar — come from a light that stays above and a little in
     // front of the figure as the camera sees it (o.placed: 0…1, how deep they are; the look sets it)
@@ -586,7 +588,7 @@ export class CelPainter {
     if (o.shadows !== false) {
       let a3 = Math.abs(L[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]; const ax = norm(cross(a3, L)), bx = cross(L, ax);
       let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
-      for (const m of this.meshes) { if (this.paints[m.id].cast === false) continue; const p = m.pos, n = p.length / 3, lu = (m.lu = new Float32Array(n)), lv = (m.lv = new Float32Array(n)), ld = (m.ld = new Float32Array(n)); for (let v = 0; v < n; v++) { const x = p[v * 3], y = p[v * 3 + 1], z = p[v * 3 + 2], U = x * ax[0] + y * ax[1] + z * ax[2], Vv = x * bx[0] + y * bx[1] + z * bx[2]; lu[v] = U; lv[v] = Vv; ld[v] = x * L[0] + y * L[1] + z * L[2]; if (U < u0) u0 = U; if (U > u1) u1 = U; if (Vv < v0) v0 = Vv; if (Vv > v1) v1 = Vv; } }
+      for (const m of this.meshes) { if (this.paints[m.id].cast === false || (this.mode === 'paint' && this.paints[m.id].castPaint === false)) continue; const p = m.pos, n = p.length / 3, lu = (m.lu = new Float32Array(n)), lv = (m.lv = new Float32Array(n)), ld = (m.ld = new Float32Array(n)); for (let v = 0; v < n; v++) { const x = p[v * 3], y = p[v * 3 + 1], z = p[v * 3 + 2], U = x * ax[0] + y * ax[1] + z * ax[2], Vv = x * bx[0] + y * bx[1] + z * bx[2]; lu[v] = U; lv[v] = Vv; ld[v] = x * L[0] + y * L[1] + z * L[2]; if (U < u0) u0 = U; if (U > u1) u1 = U; if (Vv < v0) v0 = Vv; if (Vv > v1) v1 = Vv; } }
       if (u1 > u0) {
         const tex = Math.max(0.004, Math.max(u1 - u0, v1 - v0) / 700), mw = Math.ceil((u1 - u0) / tex) + 3, mh = Math.ceil((v1 - v0) / tex) + 3, md = new Float32Array(mw * mh).fill(-1e9);
         for (const m of this.meshes) {
@@ -705,7 +707,7 @@ export class CelPainter {
         // softly painted, the hair's shadow is not a tone of its own but less light, with a soft edge
         const hs = smH && p.recvHair && !p.flat ? inHairShadow(q, x * SS + i, y * SS + j, sf > 0) : 0;
         // (the shadow another form throws: crisp it is the shadow tone; softly painted it is less light, with a soft edge, and runs out where the form itself turns from the light)
-        const cs = sm && p.recv !== false && !p.flat && l > (p.thr ?? 0.08) + (sf > 0 ? -0.25 : 0.1) ? inShadow(q, x * SS + i, y * SS + j, sf > 0) * (sf > 0 ? sstep((p.thr ?? 0.08) - 0.25, (p.thr ?? 0.08) + 0.1, l) : 1) : 0;
+        const cs = sm && p.recv !== false && !p.flat && l > (p.thr ?? 0.08) + (sf > 0 ? -0.25 : 0.1) ? inShadow(q, x * SS + i, y * SS + j, sf > 0) * (sf > 0 ? sstep((p.thr ?? 0.08) - 0.25, (p.thr ?? 0.08) + 0.1, l) : 1) * (this.mode === 'paint' ? sstep((p.thr ?? 0.08) - 0.05, (p.thr ?? 0.08) + 0.3, l) : 1) : 0; // (painted: near the turn of the form, the form's own shadow decides — a cast shadow there only draws the shadow map's stairs)
         let c = p.flat || (l > (p.thr ?? 0.08) && !(sf > 0 ? false : cs > 0.5) && !(sf > 0 ? false : hs > 0.5)) ? p.fill : p.shade;
         if (mode !== 'cel' && !p.flat) {
           const th = p.thr ?? 0.08, lit = c === p.fill;

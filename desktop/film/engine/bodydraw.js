@@ -368,6 +368,19 @@ export function paintedBeard(d) { return !!d.face?.beard; }
 /** Is the body model's own beard drawn? Not under a painted one, and not at all with design.face.beard: false (a woman, a child). */
 export function bodyBeard(d) { return d.face?.beard !== false && !paintedBeard(d); }
 
+/** Normals smoothed over a mesh's own triangles `it` times (each vertex takes the sum of the normals round it): the form
+ *  stays, the small wrinkles of the mesh no longer break the light. */
+export function smoothNormals(idx, nrm, it = 3) {
+  let cur = new Float32Array(nrm); const n = nrm.length / 3;
+  for (let r = 0; r < it; r++) {
+    const acc = new Float32Array(nrm.length);
+    for (let t = 0; t < idx.length; t += 3) { const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3; for (let k = 0; k < 3; k++) { const sm = cur[a + k] + cur[b + k] + cur[c + k]; acc[a + k] += sm; acc[b + k] += sm; acc[c + k] += sm; } }
+    for (let v = 0; v < n; v++) { const x = acc[v * 3], y = acc[v * 3 + 1], z = acc[v * 3 + 2], l = Math.hypot(x, y, z); if (l > 1e-9) { acc[v * 3] = x / l; acc[v * 3 + 1] = y / l; acc[v * 3 + 2] = z / l; } else { acc[v * 3] = cur[v * 3]; acc[v * 3 + 1] = cur[v * 3 + 1]; acc[v * 3 + 2] = cur[v * 3 + 2]; } }
+    cur = acc;
+  }
+  return cur;
+}
+
 export function hairPaint(d, rgbOf, o = {}) {
   const hc = d.hair.color, fill = rgbOf(hc), shade = rgbOf(d.hair.shade ?? shadeHex(hc, -0.34)), hi = rgbOf(d.hair.shine ?? shadeHex(hc, 0.32)), k = clamp(d.hair.strands ?? 0);
   const base = { fill, shade, hi, hiAt: 0.9, thr: 0.1, group: 'hair', hairy: true, soft: 0, bias: 0.002, noAO: true, recv: false, castHair: true, ...(o.edge ? { edge: o.edge } : {}) };
@@ -517,11 +530,21 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   if (wear) {
     const skinP = B.parts.find((q) => q.material === 'skin'), sp = skinP ? paintOf(ch, B, skinP, lit) : null;
     for (const p of wear.parts) {
-      const nr = normalsOf(p.out, p.idx, p.nrm), bias = 0.0012 * (p.layer ?? 1); let paint;
+      let nr = normalsOf(p.out, p.idx, p.nrm); const bias = 0.0012 * (p.layer ?? 1); let paint;
+      // cloth is LIT by its big form, not by every wrinkle of its mesh: the normals are smoothed over their neighbours, and on
+      // the trunk turned towards the round form of a cylinder about the spine (as the Stage's own clothes are) — so a shirt's
+      // back gets one clean shadow shape and not a lumpy patch, a trouser leg no pale streak (16 Nov 2026)
+      if (!p.flat && !p.metal && !p.skin && d.body?.proxy !== false) {
+        nr = smoothNormals(p.idx, nr, p.clothSmooth ?? 4);
+        if (trunkAxis && p.si && p.sw) {
+          if (p.trunkW === undefined) { const a2 = new Float32Array(p.n); let any = false; for (let v = 0; v < p.n; v++) { let w = 0; for (let k = 0; k < 4; k++) if (trunkIds.has(p.si[v * 4 + k])) w += p.sw[v * 4 + k]; a2[v] = w; if (w > 0.02) any = true; } p.trunkW = any ? a2 : null; }
+          if (p.trunkW) nr = proxyNormals(p.out, nr, trunkAxis, p.trunkW, d.body?.clothProxy ?? 0.8); // (cloth hangs loose: its own wrinkles carry less of the form than a body's skin)
+        }
+      }
       if (p.skin && sp) paint = { ...sp, bands: undefined, group: 'skin', bias, two: true };
       else {
         const base = p.dark ? shadeHex(p.color, -p.dark) : p.color, f = rgbOf(base), s2 = rgbOf(p.shade && !p.dark ? p.shade : shadeHex(base, -0.24));
-        paint = { fill: f, shade: p.flat ? f : s2, flat: !!p.flat, two: !!p.two, group: p.group, bias, thr: 0.05, noAO: !!p.flat };
+        paint = { fill: f, shade: p.flat ? f : s2, flat: !!p.flat, two: !!p.two, group: p.group, bias, thr: 0.05, noAO: !!p.flat, castPaint: false };
         if (p.metal) paint = { ...paint, hi: rgbOf(shadeHex(base, 0.5)), hiAt: 0.8, metal: true, soft: 0 };
         if (p.leather) paint = { ...paint, hi: rgbOf(shadeHex(base, 0.42)), hiAt: 0.9, soft: 0 };
         if (p.bands?.length) paint.bands = p.bands.map(([a, b, c]) => [a, b, { fill: rgbOf(c), shade: rgbOf(shadeHex(c, -0.24)) }]);
