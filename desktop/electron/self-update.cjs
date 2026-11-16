@@ -72,7 +72,10 @@ async function installUserApp(o) {
   const launcher = await writeLauncher({ home: o.home, exe, dir, systemApps: o.systemApps, exeName });
   // the version before is kept (to go back to); older ones go
   const keep = new Set([o.version, before && before.version !== o.version ? before.version : null]);
-  for (const n of await fsp.readdir(root)) if (/^\d/.test(n) && !keep.has(n)) await fsp.rm(path.join(root, n), { recursive: true, force: true });
+  // (tidying is never a reason for an update to fail: a folder still in use — an old instance that has not quit — gives
+  //  ENOTEMPTY; it is left and tried again at the next update. 16 Nov 2026: the new version was in place but the app was
+  //  not restarted because of it)
+  for (const n of await fsp.readdir(root)) if (/^\d/.test(n) && !keep.has(n)) { try { await (o.rm || fsp.rm)(path.join(root, n), { recursive: true, force: true }); } catch { /* left for next time */ } }
   return { version: o.version, dir, exe, launcher };
 }
 

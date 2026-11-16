@@ -47,7 +47,22 @@ if (process.argv.includes("--vsd-relaunch-wait")) {
     /* short busy wait before any profile access */
   }
 }
-const firstInstance = app.requestSingleInstanceLock();
+let firstInstance = app.requestSingleInstanceLock();
+// (a first copy that hangs — its session marker untouched for two minutes — is ended by a new start, which then opens in
+//  its place: before, the app could not be opened at all until it was killed from a terminal. electron/stuck.cjs)
+const RUNNING_PID = path.join(app.getPath("userData"), "running.pid");
+if (!firstInstance) {
+  try {
+    const STUCK = require("./stuck.cjs"), pid = STUCK.hungFirst({ session: path.join(app.getPath("userData"), "session.marker"), pidFile: RUNNING_PID, now: Date.now(), alive: STUCK.alive, isApp: (p) => STUCK.isApp(p) });
+    if (pid) {
+      crashLog(`a hung copy (pid ${pid}) was ended by a new start`);
+      try { process.kill(pid, "SIGKILL"); } catch { /* gone already */ }
+      const until = Date.now() + 2500; while (Date.now() < until && STUCK.alive(pid)) { /* wait for it to go */ }
+      firstInstance = app.requestSingleInstanceLock();
+    }
+  } catch { /* the usual hand-over then */ }
+}
+if (firstInstance) { try { fs.mkdirSync(app.getPath("userData"), { recursive: true }); fs.writeFileSync(RUNNING_PID, String(process.pid)); } catch { /* not vital */ } }
 // Session marker: written at start, touched while running, removed on a normal quit. If it is still there at the
 // next start and the session lived under three minutes, that start counts as failed (it crashed soon after opening).
 const SESSION = path.join(app.getPath("userData"), "session.marker");

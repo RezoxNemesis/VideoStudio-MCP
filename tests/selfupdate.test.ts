@@ -63,6 +63,14 @@ describe("the app in the person's own folder", () => {
     expect(fs.readdirSync(path.join(h, ".local/share/videostudio2/app")).filter((n) => /^\d/.test(n)).sort()).toEqual(["2.5.89", "2.5.90"]);
     expect(S.currentOf(h).version).toBe("2.5.90");
   });
+  it("is installed even when an old version's folder cannot be removed (still in use): tidying never fails an update", async () => {
+    const h = home();
+    for (const v of ["2.5.88", "2.5.89"]) await S.installUserApp({ appImage: appImage(v), version: v, home: h, run });
+    // (removing it fails as a folder still in use does: ENOTEMPTY)
+    const rm = async (f: string) => { if (f.endsWith("2.5.88")) { const e = new Error(`ENOTEMPTY: directory not empty, rmdir '${f}/resources'`) as Error & { code?: string }; e.code = "ENOTEMPTY"; throw e; } };
+    const r = await S.installUserApp({ appImage: appImage("2.5.90"), version: "2.5.90", home: h, run, rm });
+    expect(r.version).toBe("2.5.90"); expect(S.currentOf(h).version).toBe("2.5.90");
+  });
   it("leaves the app as it was when a download cannot be unpacked", async () => {
     const h = home(); await S.installUserApp({ appImage: appImage("2.5.89"), version: "2.5.89", home: h, run });
     await expect(S.installUserApp({ appImage: appImage("2.5.90", { broken: true }), version: "2.5.90", home: h, run })).rejects.toThrow(/could not be unpacked/);
