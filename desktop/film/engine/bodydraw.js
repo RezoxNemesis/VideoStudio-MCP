@@ -358,6 +358,12 @@ export function faceMarkOptions(d, rgbOf = (c) => hex(c)) {
   return out;
 }
 /** A beard painted on the face replaces the body model's own beard (a shell of hair round the jaw). */
+/**
+ * The paint of the inside of the mouth: none while the lips are shut (nothing of it can be seen), and with the lips
+ * open a dark tone a few millimetres BEHIND the skin — on a narrow jaw the mouth's own inside lies so near the cheek
+ * that it came through it as two dark marks.
+ */
+export function mouthInside(shut, rgbOf = (c) => hex(c)) { return shut ? null : { fill: rgbOf('#4a1c22'), shade: rgbOf('#2a0e12'), line: false, group: 'mouth', flat: true, bias: -0.006 }; }
 export function paintedBeard(d) { return !!d.face?.beard; }
 /** Is the body model's own beard drawn? Not under a painted one, and not at all with design.face.beard: false (a woman, a child). */
 export function bodyBeard(d) { return d.face?.beard !== false && !paintedBeard(d); }
@@ -504,7 +510,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       const nrF = rounded(p.out, nr, 0.55, 0.13);
       const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: d.face?.hairShadow !== false, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
       eyeIds.add(fid); faceIds.add(fid); for (const k of fp.mapIds ?? []) faceIds.add(k);
-      if (p.idxMouth.length) cp.add(p.out, p.idxMouth, { fill: rgbOf('#4a1c22'), shade: rgbOf('#2a0e12'), line: false, group: 'mouth', flat: true }, nr);
+      const mi = p.idxMouth.length ? mouthInside(mouthShut, rgbOf) : null; if (mi) cp.add(p.out, p.idxMouth, mi, nr);
     }
   }
   // the clothes the engine made (design.wear): smooth shells, each piece a thing of its own with its drawn line

@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import fs from 'node:fs';
-import { father, layeredHair, OUTFITS, CAST } from '../kit/cast.js';
+import { father, layeredHair, OUTFITS, TROUPE } from '../kit/cast.js';
 import { dressBody } from '../engine/wardrobe.js';
 import { makeHair } from '../engine/hair.js';
 
@@ -35,7 +35,7 @@ ok(d.inkScale <= 0.7, 'drawn with a fine line', d.inkScale);
 // outfits are made of the same pieces: other colours, with or without a tie
 { const a = OUTFITS.office(), b = OUTFITS.office({ shirt: '#f2efe6', tie: null, trousers: '#3a3a3e', fit: 'slim' });
   ok(a.tie && !b.tie && b.shirt.color === '#f2efe6' && b.trousers.fit === 'slim' && b.shirt.collar.open === true, 'the office outfit in other colours, without a tie, in a slim cut', [!!a.tie, !!b.tie, b.trousers.fit]); }
-ok(CAST.father === father && JSON.stringify(father().design.wear) === JSON.stringify(father().design.wear), 'the cast lists him; he is the same every time', 0);
+ok(TROUPE.father === father && JSON.stringify(father().design.wear) === JSON.stringify(father().design.wear), 'the cast lists him; he is the same every time', 0);
 ok(father({ young: true }).design.face.beard == null && father({ young: true }).design.wear.shirt.collar.open === false, 'the young father (a memory) has no beard and a closed collar', 0);
 // ---- a person made of parts: person({ … }) — any man of the cast is a recipe
 { const { man: person, BUILDS, HAIR_STYLES, BEARDS } = await import('../kit/cast.js');
@@ -48,9 +48,26 @@ ok(father({ young: true }).design.face.beard == null && father({ young: true }).
   let threw = ''; try { person({ build: 'giant' }); } catch (e) { threw = e.message; }
   ok(/giant/.test(threw) && /slim/.test(threw), 'a part the library does not have is named, with the ones it has', threw);
   for (const st of Object.keys(HAIR_STYLES)) { const h = HAIR_STYLES[st](); ok(h.n === 0 && h.mass && Array.isArray(h.locks), `hair style "${st}" is a mass with designed locks`, st); } }
-{ const names = Object.keys(CAST), made = names.map((n) => CAST[n]());
+// ---- faces are made of parts too: a shape, eyes, brows, a nose, a mouth
+{ const C = await import('../kit/cast.js'), { man, FACES, EYES, BROWS, NOSES, MOUTHS, MEN } = C;
+  ok(Object.keys(FACES ?? {}).length >= 7 && Object.keys(EYES ?? {}).length >= 6 && Object.keys(BROWS ?? {}).length >= 5 && Object.keys(NOSES ?? {}).length >= 6 && Object.keys(MOUTHS ?? {}).length >= 5, 'the parts of a face: seven shapes, six kinds of eyes, five of brows, six noses, five mouths (or more)', [Object.keys(FACES ?? {}), Object.keys(EYES ?? {}), Object.keys(BROWS ?? {}), Object.keys(NOSES ?? {}), Object.keys(MOUTHS ?? {})]);
+  const sq = man({ face: 'square', eyes: 'round', brows: 'heavy', nose: 'hooked', mouth: 'thin' }), ov = man({ face: 'oval', eyes: 'narrow', brows: 'thin', nose: 'snub', mouth: 'full' });
+  ok(sq.body.detail['head/head-square'] > 0.3 && !(ov.body.detail['head/head-square'] > 0) && ov.body.detail['head/head-oval'] > 0.3, 'the shape of the face sculpts the head (the Stage\'s own shapes)', [sq.body.detail['head/head-square'], ov.body.detail['head/head-oval']]);
+  ok(sq.body.detail['nose/nose-hump-incr'] > 0.3 && ov.body.detail['nose/nose-point-up'] > 0.3, 'the nose too', [sq.body.detail['nose/nose-hump-incr'], ov.body.detail['nose/nose-point-up']]);
+  ok(sq.design.face.eye.h > ov.design.face.eye.h + 0.02 && sq.design.face.brow.thick > ov.design.face.brow.thick + 0.15 && ov.design.face.lips > sq.design.face.lips + 0.15, 'eyes, brows and lips are drawn by their kind', [sq.design.face.eye.h, ov.design.face.eye.h, sq.design.face.brow.thick, ov.design.face.brow.thick]);
+  ok(man({ eyeColor: '#2e4a3a' }).design.face.eye.color === '#2e4a3a', 'with the colour of the eyes', 0);
+  let threw = ''; try { man({ nose: 'trunk' }); } catch (e) { threw = e.message; } ok(/trunk/.test(threw) && /straight/.test(threw), 'a nose the library does not have is named, with the ones it has', threw);
+  const sig = Object.values(MEN).map((r) => [r.face, r.eyes, r.brows, r.nose, r.mouth].join('/'));
+  ok(sig.every((q) => !/undefined/.test(q)) && new Set(sig).size === sig.length && new Set(Object.values(MEN).map((r) => r.face)).size >= 6, 'every man of the library has a face of his own (no two the same; six or more shapes among them)', sig); }
+{ const names = Object.keys(TROUPE), made = names.map((n) => TROUPE[n]());
   ok(names.length >= 8 && made.every((q) => q.body.garments.length === 0 && q.design.wear?.shirt && q.design.wear?.trousers && q.design.hair3?.mass), 'the cast has eight or more people, every one a bare body in engine-cut clothes with a head of hair', names);
   ok(new Set(made.map((q) => JSON.stringify([q.body.age, q.body.weight, q.design.hair.color, q.design.wear.shirt.color, q.design.face.beard?.style ?? '-']))).size === names.length, 'no two alike', 0);
-  ok(CAST.ravi({ outfit: 'tee' }).design.wear.shirt.kind === 'tee' && CAST.ravi().design.wear.shirt.kind !== 'tee', 'one of the cast in other clothes: CAST.ravi({ outfit: "tee" })', 0); }
+  ok(TROUPE.ravi({ outfit: 'tee' }).design.wear.shirt.kind === 'tee' && TROUPE.ravi().design.wear.shirt.kind !== 'tee', 'one of the cast in other clothes: TROUPE.ravi({ outfit: "tee" })', 0); }
+// ---- the kit is one namespace (a film imports everything from vs.js): no two of its modules may export the same name
+{ const dir = new URL('../kit/', import.meta.url), idx = fs.readFileSync(new URL('index.js', dir), 'utf8'), mods = [...idx.matchAll(/export \* from '\.\/([a-z0-9]+)\.js'/g)].map((m) => m[1]), names = {};
+  for (const m of mods) { const M = await import(new URL(m + '.js', dir)); for (const k of Object.keys(M)) (names[k] ??= []).push(m); }
+  const twice = Object.entries(names).filter(([, v]) => v.length > 1).map(([k, v]) => `${k}: ${v.join(', ')}`);
+  ok(twice.length === 0, 'no name is exported by two modules of the kit (it would vanish from vs.js)', twice);
+  const K = await import(new URL('index.js', dir)); ok(typeof K.man === 'function' && typeof K.father === 'function' && typeof K.TROUPE === 'object' && typeof K.layeredHair === 'function', 'a film can import man, father, TROUPE and layeredHair from the kit', [typeof K.man, typeof K.TROUPE]); }
 console.log(fails.length ? `CAST: ${fails.length} of ${checks} rules broken\n  ✗ ${fails.join('\n  ✗ ')}` : `CAST: all ${checks} rules hold`);
 process.exit(fails.length ? 1 : 0);

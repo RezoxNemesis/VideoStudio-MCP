@@ -108,11 +108,12 @@ const radiusAt = (p, y, th, c, half = 0.02, f = () => true) => { let best = 0, b
     ok(far > 0.03 && far < 0.085 * k, 'the head of a sleeve is a dome round the shoulder joint (nothing stands out of the shoulder however the arm turns)', far); }
   ok(!!Ti.bands && Ti.bands.length >= 6, 'with stripes across it', Ti.bands?.length ?? 0);
   // a piece lies ON the shirt, not in it and not floating: a few millimetres proud of the shell
-  const proud = (p, f = () => true) => { let lo = 1, hi = -1; for (let v = 0; v < p.n; v++) { const q = [p.pos[v * 3], p.pos[v * 3 + 1], p.pos[v * 3 + 2]]; if (!f(q)) continue; const c = [0, -0.02], th = Math.atan2(q[2] - c[1], q[0] - c[0]), d = Math.hypot(q[0] - c[0], q[2] - c[1]) - radiusAt(S, q[1], th, c, 0.02, (s) => Math.abs(s[0]) < 0.24); lo = Math.min(lo, d); hi = Math.max(hi, d); } return [lo, hi]; };
+  ok(typeof W.shirt?.radius === 'function' && typeof W.shirt?.front === 'function', 'the wardrobe tells where the shirt\'s cloth is (its radius at a height and a direction; a point on its front) — for whatever is pinned or drawn on it', typeof W.shirt?.radius);
+  const proud = (p, f = () => true) => { let lo = 1, hi = -1; for (let v = 0; v < p.n; v++) { const q = [p.pos[v * 3], p.pos[v * 3 + 1], p.pos[v * 3 + 2]]; if (!f(q)) continue; const th = Math.atan2(q[2] - W.shirt.z, q[0]), d = Math.hypot(q[0], q[2] - W.shirt.z) - W.shirt.radius(q[1], th); lo = Math.min(lo, d); hi = Math.max(hi, d); } return [lo, hi]; };
   const pp = proud(P), pl = proud(Pl, (q) => q[1] < neckY - 0.12), pt = proud(Ti, (q) => q[1] < neckY - 0.14);
-  ok(pp[0] > -0.004 && pp[1] < 0.012, 'the pocket lies on the shirt', pp);
-  ok(pl[0] > -0.004 && pl[1] < 0.012, 'the placket lies on the shirt', pl);
-  ok(pt[0] > -0.002 && pt[1] < 0.03, 'the tie lies on the shirt', pt);
+  ok(pp[0] > 0.001 && pp[1] < 0.008, 'the pocket lies on the shirt (a few millimetres proud of it)', pp);
+  ok(pl[0] > 0.001 && pl[1] < 0.008, 'the placket lies on the shirt', pl);
+  ok(pt[0] > 0.004 && pt[1] < 0.02, 'the tie lies on the shirt', pt);
 }
 { // ---- shoes
   for (const sx of [1, -1]) {
@@ -143,6 +144,16 @@ const radiusAt = (p, y, th, c, half = 0.02, f = () => true) => { let best = 0, b
   const s4 = box(p4('shirt')), t4 = box(p4('trousers')), neckY4 = B4.landmarks.neckY;
   ok(s4.lo[1] < t4.hi[1] - 0.06 * k && s4.lo[1] > t4.hi[1] - 0.2 * k, 'it is worn out: its hem hangs a hand or more below the waistband', t4.hi[1] - s4.lo[1]);
   { const y = t4.hi[1] - 0.04 * k, c = [0, -0.02]; let under = 0; for (let j = 0; j < 24; j++) { const th = j * Math.PI / 12; if (radiusAt(p4('shirt'), y, th, c, 0.02, (q) => Math.abs(q[0]) < 0.24) < radiusAt(p4('trousers'), y, th, c, 0.02) + 0.002) under++; } ok(under === 0, 'and lies over the trousers all round (never inside them)', under); }
+  // nothing of the shoulders' skin stands out over the neck band (skin drawn there would lie on top of the cloth)
+  { const rib = p4('rib'), nk = [...B4.head.subarray(B4.bi.neck01 * 3, B4.bi.neck01 * 3 + 3)], ribR = (th) => { let best = 0, bd = 9; for (let v = 0; v < rib.n; v++) { const dx = rib.pos[v * 3], dz = rib.pos[v * 3 + 2] - nk[2]; let da = Math.abs(Math.atan2(dz, dx) - th); if (da > Math.PI) da = 2 * Math.PI - da; if (da < bd - 1e-6 || (Math.abs(da - bd) < 1e-6 && Math.hypot(dx, dz) > best)) { bd = da; best = Math.hypot(dx, dz); } } return best; };
+    const sk4 = B4.parts.find((q) => q.material === 'skin'), idx = W4.skin.idxCore; let out = 0;
+    for (let t = 0; t < idx.length; t += 3) { let o = false; for (const v of [idx[t], idx[t + 1], idx[t + 2]]) { const y = sk4.pos[v * 3 + 1]; if (y < neckY4 - 0.09 * k || y > neckY4 + 0.02 * k || armW(v) > 0.2) continue; const dx = sk4.pos[v * 3], dz = sk4.pos[v * 3 + 2] - nk[2]; if (Math.abs(dx) > Math.abs(dz) && Math.hypot(dx, dz) > ribR(Math.atan2(dz, dx)) + 0.004) o = true; } /* (over the shoulders, either side of the neck: in front the throat itself stands further out than the band) */ if (o) out++; }
+    ok(out === 0, 'no skin of the shoulders is drawn outside the neck band (it would lie over the cloth)', out);
+    ok(!!p4('neckline') && p4('neckline').skin === true, 'inside the wide neck the skin of the collarbones is seen', !!p4('neckline')); }
+  // an open collar without a tie shows a deeper V of skin, and the placket begins under it
+  { const B5 = body(), W5 = dressBody(B5, { wear: { shirt: { color: '#ece4d6', sleeve: 'short', collar: { open: true } }, trousers: WEAR.trousers, belt: WEAR.belt } }), th5 = box(W5.parts.find((q) => q.name === 'throat')), pl5 = box(W5.parts.find((q) => q.name === 'placket')), th1 = box(part('throat')), pl1 = box(part('placket'));
+    ok(th5.lo[1] < th1.lo[1] - 0.015 * k, 'without a tie the open collar shows a deeper V', [th5.lo[1], th1.lo[1]]);
+    ok(pl5.hi[1] < th5.lo[1] + 0.014 && pl1.hi[1] < th1.lo[1] + 0.014, 'the placket begins where the V closes (it never crosses the bare skin)', [pl5.hi[1] - th5.lo[1], pl1.hi[1] - th1.lo[1]]); }
   { const rb = box(p4('rib')), cb = box(part('collar')); ok(rb.hi[1] < neckY4 + 0.012 && rb.hi[0] - rb.lo[0] > (cb.hi[0] - cb.lo[0]) * 0 + 0.13 * k && rb.hi[1] - rb.lo[1] < 0.07 * k, 'its neck is wider and lower than a shirt collar\'s band', [rb.hi[1] - neckY4, rb.hi[0] - rb.lo[0]]); }
 }
 { // ---- the lines a drawing of trousers is made with (ink on the cloth, moving with it)

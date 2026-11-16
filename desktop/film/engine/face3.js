@@ -181,7 +181,19 @@ export function faceDecals(M, o = {}) {
   const lwin = M.mouthW + 0.0015, sm01 = (v) => { v = Math.min(1, Math.max(0, v)); return v * v * (3 - 2 * v); };
   const winTop = (ax) => { const q = Math.min(1, ax / lwin); return M.mouth + (M.lipTopEdge + 0.0008 - M.mouth) * (1 - q * q * q); };
   const winLow = (ax) => { const q = Math.min(1, ax / lwin), arc = Math.max(M.dip + 0.001, M.lipEdge - 0.003 - 0.0045 * (1 - q * q)); return arc + (M.mouth - arc) * sm01((q - 0.55) / 0.45); };
+  // a moustache alone runs out to a point a little past each corner of the mouth; a goatee is one rounded shape round
+  // the mouth (moustache, the corners, the chin) with the lips bare inside it
+  const mEnd = M.mouthW + 0.009, alone = kMust >= 0 && bStyle === 'mustache' && !heavy, goat = bStyle === 'goatee' && kBeard >= 0;
+  const aloneTop = (ax) => mT0 - (mT0 - (M.mouth + 0.0012)) * Math.pow(Math.min(1, ax / mEnd), 1.5), aloneLow = (ax) => (ax < lwin ? winTop(ax) : M.mouth + 0.0012 - 0.002 * (ax - lwin) / (mEnd - lwin));
+  const gW = M.mouthW + 0.012, gTop = mT0, gBot = M.chin - 0.014, gC = (gTop + gBot) / 2, gR = (gTop - gBot) / 2;
   const hair = (ax, y) => {
+    if (alone) return ax < mEnd && y < aloneTop(ax) && y > aloneLow(ax) ? kMust : -1;
+    if (goat) {
+      const v = (y - gC) / gR, e = v * v < 1 ? gW * Math.pow(1 - Math.pow(Math.abs(v), 2.6), 1 / 2.6) : 0; // (a rounded box: full beside the mouth, closing under the nose and under the chin)
+      if (!(ax < e)) return -1;
+      if (ax < lwin && y < winTop(ax) && y > winLow(ax) && !(bd.soul !== false && y < M.lipEdge - 0.0012 && ax < 0.0052 * (0.45 + 0.55 * (M.lipEdge - y) / (M.lipEdge - M.dip)))) return -1; // the lips, bare
+      return y > M.mouth + 0.0045 && kMust >= 0 ? kMust : kBeard;
+    }
     // the moustache: from under the nose down to the upper lip, thinner towards the corners of the mouth, where it turns down
     if (joined && ax < uxM && ax >= gap && y < mustTop(ax)) { if (y > (ax < lwin ? winTop(ax) : M.mouth + 0.0045)) return kMust; }
     else if (kMust >= 0 && ax < uxM && ax >= gap && y < mustTop(ax)) {

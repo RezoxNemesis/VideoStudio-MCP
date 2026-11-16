@@ -47,6 +47,43 @@ export function splitFingers(tris, si, sw, boneFinger, boneHand = null) {
 export function handBone(name) { return /^(wrist|metacarpal[1-5]|finger1-1)\.(L|R)$/.test(name); }
 
 /** The body of a baked actor, ready to pose: null when the performance was solved without bodies. */
+/**
+ * Which of a head's triangles are the INSIDE of the mouth (1) and which are skin seen from outside (0). pos: rest
+ * positions; tris: the head's triangles (three vertex numbers each); mo: the mouth landmark. The inside is the hollow
+ * behind the lips and the pockets of the cheeks beside and below it: there the surface faces INTO the head. (Told only
+ * by a box round the lips, the pockets were painted as skin — and came through the jaw of a narrow face as marks.)
+ */
+export function mouthInsideOf(pos, tris, mo) {
+  const F = new Uint8Array(tris.length / 3), zc = mo[2] - 0.085, maybe = [];
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3; let box = true;
+    for (const v of [a, b, c]) { const dx = pos[v] - mo[0], dy = pos[v + 1] - mo[1], dz = pos[v + 2] - mo[2]; if (!(Math.abs(dx) < 0.03 && Math.abs(dy) < 0.022 && dz < -0.016 && dz > -0.07)) box = false; }
+    // (the box round the lips is where to LOOK, not what it is: on a narrow face the jaw itself lies inside that box)
+    const cx = (pos[a] + pos[b] + pos[c]) / 3, cy = (pos[a + 1] + pos[b + 1] + pos[c + 1]) / 3, cz = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3, dx = cx - mo[0], dy = cy - mo[1], dz = cz - mo[2];
+    if (!box && !(Math.abs(dx) < 0.055 && dy > -0.055 && dy < 0.004 && dz < -0.01 && dz > -0.085)) continue;
+    const e1 = [pos[b] - pos[a], pos[b + 1] - pos[a + 1], pos[b + 2] - pos[a + 2]], e2 = [pos[c] - pos[a], pos[c + 1] - pos[a + 1], pos[c + 2] - pos[a + 2]];
+    const nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0], nl = Math.hypot(nx, ny, nz) || 1, rx = cx, rz = cz - zc, rl = Math.hypot(rx, rz) || 1;
+    const face = (nx * rx + nz * rz) / (nl * rl);
+    if (face < -0.25 && !box) F[t / 3] = 1; // it faces into the head
+    else if (face < 0.5 || box) maybe.push(t / 3, cx, cy, cz, rx / rl, rz / rl); // not clearly facing out (the hollow's floor, roof and back), or in the box round the lips: looked at below
+  }
+  // what does not clearly face outwards is inside if skin lies over it: a ray straight out of the head meets other skin
+  if (maybe.length) {
+    const near = []; for (let t = 0; t < tris.length; t += 3) { if (F[t / 3]) continue; const a = tris[t] * 3; if (Math.abs(pos[a] - mo[0]) < 0.09 && Math.abs(pos[a + 1] - mo[1]) < 0.08) near.push(t); }
+    for (let q = 0; q < maybe.length; q += 6) {
+      const ti = maybe[q], ox = maybe[q + 1], oy = maybe[q + 2], oz = maybe[q + 3], dx = maybe[q + 4], dz = maybe[q + 5];
+      for (const t of near) {
+        if (t / 3 === ti) continue; const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3;
+        const e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2], e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
+        const px = -dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y, det = e1x * px + e1y * py + e1z * pz; if (det > -1e-12 && det < 1e-12) continue;
+        const tx = ox - pos[a], ty = oy - pos[a + 1], tz = oz - pos[a + 2], u = (tx * px + ty * py + tz * pz) / det; if (u < 0 || u > 1) continue;
+        const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x, v = (dx * qx + dz * qz) / det; if (v < 0 || u + v > 1) continue;
+        if ((e2x * qx + e2y * qy + e2z * qz) / det > 0.0015) { F[ti] = 1; break; }
+      }
+    }
+  }
+  return F;
+}
 export function bodyOf(bake, id) {
   const a = bake.actors[id];
   if (!a || !a.bodyMeta || !a.rigMeta) return null;
@@ -89,10 +126,10 @@ export function bodyOf(bake, id) {
     for (let t = 0; t < keep.length; t += 3) { let w = 0; for (const v of [keep[t], keep[t + 1], keep[t + 2]]) for (let k = 0; k < 4; k++) if (armish[si[v * 4 + k]]) w += sw[v * 4 + k]; (w > 1.5 ? limb : core).push(keep[t], keep[t + 1], keep[t + 2]); }
     const u = new Float32Array(n); for (let v = 0; v < n; v++) u[v] = pos[v * 3 + 1];
     // the head's own triangles; inside the mouth apart (it is painted dark)
-    const headT = [], mouthT = [], mo = m.landmarks?.mouth;
-    for (let t = 0; t < idx0.length; t += 3) { const a0 = idx0[t], b0 = idx0[t + 1], c0 = idx0[t + 2]; if (hw[a0] + hw[b0] + hw[c0] < 2.2) continue;
-      let inside = false; if (mo && p.material === 'skin') { inside = true; for (const v of [a0, b0, c0]) { const dx = pos[v * 3] - mo[0], dy = pos[v * 3 + 1] - mo[1], dz = pos[v * 3 + 2] - mo[2]; if (!(Math.abs(dx) < 0.03 && Math.abs(dy) < 0.022 && dz < -0.016 && dz > -0.07)) inside = false; } }
-      (inside ? mouthT : headT).push(a0, b0, c0); }
+    const headT = [], mouthT = [], mo = m.landmarks?.mouth, hd = [];
+    for (let t = 0; t < idx0.length; t += 3) { const a0 = idx0[t], b0 = idx0[t + 1], c0 = idx0[t + 2]; if (hw[a0] + hw[b0] + hw[c0] < 2.2) continue; hd.push(a0, b0, c0); }
+    const ins = mo && p.material === 'skin' ? mouthInsideOf(pos, hd, mo) : null;
+    for (let t = 0; t < hd.length; t += 3) (ins && ins[t / 3] ? mouthT : headT).push(hd[t], hd[t + 1], hd[t + 2]);
     // the skin of the hands: each finger apart from the palm, so that fingers held together are still drawn as fingers
     const fsplit = p.material === 'skin' ? splitFingers(limb, si, sw, boneFinger, boneHand) : null;
     return { idxLimb: fsplit ? fsplit.rest : Uint32Array.from(limb), idxHand: fsplit ? fsplit.hand : null, idxFingers: fsplit ? fsplit.fingers : null, idxCore: Uint32Array.from(core), idxHead: Uint32Array.from(headT), idxMouth: Uint32Array.from(mouthT), u, morphs, base: morphs ? Float32Array.from(rest) : null, rest0: pos,

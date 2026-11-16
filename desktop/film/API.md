@@ -163,7 +163,10 @@ a memory. The parts: `OUTFITS.office({ shirt, tie (null: none, collar open), tro
 fringe, turned-out ends). `man({ name, age, build (BUILDS: slim | average | athletic | broad | heavy), height, skin,
 hair (HAIR_STYLES: layered | tousled | neat | short | fringe | crop), hairColor (HAIR_COLORS), beard (BEARDS: none |
 full | goatee | moustache | chin | stubble), outfit (OUTFITS: office | casual | tee), palette: { shirt, tie, trousers,
-fit … } })` makes any man from a recipe; `CAST.ravi()`, `CAST.sameer({ outfit: 'tee' })` … are the library's named men
+fit … }, face (FACES: oval | round | square | long | heart | diamond | lean | strong), eyes (EYES: almond | round |
+narrow | upturned | downturned | wide), eyeColor, brows (BROWS: thick | straight | arched | thin | heavy), nose
+(NOSES: straight | narrow | broad | long | hooked | snub), mouth (MOUTHS: medium | thin | full | small | downturned)
+})` makes any man from a recipe; `TROUPE.ravi()`, `TROUPE.sameer({ outfit: 'tee' })` … are the library's named men
 (`MEN`: their recipes). A T-shirt is `wear.shirt.kind: 'tee'` (no collar: a ribbed neck; worn out over the trousers).
 New people are recipes of these parts; a part made better makes all of them better. The old
 `PEOPLE` library (kit/people.js) is the puppet-style cast of the fantasy films and is not at this standard.

@@ -141,6 +141,18 @@ if (M && typeof F3.faceDecals === 'function') {
     ok(bare(yU) < bare(M.mouth) - 0.002 && bare(yL) < bare(M.mouth) - 0.001 && bare(yU) > M.mouthW * 0.35, 'above and below the line of the mouth the bare skin narrows: a lens with its corners at the corners of the mouth, not a box', [bare(yU), bare(M.mouth), bare(yL)]);
     let side = 0; for (let y = M.lipEdge; y < M.lipTopEdge; y += 0.0005) side = Math.max(side, Math.abs(bare(y) - bare(y + 0.0005)));
     ok(side < 0.006, 'its sides close gradually (no upright edge beside the lips)', side); }
+  // a moustache alone is a drawn shape too: full under the nose, running out to a point past each corner of the mouth
+  { const mo = named({ beard: { style: 'mustache', strands: 0 } }), is = (x, y) => mo.at(x, y) === 'mustache', thick = (x) => { let n = 0; for (let y = M.sub + 0.004; y > M.mouth - 0.012; y -= 0.0002) if (is(x, y)) n++; return n * 0.0002; };
+    let end = 0; for (let x = 0; x < M.mouthW + 0.03; x += 0.00025) if (thick(x) > 0) end = x;
+    ok(end > M.mouthW && end < M.mouthW + 0.016, 'a moustache ends a little past the corners of the mouth', [end, M.mouthW]);
+    ok(thick(end * 0.9) < thick(0.004) * 0.5 && thick(end * 0.5) > thick(0.004) * 0.6, 'it tapers to its ends (a point, not the end of a bar)', [thick(0.004), thick(end * 0.5), thick(end * 0.9)]);
+    let step = 0, prev = thick(0.003); for (let x = 0.0035; x <= end; x += 0.0005) { const t = thick(x); step = Math.max(step, Math.abs(t - prev)); prev = t; } ok(step < 0.0018, 'with no step along it', step); }
+  // a goatee is one rounded shape round the mouth: moustache, the corners, the chin — its outer edge without a step
+  { const go = named({ beard: { style: 'goatee', strands: 0, rough: 0 } }), hairy = (x, y) => go.at(x, y) === 'beard' || go.at(x, y) === 'mustache', edge = (y) => { let w = 0; for (let x = 0; x < 0.07; x += 0.00025) if (hairy(x, y)) w = x; return w; };
+    let step = 0, prev = edge(M.sub - 0.004), widest = 0; for (let y = M.sub - 0.0045; y > M.chin + 0.002; y -= 0.0005) { const e2 = edge(y); step = Math.max(step, Math.abs(e2 - prev)); prev = e2; widest = Math.max(widest, e2); }
+    ok(step < 0.0022, 'the outer edge of a goatee is one curve from the moustache round to the chin (no step)', step);
+    ok(widest > M.mouthW + 0.004 && widest < M.mouthW + 0.022 && go.at(0.05, M.mouth - 0.01) !== 'beard', 'it passes just outside the corners of the mouth and leaves the cheeks bare', [widest, M.mouthW]);
+    ok(go.at(0, M.chin + 0.003) === 'beard' && go.at(M.mouthW * 0.5, M.mouth) !== 'beard' && go.at(M.mouthW * 0.5, M.mouth) !== 'mustache', 'it covers the chin and leaves the lips bare', [go.at(0, M.chin + 0.003), go.at(M.mouthW * 0.5, M.mouth)]); }
   const low = named({ beard: { style: 'full', cheek: 0, strands: 0 } }), high = named({ beard: { style: 'full', cheek: 1, strands: 0 } });
   ok(low.at(0.06, M.mouth + 0.012) === 'skin' && high.at(0.06, M.mouth + 0.012) === 'beard', 'cheek: 0 keeps it along the jaw, cheek: 1 lets it grow high on the cheek', [low.at(0.06, M.mouth + 0.012), high.at(0.06, M.mouth + 0.012)]);
   // other cuts
@@ -232,5 +244,36 @@ if (M && typeof F3.faceDecals === 'function') {
   ok(!dark(withHair.underNose), 'skin in front of the face throws no such shadow on it', withHair.underNose);
 }
 
+// ---- the inside of the mouth is drawn only through open lips, and behind the skin (a narrow jaw never shows it as a mark on the cheek)
+{ const { mouthInside } = await import('../engine/bodydraw.js');
+  ok(typeof mouthInside === 'function' && mouthInside(true) === null, 'lips that are shut show nothing of the inside of the mouth', typeof mouthInside);
+  const op = typeof mouthInside === 'function' ? mouthInside(false) : null; ok(!!op && op.bias <= -0.004 && op.flat === true && op.line === false, 'open, it is painted dark and a few millimetres BEHIND the skin', op); }
+// ---- the inside of the mouth is ALL of it: the pockets of the cheeks too (on a narrow face they came through the jaw as marks)
+{ const { mouthInsideOf } = await import('../engine/body.js'), { gunzipSync } = await import('node:zlib'), fsx = await import('node:fs');
+  const J = JSON.parse(gunzipSync(fsx.readFileSync(new URL('./fixtures/body_man.json.gz', import.meta.url)))), buf = (q) => { const b = Buffer.from(q, 'base64'); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+  const P = new Float32Array(buf(J.skin.pos)), I = new Uint32Array(buf(J.skin.idx)), mo = J.landmarks.mouth, head = []; for (let t = 0; t < I.length; t += 3) if (Math.min(P[I[t] * 3 + 1], P[I[t + 1] * 3 + 1], P[I[t + 2] * 3 + 1]) > J.landmarks.neckY + 0.01) head.push(I[t], I[t + 1], I[t + 2]);
+  const F = typeof mouthInsideOf === 'function' ? mouthInsideOf(P, head, mo) : null;
+  ok(!!F && F.length === head.length / 3, 'the head\'s triangles are told apart: skin seen from outside, and the inside of the mouth', F?.length ?? 0);
+  if (F) {
+    const cen = (t) => [0, 1, 2].map((c) => (P[head[t * 3] * 3 + c] + P[head[t * 3 + 1] * 3 + c] + P[head[t * 3 + 2] * 3 + c]) / 3), zc = mo[2] - 0.085;
+    // a ray from a point straight out of the head: does it meet the outer skin (triangles not of the inside) further out?
+    const hits = (o, d) => { for (let t = 0; t < F.length; t++) { if (F[t]) continue; const a = [0, 1, 2].map((c) => P[head[t * 3] * 3 + c]), b = [0, 1, 2].map((c) => P[head[t * 3 + 1] * 3 + c]), c2 = [0, 1, 2].map((c) => P[head[t * 3 + 2] * 3 + c]), e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c2[0] - a[0], c2[1] - a[1], c2[2] - a[2]], pv = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]], det = e1[0] * pv[0] + e1[1] * pv[1] + e1[2] * pv[2]; if (Math.abs(det) < 1e-12) continue; const tv = [o[0] - a[0], o[1] - a[1], o[2] - a[2]], u = (tv[0] * pv[0] + tv[1] * pv[1] + tv[2] * pv[2]) / det; if (u < 0 || u > 1) continue; const qv = [tv[1] * e1[2] - tv[2] * e1[1], tv[2] * e1[0] - tv[0] * e1[2], tv[0] * e1[1] - tv[1] * e1[0]], v = (d[0] * qv[0] + d[1] * qv[1] + d[2] * qv[2]) / det; if (v < 0 || u + v > 1) continue; if ((e2[0] * qv[0] + e2[1] * qv[1] + e2[2] * qv[2]) / det > 0.0015) return true; } return false; };
+    let pockets = 0, bare = 0, hidden = 0, nose = 0, outer = 0, lost = 0;
+    for (let t = 0; t < F.length; t++) { const c = cen(t), dx = c[0] - mo[0], dy = c[1] - mo[1], dz = c[2] - mo[2], r = [c[0], 0, c[2] - zc], rl = Math.hypot(r[0], r[2]) || 1, d = [r[0] / rl, 0, r[2] / rl];
+      if (F[t]) { if (dy > 0.006 && dz > -0.016) nose++; /* (up at the front of the face: the nostrils; further back it is the roof of the mouth) */ if (!(Math.abs(dx) < 0.03 && Math.abs(dy) < 0.022)) { pockets++; if (!hits(c, d)) bare++; } }
+      else if (Math.abs(dx) < 0.05 && dy > -0.05 && dy < 0 && dz < -0.012 && dz > -0.08) { outer++; if (hits(c, d)) hidden++; } }
+    ok(pockets > 20, 'the pockets of the cheeks belong to the inside of the mouth (beyond the box round the lips)', pockets);
+    ok(bare <= pockets * 0.05, 'what is taken for inside really lies under the skin', [bare, pockets]);
+    ok(hidden <= outer * 0.03, 'and hardly anything left as skin beside the mouth lies under other skin (it would come through a narrow jaw)', [hidden, outer]);
+    ok(nose === 0, 'the nostrils are not taken for it', nose);
+  } }
+// ---- on a NARROW face the jaw itself lies close behind the lips: the skin of the jaw is still skin (told by a box, two
+// triangles of it were taken for the mouth's inside — dark marks, then holes, on the jaw of every narrow face)
+{ const { mouthInsideOf } = await import('../engine/body.js'), { gunzipSync } = await import('node:zlib'), fsx = await import('node:fs');
+  const N = JSON.parse(gunzipSync(fsx.readFileSync(new URL('./fixtures/head_narrow.json.gz', import.meta.url)))), P = Float32Array.from(N.pos), T = N.idx, mo = N.mouth, F = mouthInsideOf(P, T, mo), zc = mo[2] - 0.085;
+  const cen = (t) => [0, 1, 2].map((c) => (P[T[t * 3] * 3 + c] + P[T[t * 3 + 1] * 3 + c] + P[T[t * 3 + 2] * 3 + c]) / 3);
+  const covered = (ti) => { const o = cen(ti), rl = Math.hypot(o[0], o[2] - zc) || 1, d = [o[0] / rl, 0, (o[2] - zc) / rl]; for (let t = 0; t < F.length; t++) { if (t === ti || F[t]) continue; const a = [0, 1, 2].map((c) => P[T[t * 3] * 3 + c]), b = [0, 1, 2].map((c) => P[T[t * 3 + 1] * 3 + c]), c2 = [0, 1, 2].map((c) => P[T[t * 3 + 2] * 3 + c]), e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], e2 = [c2[0] - a[0], c2[1] - a[1], c2[2] - a[2]], pv = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]], det = e1[0] * pv[0] + e1[1] * pv[1] + e1[2] * pv[2]; if (Math.abs(det) < 1e-12) continue; const tv = [o[0] - a[0], o[1] - a[1], o[2] - a[2]], u = (tv[0] * pv[0] + tv[1] * pv[1] + tv[2] * pv[2]) / det; if (u < 0 || u > 1) continue; const qv = [tv[1] * e1[2] - tv[2] * e1[1], tv[2] * e1[0] - tv[0] * e1[2], tv[0] * e1[1] - tv[1] * e1[0]], v = (d[0] * qv[0] + d[1] * qv[1] + d[2] * qv[2]) / det; if (v < 0 || u + v > 1) continue; if ((e2[0] * qv[0] + e2[1] * qv[1] + e2[2] * qv[2]) / det > 0.001) return true; } return false; };
+  let inside = 0, bare = 0; for (let t = 0; t < F.length; t++) if (F[t]) { inside++; if (!covered(t)) bare++; }
+  ok(inside > 150 && bare === 0, 'on a narrow face nothing that can be seen from outside is taken for the inside of the mouth', [inside, bare]); }
 if (fails.length) { console.error(`face: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`face: ${checks} rules hold`);
