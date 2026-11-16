@@ -72,5 +72,68 @@ export function father(o = {}) {
   return { body, design };
 }
 
-/** The cast by name. (It grows: men, women, boys, girls, elders — each a recipe of the parts above.) */
-export const CAST = { father };
+// ---- the parts a man of the cast is made of
+/** Builds: how the Stage sculpts the body. */
+export const BUILDS = { slim: { muscle: 0.35, weight: 0.28 }, average: { muscle: 0.5, weight: 0.42 }, athletic: { muscle: 0.82, weight: 0.45 }, broad: { muscle: 0.7, weight: 0.62 }, heavy: { muscle: 0.4, weight: 0.86 } };
+const SHORT_LINE = [[0, 27], [32, 25], [50, 14], [64, 7], [80, 3], [100, -5], [130, -22], [180, -32]]; // (a short cut: the ears are free)
+/** Men's hair: each a `hair3` — a mass with designed locks. */
+export const HAIR_STYLES = {
+  layered: () => layeredHair(),                                                                  // thick, wavy, to the ears, a fringe (the father's)
+  tousled: () => layeredHair({ vol: 0.026, lift: 1.3, ends: 1.25 }),                             // fuller and wilder
+  neat: () => layeredHair({ vol: 0.016, lift: 0.75, ends: 0.4, fringe: false, strands: false }), // combed, no fringe
+  short: () => layeredHair({ vol: 0.012, lift: 0.6, ends: 0, fringe: false, strands: false, cols: [26, 62, 98, 134, 166], line: SHORT_LINE }),
+  fringe: () => layeredHair({ vol: 0.014, lift: 0.7, ends: 0.2, strands: false, cols: [26, 62, 98, 134, 166], line: SHORT_LINE }), // short, with a fringe
+  crop: () => ({ n: 0, mass: { vol: 0.007, flat: 0.1, line: SHORT_LINE }, locks: [] }),            // cut close: the mass alone
+};
+export const HAIR_COLORS = {
+  black: { color: '#1d1a1e', shade: '#0b0a0d', shine: '#5c5866' }, dark: { color: '#221815', shade: '#0e0908', shine: '#7a5f52' }, brown: { color: '#4a3226', shade: '#2a1b14', shine: '#8f6c55' },
+  auburn: { color: '#6a3524', shade: '#3e1d13', shine: '#a8674c' }, grey: { color: '#77757b', shade: '#4c4b53', shine: '#bdbcc4' }, white: { color: '#c9c8cc', shade: '#9a99a2', shine: '#f2f2f4' },
+};
+/** Beards: painted on the face (engine/face3.js), each a dark mass with one clean outline. */
+export const BEARDS = {
+  none: null,
+  full: { style: 'full', cheek: 0.42, rough: 0.25, strands: 0.5, density: 0.9, mustache: { density: 0.94 } },
+  goatee: { style: 'goatee', rough: 0.25, strands: 0.5, density: 0.9, mustache: { density: 0.94 } },
+  moustache: { style: 'mustache', strands: 0.3, density: 0.92 },
+  chin: { style: 'chin', rough: 0.25, strands: 0.4, density: 0.9 },
+  stubble: { style: 'full', cheek: 0.5, rough: 0.45, strands: 0.15, density: 0.3, mustache: { density: 0.34 } },
+};
+OUTFITS.casual = (c = {}) => OUTFITS.office({ tie: null, shirt: '#ece4d6', trousers: '#5a4a3c', belt: '#4a3324', shoes: '#4a3528', ...c });
+/** A T-shirt worn out over trousers. */
+OUTFITS.tee = (c = {}) => { const shirt = c.shirt ?? '#7a2a2e', trousers = c.trousers ?? '#2b3040'; return { shirt: { kind: 'tee', color: shirt, shade: c.shirtShade ?? shadeOf(shirt, -0.22), sleeve: 'short' }, trousers: { color: trousers, shade: shadeOf(trousers, -0.38), fit: c.fit ?? 'straight' }, shoes: { kind: 'derby', color: c.shoes ?? '#3a3a44', shade: '#131318', sole: '#e8e4dc' } }; };
+const FACE = { 'head/head-oval': 0.3, 'nose/nose-scale-horiz-decr': 0.3, 'nose/nose-volume-decr': 0.35, 'nose/nose-width2-decr': 0.35, 'nose/nose-width3-decr': 0.35, 'nose/nose-nostrils-width-decr': 0.4, 'nose/nose-flaring-decr': 0.3 };
+const part = (table, key, what) => { if (!(key in table)) throw new Error(`The cast has no ${what} "${key}". It has: ${Object.keys(table).join(', ')}.`); return table[key]; };
+
+/**
+ * A man of the cast from a recipe of parts — man({ … }). o: { name, age: 30, build: 'average' (BUILDS), height: 1.75, origin:
+ * 'indian', skin: '#c08b63', hair: 'layered' (HAIR_STYLES), hairColor: 'dark' (HAIR_COLORS), beard: 'none' (BEARDS),
+ * outfit: 'office' (OUTFITS), palette: { shirt, tie, trousers, fit, … } (the outfit's colours), eyes: '#4a3020',
+ * brows: 0.36 (how heavy), detail: { … } (the Stage's own face sculpting) }. Returns { body, design }.
+ */
+export function man(o = {}) {
+  const b = part(BUILDS, o.build ?? 'average', 'build'), hs = part(HAIR_STYLES, o.hair ?? 'layered', 'hair style'), hc = part(HAIR_COLORS, o.hairColor ?? 'dark', 'hair colour'), bd = part(BEARDS, o.beard ?? 'none', 'beard'), of = part(OUTFITS, o.outfit ?? 'office', 'outfit');
+  const age = o.age ?? 30, wear = of(o.palette ?? {});
+  const body = { body: 'man', origin: o.origin ?? 'indian', height: o.height ?? 1.75, age, muscle: b.muscle, weight: b.weight, proportions: 0.9, hair: 'buzz', beard: 'none', kit: 'none', garments: [], detail: { ...FACE, ...(o.detail ?? {}) } };
+  const design = makeDesign({
+    name: o.name ?? 'Man', skin: o.skin ?? '#c08b63', headScale: 1.0, ink: '#241a1a', inkScale: 0.62,
+    face: { shape: 'male', eye: { w: 0.215, h: 0.092, tilt: 0.03, sharp: 0.45, color: o.eyes ?? '#4a3020', iris: 0.56, lash: 0.2, flick: 0.03 }, brow: { thick: o.brows ?? 0.36, arch: 0.02, color: hc.shade }, eye3: { brow: 0.02 },
+      lips: 0.35, nose: 0.5, lines: age > 48 ? 0.45 : age > 34 ? 0.25 : 0, hairShadow: true, beard: bd ? { ...bd } : null },
+    hair: { ...hc, tufts: [], strands: 0.5, sheen: 0.6 }, hair3: hs(), beard: null,
+    top: { type: 'tunic', color: wear.shirt.color, sleeve: 'short', hem: 0.06, collar: 'v' }, bottom: { type: 'pants', color: wear.trousers.color }, shoes: { color: wear.shoes.color, boot: 0 },
+    wear,
+  });
+  return { body, design };
+}
+
+/** The men of the library: each a recipe for man({ … }). */
+export const MEN = {
+  arjun: { name: 'Arjun', age: 24, build: 'slim', height: 1.76, hair: 'tousled', hairColor: 'black', beard: 'none', outfit: 'tee', palette: { shirt: '#7a2a2e', trousers: '#2b3040' }, skin: '#c99672' },
+  ravi: { name: 'Ravi', age: 31, build: 'athletic', height: 1.8, hair: 'short', hairColor: 'black', beard: 'stubble', outfit: 'casual', palette: { shirt: '#e9e2d4', trousers: '#5a4a3c' }, skin: '#b9825c' },
+  sameer: { name: 'Sameer', age: 35, build: 'average', height: 1.73, hair: 'neat', hairColor: 'dark', beard: 'moustache', outfit: 'office', palette: { shirt: '#f1efe9', tie: '#27406b', stripe: '#9fb4d6', trousers: '#3a3b40' }, skin: '#c69068' },
+  imran: { name: 'Imran', age: 42, build: 'broad', height: 1.78, hair: 'fringe', hairColor: 'dark', beard: 'full', outfit: 'casual', palette: { shirt: '#9db3c8', trousers: '#2e3138', belt: '#26262c', shoes: '#30303a' }, skin: '#b07a52' },
+  joseph: { name: 'Joseph', age: 50, build: 'heavy', height: 1.7, hair: 'short', hairColor: 'grey', beard: 'goatee', outfit: 'office', palette: { shirt: '#d9e3d2', tie: null, trousers: '#4a4034', fit: 'loose' }, skin: '#c48c62' },
+  dev: { name: 'Dev', age: 19, build: 'slim', height: 1.71, hair: 'layered', hairColor: 'brown', beard: 'none', outfit: 'tee', palette: { shirt: '#e8e6df', trousers: '#39507a', fit: 'slim' }, skin: '#d2a17c' },
+  harish: { name: 'Harish', age: 61, build: 'average', height: 1.69, hair: 'neat', hairColor: 'white', beard: 'full', outfit: 'casual', palette: { shirt: '#c9b79a', trousers: '#44403a' }, skin: '#b88660' },
+};
+/** The cast by name: CAST.ravi() → { body, design }; CAST.ravi({ outfit: 'tee' }) is Ravi in other clothes. (It grows: women, boys, girls, elders.) */
+export const CAST = { father, ...Object.fromEntries(Object.entries(MEN).map(([k, r]) => [k, (o = {}) => man({ ...r, ...o })])) };

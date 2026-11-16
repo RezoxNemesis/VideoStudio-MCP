@@ -37,5 +37,20 @@ ok(d.inkScale <= 0.7, 'drawn with a fine line', d.inkScale);
   ok(a.tie && !b.tie && b.shirt.color === '#f2efe6' && b.trousers.fit === 'slim' && b.shirt.collar.open === true, 'the office outfit in other colours, without a tie, in a slim cut', [!!a.tie, !!b.tie, b.trousers.fit]); }
 ok(CAST.father === father && JSON.stringify(father().design.wear) === JSON.stringify(father().design.wear), 'the cast lists him; he is the same every time', 0);
 ok(father({ young: true }).design.face.beard == null && father({ young: true }).design.wear.shirt.collar.open === false, 'the young father (a memory) has no beard and a closed collar', 0);
+// ---- a person made of parts: person({ … }) — any man of the cast is a recipe
+{ const { man: person, BUILDS, HAIR_STYLES, BEARDS } = await import('../kit/cast.js');
+  ok(Object.keys(BUILDS).length >= 5 && Object.keys(HAIR_STYLES).length >= 5 && Object.keys(BEARDS).length >= 5 && Object.keys(OUTFITS).length >= 3, 'the parts: five or more builds, hair styles and beards, three or more outfits', [Object.keys(BUILDS), Object.keys(HAIR_STYLES), Object.keys(BEARDS), Object.keys(OUTFITS)]);
+  const a = person({ name: 'A', age: 24, build: 'slim', hair: 'short', beard: 'none', outfit: 'tee' }), b = person({ name: 'B', age: 52, build: 'heavy', hair: 'neat', beard: 'moustache', outfit: 'office', hairColor: 'grey' });
+  ok(a.body.garments.length === 0 && b.body.garments.length === 0 && a.body.age === 24 && b.body.age === 52 && b.body.weight > a.body.weight + 0.3, 'a recipe sets the body: age and build (always bare)', [a.body.weight, b.body.weight]);
+  ok(a.design.wear.shirt.kind === 'tee' && !a.design.wear.tie && b.design.wear.tie && !a.design.face.beard && b.design.face.beard.style === 'mustache', 'the outfit and the beard', [a.design.wear.shirt.kind, b.design.face.beard?.style]);
+  ok(a.design.hair3.mass.vol < father().design.hair3.mass.vol && a.design.hair.color !== b.design.hair.color, 'the hair: its style and its colour', [a.design.hair3.mass.vol, a.design.hair.color, b.design.hair.color]);
+  ok(JSON.stringify(person({ name: 'A', age: 24, build: 'slim', hair: 'short', beard: 'none', outfit: 'tee' }).design.wear) === JSON.stringify(a.design.wear), 'the same recipe gives the same person', 0);
+  let threw = ''; try { person({ build: 'giant' }); } catch (e) { threw = e.message; }
+  ok(/giant/.test(threw) && /slim/.test(threw), 'a part the library does not have is named, with the ones it has', threw);
+  for (const st of Object.keys(HAIR_STYLES)) { const h = HAIR_STYLES[st](); ok(h.n === 0 && h.mass && Array.isArray(h.locks), `hair style "${st}" is a mass with designed locks`, st); } }
+{ const names = Object.keys(CAST), made = names.map((n) => CAST[n]());
+  ok(names.length >= 8 && made.every((q) => q.body.garments.length === 0 && q.design.wear?.shirt && q.design.wear?.trousers && q.design.hair3?.mass), 'the cast has eight or more people, every one a bare body in engine-cut clothes with a head of hair', names);
+  ok(new Set(made.map((q) => JSON.stringify([q.body.age, q.body.weight, q.design.hair.color, q.design.wear.shirt.color, q.design.face.beard?.style ?? '-']))).size === names.length, 'no two alike', 0);
+  ok(CAST.ravi({ outfit: 'tee' }).design.wear.shirt.kind === 'tee' && CAST.ravi().design.wear.shirt.kind !== 'tee', 'one of the cast in other clothes: CAST.ravi({ outfit: "tee" })', 0); }
 console.log(fails.length ? `CAST: ${fails.length} of ${checks} rules broken\n  ✗ ${fails.join('\n  ✗ ')}` : `CAST: all ${checks} rules hold`);
 process.exit(fails.length ? 1 : 0);

@@ -245,20 +245,23 @@ export function dressBody(B, d) {
   // ================= shirt (collar, placket, pocket, tie)
   if (w.shirt) {
     const sw_ = w.shirt, e = sw_.ease ?? 0.016 * k, shL = J('upperarm01.L'), shR = J('upperarm01.R'), shY = (shL[1] + shR[1]) / 2, open = sw_.collar?.open !== false;
+    // (kind: 'tee' — a T-shirt: no collar, placket, pocket or buttons; a ribbed band round a wider, lower neck; worn out over the trousers)
+    const tee = sw_.kind === 'tee', nk = tee ? 0.016 * k : 0, drop = tee ? 0.016 * k : 0;
     const g = (open ? 22 : 8) * Math.PI / 180, bandH = 0.034 * k;
     // the neck, for the collar's band: its outline at its base and a little higher, round its own (leaning) axis
     const n3 = J('neck03') ?? add(neck, [0, 0.1, 0.035]), nz = (y) => neck[2] + (y - neckY) * (n3[2] - neck[2]) / Math.max(0.02, n3[1] - neck[1]);
     const rn0 = hullOf(section(S, mNoArm, [0, neckY, nz(neckY)], UP, X, Z)) ?? new Float32Array(NR).fill(0.062 * k), rn1 = hullOf(section(S, mNoArm, [0, neckY + 0.022 * k, nz(neckY + 0.022 * k)], UP, X, Z)) ?? rn0;
-    const baseY = (th) => neckY - 0.012 * k - 0.012 * k * Math.sin(th), bandPt = (th, up, more = 0) => { const y = baseY(th) + up, r = lerp(polar(rn0, th), polar(rn1, th), clamp((y - neckY) / (0.022 * k))) + 0.006 * k + more; return [r * Math.cos(th), y, nz(y) + r * Math.sin(th)]; };
+    const baseY = (th) => neckY - 0.012 * k - drop - (tee ? 0.019 : 0.012) * k * Math.sin(th), bandPt = (th, up, more = 0) => { const y = baseY(th) + up, r = lerp(polar(rn0, th), polar(rn1, th), clamp((y - neckY) / (0.022 * k))) + 0.006 * k + nk + more; return [r * Math.cos(th), y, nz(y) + r * Math.sin(th)]; };
     // the body of the shirt: rings from inside the trousers up to the shoulders; the cloth hangs from the chest and the
     // shoulder blades (it does not follow the waist in), is gathered by the belt and stands out a little over it
-    const yB = waistTop - 0.05 * k, yS = shY - 0.03 * k, yTopH = neckY - 0.03 * k, ys = [];
+    const yB = waistTop - (tee ? 0.12 : 0.05) * k, yS = shY - 0.03 * k, yTopH = Math.min(neckY - 0.03 * k, baseY(Math.PI / 2) - 0.008 * k), ys = [];
     for (let y = yB; y < yS; y += 0.022 * k) ys.push(y); for (let y = yS; y < yTopH; y += 0.009 * k) ys.push(y); ys.push(yTopH);
     const Rs = 0.058 * k, withHeads = (y) => { const r = section(S, mTrunk, [0, y, zC], UP, X, Z); for (const c of [shL, shR]) { const dy = y - c[1]; if (Math.abs(dy) >= Rs) continue; const rho = Math.sqrt(Rs * Rs - dy * dy); for (let q = 0; q < 16; q++) { const a0 = q * TAU / 16, a1 = (q + 1) * TAU / 16; rays(r, c[0] + rho * Math.cos(a0), c[2] - zC + rho * Math.sin(a0), c[0] + rho * Math.cos(a1), c[2] - zC + rho * Math.sin(a1)); } } return hullOf(r); };
     let last = null; const hs = ys.map((y) => { const h = withHeads(y); if (h) last = h; return h ?? last; }).map((h) => h ?? new Float32Array(NR).fill(0.14 * k));
     const D = hs.map((h) => grown(h, e)), F7 = hs.map((h) => grown(h, 0.007 * k)), F75 = hs.map((h) => grown(h, 0.75 * e));
     for (let i = ys.length - 2; i >= 0; i--) for (let j = 0; j < NR; j++) D[i][j] = Math.max(D[i][j], D[i + 1][j] - 0.35 * (ys[i + 1] - ys[i]));
-    const rs = ys.map((y, i) => { const r = new Float32Array(NR), gt = smooth((y - waistTop) / (0.065 * k)), bump = 0.006 * k * Math.exp(-(((y - waistTop - 0.042 * k) / (0.02 * k)) ** 2)); for (let j = 0; j < NR; j++) r[j] = y < waistTop ? hs[i][j] + 0.004 * k : lerp(F7[i][j], D[i][j], gt) + bump; blur(r, 1); for (let j = 0; j < NR; j++) r[j] = Math.max(r[j], y < waistTop ? hs[i][j] + 0.004 * k : lerp(F7[i][j], F75[i][j], gt)); return r; });
+    const rs = ys.map((y, i) => { const r = new Float32Array(NR), gt = smooth((y - waistTop) / (0.065 * k)), bump = 0.006 * k * Math.exp(-(((y - waistTop - 0.042 * k) / (0.02 * k)) ** 2)); const over = (j) => (pelvR && y < waistTop + 0.02 * k ? pelvR(y, j * DT) + 0.009 * k : 0); // (worn out, a T-shirt hangs from the chest over the trousers; tucked in, a shirt is gathered by the belt)
+      for (let j = 0; j < NR; j++) r[j] = tee ? Math.max(D[i][j], over(j)) : y < waistTop ? hs[i][j] + 0.004 * k : lerp(F7[i][j], D[i][j], gt) + bump; blur(r, 1); for (let j = 0; j < NR; j++) r[j] = Math.max(r[j], tee ? Math.max(F75[i][j], over(j) - 0.002 * k) : y < waistTop ? hs[i][j] + 0.004 * k : lerp(F7[i][j], F75[i][j], gt)); return r; });
     const i7 = ys.findIndex((y) => y > waistTop + 0.08 * k); smoothUp(rs, F75, 1, i7, ys.length - 1);
     const shR_ = field(ys, rs);
     // on the shirt: the radius of its shell at a height and a direction (above its last level it rises to the collar's band)
@@ -269,12 +272,12 @@ export function dressBody(B, d) {
     const rings = rs.map((r, i) => ringPts(r, [0, ys[i], zC], X, Z)); rings.push(Array.from({ length: NR }, (_, j) => bandPt(j * DT, 0, -0.001 * k)));
     const body = loft(rings), cand = list(mask((v) => arm(v) < 0.5 && headW[v] < 0.5 && P[v * 3 + 1] > hipY - 0.05 * k));
     part('shirt', 'shirt', body, bind(B, sk, Float32Array.from(body.pos), cand), { color: sw_.color, shade: sw_.shade, two: true, layer: 2 });
-    for (let v = 0; v < n; v++) { if (!(arm(v) < 0.5 && headW[v] < 0.5) || P[v * 3 + 1] < waistTop - 0.012 * k) continue; const y = P[v * 3 + 1]; if (y < yTopH) covered[v] = 1; else if (y < neckY + 0.03 * k) { const th = Math.atan2(P[v * 3 + 2] - nz(y), P[v * 3]); if (Math.hypot(P[v * 3], P[v * 3 + 2] - nz(y)) > polar(rn0, th) + 0.004 * k) covered[v] = 1; } }
+    for (let v = 0; v < n; v++) { if (!(arm(v) < 0.5 && headW[v] < 0.5) || P[v * 3 + 1] < waistTop - 0.012 * k) continue; const y = P[v * 3 + 1]; if (y < yTopH) covered[v] = 1; else if (y < neckY + 0.03 * k) { const th = Math.atan2(P[v * 3 + 2] - nz(y), P[v * 3]); if (Math.hypot(P[v * 3], P[v * 3 + 2] - nz(y)) > polar(rn0, th) + 0.004 * k + nk) covered[v] = 1; } }
     // where the body bends the cloth folds: two short lines from each armpit towards the chest, a few over the belt
     { const on = (th, y) => { const r = shell(y, th) + 0.0012; return [r * Math.cos(th), y, zC + r * Math.sin(th)]; }, Dg = Math.PI / 180, fold = (name, a0, y0, a1, y1, sag = 0) => { const pts = []; for (let q = 0; q <= 6; q++) { const u = q / 6; pts.push(on(lerp(a0, a1, u) * Dg, lerp(y0, y1, u) - sag * Math.sin(Math.PI * u))); } line(name, 'shirt', pts, cand, null, { alpha: 0.45, lw: 0.75 }); };
       for (const sx of [1, -1]) { const m = (a) => (sx > 0 ? a : 180 - a), sd = sx > 0 ? 'L' : 'R';
         fold(`fold.pit1.${sd}`, m(22), shY - 0.1 * k, m(46), shY - 0.15 * k, 0.006 * k); fold(`fold.pit2.${sd}`, m(16), shY - 0.135 * k, m(37), shY - 0.195 * k, 0.006 * k); }
-      if (w.trousers) [[56, 0.05, 4], [80, 0.062, -3], [104, 0.055, 3], [127, 0.046, -4]].forEach(([a, h, lean], i) => fold(`fold.belt${i}`, a, beltTop + 0.006 * k, a + lean, beltTop + h * k)); }
+      if (w.trousers && !tee) [[56, 0.05, 4], [80, 0.062, -3], [104, 0.055, 3], [127, 0.046, -4]].forEach(([a, h, lean], i) => fold(`fold.belt${i}`, a, beltTop + 0.006 * k, a + lean, beltTop + h * k)); }
     // sleeves: tubes round the upper arm that stand off it, each ending in a hem band
     const sleeves = [], sbind = [], cuffs = [], cbind = [], ins = [], ibind = [];
     for (const sx of [1, -1]) {
@@ -295,6 +298,9 @@ export function dressBody(B, d) {
     part('sleeve', 'shirt', ...cat(sleeves, sbind), { color: sw_.color, shade: sw_.shade, two: true, layer: 2, limb: true });
     part('cuff', 'cuff', ...cat(cuffs, cbind), { color: sw_.color, shade: sw_.shade, two: true, layer: 3, limb: true });
     part('sleeve-in', 'shirt', ...cat(ins, ibind), { color: sw_.shade ?? sw_.color, dark: sw_.shade ? 0.12 : 0.3, flat: true, two: true, layer: 2, limb: true });
+    const ncand0 = list(mask((v) => arm(v) < 0.5 && P[v * 3 + 1] > shY - 0.12 * k && P[v * 3 + 1] < neckY + 0.06 * k));
+    if (tee) { const rb = loft([Array.from({ length: NR }, (_, j) => bandPt(j * DT, -0.003 * k, 0.0025 * k)), Array.from({ length: NR }, (_, j) => bandPt(j * DT, 0.014 * k, 0.001 * k))]); part('rib', 'rib', rb, bind(B, sk, Float32Array.from(rb.pos), ncand0), { color: sw_.color, shade: sw_.shade, two: true, layer: 5 }); }
+    if (!tee) {
     // the collar: a band round the neck, open in front, and two leaves folded over it that end in points on the chest
     const ncand = list(mask((v) => arm(v) < 0.5 && P[v * 3 + 1] > shY - 0.12 * k && P[v * 3 + 1] < neckY + 0.06 * k));
     const lay = (p, lift) => { const th = Math.atan2(p[2] - zC, p[0]), rho = Math.hypot(p[0], p[2] - zC), want = shell(p[1], th) + lift; return rho >= want ? p : [want * Math.cos(th), p[1], zC + want * Math.sin(th)]; };
@@ -339,6 +345,7 @@ export function dressBody(B, d) {
       const ti = sheet(rows, outw), u = new Float32Array(ti.pos.length / 3); let u0 = 1e9, u1 = -1e9; for (let v = 0; v < u.length; v++) { u[v] = ti.pos[v * 3 + 1] + 0.9 * ti.pos[v * 3]; u0 = Math.min(u0, u[v]); u1 = Math.max(u1, u[v]); }
       const bands = []; if (tw.stripe) for (let q = u0 + 0.01 * k; q < u1; q += 0.034 * k) bands.push([q, q + 0.0075 * k, tw.stripe]);
       part('tie', 'tie', ti, bind(B, sk, Float32Array.from(ti.pos), tcand), { color: tw.color, shade: tw.shade, two: true, layer: 6, u, bands });
+    }
     }
     hide.add('tunic');
   }

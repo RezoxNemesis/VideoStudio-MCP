@@ -160,7 +160,12 @@ every lock, `hair.sheen: 0…1` makes the band of light across the hair zigzag f
 to the motion actor (a bare Stage body) and `P.design` to the film's actor. `father({ young: true })` is the father of
 a memory. The parts: `OUTFITS.office({ shirt, tie (null: none, collar open), trousers, fit, sleeve, … })` → a `wear`;
 `layeredHair({ vol, lift, cols, ends, fringe, strands })` → a `hair3` (a mass with two layers of broad locks, a
-fringe, turned-out ends). New people are recipes of these parts; a part made better makes all of them better. The old
+fringe, turned-out ends). `man({ name, age, build (BUILDS: slim | average | athletic | broad | heavy), height, skin,
+hair (HAIR_STYLES: layered | tousled | neat | short | fringe | crop), hairColor (HAIR_COLORS), beard (BEARDS: none |
+full | goatee | moustache | chin | stubble), outfit (OUTFITS: office | casual | tee), palette: { shirt, tie, trousers,
+fit … } })` makes any man from a recipe; `CAST.ravi()`, `CAST.sameer({ outfit: 'tee' })` … are the library's named men
+(`MEN`: their recipes). A T-shirt is `wear.shirt.kind: 'tee'` (no collar: a ribbed neck; worn out over the trousers).
+New people are recipes of these parts; a part made better makes all of them better. The old
 `PEOPLE` library (kit/people.js) is the puppet-style cast of the fantasy films and is not at this standard.
 (Rules: devtests/cast.mjs)
 

@@ -137,6 +137,13 @@ const radiusAt = (p, y, th, c, half = 0.02, f = () => true) => { let best = 0, b
   const hem = (p) => { const b = box(p, (q) => q[0] > 0 && q[1] < 0.12); return b.hi[2] - b.lo[2]; };
   ok(hem(T2) < hem(T) - 0.015, 'a slim leg is narrower at the hem than a straight one', [hem(T2), hem(T)]);
   const B3 = body(); ok(dressBody(B3, {}) === null && !B3.wear, 'a design without `wear` keeps the Stage\'s clothes', !!B3.wear);
+  // a T-shirt: no collar, placket, pocket or buttons — a ribbed band round a wider neck — and it hangs OVER the trousers
+  const B4 = body(), W4 = dressBody(B4, { wear: { shirt: { kind: 'tee', color: '#7a2a2a', sleeve: 'short' }, trousers: WEAR.trousers, shoes: WEAR.shoes } }), p4 = (n) => W4.parts.find((q) => q.name === n);
+  ok(['collar', 'placket', 'pocket', 'buttons', 'tie', 'knot', 'throat'].every((n) => !p4(n)) && !!p4('rib') && p4('rib').group !== p4('shirt').group, 'a T-shirt has no collar, placket, pocket or buttons: a ribbed band round the neck instead', W4.parts.map((q) => q.name));
+  const s4 = box(p4('shirt')), t4 = box(p4('trousers')), neckY4 = B4.landmarks.neckY;
+  ok(s4.lo[1] < t4.hi[1] - 0.06 * k && s4.lo[1] > t4.hi[1] - 0.2 * k, 'it is worn out: its hem hangs a hand or more below the waistband', t4.hi[1] - s4.lo[1]);
+  { const y = t4.hi[1] - 0.04 * k, c = [0, -0.02]; let under = 0; for (let j = 0; j < 24; j++) { const th = j * Math.PI / 12; if (radiusAt(p4('shirt'), y, th, c, 0.02, (q) => Math.abs(q[0]) < 0.24) < radiusAt(p4('trousers'), y, th, c, 0.02) + 0.002) under++; } ok(under === 0, 'and lies over the trousers all round (never inside them)', under); }
+  { const rb = box(p4('rib')), cb = box(part('collar')); ok(rb.hi[1] < neckY4 + 0.012 && rb.hi[0] - rb.lo[0] > (cb.hi[0] - cb.lo[0]) * 0 + 0.13 * k && rb.hi[1] - rb.lo[1] < 0.07 * k, 'its neck is wider and lower than a shirt collar\'s band', [rb.hi[1] - neckY4, rb.hi[0] - rb.lo[0]]); }
 }
 { // ---- the lines a drawing of trousers is made with (ink on the cloth, moving with it)
   const L = W?.lines ?? [], cr = L.filter((l) => /^crease/.test(l.name)), hipY = B.landmarks.hipY;
