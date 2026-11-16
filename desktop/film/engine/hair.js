@@ -174,11 +174,16 @@ export function makeHair(B, spec, seed = 1) {
     const spike = (cut.spike ?? 0.2) * (0.6 + 0.8 * R()) * (1 - 0.6 * wB) * (lenC < 0.16 ? 1 : 0.2);
     const seg = lenC / S, pts = [], wides = [], nrms = [];
     let p = add(r0, mul(nn, -0.004)), dir = norm(add(mul(flow, 1 - spike * 0.75), mul(nn, 0.1 + spike * 1.15)));
+    // wavy hair (cut.wave 0…1): each lock swings from side to side along its length — neighbours swing together, as
+    // combed hair does — and its tip can turn out from the head (cut.flick 0…1) instead of hanging as a straight blade
+    const wave = cut.wave ?? 0, flick = cut.flick ?? 0, sway = wave || flick ? norm(cross(flow, nn)) : null, wph = wave ? r0[0] * 38 + r0[1] * 21 + r0[2] * 17 + R() * 1.3 : 0;
     for (let i = 0; i <= S; i++) {
       pts.push(p);
       // weight: the further from the root, the more a clump hangs (stiff spikes hold their line)
       const pull = Math.min(0.9, (seg / 0.03) * 0.42 * (1 - spike * 0.8));
       dir = norm(add(mul(dir, 1 - pull), mul([0, -1, 0], pull)));
+      if (wave) { const u = i / S; dir = norm(add(dir, mul(sway, wave * 1.15 * Math.cos(wph + u * Math.PI * 2.3) * (0.4 + 0.6 * u)))); }
+      if (flick && i > S * 0.55) { const u = (i / S - 0.55) / 0.45, out = norm([p[0], 0.25, p[2] + 0.02]); dir = norm(add(dir, mul(out, flick * 1.1 * u))); }
       p = outside(add(p, mul(dir, seg)));
     }
     for (let i = 0; i <= S; i++) {

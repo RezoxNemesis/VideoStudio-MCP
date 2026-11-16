@@ -10,6 +10,7 @@ import { makeHair, hairMeshes, capWithoutSideburns } from './hair.js';
 import { pauldronMeshes } from './armour.js';
 import { look } from './look.js';
 import { finishFigure } from './finish.js';
+import { tailorBody } from './tailor.js';
 import { faceMarksOf, faceDecals, decalPaints, noseLine, unfoldX, FACE_FRONT } from './face3.js';
 import { knuckleMarks, handLineWeight } from './hand3.js';
 
@@ -390,6 +391,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   const real = d.realHead !== false && B.bi.head !== undefined && !!B.landmarks.eyeL; // the body's own head (face, eyes, teeth) instead of the painted one
   // the eyes and brows of a real head are drawn (large, clear, the way drawn faces have them) unless the sheet asks for the sculpted ones
   const drawn = real && (d.face?.eyes3 ?? 'drawn') === 'drawn';
+  tailorBody(B, d); // the cut of its clothes (design.bottom.fit): once for each cut, in the body's rest shape
   poseBody(B, pb.t, pb.xf, handsFor(pose, pb.hands), real ? (drawn ? { ...(face ?? {}), eyeOpen: 1, blink: 0, eyeSmile: 0, browTilt: 0, browL: 0, browR: 0 } : (face ?? {})) : null, Array.isArray(pb.after) ? pb.after : null);
   if (typeof pb.after === 'function') pb.after(B); // a film's own change to the posed body (moves and turns of kit/combat.js are applied by poseBody)
   const sun = V.norm(o.sun ?? [-0.45, 0.7, 0.5]);

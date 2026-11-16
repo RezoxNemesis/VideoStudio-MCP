@@ -221,6 +221,14 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**Clothes that are cut (engine/tailor.js).** The body's own trousers lie on the skin like leggings. `design.bottom.fit:
+'slim' | 'straight' | 'loose'` re-cuts the legs in the body's rest shape: from the middle of the thigh the cloth falls
+in a nearly straight line to a hem far wider than the ankle; seat, hip and waistband keep their cut, and the two legs
+never run into each other. Without `fit` the garment is the body's own. Rules: `devtests/tailor.mjs`. **Wavy hair:**
+`hair3: { cut: …, wave: 0…1, flick: 0…1 }` swings each lock from side to side and turns its tip out (a cut without
+them is exactly as before). It does not yet give the soft drawn locks of an illustration: hair still needs a smooth
+mass with designed locks, strand lines and a highlight band.
+
 **Holding, giving, taking, setting down (kit/hold.js).** A thing in a hand lies IN the hand — across the palm, behind
 the knuckles, the fingers closed round it, the thumb over them — and it is ONE thing through a sequence: it lies, is
 taken, carried, given from hand to hand, set down; at no moment is it nowhere, and it never jumps.

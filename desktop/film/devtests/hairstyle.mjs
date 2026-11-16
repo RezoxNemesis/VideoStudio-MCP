@@ -320,5 +320,22 @@ for (const [name, tail] of [['a short knot', { len: 0.02, w: 0.13, at: [180, -22
   ok(worst < 0.02, 'the locks of a swinging sheaf move with its thread (none jumps across it in one picture)', worst);
 }
 
+// ---- wavy hair: each lock swings from side to side along its length and its tip turns out, instead of hanging as a
+// straight blade (the father of the Papa film had a helmet of ridges, then a mop of spikes, 16 Nov 2026)
+{
+  const cutOf = (o) => ({ top: 0.1, bangs: 0.1, sides: 0.1, back: 0.11, spike: 0.3, mess: 0.3, n: 80, w: 0.045, ...o });
+  const bend = (H) => { let s = 0, n = 0; for (const c of H.clumps) { if (c.lock || c.back || c.len < 0.06) continue; const a = c.pts[0], b = c.pts[c.pts.length - 1], ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], L = Math.hypot(...ab) || 1; let far = 0; for (const p of c.pts) { const ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]], t = (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / (L * L), q = [a[0] + ab[0] * t, a[1] + ab[1] * t, a[2] + ab[2] * t]; far = Math.max(far, dist(p, q)); } s += far / c.len; n++; } return n ? s / n : 0; };
+  const plain = makeHair(B, cutOf({}), 3), wavy = makeHair(B, cutOf({ wave: 0.7 }), 3), again = makeHair(B, cutOf({ wave: 0 }), 3);
+  ok(bend(wavy) > bend(plain) + 0.05 && bend(wavy) > 0.09, 'a wavy cut\'s locks swing off their own straight line (by a tenth of their length or more)', [bend(plain), bend(wavy)]);
+  let same = 0; plain.clumps.forEach((c, i) => c.pts.forEach((p, q) => { same = Math.max(same, dist(p, again.clumps[i].pts[q])); }));
+  ok(same === 0, 'without wave a cut is exactly what it was (every film made so far)', same);
+  let under = 0; for (const c of wavy.clumps) for (const p of c.pts) under = Math.max(under, -off(p) > 0.004 && insideHead(p) ? 1 : 0);
+  ok(under === 0, 'waves lie over the head, never inside it', under);
+  // the tips: with flick they turn away from the head at the end
+  const tipOut = (H) => { let s = 0, n = 0; for (const c of H.clumps) { if (c.lock || c.back || c.len < 0.06) continue; const N = c.pts.length, a = c.pts[N - 3], b = c.pts[N - 1], d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l = Math.hypot(...d) || 1, o = [b[0], 0, b[2] + 0.02], ol = Math.hypot(...o) || 1; s += (d[0] * o[0] + d[2] * o[2]) / (l * ol); n++; } return n ? s / n : 0; };
+  const flicked = makeHair(B, cutOf({ wave: 0.5, flick: 0.8 }), 3);
+  ok(tipOut(flicked) > tipOut(makeHair(B, cutOf({ wave: 0.5 }), 3)) + 0.08, 'with flick the tips turn outwards', [tipOut(makeHair(B, cutOf({ wave: 0.5 }), 3)), tipOut(flicked)]);
+}
+
 if (fails.length) { console.error(`hairstyle: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`hairstyle: ${checks} rules hold`);
