@@ -176,5 +176,22 @@ const turn = (row) => { const L = row.map(lum), hi = Math.max(...L.slice(4, 30))
   ok(d < 1e-6, 'what does not hang on the trunk (an arm, a leg) keeps its own normals', d);
 }
 
+// ---- the head is read from a ball: a face's light and shadow fall as on a simple round head, so the edge between
+// them is one clean curve across the face and not the facets of its mesh (the Papa film's close-ups, 16 Nov 2026)
+{
+  const { roundNormals } = await import('../engine/body.js');
+  const n = 500, pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3), w = new Float32Array(n).fill(1), c = [0.2, 1.6, -0.1];
+  let seed = 11; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 - 0.5; };
+  for (let v = 0; v < n; v++) { const a = [rnd(), rnd(), rnd()], l = Math.hypot(...a) || 1, r = [a[0] / l, a[1] / l, a[2] / l]; for (let k = 0; k < 3; k++) pos[v * 3 + k] = c[k] + r[k] * 0.1; const b = [r[0] + rnd() * 0.9, r[1] + rnd() * 0.9, r[2] + rnd() * 0.9], bl = Math.hypot(...b) || 1; for (let k = 0; k < 3; k++) nrm[v * 3 + k] = b[k] / bl; }
+  const dev = (N) => { let s = 0; for (let v = 0; v < n; v++) { const r = [pos[v * 3] - c[0], pos[v * 3 + 1] - c[1], pos[v * 3 + 2] - c[2]], l = Math.hypot(...r) || 1; s += Math.acos(Math.max(-1, Math.min(1, (N[v * 3] * r[0] + N[v * 3 + 1] * r[1] + N[v * 3 + 2] * r[2]) / l))); } return s / n; };
+  const before = dev(nrm), out = roundNormals(pos, nrm, c, w, 0.6), after = dev(out);
+  ok(after < before * 0.55, 'normals mixed towards a ball round the head\'s middle lie much nearer to it', [before, after]);
+  ok(after > before * 0.15, 'but the face keeps some of its own relief (nose, brow, cheek)', [before, after]);
+  let unit = 0; for (let v = 0; v < n; v++) unit = Math.max(unit, Math.abs(Math.hypot(out[v * 3], out[v * 3 + 1], out[v * 3 + 2]) - 1));
+  ok(unit < 1e-4, 'they stay unit normals', unit);
+  const same = roundNormals(pos, nrm, c, new Float32Array(n), 0.6); let d = 0; for (let i = 0; i < n * 3; i++) d = Math.max(d, Math.abs(same[i] - nrm[i]));
+  ok(d === 0, 'what does not belong to the head is untouched', d);
+}
+
 if (fails.length) { console.error(`brush: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`brush: ${checks} rules hold`);

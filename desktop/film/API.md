@@ -221,6 +221,15 @@ The painted look can be given a brush: `"look": { "style": "anime", "paint": { "
 gradually on skin and cloth (rounded, painted forms; hair and metal stay crisp), gives the shadows forms throw on each
 other and hair throws on a face a soft edge, and keeps the tucks of a form (under a jaw) from going to blots.
 
+**The finish (engine/finish.js) — what anime calls photography.** A painted figure is not pasted on its background:
+where it is laid down, the background's light bleeds a little over its edge (`wrap`, light only, just short of being
+noticed) and a soft gradient goes over it, lighter and warmer towards the scene's light, deeper and cooler away from it
+(`para`); then the whole picture gets a soft glow round what is light (`post: ['diffuse']`, a soft knee: blacks stay
+black). The `multiplane` and `anime` looks ask for it; any look can: `look: { finish: { wrap: 0.55, para: 0.2 },
+post: ['bloom', 'diffuse'], diffuse: 0.3 }`; one actor can differ (`finish: false` on its draw options). The head's skin
+is lit as a ball (`design.body.round`, default 0.55; `false`: the mesh's own facets), the trunk as a cylinder
+(`design.body.proxy`): light and shadow meet in one clean curve. Rules: `devtests/finish.mjs`, `devtests/brush.mjs`.
+
 **Check the finished film for flashes:** `node devtests/flash.mjs <video>` reads its brightness frame by frame and names
 every one- or two-frame flash (never right) and every cut where the whole picture jumps in brightness (day ↔ night, into
 white: right only when meant — else `post.dissolve` or a fade). Run it on every draft before it is shown.

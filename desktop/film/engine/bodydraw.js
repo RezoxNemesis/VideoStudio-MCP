@@ -3,12 +3,13 @@
 // arm, a hand or a blade passes in front of the face.
 import { createCanvas } from '@napi-rs/canvas';
 import { V, clamp, lerp, hex, qrot, shade as shadeHex } from './core.js';
-import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn, proxyNormals } from './body.js';
+import { poseBody, normalsOf, CelPainter, onBone, dirOnBone, faceShapes, inkOn, proxyNormals, roundNormals } from './body.js';
 import { swordInHand } from './character.js';
 import { drawHead, drawEyesOn } from './head.js';
 import { makeHair, hairMeshes, capWithoutSideburns } from './hair.js';
 import { pauldronMeshes } from './armour.js';
 import { look } from './look.js';
+import { finishFigure } from './finish.js';
 import { faceMarksOf, faceDecals, decalPaints, noseLine, unfoldX, FACE_FRONT } from './face3.js';
 import { knuckleMarks, handLineWeight } from './hand3.js';
 
@@ -415,6 +416,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     return out;
   };
   const mouthShut = !face || (faceShapes(face).w['mouth-open'] ?? 0) < 0.06;
+  const LM = B.landmarks ?? {}, headBall = B.bi.head !== undefined && LM.crown && LM.nape && LM.eyeL ? onBone(B, 'head', [0, (LM.crown[1] + LM.nape[1]) / 2, (LM.eyeL[2] + LM.nape[2]) / 2]) : null;
   const trunkNames = TRUNK.filter((n) => B.bi[n] !== undefined), trunkIds = new Set(trunkNames.map((n) => B.bi[n])), trunkAxis = trunkNames.length > 2 && B.P ? trunkNames.map((n) => { const i = B.bi[n]; return onBone(B, i, [B.P[i * 3], B.P[i * 3 + 1], B.P[i * 3 + 2]]); }) : null;
   for (const p of B.parts) {
     if (real && (p.name === 'eyes' || p.name === 'teeth' || p.name === 'tongue' || p.name === 'lashes')) {
@@ -446,6 +448,12 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (trunkAxis && p.si && p.sw && d.body?.proxy !== false) {
       if (p.trunkW === undefined) { const a = new Float32Array(p.n); let any = false; for (let v = 0; v < p.n; v++) { let w = 0; for (let k = 0; k < 4; k++) if (trunkIds.has(p.si[v * 4 + k])) w += p.sw[v * 4 + k]; a[v] = w; if (w > 0.02) any = true; } p.trunkW = any ? a : null; }
       if (p.trunkW) nr = proxyNormals(p.out, nr, trunkAxis, p.trunkW, d.body?.proxy ?? 0.5);
+    }
+    // the head's skin is lit as a ball (round normals): the edge between light and shadow is one clean curve across the
+    // face, not the facets of its mesh; the face keeps part of its own relief (design.body.round: 0…1, false: off)
+    if (headBall && p.material === 'skin' && p.si && p.sw && d.body?.round !== false) {
+      if (p.headW === undefined) { const a = new Float32Array(p.n), hb = B.bi.head; let any = false; for (let v = 0; v < p.n; v++) { let w = 0; for (let k = 0; k < 4; k++) if (p.si[v * 4 + k] === hb) w += p.sw[v * 4 + k]; a[v] = w; if (w > 0.02) any = true; } p.headW = any ? a : null; }
+      if (p.headW) nr = roundNormals(p.out, nr, headBall, p.headW, d.body?.round ?? 0.55);
     }
     if (p.material !== 'skin' && paint.hem === undefined) paint.hem = hemPx; // a garment's mesh ends in teeth (a short sleeve, a shirt's lower edge): drawn, its edge is smooth
     // a top cut like a robe (crossed lapels over an under-robe, set-in sleeves): painted by a map of its cut, front and back each by itself
@@ -532,7 +540,13 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   let tailFront = ch.front.tail; const m0 = -headFront; if (tailFront === null) tailFront = m0 > 0; else if (m0 > 0.15) tailFront = true; else if (m0 < -0.15) tailFront = false; ch.front.tail = tailFront;
   const drawTails = () => { for (const tf of longBack) ch.drawTuft(g, tf, C(d.hair.color), S(d.hair.color, d.hair.shade), ink, lw); };
   if (longBack.length && !tailFront && !real) drawTails();
-  if (spr) g.drawImage(spr.canvas, spr.x, spr.y);
+  if (spr) {
+    // the finish (engine/finish.js): the figure is seated in the picture it is laid on — the background's light over its
+    // edge, a soft gradient towards the scene's light — instead of being pasted on it
+    const fin = o.finish ?? look()?.finish;
+    if (fin) { const sx = V.dot(sun, cam.R), sy = -V.dot(sun, cam.U), sl = Math.hypot(sx, sy); finishFigure(g, spr, fin, { H: cam.H, light2: sl < 0.15 ? [-0.5, -0.86] : [sx / sl, sy / sl], shade: hex(lit('#6a72a6')), glow: typeof o.rim === 'string' ? hex(o.rim) : hex(lit('#fff2dc')) }); }
+    g.drawImage(spr.canvas, spr.x, spr.y);
+  }
   // the knuckles of a closed hand, inked on its own skin (never over a sleeve or a blade in front of it)
   if (real && spr && handIds.size && B.fingers) for (const s of ['L', 'R']) {
     const wj = pose.j[`wrist.${s}`]; if (!wj) continue; const px = 0.0068 * (pose.height / 1.8) * cam.ppm(cam.project(wj)[2]); if (px < 1.6) continue; // too small in the picture to be drawn

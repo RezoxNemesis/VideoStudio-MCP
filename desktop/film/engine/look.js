@@ -17,6 +17,7 @@
 // A film sets one in film.json ("look": "paper" or {"style": "pixel", "size": 4}); a shot can set its own (shot.look),
 // for a flashback in pencil or a dream in paper.
 import { createCanvas } from '@napi-rs/canvas';
+import { diffuse } from './finish.js';
 
 const ALIAS = { 'anime-classic': 'classic', cel: 'classic', '2d': 'anime', '2.5d': 'multiplane', '3d': 'soft3d', '3.5d': 'cel3d', '4d': 'immersive', papercut: 'paper', 'paper-cut': 'paper', cutout: 'puppet', motion: 'flat', mograph: 'flat', pencil: 'sketch', '8bit': 'pixel' };
 /**
@@ -25,7 +26,7 @@ const ALIAS = { 'anime-classic': 'classic', cel: 'classic', '2d': 'anime', '2.5d
  * post: passes over the finished frame; grain / vignette: multipliers of the usual amounts
  */
 export const LOOKS = {
-  anime: { about: '2D anime, painted: crisp cel shadows with soft light across the lit side, deeper tones where forms tuck in, warm skin at the turn of the light, polished metal, hair sheen, rim light, ink outlines and inner lines tinted by their colours, a soft glow on lights', paint: { mode: 'paint', rim: true }, post: ['bloom', 'grade'], bloom: 0.35 },
+  anime: { about: '2D anime, painted: crisp cel shadows with soft light across the lit side, deeper tones where forms tuck in, warm skin at the turn of the light, polished metal, hair sheen, rim light, ink outlines and inner lines tinted by their colours, a soft glow on lights', paint: { mode: 'paint', rim: true }, finish: { wrap: 0.5, para: 0.18 }, post: ['bloom', 'grade', 'diffuse'], diffuse: 0.25, bloom: 0.35 },
   classic: { about: '2D anime, classic: two flat cel tones and black ink (the look before 2.5)' },
   paper: { about: 'Paper cut: flat paper colours with pale cut edges, layered shadows, paper grain, on threes', paint: { mode: 'flat', ink: [244, 236, 220], outer: 0.6, inner: 0.4 }, hold: 3, layers: { blur: 8, dx: 4, dy: 6, a: 0.38 }, post: ['paper'], grain: 0.4 },
   puppet: { about: 'Cut-out puppet theatre: paper pieces that jolt from drawing to drawing, on threes', paint: { mode: 'flat', ink: [236, 226, 206], outer: 0.7, inner: 0.5 }, hold: 3, jitter: 2.2, layers: { blur: 6, dx: 5, dy: 7, a: 0.4 }, post: ['paper'], grain: 0.4 },
@@ -36,7 +37,7 @@ export const LOOKS = {
   soft3d: { about: '3D render: smooth shading, no lines, soft bloom', paint: { mode: 'smooth', lines: false }, post: ['bloom'] },
   cel3d: { about: 'Cel-shaded 3D: three tones, rim light, an outer line, fine inner lines', paint: { mode: 'tri', inner: 0.5, rim: true }, post: ['bloom'] },
   immersive: { about: '4D: cel-shaded 3D with light shafts, bloom, depth haze, floating motes and a breathing camera', paint: { mode: 'tri', inner: 0.5, rim: true }, post: ['rays', 'bloom', 'motes', 'fringe'], fog: 1.6, breathe: 1, autoDof: 1.6 },
-  multiplane: { about: '2.5D multiplane: painted anime drawing (soft brush, rim light) in layered depth, haze and a soft far background', paint: { mode: 'paint', rim: true, soft: 0.5 }, fog: 1.8, autoDof: 2.4, post: ['bloom'], bloom: 0.5 },
+  multiplane: { about: '2.5D multiplane: painted anime drawing (soft brush, rim light) in layered depth, haze and a soft far background', paint: { mode: 'paint', rim: true, soft: 0.5 }, finish: { wrap: 0.55, para: 0.2 }, fog: 1.8, autoDof: 2.4, post: ['bloom', 'diffuse'], bloom: 0.5, diffuse: 0.3 },
 };
 
 /** The look a name or an object asks for, with its settings filled in. */
@@ -249,6 +250,7 @@ export function postLook(L, g, W, H, ctx) {
     else if (p === 'sketch') sketch(g, W, H, ctx.frame ?? 0);
     else if (p === 'manga') manga(g, W, H);
     else if (p === 'bloom') bloom(g, W, H, L.bloom ?? 0.7, src);
+    else if (p === 'diffuse') diffuse(g, W, H, L.diffuse ?? 0.3, src);
     else if (p === 'rays') rays(g, W, H, ctx.cam, ctx.scene, L.rays ?? 0.8, src);
     else if (p === 'motes') motes(g, W, H, ctx.t ?? 0, ctx.cam, L.motes ?? 1);
     else if (p === 'fringe') fringe(g, W, H, L.fringe ?? 1, src);

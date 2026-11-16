@@ -676,6 +676,21 @@ export class CelPainter {
   }
 }
 /**
+ * Round normals: the normals of a surface mixed towards those of a ball round `centre` (a head's middle). A face lit
+ * so takes its light and shadow as a simple round head would — one clean curve across it — and keeps (1 − k) of its
+ * own relief. w: one number per vertex, 0…1, how much it belongs to the head (0: untouched). Returns new normals.
+ */
+export function roundNormals(pos, nrm, centre, w, k = 0.55) {
+  const out = new Float32Array(nrm), n = nrm.length / 3;
+  for (let v = 0; v < n; v++) {
+    const wk = (w ? w[v] : 1) * k; if (!(wk > 0)) continue;
+    const rx = pos[v * 3] - centre[0], ry = pos[v * 3 + 1] - centre[1], rz = pos[v * 3 + 2] - centre[2], rl = Math.hypot(rx, ry, rz); if (rl < 1e-6) continue;
+    const nx = nrm[v * 3] * (1 - wk) + (rx / rl) * wk, ny = nrm[v * 3 + 1] * (1 - wk) + (ry / rl) * wk, nz = nrm[v * 3 + 2] * (1 - wk) + (rz / rl) * wk, l = Math.hypot(nx, ny, nz) || 1;
+    out[v * 3] = nx / l; out[v * 3 + 1] = ny / l; out[v * 3 + 2] = nz / l;
+  }
+  return out;
+}
+/**
  * Proxy normals: the normals of a surface mixed towards those of a simple round form — a cylinder round `axis` (a line of
  * points: the spine from hips to neck). w: one number per vertex, 0…1, how much it belongs to that form (0: untouched);
  * k: how far to mix (0.5 is plenty). The light then reads the trunk as one round form: one clean shadow shape instead of
