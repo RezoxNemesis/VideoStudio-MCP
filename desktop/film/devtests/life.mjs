@@ -130,5 +130,19 @@ const LEGS = /^(root|upperleg|lowerleg|foot|toe|pelvis)/;
   ok(sighs >= 1 && sighs <= peaks.length / 2, 'now and then a breath is a sigh: half as deep again as the usual one', [sighs, peaks.length]);
 }
 
+// ---- a walker's trunk turns against his hips ("the torso lacks natural counter-rotation", the Papa film, 16 Nov 2026):
+// the shoulder on the side of the back foot comes forward with its arm, by degrees, and the head stays on his way
+{
+  const { walkTwist } = await import('../kit/combat.js');
+  const stride = (right) => { const p = poseOf(); p.j['foot.R'][2] += right; p.j['foot.L'][2] -= right; return p; };
+  const fwd = (p) => p.j['upperarm01.L'][2] - p.j['upperarm01.R'][2];
+  const a = walkTwist(stride(0.4)), b = walkTwist(stride(-0.4)), c = walkTwist(stride(0));
+  ok(fwd(a) > 0.012 && fwd(a) < 0.08, 'right foot ahead: the left shoulder comes forward by centimetres', fwd(a));
+  ok(fwd(b) < -0.012, 'left foot ahead: the right shoulder', fwd(b));
+  ok(Math.abs(fwd(c)) < 1e-6, 'feet together: no turn at all (a man who stands is left alone)', fwd(c));
+  ok(Math.abs(a.j.head[0] - poseOf().j.head[0]) < 0.006, 'the head stays over the hips', a.j.head[0]);
+  ok(['foot.L', 'foot.R', 'root'].every((n) => Math.hypot(...a.j[n].map((v, i) => v - stride(0.4).j[n][i])) < 1e-9), 'the feet and the hips are not touched', 0);
+}
+
 if (fails.length) { console.error(`life: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.error('  ✗ ' + f); process.exit(1); }
 console.log(`life: all ${checks} rules hold`);

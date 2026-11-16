@@ -76,6 +76,20 @@ export function swingArms(pose, o = {}) {
   return bendPose(pose, bends);
 }
 /**
+ * A walker's trunk turns against his hips: the shoulder on the side of the back foot comes forward (with its arm) by a
+ * few degrees, and the neck gives the turn back so the head stays on his way. Read from the feet like swingArms — nothing
+ * when they pass each other, all of it at full stride — so it goes with any walk or run. o: { deg: 7 (the chest's turn
+ * at full stride), reach: 0.8 }. For an actor: fit: (pose) => swingArms(walkTwist(pose), { amount: 0.6 }).
+ */
+export function walkTwist(pose, o = {}) {
+  const j = pose.j, hl = j['upperleg01.L'], hr = j['upperleg01.R'], fl = j['foot.L'], fr = j['foot.R']; if (!hl || !hr || !fl || !fr) return pose;
+  const k = pose.height / 1.8, n = Math.hypot(hl[0] - hr[0], hl[2] - hr[2]) || 1, fx = -(hl[2] - hr[2]) / n, fz = (hl[0] - hr[0]) / n;
+  const s = clamp(((fr[0] - fl[0]) * fx + (fr[2] - fl[2]) * fz) / ((o.reach ?? 0.8) * k), -1, 1); if (Math.abs(s) < 1e-6) return pose;
+  const d = (o.deg ?? 7) * s * TWIST;
+  return bendPose(pose, [{ bone: 'spine03', about: 'up', deg: d * 0.5 }, { bone: 'spine02', about: 'up', deg: d * 0.5 }, { bone: 'neck01', about: 'up', deg: -d }]);
+}
+const TWIST = -1; // (the way round `up` that brings the left shoulder forward: found by the rule in devtests/life.mjs)
+/**
  * Stand a spear on its butt: the shaft goes from the ground up through the hand that holds it, whatever the arm does
  * (a captured wait moves the arm about; a soldier's spear at rest stands). o: { ground: 0 (height of the ground there),
  * len: 2.4 (the spear's shaft), hand: 'R', lean: [right, forward] (m: where the butt stands from under the hand — a
