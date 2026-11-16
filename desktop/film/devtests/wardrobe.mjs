@@ -177,5 +177,26 @@ const radiusAt = (p, y, th, c, half = 0.02, f = () => true) => { let best = 0, b
   ok(sh.filter((l) => /^cap/.test(l.name)).length === 2 && sh.filter((l) => /^lace/.test(l.name)).length >= 6, 'each shoe has a line across the toe cap and three laces', sh.map((l) => l.name));
   ok(sh.every((l) => { for (let v = 0; v < l.n; v++) if (l.sw[v * 4] !== 1 || l.si[v * 4] !== B.bi[l.pos[v * 3] > 0 ? 'foot.L' : 'foot.R']) return false; return true; }), 'they ride on the foot, as the shoe does', 0);
 }
+{ // ---- the cut of a model sheet measured with lines (16 Nov 2026): a boxy T-shirt, sneakers, a trouser hem that rests on the shoe
+  const wear = { shirt: { kind: 'tee', color: '#f3f3f1', sleeve: 'short' }, trousers: { color: '#26272c', fit: 'straight', hem: 0.105 }, shoes: { kind: 'sneaker', color: '#f4f4f4', sole: '#ffffff' } };
+  const B5 = body(), W5 = dressBody(B5, { wear }), p5 = (n) => W5.parts.find((q) => q.name === n), J5 = (n) => [B5.head[B5.bi[n] * 3], B5.head[B5.bi[n] * 3 + 1], B5.head[B5.bi[n] * 3 + 2]];
+  const sh5 = p5('shirt'), bb = box(sh5), S0 = J5('upperarm01.L'), El = J5('lowerarm01.L'), len = Math.hypot(El[0] - S0[0], El[1] - S0[1], El[2] - S0[2]), ax = [(El[0] - S0[0]) / len, (El[1] - S0[1]) / len, (El[2] - S0[2]) / len];
+  // (the side of the shirt: the body's left, θ = 0, as the wardrobe counts round)
+  const rHem = W5.shirt.radius(bb.lo[1] + 0.02 * k, 0), rChest = W5.shirt.radius(S0[1] - 0.24 * k, 0), rWaist = W5.shirt.radius((bb.lo[1] + S0[1] - 0.17 * k) / 2, 0);
+  ok(rHem > rChest - 0.012 * k && rWaist > rChest - 0.012 * k, 'a T-shirt hangs straight from the chest: at the waist and the hem its side is no more than a centimetre inside the chest\'s (it does not follow the waist in)', [rChest, rWaist, rHem]);
+  const hip5 = J5('upperleg01.L')[1]; ok(bb.lo[1] < hip5 + 0.02 * k && bb.lo[1] > hip5 - 0.1 * k, 'its hem lies at the hips (between the hip joint and 10 cm under it)', bb.lo[1] - hip5);
+  const sl5 = p5('sleeve'); let far = 0; for (let v = 0; v < sl5.n; v++) if (sl5.pos[v * 3] > 0) far = Math.max(far, (sl5.pos[v * 3] - S0[0]) * ax[0] + (sl5.pos[v * 3 + 1] - S0[1]) * ax[1] + (sl5.pos[v * 3 + 2] - S0[2]) * ax[2]);
+  ok(far > 0.62 * len && far < 0.8 * len, 'its sleeve covers two thirds of the upper arm', far / len);
+  const tr5 = box(p5('trousers')); ok(Math.abs(tr5.lo[1] - 0.105 * k) < 0.014 * k, 'trousers.hem: the trouser ends that high above the ground (10.5 cm: it rests on a sneaker)', tr5.lo[1]);
+  const WD = dressBody(body(), { wear: { ...wear, shoes: { kind: 'derby', color: '#121214' } } }), side = (q) => q[0] > 0;
+  const So = box(p5('sole'), side), U = box(p5('shoe'), side), Ud = box(WD.parts.find((q) => q.name === 'shoe'), side), Sd = box(WD.parts.find((q) => q.name === 'sole'), side);
+  ok(So.hi[1] - So.lo[1] > 0.03 * k && So.hi[1] - So.lo[1] > (Sd.hi[1] - Sd.lo[1]) + 0.004 * k, 'a sneaker stands on a thick sole (3 cm and more at the heel; thicker than a leather shoe\'s)', [So.hi[1] - So.lo[1], Sd.hi[1] - Sd.lo[1]]);
+  const toeH = (W_, pt) => { let h = 0; const zf = box(pt, side).hi[2]; for (let v = 0; v < pt.n; v++) if (pt.pos[v * 3] > 0 && pt.pos[v * 3 + 2] > zf - 0.06 * k) h = Math.max(h, pt.pos[v * 3 + 1]); return h; };
+  ok(toeH(W5, p5('shoe')) > toeH(WD, WD.parts.find((q) => q.name === 'shoe')) + 0.006 * k, 'and has a fuller, rounder toe than a leather shoe', [toeH(W5, p5('shoe')), toeH(WD, WD.parts.find((q) => q.name === 'shoe'))]);
+  ok(U.hi[0] - U.lo[0] > (Ud.hi[0] - Ud.lo[0]) + 0.004 * k && So.hi[2] - So.lo[2] < 0.34 * k, 'it is wider, and no longer than 34 cm', [U.hi[0] - U.lo[0], Ud.hi[0] - Ud.lo[0], So.hi[2] - So.lo[2]]);
+  const ln = W5.lines.filter((l) => l.on === 'shoe').map((l) => l.name);
+  ok(ln.filter((n) => /^lace/.test(n)).length >= 10 && ln.filter((n) => /^cap/.test(n)).length === 2 && ln.filter((n) => /^panel/.test(n)).length >= 4 && ln.filter((n) => /^tongue/.test(n)).length === 2, 'drawn as a sneaker: five laces, the toe cap, the tongue\'s edge and the seams of its side panels on each shoe', ln);
+  ok(!p5('shoe').leather, 'canvas, not polished leather: no shine', p5('shoe').leather);
+}
 console.log(fails.length ? `WARDROBE: ${fails.length} of ${checks} rules broken\n  ✗ ${fails.join('\n  ✗ ')}` : `WARDROBE: all ${checks} rules hold`);
 process.exit(fails.length ? 1 : 0);

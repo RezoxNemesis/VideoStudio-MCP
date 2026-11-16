@@ -3,7 +3,8 @@
 // collar, placket, pocket, belt or shoe. A design can ask for cut clothes instead:
 //   design.wear = { shirt: { color, shade?, sleeve: 'short' | 'long' | 'rolled', ease?, pocket?, collar: { open?, point? } },
 //                   tie: { color, stripe?, loose? }, trousers: { color, shade?, fit: 'slim' | 'straight' | 'loose' },
-//                   belt: { color, buckle? }, shoes: { kind: 'derby', color, sole? } }
+//                   belt: { color, buckle? }, shoes: { kind: 'derby' | 'sneaker', color, sole? } }   (trousers.hem: metres above the ground;
+//                   a T-shirt — shirt.kind: 'tee' — takes box: 0…1 (how straight it hangs), len, sleeveLen)
 // Every piece is a smooth shell measured from the body in its rest shape — sections of the body, the cloth spanning its
 // hollows (a convex outline) with ease, hanging from the chest and the thigh — and hangs on the body's own bones (each
 // bit of cloth moves as the skin nearest to it does). The pieces a drawing of clothes is made of are things of their
@@ -189,7 +190,7 @@ export function dressBody(B, d) {
     for (const sx of [1, -1]) {
       const sd = sx > 0 ? 'L' : 'R', hip = J(`upperleg01.${sd}`), knee = J(`lowerleg01.${sd}`), ank = J(`foot.${sd}`), mLeg = mask((v) => arm(v) < 0.5 && sx * P[v * 3] > -0.003);
       const axis = (y) => { const [a, c] = y > knee[1] ? [hip, knee] : [knee, ank], u = (a[1] - y) / (a[1] - c[1]); return [lerp(a[0], c[0], u), y, lerp(a[2], c[2], u)]; };
-      const uOf = (y) => (hip[1] - y) / (hip[1] - ank[1]), yHem = 0.082 * k, uH = uOf(yHem), E = (j) => 1 / Math.sqrt((COS[j] / 0.9) ** 2 + (SIN[j] / 1.22) ** 2);
+      const uOf = (y) => (hip[1] - y) / (hip[1] - ank[1]), yHem = (tw.hem ?? 0.082) * k, uH = uOf(yHem), E = (j) => 1 / Math.sqrt((COS[j] / 0.9) ** 2 + (SIN[j] / 1.22) ** 2);
       const yT = crotch, lv = []; for (let y = yT; y > yHem + 0.035 * k; y -= 0.026 * k) lv.push(y);
       // the leg hangs round a straight middle line: from the thigh's own middle to the ankle's (a leg is not straight, a trouser leg is)
       const midOf = (y) => { const c = axis(y), h = hullOf(section(S, mLeg, c, UP, X, Z)); if (!h) return c; let mx = 0, mz = 0; for (let j = 0; j < NR; j++) { mx += h[j] * COS[j]; mz += h[j] * SIN[j]; } return [c[0] + mx / NR, y, c[2] + mz / NR]; };
@@ -245,9 +246,9 @@ export function dressBody(B, d) {
 
   // ================= shirt (collar, placket, pocket, tie)
   if (w.shirt) {
-    const sw_ = w.shirt, e = sw_.ease ?? 0.016 * k, shL = J('upperarm01.L'), shR = J('upperarm01.R'), shY = (shL[1] + shR[1]) / 2, open = sw_.collar?.open !== false;
+    const sw_ = w.shirt, e = sw_.ease ?? (sw_.kind === 'tee' ? 0.018 : 0.016) * k, shL = J('upperarm01.L'), shR = J('upperarm01.R'), shY = (shL[1] + shR[1]) / 2, open = sw_.collar?.open !== false;
     // (kind: 'tee' — a T-shirt: no collar, placket, pocket or buttons; a ribbed band round a wider, lower neck; worn out over the trousers)
-    const tee = sw_.kind === 'tee', nk = tee ? 0.016 * k : 0, drop = tee ? 0.016 * k : 0;
+    const tee = sw_.kind === 'tee', nk = tee ? 0.016 * k : 0, drop = tee ? 0.016 * k : 0, box = tee ? clamp(sw_.box ?? 1) : 0; // (box: 1 = its sides hang straight down from the chest, 0 = it falls in to the waist as a shirt does)
     const g = (open ? 22 : 8) * Math.PI / 180, bandH = 0.034 * k;
     // the neck, for the collar's band: its outline at its base and a little higher, round its own (leaning) axis
     const n3 = J('neck03') ?? add(neck, [0, 0.1, 0.035]), nz = (y) => neck[2] + (y - neckY) * (n3[2] - neck[2]) / Math.max(0.02, n3[1] - neck[1]);
@@ -259,12 +260,12 @@ export function dressBody(B, d) {
     const baseY = (th) => Math.max(design(th), polar(ringY, th)), bandPt = (th, up, more = 0) => { const y = baseY(th) + up, r = lerp(polar(rn0, th), polar(rn1, th), clamp((y - neckY) / (0.022 * k))) + 0.006 * k + nk + more; return [r * Math.cos(th), y, nz(y) + r * Math.sin(th)]; };
     // the body of the shirt: rings from inside the trousers up to the shoulders; the cloth hangs from the chest and the
     // shoulder blades (it does not follow the waist in), is gathered by the belt and stands out a little over it
-    const yB = waistTop - (tee ? 0.12 : 0.05) * k, yS = shY - 0.03 * k, yTopH = Math.min(neckY - 0.03 * k, baseY(Math.PI / 2) - 0.008 * k), ys = [];
+    const yB = waistTop - (tee ? (sw_.len ?? 0.15) : 0.05) * k, yS = shY - 0.03 * k, yTopH = Math.min(neckY - 0.03 * k, baseY(Math.PI / 2) - 0.008 * k), ys = [];
     for (let y = yB; y < yS; y += 0.022 * k) ys.push(y); for (let y = yS; y < yTopH; y += 0.009 * k) ys.push(y); ys.push(yTopH);
     const Rs = 0.058 * k, withHeads = (y) => { const r = section(S, mTrunk, [0, y, zC], UP, X, Z); for (const c of [shL, shR]) { const dy = y - c[1]; if (Math.abs(dy) >= Rs) continue; const rho = Math.sqrt(Rs * Rs - dy * dy); for (let q = 0; q < 16; q++) { const a0 = q * TAU / 16, a1 = (q + 1) * TAU / 16; rays(r, c[0] + rho * Math.cos(a0), c[2] - zC + rho * Math.sin(a0), c[0] + rho * Math.cos(a1), c[2] - zC + rho * Math.sin(a1)); } } return hullOf(r); };
     let last = null; const hs = ys.map((y) => { const h = withHeads(y); if (h) last = h; return h ?? last; }).map((h) => h ?? new Float32Array(NR).fill(0.14 * k));
     const D = hs.map((h) => grown(h, e)), F7 = hs.map((h) => grown(h, 0.007 * k)), F75 = hs.map((h) => grown(h, 0.75 * e));
-    for (let i = ys.length - 2; i >= 0; i--) for (let j = 0; j < NR; j++) D[i][j] = Math.max(D[i][j], D[i + 1][j] - 0.35 * (ys[i + 1] - ys[i]));
+    for (let i = ys.length - 2; i >= 0; i--) for (let j = 0; j < NR; j++) D[i][j] = Math.max(D[i][j], D[i + 1][j] - (ys[i + 1] < shY - 0.21 * k ? lerp(0.35, 0, box) : 0.35) * (ys[i + 1] - ys[i])); // (a T-shirt's sides hang straight from under the arm)
     const rs = ys.map((y, i) => { const r = new Float32Array(NR), gt = smooth((y - waistTop) / (0.065 * k)), bump = 0.006 * k * Math.exp(-(((y - waistTop - 0.042 * k) / (0.02 * k)) ** 2)); const over = (j) => (pelvR && y < waistTop + 0.02 * k ? pelvR(y, j * DT) + 0.009 * k : 0); // (worn out, a T-shirt hangs from the chest over the trousers; tucked in, a shirt is gathered by the belt)
       for (let j = 0; j < NR; j++) r[j] = tee ? Math.max(D[i][j], over(j)) : y < waistTop ? hs[i][j] + 0.004 * k : lerp(F7[i][j], D[i][j], gt) + bump; blur(r, 1); for (let j = 0; j < NR; j++) r[j] = Math.max(r[j], tee ? Math.max(F75[i][j], over(j) - 0.002 * k) : y < waistTop ? hs[i][j] + 0.004 * k : lerp(F7[i][j], F75[i][j], gt)); return r; });
     const i7 = ys.findIndex((y) => y > waistTop + 0.08 * k); smoothUp(rs, F75, 1, i7, ys.length - 1);
@@ -290,10 +291,10 @@ export function dressBody(B, d) {
     // sleeves: tubes round the upper arm that stand off it, each ending in a hem band
     const sleeves = [], sbind = [], cuffs = [], cbind = [], ins = [], ibind = [];
     for (const sx of [1, -1]) {
-      const sd = sx > 0 ? 'L' : 'R', S0 = J(`upperarm01.${sd}`), El = J(`lowerarm01.${sd}`), a = norm(sub(El, S0)), len = Math.hypot(El[0] - S0[0], El[1] - S0[1], El[2] - S0[2]), Ls = (sw_.sleeve === 'long' ? 0.98 : 0.58) * len;
+      const sd = sx > 0 ? 'L' : 'R', S0 = J(`upperarm01.${sd}`), El = J(`lowerarm01.${sd}`), a = norm(sub(El, S0)), len = Math.hypot(El[0] - S0[0], El[1] - S0[1], El[2] - S0[2]), Ls = (sw_.sleeve === 'long' ? 0.98 : tee ? (sw_.sleeveLen ?? 0.67) : 0.58) * len;
       const v = norm(sub(Z, mul(a, dot(a, Z)))), u = cross(v, a), aw = sx > 0 ? armL : armR, mArm = mask((q) => aw[q] >= 0.5), at = (t) => add(S0, mul(a, t));
       const ts = []; for (let t = 0; t < Ls - 0.012 * k; t += 0.02 * k) ts.push(t); ts.push(Ls);
-      let lastH = null; const rr = ts.map((t) => { const h = hullOf(section(S, mArm, at(Math.max(t, 0.03 * k)), a, u, v)); if (h) lastH = h; const hh = h ?? lastH ?? new Float32Array(NR).fill(0.05 * k), r = new Float32Array(NR), es = lerp(0.012 * k, 0.024 * k, clamp(t / Ls)), rmin = lerp(0.066 * k, 0.056 * k, clamp(t / Ls)); const gg = grown(hh, es), g0 = grown(hh, 0.7 * es); for (let j = 0; j < NR; j++) r[j] = Math.max(gg[j], rmin); blur(r, 2); for (let j = 0; j < NR; j++) r[j] = Math.max(r[j], g0[j]); return r; });
+      let lastH = null; const rr = ts.map((t) => { const h = hullOf(section(S, mArm, at(Math.max(t, 0.03 * k)), a, u, v)); if (h) lastH = h; const hh = h ?? lastH ?? new Float32Array(NR).fill(0.05 * k), r = new Float32Array(NR), es = tee ? lerp(0.014 * k, 0.028 * k, clamp(t / Ls)) : lerp(0.012 * k, 0.024 * k, clamp(t / Ls)), rmin = tee ? lerp(0.07 * k, 0.066 * k, clamp(t / Ls)) : lerp(0.066 * k, 0.056 * k, clamp(t / Ls)); const gg = grown(hh, es), g0 = grown(hh, 0.7 * es); for (let j = 0; j < NR; j++) r[j] = Math.max(gg[j], rmin); blur(r, 2); for (let j = 0; j < NR; j++) r[j] = Math.max(r[j], g0[j]); return r; });
       const R0 = Math.min(mean(rr[0]) * 0.92, 0.058 * k + 0.012 * k), dome = [80, 62, 44, 26, 10].map((deg) => { const ph = deg * Math.PI / 180, r = rr[0].map((q) => q * Math.cos(ph)); return ringPts(r, at(-R0 * Math.sin(ph)), u, v); });
       const sl = loft([...dome, ...ts.map((t, i) => ringPts(rr[i], at(t), u, v))], { capA: true }), acand = list(mask((q) => aw[q] >= 0.5 && dot(sub([P[q * 3], P[q * 3 + 1], P[q * 3 + 2]], S0), a) < Ls + 0.06 * k));
       sleeves.push(sl); sbind.push(bind(B, sk, Float32Array.from(sl.pos), acand));
@@ -367,10 +368,11 @@ export function dressBody(B, d) {
     const pw = (s, pts) => { for (let i = 0; i < pts.length - 1; i++) if (s <= pts[i + 1][0]) { const [s0, v0] = pts[i], [s1, v1] = pts[i + 1]; return lerp(v0, v1, smooth((s - s0) / (s1 - s0))); } return pts[pts.length - 1][1]; };
     for (const sx of [1, -1]) {
       const sd = sx > 0 ? 'L' : 'R', bone = B.bi[`foot.${sd}`], A = J(`foot.${sd}`), tl = [B.tail[bone * 3], B.tail[bone * 3 + 1], B.tail[bone * 3 + 2]], f = norm([tl[0] - A[0], 0, tl[2] - A[2]]), sdv = [f[2], 0, -f[0]];
-      const L = 0.3 * k, heel = add([A[0], 0, A[2]], mul(f, -0.074 * k)), NS = 22;
-      const wOf = (s) => (s < 0.1 ? 0.037 * Math.sqrt(1 - ((0.1 - s) / 0.1) ** 2) : s < 0.72 ? pw(s, [[0.1, 0.037], [0.38, 0.039], [0.72, 0.053]]) : 0.053 * Math.pow(Math.max(0, 1 - ((s - 0.72) / 0.28) ** 2.6), 0.5)) * k;
-      const thOf = (s) => pw(s, [[0, 0.028], [0.26, 0.028], [0.32, 0.015], [1, 0.014]]) * k, lowOf = (s) => (s > 0.27 && s < 0.5 ? 0.007 * k * Math.sin(Math.PI * (s - 0.27) / 0.23) : 0);
-      const hOf = (s) => pw(s, [[0, 0.062], [0.12, 0.067], [0.4, 0.063], [0.56, 0.054], [0.76, 0.044], [0.92, 0.038], [1, 0.022]]) * k;
+      const snk = sh.kind === 'sneaker', L = (snk ? 0.305 : 0.3) * k, heel = add([A[0], 0, A[2]], mul(f, -(snk ? 0.078 : 0.074) * k)), NS = 22, wk = snk ? 1.09 : 1;
+      const wOf = (s) => (s < 0.1 ? 0.037 * Math.sqrt(1 - ((0.1 - s) / 0.1) ** 2) : s < 0.72 ? pw(s, [[0.1, 0.037], [0.38, 0.039], [0.72, 0.053]]) : 0.053 * Math.pow(Math.max(0, 1 - ((s - 0.72) / 0.28) ** (snk ? 3.4 : 2.6)), 0.5)) * k * wk;
+      // (a sneaker: one thick rubber sole from heel to toe, flat on the ground, turned up a little at the toe; a leather shoe: a heel, a waist, a thin fore-sole)
+      const thOf = (s) => (snk ? pw(s, [[0, 0.034], [0.3, 0.032], [0.7, 0.027], [1, 0.03]]) : pw(s, [[0, 0.028], [0.26, 0.028], [0.32, 0.015], [1, 0.014]])) * k, lowOf = (s) => (snk ? (s > 0.86 ? 0.012 * k * ((s - 0.86) / 0.14) ** 2 : 0) : s > 0.27 && s < 0.5 ? 0.007 * k * Math.sin(Math.PI * (s - 0.27) / 0.23) : 0);
+      const hOf = (s) => (snk ? pw(s, [[0, 0.07], [0.1, 0.078], [0.34, 0.074], [0.5, 0.064], [0.7, 0.054], [0.9, 0.05], [1, 0.034]]) : pw(s, [[0, 0.062], [0.12, 0.067], [0.4, 0.063], [0.56, 0.054], [0.76, 0.044], [0.92, 0.038], [1, 0.022]])) * k;
       const pt = (s, x, y) => [heel[0] + f[0] * s * L + sdv[0] * x, y, heel[2] + f[2] * s * L + sdv[2] * x];
       const sr = [], ur = [];
       for (let i = 0; i <= NS; i++) { const s = 0.004 + 0.992 * (i / NS) ** (i / NS < 0.5 ? 1 : 0.9), ww = Math.max(0.004 * k, wOf(s)) + 0.0045 * k, th = thOf(s), lo = lowOf(s);
@@ -382,12 +384,21 @@ export function dressBody(B, d) {
       soles.push(so); sb.push(rigid(so.pos.length / 3, bone)); ups.push(up); ub.push(rigid(up.pos.length / 3, bone));
       // the lines a leather shoe is drawn with: across the toe cap, and three laces over the instep
       const over = (s, x0, x1, lift = 0.0012) => { const wu = Math.max(0.003 * k, wOf(s)), th = thOf(s), h = hOf(s), ex = s < 0.42 ? 0.55 : lerp(0.55, 0.8, clamp((s - 0.42) / 0.3)), pts = []; for (let q = 0; q <= 8; q++) { const x = lerp(x0, x1, q / 8), c = clamp(x, -0.999, 0.999), ph = Math.acos(Math.sign(c) * Math.pow(Math.abs(c), 1 / ex)); pts.push(pt(s, wu * c, th + h * Math.pow(Math.sin(ph), ex) + lift)); } return pts; };
-      line(`cap.${sd}`, 'shoe', over(0.8, -0.9, 0.9), null, null, { bone, alpha: 0.5, lw: 0.75 });
-      [0.5, 0.56, 0.62].forEach((sl, i) => line(`lace${i}.${sd}`, 'shoe', over(sl, -0.42, 0.42, 0.002), null, null, { bone, alpha: 0.6, lw: 0.75 }));
+      if (snk) {
+        // a sneaker is drawn with: the rounded toe cap, five laces over the tongue, the tongue's top edge, and the seams of the two side panels
+        const along = (x, s0, s1, lift = 0.0012) => { const pts = []; for (let q = 0; q <= 8; q++) pts.push(over(lerp(s0, s1, q / 8), x, x, lift)[0]); return pts; };
+        line(`cap.${sd}`, 'shoe', over(0.8, -0.92, 0.92), null, null, { bone, alpha: 0.55, lw: 0.75 });
+        [0.44, 0.5, 0.56, 0.62, 0.68].forEach((sl, i) => line(`lace${i}.${sd}`, 'shoe', over(sl, -0.4 + i * 0.012, 0.4 - i * 0.012, 0.0022), null, null, { bone, alpha: 0.75, lw: 0.8 }));
+        line(`tongue.${sd}`, 'shoe', over(0.385, -0.5, 0.5, 0.0016), null, null, { bone, alpha: 0.55, lw: 0.75 });
+        for (const sg of [-1, 1]) { line(`panel${sg > 0 ? 'A' : 'B'}.${sd}`, 'shoe', along(sg * 0.55, 0.4, 0.74), null, null, { bone, alpha: 0.5, lw: 0.7 }); line(`panel${sg > 0 ? 'C' : 'D'}.${sd}`, 'shoe', [...along(sg * 0.93, 0.08, 0.3), ...along(sg * 0.8, 0.32, 0.4)], null, null, { bone, alpha: 0.45, lw: 0.7 }); }
+      } else {
+        line(`cap.${sd}`, 'shoe', over(0.8, -0.9, 0.9), null, null, { bone, alpha: 0.5, lw: 0.75 });
+        [0.5, 0.56, 0.62].forEach((sl, i) => line(`lace${i}.${sd}`, 'shoe', over(sl, -0.42, 0.42, 0.002), null, null, { bone, alpha: 0.6, lw: 0.75 }));
+      }
     }
     const cat = (ms, bs) => { const m = join(ms), si = new Uint16Array(m.pos.length / 3 * 4), sw2 = new Float32Array(m.pos.length / 3 * 4); let o = 0; for (const b of bs) { si.set(b.si, o); sw2.set(b.sw, o); o += b.si.length; } return [m, { si, sw: sw2 }]; };
-    part('shoe', 'shoe', ...cat(ups, ub), { color: sh.color ?? '#30303a', shade: sh.shade, leather: true, layer: 1 });
-    part('sole', 'sole', ...cat(soles, sb), { color: sh.sole ?? sh.color ?? '#0c0c0e', flat: true, layer: 1 });
+    part('shoe', 'shoe', ...cat(ups, ub), { color: sh.color ?? '#30303a', shade: sh.shade, leather: sh.kind !== 'sneaker', layer: 1 });
+    part('sole', 'sole', ...cat(soles, sb), { color: sh.sole ?? sh.color ?? '#0c0c0e', shade: sh.soleShade, flat: !sh.soleShade, layer: 1 });
     hide.add('shoes'); hide.add('boots');
     for (let v = 0; v < n; v++) if (arm(v) < 0.5 && P[v * 3 + 1] < 0.118 * k) covered[v] = 1; // the feet are in the shoes
   }

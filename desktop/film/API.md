@@ -625,6 +625,47 @@ A **bone overlay adds degrees** to whatever the body is doing (`keys: [{ on: 'up
 [0, 0, 8]]] }]`): for the left upper arm z+ opens the arm sideways (15° moves the wrist 10 cm out) and x+ swings it back
 (15° = 7 cm). It is the small, local cure for a hand that brushes the body on one frame of a capture (move `hand-clear`).
 
+## The choreographer (kit/choreo.js): any chain of movements, laid out before anything is solved
+
+`MOVEMENTS` is a catalogue of 95 body movements (walks of every mood, jumps, hops, bending and balancing, throwing and
+kicking, greetings and feelings, 13 movements for TWO captured together, runs, rolls, flips, kicks and falls), each a
+stretch of a captured clip. What each DOES is measured from the motion library and kept in `kit/movefacts.js` (never
+edited by hand: `node devtests/clipfacts.mjs --write`): how far it travels ahead and to the body's left, how much it
+turns, how long it lasts, its course every quarter second, and for a pair where the partner stands and faces.
+```js
+const C = choreo({ area: { x: [-6, 6], z: [-3, 3] } });          // the floor (metres); leg: 0.88 for a body of 1.78 m
+C.actor('a', { at: [-3, 0], yaw: 90 }); C.actor('b', { at: [3, 0], yaw: -90 });
+C.do('a', 'hopscotch', { toward: 90 });       // it TRAVELS towards +x whichever way its performer went in the capture
+C.do('b', 'bow'); C.then();                   // at the same time; then() waits until everyone has finished
+C.pair('handshake', 'a', 'b', { at: [-1, 0], yaw: 90 });         // both walk to their marks, begin together, hands meet
+C.both('jump', ['a', 'b']); C.go('a', [2, 1], { gait: 'run' });  // the same movement by both; a walk or run to a mark
+// motion: () => ({ bodies: true, actors: C.actors({ a: A.body, b: B.body }), steps: C.steps() })
+// shots: () => beatShots(C, { id: 'm' })     a camera for every beat: level, its height held, every cut a new side
+// beatLabel(C, t) → { n, name, kind, by }    what is being done at a moment (for lettering); C.beats, C.dur, C.where(id, t)
+```
+`do` options: `at: [x, z]` (he walks to that mark first), `toward` (the way it travels), `face` (the way the body
+faces as it begins), `rate`, `hold`, `t`. A movement that would leave the floor is turned to travel across it; one that
+cannot stay on it is refused by name. A standing body between two movements is given an idle (nobody is a statue).
+What a clip does, in numbers: `node devtests/clipfacts.mjs 127_23 88_01:0.45 --line`, `--pair 18_01 19_01`.
+(Rules: devtests/choreo.mjs)
+
+## Measuring a figure with lines (devtests/measure.mjs)
+
+`node devtests/measure.mjs <picture> <out.jpg> --views front,side,back --json out.json` lays GREEN horizontal lines
+(top of the head, chin, neck, shoulders, armpit, end of the sleeve, hem of the top, where the legs part, fingertips,
+hem of the trousers, sole) and RED vertical lines (middle, head, neck, shoulders, waist, hips) over every standing
+figure on a plain ground and reads each in HEADS and as part of the height. Run it on a reference sheet and on our own
+character drawn from the same sides (a white `studio`, `sc.fogMax = 0`, a lens 30 m away with fov 4.1, arms 3° out);
+what differs is what to correct in the body's sculpt (`detail`: `armslegs/upperlegs-height-incr`, `torso/torso-scale-
+vert-decr`, `neck/neck-scale-horiz-decr`, `head/head-scale-vert-incr` …) and in the clothes. A reference is measured,
+never traced. `TROUPE.kabir()` was proportioned this way (7.1 heads, legs 46% of the height, a boxy T-shirt to the
+hips, trousers resting on sneakers).
+
+Clothes for it: `wear.shirt: { kind: 'tee', box: 0…1 (1: its sides hang straight from under the arm), len, sleeveLen }`,
+`wear.trousers.hem` (metres above the ground: 0.105 rests on a sneaker), `wear.shoes: { kind: 'sneaker', color, sole,
+soleShade }` (a thick rubber sole, a full round toe, five laces, tongue, panel seams; no shine). In the cast:
+`OUTFITS.tee({ shoeKind: 'sneaker', hem: 0.105 })`.
+
 ## Craft: dance, eyes, things in hands, things that go round
 
 Four kinds of scene the practice reel proved, each with the rule that makes it read and the helper that does it.

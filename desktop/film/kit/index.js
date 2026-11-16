@@ -39,6 +39,7 @@ export * from './hold.js';
 export * from './pictures.js';
 export * from './orbs.js';
 export * from './moves.js';
+export * from './choreo.js';
 export * from './gait.js';
 export * from './library2d.js';
 export * from './director.js';

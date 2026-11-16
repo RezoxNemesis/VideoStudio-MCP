@@ -100,7 +100,13 @@ export const BEARDS = {
 };
 OUTFITS.casual = (c = {}) => OUTFITS.office({ tie: null, shirt: '#ece4d6', trousers: '#5a4a3c', belt: '#4a3324', shoes: '#4a3528', ...c });
 /** A T-shirt worn out over trousers. */
-OUTFITS.tee = (c = {}) => { const shirt = c.shirt ?? '#7a2a2e', trousers = c.trousers ?? '#2b3040'; return { shirt: { kind: 'tee', color: shirt, shade: c.shirtShade ?? shadeOf(shirt, -0.22), sleeve: 'short' }, trousers: { color: trousers, shade: shadeOf(trousers, -0.38), fit: c.fit ?? 'straight' }, shoes: { kind: 'derby', color: c.shoes ?? '#3a3a44', shade: '#131318', sole: '#e8e4dc' } }; };
+OUTFITS.tee = (c = {}) => {
+  const shirt = c.shirt ?? '#7a2a2e', trousers = c.trousers ?? '#2b3040', snk = c.shoeKind === 'sneaker';
+  return { shirt: { kind: 'tee', color: shirt, shade: c.shirtShade ?? shadeOf(shirt, -0.22), sleeve: 'short', ...(c.box !== undefined ? { box: c.box } : {}) },
+    trousers: { color: trousers, shade: shadeOf(trousers, -0.38), fit: c.fit ?? 'straight', ...(c.hem ? { hem: c.hem } : {}) },
+    // (sneakers: shoeKind: 'sneaker' — canvas on a thick rubber sole; the trouser hem then rests on them: hem: 0.105)
+    shoes: snk ? { kind: 'sneaker', color: c.shoes ?? '#f4f4f2', shade: c.shoeShade ?? '#c3c7d0', sole: c.sole ?? '#fbfbfb', soleShade: '#c9ccd4' } : { kind: 'derby', color: c.shoes ?? '#3a3a44', shade: '#131318', sole: '#e8e4dc' } };
+};
 // ---- the parts of a face. The shape and the nose sculpt the head (the Stage's own shapes); eyes, brows and lips are drawn.
 const both = (name, v) => ({ [`cheek/l-cheek-${name}`]: v, [`cheek/r-cheek-${name}`]: v });
 export const FACES = {
@@ -161,6 +167,15 @@ export const MEN = {
   imran: { face: 'square', eyes: 'downturned', brows: 'heavy', nose: 'broad', mouth: 'full', name: 'Imran', age: 42, build: 'broad', height: 1.78, hair: 'fringe', hairColor: 'dark', beard: 'full', outfit: 'casual', palette: { shirt: '#9db3c8', trousers: '#2e3138', belt: '#26262c', shoes: '#30303a' }, skin: '#b07a52' },
   joseph: { face: 'round', eyes: 'round', brows: 'thin', nose: 'snub', mouth: 'medium', name: 'Joseph', age: 50, build: 'heavy', height: 1.7, hair: 'short', hairColor: 'grey', beard: 'goatee', outfit: 'office', palette: { shirt: '#d9e3d2', tie: null, trousers: '#4a4034', fit: 'loose' }, skin: '#c48c62' },
   dev: { face: 'lean', eyes: 'upturned', brows: 'straight', nose: 'straight', mouth: 'small', name: 'Dev', age: 19, build: 'slim', height: 1.71, hair: 'layered', hairColor: 'brown', beard: 'none', outfit: 'tee', palette: { shirt: '#e8e6df', trousers: '#39507a', fit: 'slim' }, skin: '#d2a17c' },
+  // KABIR — proportioned BY MEASURE (devtests/measure.mjs, 16 Nov 2026): green and red lines laid over a model sheet and over
+  // our own figure from the same three sides until the numbers agreed. 7.1 heads tall with his hair; chin 0.14 of the
+  // height down, shoulders 0.22, hem of the T-shirt 0.46, the legs part at 0.54, fingertips 0.56; long legs, a short slim
+  // trunk, a fine neck. The sculpt below is what brought the Stage's body to those numbers; the face and hair are our own.
+  kabir: { face: 'lean', eyes: 'almond', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'tousled', hairColor: 'black', beard: 'none', outfit: 'tee',
+    palette: { shirt: '#f3f3f1', shirtShade: '#c9cbd3', trousers: '#26272c', hem: 0.105, shoeKind: 'sneaker' }, skin: '#d9a57e',
+    detail: { 'armslegs/upperlegs-height-incr': 0.9, 'armslegs/lowerlegs-height-incr': 0.9, 'torso/torso-scale-vert-decr': 0.6, 'torso/torso-scale-horiz-decr': 0.5, 'torso/torso-muscle-dorsi-decr': 0.5, 'torso/torso-scale-depth-decr': 0.3,
+      'neck/neck-scale-horiz-decr': 0.6, 'neck/neck-scale-depth-decr': 0.8, 'neck/neck-scale-vert-decr': 0.5, 'head/head-scale-vert-incr': 0.9, 'head/head-scale-horiz-incr': 0.45, 'head/head-scale-depth-incr': 0.65,
+      'armslegs/l-upperarm-scale-vert-decr': 0.3, 'armslegs/r-upperarm-scale-vert-decr': 0.3, 'armslegs/l-lowerarm-scale-vert-decr': 0.3, 'armslegs/r-lowerarm-scale-vert-decr': 0.3 } },
   harish: { face: 'long', eyes: 'downturned', brows: 'thick', nose: 'hooked', mouth: 'downturned', name: 'Harish', age: 61, build: 'average', height: 1.69, hair: 'neat', hairColor: 'white', beard: 'full', outfit: 'casual', palette: { shirt: '#c9b79a', trousers: '#44403a' }, skin: '#b88660' },
 };
 /** The cast by name: TROUPE.ravi() → { body, design }; TROUPE.ravi({ outfit: 'tee' }) is Ravi in other clothes. (It grows: women, boys, girls, elders.) */
