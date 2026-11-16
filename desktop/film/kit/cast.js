@@ -184,8 +184,8 @@ export const MEN = {
   // trunk, a fine neck. The sculpt below is what brought the Stage's body to those numbers; the face and hair are our own.
   kabir: { face: 'lean', eyes: 'anime', eyeColor: '#3a2a22', brows: 'straight', nose: 'narrow', mouth: 'small', name: 'Kabir', age: 22, build: 'slim', height: 1.78, hair: 'messy', hairColor: 'black', beard: 'none', outfit: 'tee',
     palette: { shirt: '#f3f3f1', shirtShade: '#c9cbd3', trousers: '#26272c', hem: 0.105, shoeKind: 'sneaker' }, skin: '#d9a57e',
-    detail: { 'armslegs/upperlegs-height-incr': 0.9, 'armslegs/lowerlegs-height-incr': 0.9, 'torso/torso-scale-vert-decr': 0.6, 'torso/torso-scale-horiz-decr': 0.5, 'torso/torso-muscle-dorsi-decr': 0.5, 'torso/torso-scale-depth-decr': 0.3,
-      'neck/neck-scale-horiz-decr': 0.6, 'neck/neck-scale-depth-decr': 0.8, 'neck/neck-scale-vert-decr': 0.5, 'head/head-scale-vert-incr': 0.9, 'head/head-scale-horiz-incr': 0.45, 'head/head-scale-depth-incr': 0.65,
+    detail: { 'armslegs/upperlegs-height-incr': 0.9, 'armslegs/lowerlegs-height-incr': 0.35, 'torso/torso-scale-vert-decr': 0.25, 'torso/torso-scale-horiz-decr': 0.12, 'torso/torso-muscle-dorsi-decr': 0.2, 'torso/torso-scale-depth-decr': 0.3,
+      'neck/neck-scale-horiz-decr': 0.6, 'neck/neck-scale-depth-decr': 0.8, 'neck/neck-scale-vert-decr': 0.5, 'head/head-scale-vert-incr': 0.25, 'head/head-scale-horiz-incr': 0.12, 'head/head-scale-depth-incr': 0.2,
       'armslegs/l-upperarm-scale-vert-decr': 0.3, 'armslegs/r-upperarm-scale-vert-decr': 0.3, 'armslegs/l-lowerarm-scale-vert-decr': 0.3, 'armslegs/r-lowerarm-scale-vert-decr': 0.3 } },
   harish: { face: 'long', eyes: 'downturned', brows: 'thick', nose: 'hooked', mouth: 'downturned', name: 'Harish', age: 61, build: 'average', height: 1.69, hair: 'neat', hairColor: 'white', beard: 'full', outfit: 'casual', palette: { shirt: '#c9b79a', trousers: '#44403a' }, skin: '#b88660' },
 };

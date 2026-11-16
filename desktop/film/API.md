@@ -839,3 +839,17 @@ sways over the hips and a head that is never quite still, at its own pace; a spe
 - ink round the outline, and between clumps only where one stands off another (`lap`), so the lines land at the tips and never along the roots.
 
 The rules are in `devtests/hairdesign.mjs`. They check that the eight outlines all differ, and that each style is what its name says.
+
+## Figures measured in heads (devtests/proportions.mjs)
+
+Use `node devtests/proportions.mjs [body fixture …]` to measure a bare body in heads, where a head runs from the top of the skull to the chin and the chin is found from the face's profile. It checks a figure against the animator's proportions guide:
+- height 7.5–8 heads;
+- shoulders 2.2–3 heads wide, chest 1.4 (slim) to 2.2 (heroic), waist 1–2 and the narrowest part of the trunk, hips 1.35–2.5 and inside the shoulders;
+- chest line about 2 heads down, crotch at half the height, knees three quarters of the way down;
+- hands, with the arm hung straight down, ending at mid-thigh.
+
+Make a fixture of any character with `devtests/bodyinfo.mjs <film> shot@t actor nobones --fixture out.json.gz`.
+
+## Placed shadows (look.paint.placed)
+
+In the anime look, the shadows an animator places on a figure whatever the key light does (under the chin on the neck, under a hem, under the arms, inside a collar) are cast by a *placed light*. That light stays above and a little in front of the figure as the camera sees it. `placed` (0–1) sets how deep these shadows are. A paint opts out with `placed: false`. Skin takes them only from a caster at least 4 cm off it, so the chin shades the neck but the nose never spots the lip.

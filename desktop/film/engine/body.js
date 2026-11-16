@@ -460,6 +460,7 @@ export class CelPainter {
     if (lp.outer !== undefined) o = { ...o, lw: (o.lw ?? 2.6) * lp.outer };
     if (lp.rim && o.rim === undefined) o = { ...o, rim: true };
     if (lp.soft !== undefined && o.soft === undefined) o = { ...o, soft: lp.soft };
+    if (lp.placed !== undefined && o.placed === undefined) o = { ...o, placed: lp.placed };
     if (lp.mode === 'flat' && o.shadows === undefined) o = { ...o, shadows: false };
     this.mode = lp.mode ?? 'cel';
     this.cam = cam; this.o = o; this.meshes = []; this.paints = [null];
@@ -476,10 +477,14 @@ export class CelPainter {
   finish() {
     const cam = this.cam, o = this.o, SS = o.ss ?? 2, L = o.light ?? [0.4, 0.8, 0.45];
     const { pos: cp, R: cr, U: cu, F: cf, f: fl, cx, cy } = cam;
+    // the PLACED light (step 7 of a drawn figure): the shadows an animator puts in whatever the key light does — under the
+    // chin on the neck, under a hem, under the arms, inside a collar — come from a light that stays above and a little in
+    // front of the figure as the camera sees it (o.placed: 0…1, how deep they are; the look sets it)
+    const LP = this.mode === 'paint' && o.placed > 0 ? (() => { const d = [cu[0] * 1 - cf[0] * 0.5 + cr[0] * 0.22, cu[1] * 1 - cf[1] * 0.5 + cr[1] * 0.22, cu[2] * 1 - cf[2] * 0.5 + cr[2] * 0.22], l = Math.hypot(...d); return d.map((x) => x / l); })() : null;
     // project every mesh; find the box of the picture they cover
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
     for (const m of this.meshes) {
-      const n = m.pos.length / 3, sx = (m.sx = new Float32Array(n)), sy = (m.sy = new Float32Array(n)), sz = (m.sz = new Float32Array(n)), sl = (m.sl = new Float32Array(n)), sv = (m.sv = new Float32Array(n));
+      const n = m.pos.length / 3, sx = (m.sx = new Float32Array(n)), sy = (m.sy = new Float32Array(n)), sz = (m.sz = new Float32Array(n)), sl = (m.sl = new Float32Array(n)), sv = (m.sv = new Float32Array(n)), sp = LP ? (m.sp = new Float32Array(n)) : null;
       const nr = m.nrm ?? normalsOf(m.pos, m.idx, new Float32Array(n * 3)), p = m.pos, two = this.paints[m.id].two;
       for (let v = 0; v < n; v++) {
         const dx = p[v * 3] - cp[0], dy = p[v * 3 + 1] - cp[1], dz = p[v * 3 + 2] - cp[2], z = dx * cf[0] + dy * cf[1] + dz * cf[2];
@@ -489,7 +494,7 @@ export class CelPainter {
         let nx = nr[v * 3], ny = nr[v * 3 + 1], nz = nr[v * 3 + 2];
         const il = Math.hypot(dx, dy, dz) || 1; let nv = -(nx * dx + ny * dy + nz * dz) / il;
         if (two && nv < 0) { nx = -nx; ny = -ny; nz = -nz; nv = -nv; } // cloth seen from its inside
-        sl[v] = nx * L[0] + ny * L[1] + nz * L[2]; sv[v] = nv;
+        sl[v] = nx * L[0] + ny * L[1] + nz * L[2]; sv[v] = nv; if (sp) sp[v] = nx * LP[0] + ny * LP[1] + nz * LP[2];
       }
     }
     const pad = Math.ceil((o.lw ?? 3) + 3);
@@ -497,6 +502,7 @@ export class CelPainter {
     if (!(x1 > x0 && y1 > y0)) return null;
     const w = (x1 - x0) * SS, h = (y1 - y0) * SS, N = w * h;
     const zb = new Float32Array(N), ib = new Uint8Array(N), lb = new Float32Array(N), vb = new Float32Array(N); // 1/depth, part, light, facing
+    const pb = LP ? new Float32Array(N) : null; // facing the placed light
     const anyU = this.meshes.some((m) => m.u && this.paints[m.id].bands), ub = anyU ? new Float32Array(N) : null;
     const anyXY = this.meshes.some((m) => m.xy && this.paints[m.id].map), xb = anyXY ? new Float32Array(N) : null, yb = anyXY ? new Float32Array(N) : null;
     for (const m of this.meshes) {
@@ -511,13 +517,13 @@ export class CelPainter {
         const ia = 1 / area, za = 1 / (sz[a] - bias), zbb = 1 / (sz[b] - bias), zc = 1 / (sz[c] - bias);
         // barycentric weights are affine in the picture: w0 = e0x·x + e0y·y + e0c …
         const e0x = (by - cy2) * ia, e0y = (cx2 - bx) * ia, e0c = (bx * cy2 - cx2 * by) * ia, e1x = (cy2 - ay) * ia, e1y = (ax - cx2) * ia, e1c = (cx2 * ay - ax * cy2) * ia;
-        const la = sl[a], lbv = sl[b], lc = sl[c], va = sv[a], vbv = sv[b], vc = sv[c], id = backId && area > 0 ? backId : id0, ua = mu ? mu[a] : 0, ubb = mu ? mu[b] : 0, uc = mu ? mu[c] : 0;
+        const spm = pb ? m.sp : null, pa = spm ? spm[a] : 0, pbb = spm ? spm[b] : 0, pc = spm ? spm[c] : 0, la = sl[a], lbv = sl[b], lc = sl[c], va = sv[a], vbv = sv[b], vc = sv[c], id = backId && area > 0 ? backId : id0, ua = mu ? mu[a] : 0, ubb = mu ? mu[b] : 0, uc = mu ? mu[c] : 0;
         for (let y = mny; y <= mxy; y++) {
           const py = y + 0.5; let w0 = e0x * (mnx + 0.5) + e0y * py + e0c, w1 = e1x * (mnx + 0.5) + e1y * py + e1c, o2 = y * w + mnx;
           for (let x = mnx; x <= mxx; x++, w0 += e0x, w1 += e1x, o2++) {
             const w2 = 1 - w0 - w1; if (w0 < -1e-5 || w1 < -1e-5 || w2 < -1e-5) continue;
             const z = w0 * za + w1 * zbb + w2 * zc; if (z <= zb[o2]) continue;
-            zb[o2] = z; ib[o2] = id; lb[o2] = w0 * la + w1 * lbv + w2 * lc; vb[o2] = w0 * va + w1 * vbv + w2 * vc; if (ub) ub[o2] = w0 * ua + w1 * ubb + w2 * uc; if (faceMap) { xb[o2] = w0 * faceMap[a * 2] + w1 * faceMap[b * 2] + w2 * faceMap[c * 2]; yb[o2] = w0 * faceMap[a * 2 + 1] + w1 * faceMap[b * 2 + 1] + w2 * faceMap[c * 2 + 1]; }
+            zb[o2] = z; ib[o2] = id; if (pb) pb[o2] = w0 * pa + w1 * pbb + w2 * pc; lb[o2] = w0 * la + w1 * lbv + w2 * lc; vb[o2] = w0 * va + w1 * vbv + w2 * vc; if (ub) ub[o2] = w0 * ua + w1 * ubb + w2 * uc; if (faceMap) { xb[o2] = w0 * faceMap[a * 2] + w1 * faceMap[b * 2] + w2 * faceMap[c * 2]; yb[o2] = w0 * faceMap[a * 2 + 1] + w1 * faceMap[b * 2 + 1] + w2 * faceMap[c * 2 + 1]; }
           }
         }
       }
@@ -620,6 +626,33 @@ export class CelPainter {
         smH = { md, mw, mh, u0, v0, tex, ax: sm.ax, bx: sm.bx };
       }
     }
+    let smP = null;
+    if (LP) {
+      let a3 = Math.abs(LP[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]; const ax = norm(cross(a3, LP)), bx = cross(LP, ax), ms = [];
+      let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+      for (const m of this.meshes) { const pt = this.paints[m.id]; if (pt.cast === false || pt.flat || pt.placed === false && pt.recv === false) continue; const p = m.pos, n = p.length / 3, lu = new Float32Array(n), lv = new Float32Array(n), ld = new Float32Array(n); for (let v = 0; v < n; v++) { const x = p[v * 3], y = p[v * 3 + 1], z = p[v * 3 + 2], U = x * ax[0] + y * ax[1] + z * ax[2], Vv = x * bx[0] + y * bx[1] + z * bx[2]; lu[v] = U; lv[v] = Vv; ld[v] = x * LP[0] + y * LP[1] + z * LP[2]; if (U < u0) u0 = U; if (U > u1) u1 = U; if (Vv < v0) v0 = Vv; if (Vv > v1) v1 = Vv; } ms.push({ lu, lv, ld, idx: m.idx }); }
+      if (u1 > u0) {
+        const tex = Math.max(0.002, Math.max(u1 - u0, v1 - v0) / 900), mw = Math.ceil((u1 - u0) / tex) + 3, mh = Math.ceil((v1 - v0) / tex) + 3, md = new Float32Array(mw * mh).fill(-1e9);
+        for (const { lu, lv, ld, idx } of ms) for (let t = 0; t < idx.length; t += 3) {
+          const a = idx[t], b = idx[t + 1], c = idx[t + 2], ax2 = (lu[a] - u0) / tex + 1, ay2 = (lv[a] - v0) / tex + 1, bx2 = (lu[b] - u0) / tex + 1, by2 = (lv[b] - v0) / tex + 1, cx3 = (lu[c] - u0) / tex + 1, cy3 = (lv[c] - v0) / tex + 1;
+          const area = (bx2 - ax2) * (cy3 - ay2) - (cx3 - ax2) * (by2 - ay2); if (area > -1e-9 && area < 1e-9) continue;
+          const mnx = Math.max(0, Math.floor(Math.min(ax2, bx2, cx3))), mxx = Math.min(mw - 1, Math.ceil(Math.max(ax2, bx2, cx3))), mny = Math.max(0, Math.floor(Math.min(ay2, by2, cy3))), mxy2 = Math.min(mh - 1, Math.ceil(Math.max(ay2, by2, cy3)));
+          const ia = 1 / area, e0x = (by2 - cy3) * ia, e0y = (cx3 - bx2) * ia, e0c = (bx2 * cy3 - cx3 * by2) * ia, e1x = (cy3 - ay2) * ia, e1y = (ax2 - cx3) * ia, e1c = (cx3 * ay2 - ax2 * cy3) * ia, da = ld[a], db = ld[b], dc = ld[c];
+          for (let y = mny; y <= mxy2; y++) { let w0 = e0x * (mnx + 0.5) + e0y * (y + 0.5) + e0c, w1 = e1x * (mnx + 0.5) + e1y * (y + 0.5) + e1c, q = y * mw + mnx; for (let x = mnx; x <= mxx; x++, w0 += e0x, w1 += e1x, q++) { const w2 = 1 - w0 - w1; if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) continue; const dd = w0 * da + w1 * db + w2 * dc; if (dd > md[q]) md[q] = dd; } }
+        }
+        smP = { md, mw, mh, u0, v0, tex, ax, bx };
+      }
+    }
+    /** how much a place is in the placed shadow (bias: how far the shadow's caster must stand off it — 4 cm keeps a
+     *  nose from spotting the lip but lets the chin shade the neck) — a crisp shape, smoothed over 2×2 of its picture */
+    const inPlaced = (q, X, Y, bias) => {
+      const z = 1 / zb[q] + (this.paints[ib[q]].bias ?? 0), px = (x0 + (X + 0.5) / SS - cx) / fl * z, py = -(y0 + (Y + 0.5) / SS - cy) / fl * z;
+      const wx = cp[0] + cr[0] * px + cu[0] * py + cf[0] * z, wy = cp[1] + cr[1] * px + cu[1] * py + cf[1] * z, wz = cp[2] + cr[2] * px + cu[2] * py + cf[2] * z;
+      const U = (wx * smP.ax[0] + wy * smP.ax[1] + wz * smP.ax[2] - smP.u0) / smP.tex + 1, Vv = (wx * smP.bx[0] + wy * smP.bx[1] + wz * smP.bx[2] - smP.v0) / smP.tex + 1, d = wx * LP[0] + wy * LP[1] + wz * LP[2] + bias;
+      const iu = Math.floor(U - 0.5), iv = Math.floor(Vv - 0.5); if (iu < 0 || iv < 0 || iu >= smP.mw - 1 || iv >= smP.mh - 1) return 0;
+      const fu = U - 0.5 - iu, fv = Vv - 0.5 - iv, q2 = iv * smP.mw + iu, md = smP.md;
+      return (md[q2] > d ? (1 - fu) * (1 - fv) : 0) + (md[q2 + 1] > d ? fu * (1 - fv) : 0) + (md[q2 + smP.mw] > d ? (1 - fu) * fv : 0) + (md[q2 + smP.mw + 1] > d ? fu * fv : 0);
+    };
     const shBias = o.shadowBias ?? 0.028, hairBias = o.hairShadowBias ?? 0.0045;
     const inHairShadow = (q, X, Y, wide = false) => { // how much in the hair's shadow: 0 | 1, or with `wide` a part between (a soft edge)
       const z = 1 / zb[q] + (this.paints[ib[q]].bias ?? 0), px = (x0 + (X + 0.5) / SS - cx) / fl * z, py = -(y0 + (Y + 0.5) / SS - cy) / fl * z;
@@ -688,6 +721,7 @@ export class CelPainter {
             // painted anime: a crisp but anti-aliased terminator, light that grows toward the lamp across the lit side, a
             // deeper tone where the form is tucked away, warm skin at the turn of the light, polished metal, hair with a sheen
             const shadowed = !lit && l > th; let k = shadowed ? 0 : sstep(th - 0.05 - 0.36 * sf, th + 0.07 + 0.36 * sf, l); const kForm = k; if (sf > 0) { if (cs > 0) k *= 1 - cs; if (hs > 0) k *= 1 - 0.62 * sf * hs; }
+            if (smP && k > 0 && p.placed !== false && !p.hairy && (p.recv !== false || p.recvHair) && pb[q] > 0.05) { const ps = sstep(0.35, 0.65, inPlaced(q, x * SS + i, y * SS + j, p.recvHair ? 0.04 : 0.014)) * sstep(0.05, 0.2, pb[q]); if (ps > 0) k *= 1 - ps * o.placed; } // (a placed shadow: under the chin, a hem, an arm)
             const up = sstep(th + 0.18, 1.05, l) * (p.metal ? 0.05 : 0.17), occ = ao ? ao[q] * (1 - 0.8 * sf) : 0; // (softly painted, a tuck in the form is a gentle deepening, not a blot)
             const lt = p._lit ??= [Math.min(255, p.fill[0] + 26), Math.min(255, p.fill[1] + 22), Math.min(255, p.fill[2] + 16)];
             const dp = p._deep ??= [p.shade[0] * 0.66, p.shade[1] * 0.66, p.shade[2] * 0.72 + 6];
