@@ -18,7 +18,7 @@ const crypto = require("node:crypto");
 
 const ASSET = "film-kit.json.gz";
 const CARRIED = ["engine", "kit", "runner", "sensei", "templates"]; // folders of text the engine is made of
-const CARRIED_FILES = ["API.md", "package.json"];
+const CARRIED_FILES = ["API.md", "STYLE.md", "package.json"];
 const BORROWED = ["node_modules", "assets", "library2d"]; // what stays with the installation
 const TEXT = /\.(js|mjs|cjs|json|md|txt)$/i;
 

@@ -643,6 +643,10 @@ While a build runs, every progress report carries `work`: the whole job's percen
 the step that runs (`Step 3 of 6 · Drawing the shots · 42% · 1,034 / 2,460 frames · 6.1 frames/s · about 4 min left`).
 `code.stop` stops it at any stage: speaking (after the line in hand), solving, drawing, joining.
 
+**The look to reach is written down in `STYLE.md`** (beside this file): line, colour and shade, hair, face, body,
+clothes, hands and things, places, and how a character sheet is judged against the owner's reference pictures. Read it
+before designing any character or place; what the engine cannot draw yet is marked there.
+
 ## Working well — the director's handbook
 
 What goes wrong in films made this way, and how each mistake is caught before anyone sees it. Read it before staging.
