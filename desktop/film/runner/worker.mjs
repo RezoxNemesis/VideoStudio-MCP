@@ -79,7 +79,7 @@ const methods = {
     return {
       total: +Pr.total.toFixed(3), fps: Pr.config.fps, width: Pr.config.width, height: Pr.config.height, langs: Pr.config.langs,
       shots: Pr.shots.map((s) => ({ id: s.id, seq: s.seq, start: +s.start.toFixed(3), dur: +s.dur.toFixed(3), lip: !!s.lip, off: !!s.off, note: s.note ?? '', variants: by.get(s.id) ?? [] })),
-      needs: { motion: n.bakes.filter((b) => !b.have).map((b) => b.seq), voices: n.voices.filter((v) => !v.have).map((v) => `${v.id}.${v.lang}`), sounds: n.sounds.filter((x) => !x.have).map((x) => x.name), problems: n.problems },
+      needs: { motion: n.bakes.filter((b) => !b.have).map((b) => b.seq), voices: n.voices.filter((v) => !v.have).map((v) => `${v.id}.${v.lang}`), sounds: n.sounds.filter((x) => !x.have).map((x) => x.name), problems: n.problems, advice: n.advice ?? [] },
     };
   },
 

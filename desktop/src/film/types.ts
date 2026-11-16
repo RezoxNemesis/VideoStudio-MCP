@@ -41,7 +41,7 @@ export interface FilmStatus {
   height: number;
   langs: string[];
   shots: FilmShot[];
-  needs: { motion: string[]; voices: string[]; sounds: string[]; problems: string[] };
+  needs: { motion: string[]; voices: string[]; sounds: string[]; problems: string[]; advice?: string[] };
 }
 export interface VoiceNeed {
   id: string;

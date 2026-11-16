@@ -283,3 +283,22 @@ export function villager(i = 0, woman = false, o = {}) {
 CAST.soldier = soldier(0);
 CAST.rider = villager(3, false, { name: 'Rider', headgear: { type: 'straw', color: '#c9a862' }, cape: { color: '#5a5048', lining: '#3a342e', len: 0.5, w: 0.9, cols: 7, rows: 7 }, top: { type: 'tunic', color: '#6a5a4a', sleeve: 'long', hem: 0.12, collar: 'v', inner: '#d9cfb8' } });
 export { lock, fringe, spikes, sideLocks, longBack, tail, knot, BLACK, BROWN, WHITE, GREY };
+
+/* ---- advice on a design, before it is drawn ---------------------------------------------------------------------- */
+const _rgb = (h) => { const n = parseInt(String(h).slice(1), 16); return String(h).length === 4 ? [((n >> 8) & 15) * 17, ((n >> 4) & 15) * 17, (n & 15) * 17] : [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const _lum = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+const _hex = (c) => '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+/**
+ * What would look wrong in a design, in sentences (a film still builds; `needs(P).advice` and code.open list them).
+ * So far: a saturated cloth whose shade is far darker than its colour — on a painted look that is not a shadow but a
+ * stain down the chest and back. A cloth's shade is its own colour about a fifth darker.
+ */
+export function designAdvice(d) {
+  const out = []; if (!d || typeof d !== 'object') return out;
+  for (const part of ['top', 'bottom', 'robe', 'cape', 'sash', 'headgear']) {
+    const p = d[part]; if (!p || typeof p.color !== 'string' || typeof p.shade !== 'string' || !/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(p.color) || !/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(p.shade)) continue;
+    const c = _rgb(p.color), s = _rgb(p.shade), mx = Math.max(...c), sat = mx ? (mx - Math.min(...c)) / mx : 0, lc = _lum(c), ls = _lum(s);
+    if (sat > 0.45 && ls < lc * 0.7 && lc - ls > 35) out.push(`${d.name ?? 'A design'}: the shade of its ${part} (${p.shade}) is far darker than its colour (${p.color}); on a painted look that reads as a stain, not a shadow — try ${_hex(c.map((v) => v * 0.82))}.`);
+  }
+  return out;
+}

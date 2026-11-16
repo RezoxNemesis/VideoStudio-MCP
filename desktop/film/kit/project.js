@@ -11,7 +11,7 @@ import { setEnv, ENV } from '../engine/env.js';
 import { dropBakes } from '../engine/bake.js';
 import { runnerShots, runnerShot } from './seq.js';
 import { VO, lineOff, loadVoices } from './acting.js';
-import { CAST as KIT_CAST } from './design.js';
+import { CAST as KIT_CAST, designAdvice } from './design.js';
 import { PEOPLE } from './people.js';
 import { fingerprint, ENGINE_VERSION } from './finger.js';
 
@@ -197,7 +197,9 @@ export function needs(P) {
     const key = md5(JSON.stringify(ordered(cmd))).slice(0, 12), have = idx[name]?.key === key && fs.existsSync(path.join(P.D.audio, dir, `${name}.wav`));
     sounds.push(have ? { name, dir, have, seconds: idx[name].seconds } : { name, dir, have, key, cmd });
   }
-  return { bakes, voices, sounds, problems };
+  // advice: what would look wrong (a film still builds), once for each design
+  const advice = [...new Set(P.FILM.flatMap((seq) => (seq.actorList ?? []).flatMap((a) => designAdvice(a.design))))];
+  return { bakes, voices, sounds, problems, advice };
 }
 
 /** Every shot, spoken line and sound on the film's clock (shots that are switched off take no time). */
