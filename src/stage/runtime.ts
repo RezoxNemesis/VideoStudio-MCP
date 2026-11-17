@@ -1095,11 +1095,15 @@ export class StageRuntime {
       const w = ov.kind === "reach" ? reachEnv(ov, t) : env01(ov, t);
       try {
         if (ov.kind === "reach") {
-          const p = this.target(ov.target, new THREE.Vector3());
+          // a moving target: its offset on one smooth path through the keys (no stop at each key pose)
+          const along = (ks: [number, Vec3][]): Vec3 => keyValue({ on: "path", keys: ks.map(([kt, v], i) => [kt, v, i ? "spline" : undefined]) as never }, t - ov.t0)!;
+          const ref = ov.path && typeof ov.target === "object" && !Array.isArray(ov.target) ? { ...ov.target, offset: along(ov.path) } : ov.target;
+          const p = this.target(ref, new THREE.Vector3());
           if (!p) continue;
           const before = h.snapshot();
           // (the elbow towards the overlay's pole, given in the body's own [right, up, forward]; none: down and back)
-          SK.reach(a, ov.side, p, (ov.pole ? new THREE.Vector3(-ov.pole[0], ov.pole[1], ov.pole[2]).applyQuaternion(a.root.quaternion) : null) as never);
+          const pole = ov.polePath ? along(ov.polePath) : ov.pole;
+          SK.reach(a, ov.side, p, (pole ? new THREE.Vector3(-pole[0], pole[1], pole[2]).applyQuaternion(a.root.quaternion) : null) as never);
           h.blendTo(before, 1 - w);
           h.root.updateMatrixWorld(true);
         } else if (ov.kind === "strike") {

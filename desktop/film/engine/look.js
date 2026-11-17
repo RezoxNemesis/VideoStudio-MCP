@@ -37,6 +37,9 @@ export const LOOKS = {
   soft3d: { about: '3D render: smooth shading, no lines, soft bloom', paint: { mode: 'smooth', lines: false }, post: ['bloom'] },
   cel3d: { about: 'Cel-shaded 3D: three tones, rim light, an outer line, fine inner lines', paint: { mode: 'tri', inner: 0.5, rim: true }, post: ['bloom'] },
   immersive: { about: '4D: cel-shaded 3D with light shafts, bloom, depth haze, floating motes and a breathing camera', paint: { mode: 'tri', inner: 0.5, rim: true }, post: ['rays', 'bloom', 'motes', 'fringe'], fog: 1.6, breathe: 1, autoDof: 1.6 },
+  // (18 Nov 2026) the painted anime drawing in air you can feel: depth haze that thickens with distance, soft focus
+  // beyond the subject, a breathing lens, bloom on the lights, a little dust in the light — the default for new films
+  cinema: { about: 'Cinematic anime: painted anime drawing with depth haze, soft focus beyond the subject, a breathing lens, bloom and dust in the light', paint: { mode: 'paint', rim: true, soft: 0.85 }, finish: { wrap: 0.55, para: 0.2 }, fog: 1.5, breathe: 0.7, autoDof: 2.2, post: ['bloom', 'diffuse', 'motes'], bloom: 0.45, diffuse: 0.3, motes: 0.3 },
   multiplane: { about: '2.5D multiplane: painted anime drawing (soft brush, rim light) in layered depth, haze and a soft far background', paint: { mode: 'paint', rim: true, soft: 0.5 }, finish: { wrap: 0.55, para: 0.2 }, fog: 1.8, autoDof: 2.4, post: ['bloom', 'diffuse'], bloom: 0.5, diffuse: 0.3 },
 };
 

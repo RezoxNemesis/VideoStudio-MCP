@@ -262,8 +262,33 @@ export function keyValue(tr: KeyTrack, local: number): Vec3 | null {
   let i = 0;
   while (i < ks.length - 2 && local >= ks[i + 1]![0]) i++;
   const A = ks[i]!, B = ks[i + 1]!;
+  // "spline": one smooth path through the keys (time-aware Catmull-Rom / Hermite), so a hand passes THROUGH a key pose
+  // without stopping there. Every key eased in and out made each pose a dead stop — stop-start robot motion.
+  if (B[2] === "spline") return splineAt(ks, i, local);
   const u = (EASE[B[2] ?? "io"] ?? sm)(clamp((local - A[0]) / Math.max(1e-6, B[0] - A[0])));
   return [lerp(A[1][0], B[1][0], u), lerp(A[1][1], B[1][1], u), lerp(A[1][2], B[1][2], u)];
+}
+
+/**
+ * A point on the smooth path through timed keys [t, [x, y, z]] in segment i (from key i to key i + 1): tangents from the
+ * neighbours (time-aware), zero at the first and last key (the motion starts and ends at rest), held where a key repeats.
+ */
+export function splineAt(ks: readonly (readonly [number, Vec3, string?])[], i: number, local: number): Vec3 {
+  const A = ks[i]!, B = ks[i + 1]!, h = Math.max(1e-6, B[0] - A[0]), u = clamp((local - A[0]) / h);
+  const tan = (j: number, c: number): number => {
+    const P = ks[j - 1], N = ks[j + 1], K = ks[j]!;
+    if (!P || !N) return 0;
+    // a key equal to a neighbour is a hold: the path rests there
+    if (K[1][c] === P[1][c] || K[1][c] === N[1][c]) return 0;
+    const m = (N[1][c] - P[1][c]) / Math.max(1e-6, N[0] - P[0]);
+    // no overshoot: a key that is a peak or a trough has a flat tangent
+    if ((K[1][c] - P[1][c]) * (N[1][c] - K[1][c]) <= 0) return 0;
+    return m;
+  };
+  const u2 = u * u, u3 = u2 * u, h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2;
+  const out: Vec3 = [0, 0, 0];
+  for (let c = 0; c < 3; c++) out[c] = h00 * A[1][c] + h10 * h * tan(i, c) + h01 * B[1][c] + h11 * h * tan(i + 1, c);
+  return out;
 }
 
 export const IK_HANDLES = ["hand.L", "hand.R", "foot.L", "foot.R"];

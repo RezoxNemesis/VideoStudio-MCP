@@ -80,6 +80,16 @@ export function wide(ctx, ids, o = {}) {
 export const mixCams = (a, b, u) => ({ pos: V.lerp(a.pos, b.pos, u), target: V.lerp(a.target, b.target, u), fov: lerp(a.fov ?? 35, b.fov ?? 35, u), roll: lerp(a.roll ?? 0, b.roll ?? 0, u) });
 const ease = (u) => { u = clamp(u); return u * u * (3 - 2 * u); };
 /** A slow push in over a shot: the camera travels `by` of the way to its target between t0 and t1 (negative: pulls back). */
+/**
+ * CAMERA DIRECTION helpers (18 Nov 2026). arc: the lens travels a few degrees round its target through the shot (deg > 0
+ * to the right), so near and far things slide past each other — parallax is what makes a still set read as deep.
+ * rise: the lens lifts (metres) as the shot goes on. Combine: arc(push(cam, …), …). All eased; never a shake.
+ */
+export function arc(c, t, t0, t1, deg = 6) {
+  const u = ease((t - t0) / Math.max(1e-3, t1 - t0)) - 0.5, a = (u * deg * Math.PI) / 180, d = V.sub(c.pos, c.target), co = Math.cos(a), si = Math.sin(a);
+  return { ...c, pos: [c.target[0] + d[0] * co - d[2] * si, c.pos[1], c.target[2] + d[0] * si + d[2] * co] };
+}
+export function rise(c, t, t0, t1, by = 0.2) { const u = ease((t - t0) / Math.max(1e-3, t1 - t0)) - 0.5; return { ...c, pos: [c.pos[0], c.pos[1] + u * by, c.pos[2]] }; }
 export function push(c, t, t0, t1, by = 0.15) { const u = ease((t - t0) / Math.max(1e-3, t1 - t0)) * by; return { ...c, pos: V.lerp(c.pos, c.target, u) }; }
 
 /* ----------------------------------------------------------------------------------------- performances, gestures */

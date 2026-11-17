@@ -242,17 +242,18 @@ export function drink(o) {
   const D = o.dur ?? 3.2, t = o.t, s = (o.height ?? 1.75) / 1.75, mir = o.hand === 'L', side = mir ? 'L' : 'R', Ph = DRINK.phases, at = (k) => +(t + Ph[k] * D).toFixed(3);
   const off = (p) => [-(mir ? -p[0] : p[0]) * s, (p[1] - 1.36) * s, (p[2] + 0.05) * s], turn = (r) => (mir ? [r[0], -r[1], -r[2]] : r);
   const pole = (p) => (mir ? [-p[0], p[1], p[2]] : p), L = DRINK, LIP_POLE = [0.85, -0.3, 0.55], CHEST_POLE = [0.6, -0.6, 0.2];
-  // the arm through its places; each holds until the next has fully taken over (a later reach is laid over an earlier
-  // one), so the hand never drops between two of them
+  // the arm's places, in order (the hold at the lips is a repeated place: the path rests there)
   const path = [[t - 0.4, L.chest.p, CHEST_POLE], [+(t + Ph.lift * D * 0.5).toFixed(3), L.mid.p, LIP_POLE], [at('lift'), L.chin.p, LIP_POLE], [at('align'), L.lips.p, LIP_POLE], [at('touch'), L.touch.p, LIP_POLE],
-    [at('hold'), L.sip.p, LIP_POLE], [at('level'), L.lips.p, LIP_POLE], [at('lower'), L.chest.p, CHEST_POLE]];
-  const ov = path.map(([t0, p, pl], i) => {
-    const prev = i ? path[i - 1][0] : t0 - 0.3, fade = Math.max(0.12, Math.min(0.45, (t0 - prev) * 0.85)), next = path[i + 1];
-    return { t0: +(t0 - fade).toFixed(3), t1: +(next ? next[0] + 0.5 : t + D + 0.8).toFixed(3), fade, reach: { actor: o.actor, bone: 'spine01', offset: off(p) }, side, pole: pole(pl) };
-  });
+    [at('hold'), L.sip.p, LIP_POLE], [at('holdEnd'), L.sip.p, LIP_POLE], [at('level'), L.lips.p, LIP_POLE], [at('lower'), L.chest.p, CHEST_POLE]];
+  // ONE reach whose target moves along a smooth path through the places (Stage reach `path`): the cup travels through
+  // every key pose without stopping (separately eased reaches stopped dead at each: slow, stop-start, 18 Nov 2026)
+  const T0 = path[0][0] - 0.05, end = t + D + 0.8;
+  const ov = [{ t0: +T0.toFixed(3), t1: +end.toFixed(3), fade: 0.4, side, reach: { actor: o.actor, bone: 'spine01', offset: off(path[0][1]) },
+    path: [...path.map(([tt, p]) => [+(tt - T0).toFixed(3), off(p)]), [+(end - T0).toFixed(3), off(path[path.length - 1][1])]],
+    polePath: path.map(([tt, , pl]) => [+(tt - T0).toFixed(3), pole(pl)]) }];
   ov.push(
     // the wrist: level the whole way up, tips only at the lips, levels again before coming down
-    { t0: t - 0.4, t1: t + D + 0.8, fade: 0.3, keys: [{ on: `wrist.${side}`, keys: [[0, turn(L.chest.r)], [0.4, turn(L.chest.r)], [+(Ph.lift * D * 0.5 + 0.4).toFixed(3), turn(L.mid.r)], [+(Ph.lift * D + 0.4).toFixed(3), turn(L.chin.r)], [+(Ph.align * D + 0.4).toFixed(3), turn(L.lips.r)], [+(Ph.touch * D + 0.4).toFixed(3), turn(L.touch.r)], [+(Ph.hold * D + 0.4).toFixed(3), turn(L.sip.r)], [+(Ph.holdEnd * D + 0.4).toFixed(3), turn(L.sip.r)], [+(Ph.level * D + 0.4).toFixed(3), turn(L.lips.r)], [+(Ph.lower * D + 0.4).toFixed(3), turn(L.chest.r)], [+(D + 1.2).toFixed(3), turn(L.chest.r)]] }] },
+    { t0: t - 0.4, t1: t + D + 0.8, fade: 0.3, keys: [{ on: `wrist.${side}`, keys: [[0, turn(L.chest.r)], [0.4, turn(L.chest.r), 'spline'], [+(Ph.lift * D * 0.5 + 0.4).toFixed(3), turn(L.mid.r), 'spline'], [+(Ph.lift * D + 0.4).toFixed(3), turn(L.chin.r), 'spline'], [+(Ph.align * D + 0.4).toFixed(3), turn(L.lips.r), 'spline'], [+(Ph.touch * D + 0.4).toFixed(3), turn(L.touch.r), 'spline'], [+(Ph.hold * D + 0.4).toFixed(3), turn(L.sip.r), 'spline'], [+(Ph.holdEnd * D + 0.4).toFixed(3), turn(L.sip.r), 'spline'], [+(Ph.level * D + 0.4).toFixed(3), turn(L.lips.r), 'spline'], [+(Ph.lower * D + 0.4).toFixed(3), turn(L.chest.r), 'spline'], [+(D + 1.2).toFixed(3), turn(L.chest.r), 'spline']] }] },
     // the eyes go to the cup as it rises, the head comes forward a little to meet it, then goes back for the sip
     { t0: t - 0.3, t1: at('align') + 0.1, fade: 0.25, look: { actor: o.actor, bone: `wrist.${side}` }, head: 0.35 },
     { t0: at('lift'), t1: at('touch') + 0.1, fade: 0.25, rot: [7, 0, 0], bone: 'head' },

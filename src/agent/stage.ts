@@ -532,7 +532,10 @@ export function registerStageCommands(): void {
           const base = { id: sid("o"), t0, t1, fade: typeof x.fade === "number" ? x.fade : undefined };
           let ov: Overlay;
           if (x.look !== undefined) ov = { ...base, kind: "look", target: targetRef(x.look, "look"), head: typeof x.head === "number" ? x.head : undefined, eyes: typeof x.eyes === "number" ? x.eyes : undefined };
-          else if (x.reach !== undefined) ov = { ...base, kind: "reach", target: targetRef(x.reach, "reach"), side: x.side === "L" ? "L" : "R", ...(x.pole !== undefined ? { pole: vec3(x.pole, "pole") } : {}) };
+          else if (x.reach !== undefined) {
+            const keysOf = (v: unknown, what: string): [number, Vec3][] => { if (!Array.isArray(v) || v.length < 2) throw new ops.OpError(`${what} must be a list of [seconds, [x, y, z]] with at least two keys.`); return (v as unknown[]).map((k) => { const kk = k as unknown[]; return [Number(kk[0]), vec3(kk[1], what)] as [number, Vec3]; }); };
+            ov = { ...base, kind: "reach", target: targetRef(x.reach, "reach"), side: x.side === "L" ? "L" : "R", ...(x.pole !== undefined ? { pole: vec3(x.pole, "pole") } : {}), ...(x.path !== undefined ? { path: keysOf(x.path, "path") } : {}), ...(x.polePath !== undefined ? { polePath: keysOf(x.polePath, "polePath") } : {}) };
+          }
           else if (x.rot !== undefined) ov = { ...base, kind: "rot", bone: String(x.bone ?? ""), euler: vec3(x.rot, "rot") };
           else if (x.face !== undefined) {
             const f = typeof x.face === "string" ? MOODS[x.face] : (x.face as Record<string, number>);

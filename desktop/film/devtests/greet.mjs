@@ -27,7 +27,10 @@ for (const kind of ['handshake', 'five']) {
   // 4. marks: far enough apart for bent elbows, near enough to meet
   const M = greetMarks(kind, [0, 0], 90), d = Math.hypot(M.at[0], M.at[1]);
   ok(d > 0.6 && d < 0.95 && M.face === 270, `${kind}: marks ${d.toFixed(2)} m apart, face to face`, M);
-  // 5. every overlay is well formed
+  // 5. the hand moves on smooth paths: few reaches (one per body part it follows), each with a path through the keys
+  ok(reaches(lead).length === 1 && reaches(lead)[0].path?.length >= 5, `${kind}: the lead's hand is ONE smooth reach through its key poses`, reaches(lead).length);
+  ok(reaches(fol).length <= 3 && reaches(fol).every((x) => x.path), `${kind}: the follower's hand is at most three smooth runs`, reaches(fol).length);
+  // 6. every overlay is well formed
   ok([...lead.overlays, ...fol.overlays].every((x) => x.t1 > x.t0 && Number.isFinite(x.t0)), `${kind}: overlays have t0 < t1`, null);
 }
 { // the handshake: grip closes at contact, opens before the hands part; two shakes
@@ -35,14 +38,17 @@ for (const kind of ['handshake', 'five']) {
   const grip = f.find((x) => x.fingers > 0.4), open = f.filter((x) => x.fingers < 0.2);
   ok(grip && Math.abs(grip.t0 - at.contact) < 0.1, 'handshake: the fingers wrap at contact', grip);
   ok(open.some((x) => x.t0 < at.release), 'handshake: the fingers open first at the release', open);
-  ok(GREET.handshake.shake.length === 3 && Math.max(...GREET.handshake.shake.map(Math.abs)) <= 0.05, 'handshake: a small shake, up-down-up from the elbow', GREET.handshake.shake);
+  ok(GREET.handshake.shake.length >= 3 && Math.max(...GREET.handshake.shake.map(Math.abs)) <= 0.05, 'handshake: a small shake, up-down-up from the elbow', GREET.handshake.shake);
+  const per = (L.at.down - L.at.up1) * 2; ok(per > 0.2 && per < 0.45, 'handshake: the shake at about 2.5–4 Hz (measured handshakes ~4 Hz)', per);
 }
 { // namaste: both hands, mirrored; eyes shut only in the bow
   const N = greet('namaste', { t: 1, actor: 'a', with: 'b' }), at = N.at, r = reaches(N);
   ok(r.some((x) => x.side === 'L') && r.some((x) => x.side === 'R'), 'namaste: both hands', null);
-  const jr = r.find((x) => x.side === 'R' && Math.abs(x.reach.offset[0] + GREET.namaste.join.p[0]) < 1e-6), jl = r.find((x) => x.side === 'L' && Math.abs(x.reach.offset[0] - GREET.namaste.join.p[0]) < 1e-6);
-  ok(jr && jl, 'namaste: the joined places mirror each other', [jr?.reach.offset, jl?.reach.offset]);
+  const has = (x, v) => (x.path ?? []).some(([, q]) => Math.abs(q[0] - v) < 1e-6);
+  const jr = r.find((x) => x.side === 'R' && has(x, -GREET.namaste.join.p[0])), jl = r.find((x) => x.side === 'L' && has(x, GREET.namaste.join.p[0]));
+  ok(jr && jl, 'namaste: the joined places mirror each other', [!!jr, !!jl]);
   ok(r.every((x) => !x.pole || Math.abs(x.pole[0]) > 0.8), 'namaste: elbows out to the sides', r.map((x) => x.pole));
+  ok(r.length === 2, 'namaste: each hand is ONE smooth reach (no stop at every key pose)', r.length);
   ok(N.eyes(at.join) === 0 && N.eyes((at.bow + at.bowEnd) / 2) === 1 && N.eyes(at.separate) === 0, 'namaste: eyes shut in the bow only', [N.eyes(at.join), N.eyes((at.bow + at.bowEnd) / 2), N.eyes(at.separate)]);
 }
 { // the drink: level on the way up (measured turns), tipped only at the lips, eyes shut through the sip
