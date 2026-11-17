@@ -88,12 +88,16 @@ export function prop(o) {
     if (P && ts < S.t + ov) { const was = pose(P, ts, ctx), k = cross01(S, P, (ts - S.t) / ov); grip = lerp(was.grip, now.grip, k); dir = turn(was.dir, now.dir, k); }
     return { owner: S.by ?? null, hand: held(S) ? S.hand ?? 'R' : null, grip, p: sub(grip, mul(dir, at)), dir };
   };
-  const shapeOf = (S) => holdShape(S.style ?? o.style ?? 'fist', r), OPEN = HANDS.open;
+  const shapeOf = (S) => holdShape(S.style ?? o.style ?? 'fist', r);
+  // THE APERTURE (reach-to-grasp studies, Jeannerod): a reaching hand PRE-SHAPES to the thing — its own grip, opened
+  // only a little wider than the thing (peak about 2–4 cm over its width, two thirds of the way there). A hand thrown
+  // wide open for a pen or a glass reads as a grab at air.
+  const aperture = Math.max(0.3, Math.min(1, (2 * r + 0.035) / 0.12));
   /** this actor's hands as the thing asks for them at ts: only the hand that reaches for, holds or lets go of it */
   const hands = (actor) => (ts) => {
     const out = {};
     life.forEach((S, i) => {
-      if (S.by !== actor) return; const P = life[i - 1] ?? null, N = life[i + 1] ?? null, h = S.hand ?? 'R', sh = shapeOf(S), ov = P ? over(S, P) : 0;
+      if (S.by !== actor) return; const P = life[i - 1] ?? null, N = life[i + 1] ?? null, h = S.hand ?? 'R', sh = shapeOf(S), ov = P ? over(S, P) : 0, OPEN = mixShape(sh, HANDS.open, aperture);
       const same = (X) => held(X) && X.by === actor && (X.hand ?? 'R') === h; // (it only changes its lean in the same hand)
       // taking it: the hand opens as it reaches, then closes — from another hand a little later (the giver still has it)
       // (a reaching hand is widest about two thirds of the way there, then closes on the thing: S.reach = seconds the reach takes)

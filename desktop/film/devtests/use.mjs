@@ -56,7 +56,12 @@ for (const k of Object.keys(THINGS)) {
   ok(pa.thumbIn > 0.6, 'paper: the thumb pinches', pa.thumbIn);
   const th = useThing('phone', { life: [{ t: 0, on: [0, 1, 0] }, { t: 2, by: 'a', hand: 'R', reach: 0.6 }] }), H = th.hands('a');
   const sp = (x) => H(x).R?.spread ?? null;
-  ok(sp(1.4 + 0.67 * 0.56) > 0.28, 'reach: the hand is wide open two thirds of the way', sp(1.4 + 0.67 * 0.56));
+  // (the aperture: a reaching hand pre-shapes, opened wider than its grip — a phone (edge, r 0.004) only a little, a
+  // cup (fist, r 0.038) much more; widest about two thirds of the way)
+  const mid = 1.4 + 0.67 * 0.56, held = H(3).R, open = H(mid).R, cupH = useThing('cup', { life: [{ t: 0, on: [0, 1, 0] }, { t: 2, by: 'a', hand: 'R', reach: 0.6 }] }).hands('a');
+  ok(curl(open) < curl(held) * 0.85, 'reach: the hand is open wider than its grip two thirds of the way', [curl(open), curl(held)]);
+  ok(curl(cupH(mid).R) < curl(cupH(3).R) * 0.5, 'reach: a cup opens the hand much more than its grip', [curl(cupH(mid).R), curl(cupH(3).R)]);
+  ok(curl(open) / curl(held) > curl(cupH(mid).R) / curl(cupH(3).R), 'reach: a small thing opens the hand less (relative to its grip) than a cup', [curl(open) / curl(held), curl(cupH(mid).R) / curl(cupH(3).R)]);
   ok(sp(1.45) < sp(1.7), 'reach: the hand opens as it goes', [sp(1.45), sp(1.7)]);
   ok(curl(H(2.3).R) > curl(H(1.85).R), 'reach: then closes on the thing', [curl(H(1.85).R), curl(H(2.3).R)]);
 }

@@ -120,7 +120,7 @@ export function useThing(kind, o = {}) {
     return { owner: S.by, ...now };
   };
   return {
-    prop: P, where: P.where,
+    prop: P, where: P.where, kind,
     hands: (actor) => (ts) => { const h = P.hands(actor)(ts); if (K.two) { if (h.R && !h.L) h.L = h.R; else if (h.L && !h.R) h.R = h.L; } return h; },
     held: (actor) => (ts, ctx) => { const a = at(ts, ctx); return a.free || a.owner !== actor ? null : shape(a.c, a.u, a.v, a.n, a.k); },
     item: (ts, ctx) => {

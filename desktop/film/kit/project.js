@@ -8,7 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { setEnv, ENV } from '../engine/env.js';
-import { dropBakes } from '../engine/bake.js';
+import { dropBakes, loadBake } from '../engine/bake.js';
 import { runnerShots, runnerShot } from './seq.js';
 import { VO, lineOff, loadVoices } from './acting.js';
 import { CAST as KIT_CAST, designAdvice } from './design.js';
@@ -203,6 +203,37 @@ export function needs(P) {
   return { bakes, voices, sounds, problems, advice };
 }
 
+/**
+ * FOOTSTEPS where the feet really land (the solved motion of a sequence, 60 a second): a foot that has travelled and
+ * comes down low and still is a strike. Louder for a long stride (a heel strike) than for a shuffle; each foot of each
+ * person its own small pitch, so two walkers never tick together. → sound events, or null before the motion is solved.
+ */
+export function footsteps(seqId, o = {}) {
+  let b; try { b = loadBake(seqId); } catch { return null; }
+  const S = b.stride, ji = b.ji, out = [], sfx = typeof o.stepsAuto === 'string' ? o.stepsAuto : 'step', g0 = o.gain ?? 0.2;
+  if (ji['foot.L'] === undefined) return null;
+  let k = 0;
+  for (const a of Object.values(b.actors)) {
+    k++;
+    const sc = (a.height ?? 1.75) / 1.75, Y = (f, n) => a.data[f * S + ji[n] * 3 + 1], X = (f, n) => a.data[f * S + ji[n] * 3], Z = (f, n) => a.data[f * S + ji[n] * 3 + 2];
+    for (const s of ['L', 'R']) {
+      const n = `foot.${s}`, toe = ji[`toe2-1.${s}`] !== undefined ? `toe2-1.${s}` : n; let down = true, moved = 0, land = 0;
+      for (let f = 1; f < b.frames; f++) {
+        const sp = Math.hypot(X(f, n) - X(f - 1, n), Z(f, n) - Z(f - 1, n)) * b.fps, h = Math.min(Y(f, n), Y(f, toe) + 0.03 * sc), dy = (Y(f - 1, n) - Y(f, n)) * b.fps;
+        const isDown = h < 0.115 * sc && sp < 0.35;
+        if (!isDown) { moved += sp / b.fps; land = Math.max(land * 0.8, dy); }
+        if (!down && isDown && moved > 0.05 * sc) {
+          const w = Math.max(0.35, Math.min(1.25, moved / (1.2 * sc))) * (0.85 + Math.min(0.3, land * 0.25));
+          out.push({ t: +(f / b.fps).toFixed(3), sfx, gain: +(g0 * w).toFixed(3), pitch: +((s === 'L' ? 0.97 : 1.03) * (1 + ((k * 37) % 9 - 4) * 0.012)).toFixed(3), step: a.id });
+        }
+        if (isDown) { moved = 0; land = 0; }
+        down = isDown;
+      }
+    }
+  }
+  return out.sort((p, q) => p.t - q.t);
+}
+
 /** Every shot, spoken line and sound on the film's clock (shots that are switched off take no time). */
 export function timeline(P) {
   let script = { lines: [] };
@@ -224,7 +255,14 @@ export function timeline(P) {
       for (const lang of P.config.langs) row[lang] = { off: +lineOff(c.id, lang).toFixed(3), secs: VO[lang]?.[c.id]?.seconds ?? 0, text: LN[c.id]?.[lang] ?? LN[c.id]?.en ?? VO[lang]?.[c.id]?.show ?? '' };
       out.cues.push(row);
     }
-    for (const e of (seq.sound ? seq.sound(seq.T) : [])) {
+    let evs = seq.sound ? seq.sound(seq.T) : [];
+    const auto = evs.find((e) => e.stepsAuto);
+    if (auto) {
+      evs = evs.filter((e) => !e.stepsAuto);
+      const real = footsteps(seq.id, auto);
+      if (real) evs = [...evs.filter((e) => !e.walkStep), ...real];
+    }
+    for (const e of evs) {
       const r = { ...e, seq: seq.id };
       if ('t' in e) { if (!inside(e.t)) continue; r.t = +map(e.t).toFixed(3); }
       if ('t0' in e) r.t0 = +map(e.t0).toFixed(3);

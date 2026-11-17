@@ -232,13 +232,25 @@ export function scene(def) {
       const ev = [], ambs = def.amb ? (Array.isArray(def.amb) ? def.amb : [def.amb]) : [];
       for (const a of ambs) ev.push({ t0: 0, t1: T.dur, amb: a, gain: 0.32 });
       if (def.music) ev.push({ t0: def.musicAt ?? 0.3, t1: T.dur, music: def.music, gain: def.musicGain ?? 0.55, fadeIn: 1.6, fadeOut: 2.2 });
-      // footsteps under every walk
+      // footsteps: laid on the real foot strikes of the solved motion (kit/project.js footsteps); these timed ones are
+      // only the stand-in until the motion is solved
+      if (def.steps !== false) ev.push({ t0: 0, t1: T.dur, stepsAuto: def.steps ?? 'step', gain: def.stepGain ?? 0.2 });
       for (const b of beats.filter((x) => x.walk)) {
         const c = cast.find((q) => q.id === b.walk); if (!c) continue;
         const t0 = tOf(T, b) + 0.3, dur = Math.hypot(b.to[0] - c.at[0], b.to[1] - c.at[1]) / (b.speed ?? 1.3), step = b.gait === 'run' || b.gait === 'jog' ? 0.32 : 0.52;
-        for (let t = t0, i = 0; t < t0 + dur; t += step, i++) ev.push({ t, sfx: 'step', gain: 0.18, pitch: i % 2 ? 0.95 : 1.05 });
+        for (let t = t0, i = 0; t < t0 + dur; t += step, i++) ev.push({ t, sfx: def.steps || 'step', gain: 0.18, pitch: i % 2 ? 0.95 : 1.05, walkStep: true });
       }
       for (const b of beats.filter((x) => x.sfx)) ev.push({ t: tOf(T, b), sfx: b.sfx, gain: b.gain ?? 0.5 });
+      // contact sounds (foley): a thing set down knocks on what it lands on; a high five claps; a handshake's palms meet
+      for (const th of thingsOf(T)) for (const S of th.prop?.life ?? []) if (S.on && S.t > 0.05 && Math.hypot(...S.on) < 60) { // (not a thing put away out of the world)
+        const hard = th.kind === 'cup' || th.kind === 'phone' || th.kind === 'tablet';
+        ev.push({ t: +(S.t + (S.over ?? 0.3) * 0.9).toFixed(3), sfx: hard ? 'click' : 'paper', gain: hard ? 0.16 : 0.12, pitch: th.kind === 'cup' ? 0.7 : 1 });
+      }
+      for (const c of cast) for (const u of c.uses ? c.uses(T) : []) {
+        if (u.greet === 'five' && (u.lead || !u.with)) ev.push({ t: greet('five', { ...u, actor: c.id }).at.contact, sfx: 'punch', gain: 0.22, pitch: 1.9 });
+        if (u.greet === 'handshake' && (u.lead || !u.with)) ev.push({ t: greet('handshake', { ...u, actor: c.id }).at.contact, sfx: 'cloth', gain: 0.14, pitch: 1.2 });
+        if (u.greet === 'namaste') ev.push({ t: greet('namaste', { ...u, actor: c.id }).at.join, sfx: 'cloth', gain: 0.08, pitch: 1.3 });
+      }
       return [...ev, ...(def.sounds ? def.sounds(T) : [])];
     },
   });
