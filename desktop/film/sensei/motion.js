@@ -124,7 +124,7 @@ export function motionChecks(D, B) {
     // ---------- per frame: own body passing through itself, wrists, neck, knees
     const selfHits = new Map(); // pair → flags with depth
     const palmN = (j, h) => { const W = j[`wrist.${h}`], a = j[`finger2-1.${h}`], b = j[`finger5-1.${h}`]; if (!W || !a || !b) return null; const ax = norm(sub(a, b)), kc = mid(a, b); let f = sub(kc, W); f = norm(sub(f, ax.map((x) => x * dot(f, ax)))); const c = [ax[1] * f[2] - ax[2] * f[1], ax[2] * f[0] - ax[0] * f[2], ax[0] * f[1] - ax[1] * f[0]]; return { n: h === 'R' ? c : c.map((x) => -x), c: kc }; };
-    const palmsPressed = (j, k) => { const L = palmN(j, 'L'), R = palmN(j, 'R'); return !!(L && R && dot(L.n, R.n) < -0.7 && dist(L.c, R.c) < 0.07 * k); };
+    const palmsPressed = (j, k) => { const L = palmN(j, 'L'), R = palmN(j, 'R'); return !!(L && R && dot(L.n, R.n) < -0.3 && dist(L.c, R.c) < 0.14 * k); };
     const wristBad = { L: [], R: [] }, neckBad = [], twistBad = [], kneeBad = { L: [], R: [] };
     for (let i = 0; i < N; i++) {
       const j = a.J[i];

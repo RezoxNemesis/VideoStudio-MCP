@@ -159,7 +159,8 @@ export function scene(def) {
         const busy = [];
         for (const b of beats) {
           const t = +tOf(T, b).toFixed(3);
-          if (b.walk === c.id) { const from = busy.filter((x) => x.to).pop()?.to ?? c.at, dur = Math.hypot(b.to[0] - from[0], b.to[1] - from[1]) / (b.speed ?? 1.3); busy.push({ t0: t, t1: t + dur + 0.4, to: b.to, act: { t, go: b.to, gait: b.gait ?? 'walk', speed: b.speed ?? 1.3, ...(b.face != null ? { face: b.face } : {}), blend: 0.4 } }); }
+          if (b.walk === c.id) { const from = busy.filter((x) => x.to).pop()?.to ?? c.at, dur = Math.hypot(b.to[0] - from[0], b.to[1] - from[1]) / (b.speed ?? 1.3); busy.push({ t0: t, t1: t + dur * (b.face != null ? 1.15 : 1) + (b.face != null ? 1.1 : 0.4), to: b.to, // (with a facing to end on, the walk keeps the body until it has turned to it: cut short, the turn never happened)
+            act: { t, go: b.to, gait: b.gait ?? 'walk', speed: b.speed ?? 1.3, ...(b.face != null ? { face: b.face } : {}), blend: 0.4 } }); }
           const g = b.do === c.id ? b.gesture : b.say && byOf(b) === c.id ? b.gesture : null;
           // a gesture is done on the spot (a captured clip's own steps would carry the body off its mark), unless the beat says travel: true
           if (g) { const [clip, inn, out] = gestureClip(g), gt = b.say ? Math.max(0, t - 0.15) : t, len = b.warp ? b.warp[b.warp.length - 1][0] : out - inn; busy.push({ t0: gt, t1: gt + len, act: { t: +gt.toFixed(3), clip, in: inn, out, blend: b.blend ?? 0.4, ...(b.warp ? { warp: b.warp } : {}), ...(b.travel ? {} : { inPlace: true }) } }); } // b.warp: [[local s, clip s]…] times a gesture (a kneel held by slowing its end)

@@ -47,10 +47,10 @@ export const GREET = {
   },
   namaste: {
     dur: 3.4,
-    side: { p: [0.14, 1.06, 0.2], r: [0, 15, -20] },       // 02: both hands start up from the sides
-    raise: { p: [0.07, 1.18, 0.26], r: [-15, 30, -45] },   // 03: in front of the stomach, palms turning in
-    near: { p: [0.045, 1.29, 0.27], r: [-30, 30, -60] },   // 04-05: at the chest, palms facing, fingers up, apart
-    join: { p: [0.025, 1.33, 0.27], r: [-30, 30, -60] },   // 06: joined at the breastbone, elbows out
+    side: { p: [0.2, 1.0, 0.14], r: [0, 15, -20] },        // 02: both hands start up from the sides (apart: they never meet low)
+    raise: { p: [0.11, 1.17, 0.2], r: [-15, 30, -45] },    // 03: rising before the stomach, palms turning in, still a hand apart
+    near: { p: [0.05, 1.29, 0.21], r: [-30, 30, -60] },    // 04-05: at the chest, palms facing, fingers up, apart
+    join: { p: [0.025, 1.32, 0.2], r: [-30, 30, -60] },    // 06: joined at the breastbone, close to it (a hand's length off the chest), elbows out
     pole: [1, -0.4, -0.1],
     bow: 14, head: 16,                                       // 08: a slight bow, the head lower still, eyes shut
     phases: { side: 0.06, raise: 0.15, near: 0.25, align: 0.31, join: 0.37, hold: 0.44, bow: 0.52, bowEnd: 0.68, lift: 0.76, separate: 0.86, back: 0.97 },
@@ -101,10 +101,12 @@ export function greet(kind, o) {
     eyes = (ts) => (ts <= a - 0.1 || ts >= b + 0.12 ? 0 : ts < a ? (ts - (a - 0.1)) / 0.1 : ts > b ? 1 - (ts - b) / 0.12 : 1);
   } else {
     // 01: notice — the eyes and a smile come first, before any hand moves
-    if (o.with) ov.push({ t0: r3(t - 0.55), t1: r3(end), fade: 0.25, look: { actor: o.with, bone: 'head' }, head: 0.55 }, { t0: r3(t - 0.4), t1: r3(end), fade: 0.4, face: kind === 'five' ? 'joy' : 'happy' });
+    if (o.with) ov.push({ t0: r3(t - 0.55), t1: r3(end), fade: 0.25, look: { actor: o.with, bone: 'head' }, head: 0.45 }, { t0: r3(t - 0.4), t1: r3(end), fade: 0.4, face: kind === 'five' ? 'joy' : 'happy' });
     const lead = !!o.lead || !o.with;
     // the follower's hand goes to the lead's wrist: stopped short at align, on it at contact (the lead's moves carry it)
-    const theirs = (gap) => ({ actor: o.with, bone: `wrist.${side}`, offset: [G.other[0], G.other[1], G.other[2] + gap] });
+    // (o.theirHand: the hand the other one uses, when it is not the same as this one's — a right meets a left in a high
+    // five filmed from the side, so both near hands are seen; then the two stand straight across: greetMarks lat 0)
+    const th = o.theirHand ?? side, cross = th !== side, theirs = (gap) => ({ actor: o.with, bone: `wrist.${th}`, offset: [cross ? 0 : G.other[0], G.other[1], G.other[2] + gap] });
     if (kind === 'handshake') {
       const meetAt = (dy) => ({ ...me, offset: off([G.meet.p[0], G.meet.p[1] + dy, G.meet.p[2]], s, mir) });
       const path = lead
