@@ -2,6 +2,9 @@
 // Everything is simulated in world metres from the body's own movement, gravity and wind, so cloth and hair
 // follow, lag, swing and settle the way real ones do.
 import { V, noise1 } from './core.js';
+// still air: cloth that moves through it is held back by it as much as by any wind (with no wind given, a running man's coat
+// used to keep up with him and hang like a bell — 17 Nov 2026, compared with the owner's run reference)
+const STILL = [0, 0, 0];
 
 const G = 9.81;
 
@@ -71,7 +74,7 @@ export class Cloth {
         for (let r = 1; r < this.rows; r++) {
           const p = col[r], q = old[r];
           let ax = 0, ay = -G * this.gravity, az = 0;
-          if (wind) { const w = wind(p, t); const vx = (p[0] - q[0]) / h, vy = (p[1] - q[1]) / h, vz = (p[2] - q[2]) / h; const k = this.drag * 1.1; ax += (w[0] - vx) * k; ay += (w[1] - vy) * k * 0.35; az += (w[2] - vz) * k; }
+          { const w = wind ? wind(p, t) : STILL; const vx = (p[0] - q[0]) / h, vy = (p[1] - q[1]) / h, vz = (p[2] - q[2]) / h; const k = this.drag * 1.1; ax += (w[0] - vx) * k; ay += (w[1] - vy) * k * 0.35; az += (w[2] - vz) * k; }
           const nx = p[0] + (p[0] - q[0]) * this.damp + ax * h * h, ny = p[1] + (p[1] - q[1]) * this.damp + ay * h * h, nz = p[2] + (p[2] - q[2]) * this.damp + az * h * h;
           q[0] = p[0]; q[1] = p[1]; q[2] = p[2];
           p[0] = nx; p[1] = ny; p[2] = nz;

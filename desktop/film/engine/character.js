@@ -92,7 +92,7 @@ export class Character {
     // from the waist, from one side of the front round the back to the other, parted in front; they swing and trail
     if (d.robe) {
       const Rb = d.robe, n = Rb.cols ?? 13, rows = Rb.rows ?? 7, len = (Rb.len ?? 0.46) * pose.height, open = Math.max(0, Math.min(0.6, Rb.open ?? 0.16));
-      if (!this.robe) this.robe = new Cloth({ cols: n, rows, length: len, damp: 0.98, drag: Rb.drag ?? 1.6, stiff: Rb.stiff ?? 0.012, pad: 0.03 }); // light cloth: it holds little shape of its own and the air takes it
+      if (!this.robe) this.robe = new Cloth({ cols: n, rows, length: len, damp: 0.98, drag: Rb.drag ?? 2.3, stiff: Rb.stiff ?? 0.003, pad: 0.03 }); // light cloth: it holds little shape of its own and the air takes it (at a run its skirts stream back half a metre and show the legs, as the owner's run reference has it; a stiffer robe of 0.012 hung like a bell — 17 Nov 2026)
       const c0 = V.add(F.pel, V.mul(F.up, (Rb.rise ?? 0.075) * k)), a = F.hipHalf + 0.1 * k * d.build.hip, bb = 0.14 * k, pins = [], dirs = [];
       // On a real body the skirts hang outside the body as it is dressed: the waist ring lies on its outline, and
       // no thread may enter its hips and seat (a seat stands out behind further than any ring round the waist).
