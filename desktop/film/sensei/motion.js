@@ -79,6 +79,9 @@ const whereAt = (D, i, pt) => { const s = screenAt(D, i, pt); return s && onScre
 
 export function motionChecks(D, B) {
   const out = [];
+  // a shot marked `freeze: true` holds one moment of the performance: nothing in it moves, so nothing can skate, float
+  // or flare there (the frozen pose is still judged by the body and framing checks)
+  if (D.sh?.freeze) return out;
   const push = (o) => { if (o.sev) out.push(issue({ shot: D.id, seq: D.seq, ...o })); };
   const N = D.N, dt = D.dt;
   for (const a of D.actors) {
