@@ -53,9 +53,18 @@ export function wristFor(pose, hand, point, o = {}) { const F = gripFrame(pose, 
 const THIN = { curl: [[14, 26, 44], [80, 92, 44], [82, 94, 46], [84, 94, 46], [84, 92, 44]], spread: -0.3, thumbIn: 1, thumbOut: 0 };
 const THICK = { curl: [[10, 20, 30], [55, 62, 40], [56, 64, 42], [58, 64, 42], [58, 62, 40]], spread: -0.1, thumbIn: 0.85, thumbOut: 0.1 };
 const PINCH = { curl: [[18, 30, 36], [52, 58, 30], [58, 62, 34], [70, 80, 40], [74, 84, 42]], spread: -0.2, thumbIn: 0.85, thumbOut: 0.05 };
+// (study of 17 Nov 2026: the object decides the grip.) A phone is held by the fingertips on its edges, the thumb free
+// over its face; a book or tablet rests on flat, slightly hooked fingers with the thumb over the front (a support grip).
+const EDGE = { curl: [[8, 18, 22], [38, 46, 30], [40, 48, 32], [44, 52, 34], [48, 56, 36]], spread: -0.15, thumbIn: 0.55, thumbOut: 0.25 };
+const SUPPORT = { curl: [[6, 12, 10], [18, 22, 16], [20, 24, 18], [22, 26, 20], [26, 30, 22]], spread: 0.05, thumbIn: 0.75, thumbOut: 0.2 };
 const mixShape = (A, B, k) => ({ curl: A.curl.map((f, i) => f.map((d, q) => d + (B.curl[i][q] - d) * k)), spread: A.spread + (B.spread - A.spread) * k, thumbIn: A.thumbIn + (B.thumbIn - A.thumbIn) * k, thumbOut: A.thumbOut + (B.thumbOut - A.thumbOut) * k });
-/** The hand's shape round a thing of radius r (metres). style: 'fist' (through the closed hand) | 'pinch' (between thumb and first fingers). */
-export function holdShape(style = 'fist', r = 0.01) { return style === 'pinch' ? mixShape(PINCH, PINCH, 0) : mixShape(THIN, THICK, clamp01((r - 0.003) / 0.027)); }
+/** The hand's shape round a thing of radius r (metres). style: 'fist' (power grip: through the closed hand, the thumb
+ * pressing back) | 'pinch' (precision: between thumb and first fingers — paper, a card) | 'edge' (fingertips on the
+ * edges — a phone) | 'support' (flat fingers under it, thumb over the front — a book, a tablet). */
+export function holdShape(style = 'fist', r = 0.01) {
+  const pick = { pinch: PINCH, edge: EDGE, cradle: EDGE, support: SUPPORT }[style];
+  return pick ? mixShape(pick, pick, 0) : mixShape(THIN, THICK, clamp01((r - 0.003) / 0.027));
+}
 
 /**
  * One thing with its whole life in a sequence (see the top of this file). o: { id, r, at, style, make(p, dir, where) →
@@ -87,11 +96,12 @@ export function prop(o) {
       if (S.by !== actor) return; const P = life[i - 1] ?? null, N = life[i + 1] ?? null, h = S.hand ?? 'R', sh = shapeOf(S), ov = P ? over(S, P) : 0;
       const same = (X) => held(X) && X.by === actor && (X.hand ?? 'R') === h; // (it only changes its lean in the same hand)
       // taking it: the hand opens as it reaches, then closes — from another hand a little later (the giver still has it)
-      const reach = same(P) ? -1e9 : S.t - (held(P) ? 0.2 : 0.3), c0 = same(P) ? -1e9 : held(P) ? S.t + 0.2 * ov : S.t - 0.04, c1 = same(P) ? -1e9 : held(P) ? S.t + 0.35 * ov : S.t + 0.1;
+      // (a reaching hand is widest about two thirds of the way there, then closes on the thing: S.reach = seconds the reach takes)
+      const reach = same(P) ? -1e9 : S.t - (S.reach ?? (held(P) ? 0.2 : 0.3)), c0 = same(P) ? -1e9 : held(P) ? S.t + 0.2 * ov : S.t - 0.04, c1 = same(P) ? -1e9 : held(P) ? S.t + 0.35 * ov : S.t + 0.1;
       // letting go: to another hand only once that hand has it; set down, as it comes to rest
       const nv = N ? over(N, S) : 0, o0 = !N || same(N) ? 1e9 : held(N) ? N.t + 0.65 * nv : N.t + 0.5 * nv, o1 = !N || same(N) ? 1e9 : held(N) ? N.t + 0.85 * nv : N.t + nv, end = !N || same(N) ? 1e9 : o1 + 0.12;
       if (ts < reach || ts >= end) return;
-      if (ts < c0) out[h] = mixShape(HANDS.relax, OPEN, ease((ts - reach) / Math.max(1e-6, c0 - reach)));
+      if (ts < c0) out[h] = mixShape(HANDS.relax, OPEN, ease((ts - reach) / Math.max(1e-6, (c0 - reach) * 0.67)));
       else if (ts < c1) out[h] = mixShape(OPEN, sh, ease((ts - c0) / (c1 - c0)));
       else if (ts < o0) out[h] = sh;
       else if (ts < o1) out[h] = mixShape(sh, OPEN, ease((ts - o0) / (o1 - o0)));

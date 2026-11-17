@@ -101,6 +101,9 @@ export class ShotRun {
       a.gnd = typeof a.ground === 'function' ? a.ground(a.pose, t, this.ctx) : (a.gnd ?? 0); // the height of the ground under this actor (stairs, a dike)
       this.ctx.poses[a.id] = a.pose;
     }
+    // what each hand holds, drawn INSIDE the body's own depth picture so the fingers close over it (kit/use.js): asked
+    // for once every body is posed, since a thing being given is placed between two people's hands
+    for (const a of this.actors) if (a.held && a.pose) { try { a.pose.held = a.held(a.hold === 1 ? this.ctx.tw : th, this.ctx, a.pose) ?? null; } catch (e) { a.pose.held = null; (this.problems ??= []).push(`${a.id} held: ${e.message}`); } }
   }
   /** What decides how the frame at t looks, without drawing it: poses, camera, focus, faces (probe mode). */
   probe(t) {

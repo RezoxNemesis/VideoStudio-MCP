@@ -22,6 +22,8 @@ export function collect(P, sh, o = {}) {
     cams[i] = makeCam(pr.cam, W, H); cams[i].spec = pr.cam;
     shown[i] = pr.shown; faces[i] = pr.faces;
     const hp = {}; for (const a of run.actors) hp[a.id] = run.ctx.poses[a.id]?.j ?? null; held[i] = hp;
+    // where what each one holds is (the middle of its first part), for the check that it is ever in the picture
+    for (const a of run.actors) { const hl = run.ctx.poses[a.id]?.held; if (!hl?.length) continue; const q = hl[0].pos; (a._heldAt ??= new Array(N).fill(null))[i] = [q[0], q[1], q[2]]; }
   }
   const actors = run.actors.map((a) => {
     const J = new Array(N), Lc = new Array(N), C = new Uint8Array(N), props = new Array(N), vis = new Uint8Array(N), size = new Float32Array(N), box = new Array(N), hands = new Array(N);
@@ -48,7 +50,7 @@ export function collect(P, sh, o = {}) {
       size[i] = vis[i] ? Math.max(0, y1 - y0) / H : 0;
       box[i] = vis[i] ? [x0 / W, y0 / H, x1 / W, y1 / H] : null;
     }
-    return { id: a.id, bakeId: id, bake: a.bk.name, k, J, L: Lc, C, props, vis, size, box, hands, design: a.design, rate: a.rate ?? 1, t0: a.t0 ?? 0, bk: a.bk };
+    return { id: a.id, who: a.who ?? null, heldAt: a._heldAt ?? null, bakeId: id, bake: a.bk.name, k, J, L: Lc, C, props, vis, size, box, hands, design: a.design, rate: a.rate ?? 1, t0: a.t0 ?? 0, bk: a.bk };
   });
   return { sh, id: sh.id, seq: sh.seq, dur: sh.dur, N, dt, ts, tw, cams, shown, faces, held, actors, W, H, fps: P.config.fps, warp: !!warp };
 }

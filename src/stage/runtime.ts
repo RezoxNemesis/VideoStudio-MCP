@@ -214,6 +214,12 @@ const env01 = (o: { t0: number; t1: number; fade?: number }, t: number) => {
   const f = Math.max(1e-3, Math.min(o.fade ?? 0.25, (o.t1 - o.t0) / 2));
   return smooth(o.t0, o.t0 + f, t) * (1 - smooth(o.t1 - f, o.t1, t));
 };
+/** A reaching arm (study of 17 Nov 2026): a hand travels to a thing fast at first, its speed peaking about 40% of the way,
+ * then slows over a longer stretch as it arrives (not the even S of a fade). */
+const reachEnv = (o: { t0: number; t1: number; fade?: number }, t: number) => {
+  const f = Math.max(1e-3, Math.min(o.fade ?? 0.25, (o.t1 - o.t0) / 2)), u = clamp((t - o.t0) / f, 0, 1);
+  return smooth(0, 1, Math.pow(u, 0.75)) * (1 - smooth(o.t1 - f, o.t1, t));
+};
 
 /* ------------------------------ the runtime ------------------------------ */
 
@@ -1059,7 +1065,7 @@ export class StageRuntime {
     };
     for (const ov of sa.overlays) {
       if (t < ov.t0 - 1e-6 || t > ov.t1 + 1e-6) continue;
-      const w = env01(ov, t);
+      const w = ov.kind === "reach" ? reachEnv(ov, t) : env01(ov, t);
       try {
         if (ov.kind === "reach") {
           const p = this.target(ov.target, new THREE.Vector3());

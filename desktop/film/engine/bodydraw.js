@@ -87,6 +87,12 @@ function carried(ch, pose, lit, k) {
     const wire = bail.map((p, i) => { const t = V.norm(V.sub(bail[Math.min(4, i + 1)], bail[Math.max(0, i - 1)])), a = V.norm(V.cross(t, [0, 0, 1])), b = V.cross(t, a); return ring(p, t, a, b, 0.006 * k, 0.006 * k, 5); });
     out.push({ ...tube(wire), paint: flatP('#3a3434', -0.3) });
   }
+  // things the film puts in the hands (kit/use.js: a phone, a sheet of paper, a cup, a book): triangles in the world
+  // with a colour each, lit like the body and drawn in its depth picture, so the fingers close over them
+  for (const h of pose.held ?? []) {
+    if (!h?.pos?.length) continue; const c = h.c ?? '#888';
+    out.push({ pos: h.pos, idx: h.idx, paint: { fill: h.glow ? hex(c) : rgbOf(c), shade: h.glow ? hex(c) : rgbOf(shadeHex(c, h.shade ?? -0.3)), ...(h.hi ? { hi: rgbOf(h.hi), hiAt: h.hiAt ?? 0.8 } : {}), two: h.two ?? true, thr: 0.0, recv: false, group: h.group ?? 'held' } });
+  }
   return out;
 }
 

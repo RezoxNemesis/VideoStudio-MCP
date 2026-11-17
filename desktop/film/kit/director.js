@@ -3,6 +3,7 @@
 // description: the place, the people, what they say and do; the coverage is shot the way a film editor would want it
 // (an establishing wide, shot and reverse shot over the shoulders on one side of the line, close-ups, reactions, a
 // closing two-shot), with focus, breathing cameras, footsteps and the music bed.
+import { usePose, takeFrom } from './use.js';
 import { V, clamp, lerp } from '../engine/core.js';
 import { makeSeq, at, breathe } from './seq.js';
 import { person, presetOf } from './people.js';
@@ -141,8 +142,12 @@ export function scene(def) {
     wide: (ctx, o = {}) => wide(ctx, ids, { side: sideSign, ...o }),
     two: (ctx, o = {}) => (ids.length > 1 ? two(ctx, ids[0], ids[1], { flip: sideSign < 0, ...o }) : cu(ctx, ids[0], { dist: 2.2, fov: 34 })),
   };
+  // the things people use in this sequence (kit/use.js useThing), made once its clock is known
+  let thingsT = null, things = [];
+  const thingsOf = (T) => { if (!def.things) return []; if (thingsT !== T) { thingsT = T; things = def.things(T); } return things; };
+  const dyn = def.things ? (ts, ctx) => [...(def.dyn ? def.dyn(ts, ctx) ?? [] : []), ...things.map((x) => x.item(ts, ctx)).filter(Boolean)] : def.dyn;
   return makeSeq({
-    ...def,
+    ...def, dyn,
     id: def.id, script, tail: def.tail ?? 0.4,
     set: def.set,
     motion: (T) => {
@@ -177,7 +182,9 @@ export function scene(def) {
         for (const b of lines) {
           const by = byOf(b), mine = by === c.id, tgt = mine ? (b.to ?? ids.find((x) => x !== c.id) ?? null) : by;
           turns.push({ t: T.t(b.say) - 0.2, tgt, named: mine && !!b.to });
-          if (mine && b.hands !== false && !b.gesture) ov.push(talk(T, b.say, k++, { weight: c.talkWeight ?? 0.75 }));
+          // (talking hands only when the hands are free: not while they hold up a thing in use)
+          const busyHands = c.uses ? c.uses(T).some((u) => !u.raw && (u.take ? Math.abs(u.t - T.t(b.say)) < 1.5 : u.t0 < T.e(b.say) && u.t1 > T.t(b.say))) : false;
+          if (mine && b.hands !== false && !b.gesture && !busyHands) ov.push(talk(T, b.say, k++, { weight: c.talkWeight ?? 0.75 }));
         }
         for (const b of beats.filter((x) => x.look === c.id)) turns.push({ t: tOf(T, b), tgt: b.at, beat: true });
         turns.sort((x, y) => x.t - y.t);
@@ -191,6 +198,8 @@ export function scene(def) {
         }
         if (cur) ov.push({ t0: +last.toFixed(3), t1: +(T.dur + 1).toFixed(3), fade: 0.35, look: cur, head: 0.8 });
         if (ov.length) steps.push({ op: 'stage.overlay', actor: c.id, add: ov });
+        // what this one does with things (kit/use.js): a phone read, a drawing held out, a sheet taken from someone
+        if (c.uses) { const us = c.uses(T).flatMap((u) => (u.raw ? u.raw : u.take ? takeFrom(u.take, u.t, u) : usePose(u.use, { ...u, actor: c.id, height: c.height ?? 1.75 }))); if (us.length) steps.push({ op: 'stage.overlay', actor: c.id, add: us }); }
       }
       return { bodies: def.bodies ?? true, actors: cast.map((c, i) => ({ id: c.id, preset: c.preset ?? (typeof c.person === 'string' ? presetOf(c.person) : 'villager'), kit: c.kit ?? 'none', ...(c.props ? { props: c.props } : {}), ...(c.stage ?? {}), at: c.at, yaw: c.face ?? (cast.length > 1 ? yawTo(c.at, cast[(i + 1) % cast.length].at) : 0) })), steps: [...steps, ...(def.steps ? def.steps(T) : [])] };
     },
@@ -201,7 +210,9 @@ export function scene(def) {
         if (b.emote && !b.say && b.emote[c.id]) emote.push([tOf(T, b), ...(Array.isArray(b.emote[c.id]) ? b.emote[c.id] : [b.emote[c.id], 0.75])]);
       }
       emote.sort((x, y) => x[0] - y[0]);
-      return { id: c.id, design: typeof c.person === 'string' ? person(c.person, c.changes ?? {}) : c.person, ...(c.who ? { who: c.who } : {}), emote, ...(c.actor ?? {}) };
+      const th = thingsOf(T), held = th.length ? (ts, ctx) => th.flatMap((x) => x.held(c.id)(ts, ctx) ?? []) : undefined;
+      const hands = th.length ? (ts) => Object.assign({}, ...th.map((x) => x.hands(c.id)(ts))) : undefined;
+      return { id: c.id, design: typeof c.person === 'string' ? person(c.person, c.changes ?? {}) : c.person, ...(c.who ? { who: c.who } : {}), emote, ...(held ? { held, hands } : {}), ...(c.actor ?? {}) };
     }),
     shots: (T) => {
       let shots = typeof def.coverage === 'function' ? def.coverage(T, D) : coverage(T, def, cast, beats, D, byOf);

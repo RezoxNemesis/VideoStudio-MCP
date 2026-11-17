@@ -53,3 +53,4 @@ export * from './ledface.js';
 export * from './robot.js';
 export * from './sword3d.js';
 export * from './animalhead.js';
+export * from './use.js';

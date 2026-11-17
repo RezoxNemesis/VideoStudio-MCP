@@ -52,17 +52,46 @@ export function emotionAt(keys, t) {
 /** The mouth of whoever is speaking at t. cues: [{ id, who, t0 }]; returns { open, wide } or null when silent. */
 /** The shorter reading of a line starts a little late inside its slot, so the spare time is not all at the end. */
 export const lineOff = (id, lang) => { const d = lineDur(id), own = VO[lang]?.[id]?.seconds ?? d; return Math.min(0.45, Math.max(0, d - own) * 0.4); };
+const ENVS = new WeakMap();
+/** The loudest the line gets within a sixth of a second of each moment (60 a second): a syllable is measured against it. */
+function speechEnv(lp) { let e = ENVS.get(lp); if (e) return e; const o = lp.open, n = lp.n; e = new Float32Array(n); for (let i = 0; i < n; i++) { let m = 0; for (let k = Math.max(0, i - 10); k <= Math.min(n - 1, i + 10); k++) if (o[k] > m) m = o[k]; e[i] = m; } ENVS.set(lp, e); return e; }
+/** How lively a mouth track is: changes of drawing a second and the share of the line the mouth is (nearly) shut. */
+export function lipStats(cues, who, t0, t1, lang, fps = 24) {
+  const v = []; for (let t = t0; t < t1; t += 1 / fps) { const m = mouthAt(cues, who, t, lang); if (m) v.push(m.open); }
+  if (v.length < 3) return null; let ch = 0; for (let i = 1; i < v.length; i++) if (Math.abs(v[i] - v[i - 1]) > 0.05) ch++;
+  return { changes: ch / (v.length / fps), shut: v.filter((x) => x < 0.15).length / v.length, max: Math.max(...v) };
+}
 export function mouthAt(cues, who, t, lang) {
   for (const c of cues) {
     if (c.who !== who || c.vo) continue;
     const lp = LIP[lang]?.[c.id]; if (!lp) continue;
     const u = (t - c.t0 - lineOff(c.id, lang)) * 60;
-    if (u < -2 || u > lp.n + 3) continue;
+    if (u < -4 || u > lp.n + 6) continue;
     // the anime way (serifu / kuchipaku): a mouth has a few drawings — shut, half open, open — and each is HELD a
     // twelfth of a second; it opens downwards, small when the voice is quiet, and widens only a little on wide vowels.
     // A smooth, every-frame mouth that also spreads to the corners reads as a grin (the owner, 17 Nov 2026: the lips
     // were "more on wide"). look.lip: 'smooth' keeps the old, continuous mouth.
-    const L = look(), serifu = (L?.lip ?? (L?.style === 'anime' ? 'serifu' : 'smooth')) === 'serifu';
+    // 'speech' (the default since 17 Nov, evening): the measured fix for both complaints. 'serifu' held ONE drawing for
+    // half a second at a time (2.8 changes a second: the mouth looked stuck open) and 'smooth' opened to the tongue on
+    // loud vowels (too wide). Here every syllable opens and nearly closes again (7–10 changes a second, like the Vikas
+    // opening that the owner liked), the opening is measured against the line's own loudness close by, it never goes
+    // past 0.72, and each drawing is held a twelfth of a second, a frame and a half ahead of the sound.
+    const L = look(), mode = L?.lip ?? (L?.style === 'anime' || L?.style === 'multiplane' ? 'speech' : 'smooth'), serifu = mode === 'serifu';
+    if (mode === 'speech') {
+      // (the study of 17 Nov: the mouth leads the sound a frame or two; a shut M/B/P is held at least two frames; at the
+      // end of a phrase the last vowel eases through a half-open drawing and the mouth shuts 2–3 frames into the silence,
+      // never wide open to shut in one frame; hold vowels, snap consonants)
+      const env = speechEnv(lp), at = (k) => (k >= 0 && k < lp.n ? lp.open[k] : 0);
+      const draw = (k) => { const o = at(k); if (o < 0.06) return 0; const e = env[clamp(k, 0, lp.n - 1)], rel = o / Math.max(e, 0.2); return Math.min(1, 0.08 + 0.64 * rel ** 1.6) * (0.75 + 0.25 * Math.min(1, e)); };
+      const i = Math.floor((u + 2.5) / 5) * 5, open = draw(i), ic = clamp(i, 0, lp.n - 1);
+      if (open === 0) {
+        let pause = true; for (let k = i; k < i + 12; k++) if (at(k) >= 0.06) { pause = false; break; }
+        const before = draw(i - 5);
+        if (pause && before > 0.3) return { open: Math.min(0.26, before * 0.45), wide: 0, id: c.id };
+        return { open: 0, wide: 0, id: c.id };
+      }
+      return { open, wide: clamp(lp.wide[ic] * 0.5, -0.6, 0.3), id: c.id };
+    }
     if (serifu) {
       const k = clamp(Math.floor(u / 5) * 5, 0, lp.n - 1), k2 = Math.min(lp.n - 1, k + 2), o = Math.max(lp.open[k], lp.open[k2]), w = (lp.wide[k] + lp.wide[k2]) / 2;
       const open = o < 0.14 ? 0 : o < 0.45 ? 0.36 : 0.7;

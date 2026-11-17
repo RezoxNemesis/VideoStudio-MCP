@@ -6,6 +6,7 @@ import { loadImage, createCanvas } from '@napi-rs/canvas';
 import { bench as benchOf } from './rules.js';
 import { collect } from './collect.js';
 import { motionChecks } from './motion.js';
+import { actingChecks } from './acting.js';
 import { cameraChecks, cutChecks } from './camera.js';
 import { pictureChecks, colourCuts, decode, drawn, shotFile } from './picture.js';
 import { soundChecks } from './sound.js';
@@ -28,7 +29,7 @@ export async function reviewShots(P, ids, o = {}, emit = () => {}) {
     const sh = P.shots.find((s) => s.id === id); if (!sh || sh.off) continue;
     try {
       const D = collect(P, sh, { lang });
-      if (want(o, 'motion')) issues.push(...motionChecks(D, B));
+      if (want(o, 'motion')) issues.push(...motionChecks(D, B), ...actingChecks(D));
       const cam = cameraChecks(D, B);
       if (want(o, 'camera')) issues.push(...cam.issues);
       const sum = cam.summary;

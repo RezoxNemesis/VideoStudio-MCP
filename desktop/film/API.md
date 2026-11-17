@@ -919,3 +919,57 @@ Built and checked in the concept tests; each returns items for a sequence's `dyn
 - `sword3d(at, o)` — a longsword: `at` is the middle of the guard, `yaw`, `pitch` (0 = point down), `len`. Buried in a stone: give it `bias: 0.5` (drawn before the stone, so the stone hides the buried blade) and drop the bias as it comes out.
 - `animalHead(id, 'lion' | 'cat', { talk: (t) => 0…1, mood: (t) => 'calm' | 'stern' | 'afraid' | 'happy', size })` — a painted animal head worn by a Stage body (`dyn: (t, ctx) => [animalHead('sher', 'lion', …)(t, ctx)]`): it follows the body's real head, turns with it, blinks and talks with the line. Give the body a short haircut and no beard.
 - `ledFace(g, cx, cy, h, f, t)` — the LED-dot face on its own, for screens and gadgets.
+
+## Using things: holding, reading, showing, giving (17 Nov 2026, kit/use.js)
+
+The owner's verdict on the concept tests: "the hands don't hold anything properly". Two causes, both cured here:
+a thing drawn as its own world item lies wholly in front of or behind the hand (only a thing drawn INSIDE the body's
+depth picture has fingers closed over it — that is why the Vikas sword looked right), and nothing put the arms where
+a use puts them (phones hung at the hip, a drawing at a child's knee).
+
+    // in scene():
+    things: (T) => [useThing('drawing', { id: 'drawing', life: [
+      { t: 0, by: 'mini', hand: 'R' },                          // she has it
+      { t: T.t('F01') - 0.1, by: 'mini', hand: 'R', out: true }, // held out, its picture to him
+      { t: give(T), by: 'papa', hand: 'R', over: 0.6 } ] })],    // he takes it: both hold it, then her fingers open
+    cast: [{ id: 'mini', …, uses: (T) => [{ use: 'present', t0, t1, to: 'papa' }] },
+           { id: 'papa', …, uses: (T) => [{ take: 'mini', t: give(T) }, { use: 'read', t0: give(T) + 0.35, t1: T.dur + 1 }] }]
+
+- Things (`THINGS`): phone, tablet, book, paper, drawing (a crayon figure on it), cup. Each lies in the hand by its
+  own rule (flat things on the palm, a cup through the fist; paper and tablets between BOTH hands when both are near,
+  face to the eyes, or away from them with `out: true`). Own shapes: `make(c, u, v, n, k)` → parts `{ pos, idx, c }`.
+- Uses (`USES`, `usePose`): phone (read at the chest, palm up), phone-ear, read (both hands), present (both hands, to
+  someone), show (one hand), tablet, cup, sip. Hands are placed from the actor's own chest (spine01), so a use holds
+  when he kneels or sits. The wrist turns are measured (lab Practice_Loop/seq/h3.js: 36 turns, labs/practice/palm.mjs).
+- `takeFrom(giver, t)`: the taker's hand goes to the giver's and stays while both hold it.
+- In a makeSeq film: actors `{ held: thing.held(id), hands: thing.hands(id) }`, `dyn: [thing.item(ts, ctx)]` (drawn
+  only while it lies somewhere), steps `stage.overlay` with `usePose(kind, { t0, t1, actor, height })`.
+- Never draw a held thing as a world Mesh at the wrist. Show it: a cut-in over the shoulder, a two-shot that frames
+  the hands at a hand-off. Sensei's `held-unseen` says when a held thing is out of the picture most of a shot.
+
+## Lip-sync (17 Nov 2026)
+
+`look.lip`: 'speech' (default for anime and multiplane) | 'serifu' | 'smooth'. 'speech' opens every syllable and
+nearly closes it again, measured against the line's own loudness close by, never past 0.72, each drawing held 1/12 s
+and a frame and a half ahead of the sound: 7–10 changes a second. 'serifu' (one of three drawings held) made 2.8
+changes a second — a mouth stuck open — and is kept only for a deliberate limited-animation style. Sensei's
+`lip-stuck` flags a speaking face (a fifth of the picture or bigger) whose mouth changes fewer than 4 times a second.
+`lipStats(cues, who, t0, t1, lang)` in kit/acting.js gives the numbers. A beard or moustache must never cover the lips
+(Bholu's 'heavy' moustache hung over his mouth like a black frame).
+
+From the body-movement study (17 Nov 2026, evening): the mouth opens a frame before the sound; a shut M/B/P is held
+at least two frames; at the end of a phrase the last vowel eases through a half-open drawing and the lips shut 2–3
+frames into the silence (never wide open to shut in one frame). `node devtests/lip.mjs` checks all of it.
+
+## Grips and reaches (17 Nov 2026)
+
+The object decides the grip (kit/hold.js `holdShape(style)`): 'fist' — power grip, the thing through the closed hand,
+the thumb pressing back (a cup, a sword, a rail); 'pinch' — thumb pad on finger pads (paper, a card); 'edge' —
+fingertips on the edges, the thumb free over the face (a phone); 'support' — flat, slightly hooked fingers under it, the
+thumb over the front (a book, a tablet). kit/use.js things carry their style. A reaching hand is widest about two thirds
+of the way and closes on the thing (a held state's `reach: seconds`); the Stage's reach overlays now move fast first
+and slow down over a longer stretch as the hand arrives. Two hands on one thing hold it at its edges (USES `span`, in
+metres, the same for a child); a held sheet is always upright. A hand-off: the taker reaches with BOTH hands to just
+above the giver's (`take` uses from 'L' and 'R'), close enough that the arms bend (an arm locked straight never
+arrives), both hold it a beat (`hold` longer than the take's fade), and the taker's own use starts before the take ends.
+A kneel keeps the chest upright (a lean from the start of the kneel, not after it).

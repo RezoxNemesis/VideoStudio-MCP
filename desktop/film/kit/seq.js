@@ -49,6 +49,11 @@ export function runnerShot(seq, sh, off = 0) {
     const emo = typeof a.emote === 'function' ? a.emote(seq.T) : a.emote, looks = typeof a.look === 'function' ? a.look(seq.T) : a.look;
     return {
       ...a, ...(sh.actor?.[a.id] ?? {}), bake: a.bake ?? seq.bakeName, t0: (a.t0 ?? 0) + T0,
+      // the hands and what they hold are asked in SEQUENCE time, as the face is (until 17 Nov 2026 they were asked in
+      // the shot's own time: a thing's life — taken at 4.2 s of the sequence — ran from each shot's start, so a rose
+      // or a drawing changed hands, vanished and came back at every cut)
+      ...(typeof a.hands === 'function' ? { hands: (t, ctx) => a.hands(T0 + wt(t), ctx) } : {}),
+      ...(typeof a.held === 'function' ? { held: (t, ctx, pose) => a.held(T0 + wt(t), ctx, pose) } : {}),
       face: (t, ctx) => {
         const ts = T0 + wt(t), f = emotionAt(emo, ts), m = a.who ? mouthAt(seq.cues, a.who, ts, ctx.o.lang ?? 'en') : null;
         if (m) { f.mouthOpen = Math.max(f.mouthOpen ?? 0, m.open * (a.mouth ?? 0.6)); f.mouthWide = (f.mouthWide ?? 0) + m.wide * 0.4; }
