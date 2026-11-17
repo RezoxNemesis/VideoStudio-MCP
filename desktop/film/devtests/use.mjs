@@ -26,6 +26,10 @@ for (const k of Object.keys(THINGS)) {
   // the picture is on the face side: nearer the eyes when read, farther when shown
   // (which side the picture is on is judged on the lab sheet: Practice_Loop p04, shots b and d)
   ok(len(sub(c, [0, 1.2, 0.36])) < 0.12, 'two hands: the sheet is at the hands', c); void sh;
+  // shown to someone it stands nearly upright, its face out and a little up (never towards the floor)
+  { const P = sh[0], q = (i) => [P.pos[3 * P.idx[i]], P.pos[3 * P.idx[i] + 1], P.pos[3 * P.idx[i] + 2]], m = Math.floor(P.idx.length / 6) * 3, e1 = sub(q(m + 1), q(m)), e2 = sub(q(m + 2), q(m));
+    const nn = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]], L = len(nn) || 1;
+    ok(Math.abs(nn[1] / L) < 0.45, 'shown: the sheet stands nearly upright', nn[1] / L); }
   // the picture stands upright (its sun above the face, its face above the legs) read or shown, either hand first
   for (const [nm, P] of [['read', rd], ['shown', sh], ['read, hands crossed', useThing('drawing', { life: [{ t: 0, by: 'a', hand: 'L' }] }).held('a')(1, ctx)]]) {
     const sun = cen(P[1]), face = cen(P[4]); ok(sun[1] > face[1] + 0.02, `${nm}: the picture is upright`, [sun[1], face[1]]); }

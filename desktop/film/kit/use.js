@@ -95,7 +95,11 @@ export function useThing(kind, o = {}) {
     // held in BOTH hands (a sheet read, a tablet): it lies between them, its face turned to the eyes
     if (K.two) { const G = frameOf(pose, hand === 'R' ? 'L' : 'R'); if (G && Math.hypot(...sub(G.knuckles, F.knuckles)) < 0.5 * k) {
       const A = F.knuckles, B = G.knuckles; let v = norm(sub(B, A)); const eyes = lerp3(pose.j['eye.L'] ?? A, pose.j['eye.R'] ?? B, 0.5), mid = lerp3(A, B, 0.5);
-      let n = sub(eyes, mid); n = norm(sub(n, mul(v, dot(n, v)))); if (out) n = mul(n, -1); let u = norm(cross(v, n));
+      let n = sub(eyes, mid); n = norm(sub(n, mul(v, dot(n, v)))); if (out) n = mul(n, -1);
+      // shown to someone, a sheet stands nearly upright with its face out and a little up (held out from the chest it
+      // would otherwise face the floor, away from the eyes it is shown to)
+      if (out) { n = norm(add([n[0], 0, n[2]], [0, 0.3, 0])); n = norm(sub(n, mul(v, dot(n, v)))); }
+      let u = norm(cross(v, n));
       // a held sheet is upright whichever way round the hands are: its top (−u) up
       if (u[1] > 0) { u = mul(u, -1); v = mul(v, -1); }
       // paper is pinched at its side edges a little above the middle; a tablet rests on the fingers, its lower half in the hands
@@ -203,6 +207,6 @@ export function usePose(kind, o) {
  */
 export function takeFrom(giver, t, o = {}) {
   const side = o.hand ?? 'R', from = o.from ?? 'R', go = o.reach ?? 0.8;
-  return [{ t0: t - go, t1: t + (o.hold ?? 0.5), fade: o.fade ?? 0.5, reach: { actor: giver, bone: `wrist.${from}`, offset: o.offset ?? [0, 0.07, 0.05] }, side },
+  return [{ t0: t - go, t1: t + (o.hold ?? 0.5), fade: o.fade ?? 0.5, reach: { actor: giver, bone: o.bone ?? `wrist.${from}`, offset: o.offset ?? [0, 0.07, 0.05] }, side },
     { t0: t - go - 0.2, t1: t + (o.hold ?? 0.5) + 0.3, fade: 0.3, look: { actor: giver, bone: `wrist.${from}` }, head: 0.6 }];
 }

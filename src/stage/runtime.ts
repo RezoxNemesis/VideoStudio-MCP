@@ -221,6 +221,33 @@ const reachEnv = (o: { t0: number; t1: number; fade?: number }, t: number) => {
   return smooth(0, 1, Math.pow(u, 0.75)) * (1 - smooth(o.t1 - f, o.t1, t));
 };
 
+/** The order to aim actors in: one whose reach or strike targets another actor comes after that actor (cycles keep the
+ * spec's order). Looks do not count: two people look at each other all the time, and a look that counted made every
+ * hand-off a cycle, so the taker still reached for where the giver's hand hung before she raised it. Exported for tests. */
+export function aimOrder<T extends { id: string; overlays?: Overlay[] }>(actors: T[]): T[] {
+  const deps = new Map<string, Set<string>>();
+  for (const a of actors) {
+    const d = new Set<string>();
+    for (const ov of a.overlays ?? []) {
+      const tg = (ov as { target?: unknown }).target;
+      if ((ov.kind === "reach" || ov.kind === "strike") && tg && typeof tg === "object" && !Array.isArray(tg)) {
+        const id = (tg as { actor?: string }).actor;
+        if (id && id !== a.id) d.add(id);
+      }
+    }
+    deps.set(a.id, d);
+  }
+  const out: T[] = [], done = new Set<string>(), ids = new Set(actors.map((a) => a.id));
+  let left = [...actors];
+  while (left.length) {
+    const next = left.filter((a) => [...deps.get(a.id)!].every((x) => done.has(x) || !ids.has(x)));
+    const take = next.length ? next : [left[0]!]; // a cycle: keep the spec's order
+    for (const a of take) { out.push(a); done.add(a.id); }
+    left = left.filter((a) => !done.has(a.id));
+  }
+  return out;
+}
+
 /* ------------------------------ the runtime ------------------------------ */
 
 /** A free camera for looking at the stage while working on it: positions in stage metres [x, y, z]. */
@@ -1381,7 +1408,9 @@ export class StageRuntime {
         this.problems.push(`${sa.id}: ${(err as Error).message}`);
       }
     }
-    for (const sa of spec.actors) {
+    // (aimed in dependency order: someone who reaches for another's hand is posed after that other's own reaches — a
+    //  father taking a drawing reached for where his daughter's hand hung before her arms were raised, 17 Nov 2026)
+    for (const sa of aimOrder(spec.actors)) {
       const rt = this.actors.get(sa.id);
       if (!rt) continue;
       try {

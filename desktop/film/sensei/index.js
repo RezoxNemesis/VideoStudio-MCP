@@ -10,6 +10,7 @@ import { actingChecks } from './acting.js';
 import { cameraChecks, cutChecks } from './camera.js';
 import { pictureChecks, colourCuts, decode, drawn, shotFile } from './picture.js';
 import { soundChecks } from './sound.js';
+import { voiceChecks } from './voice.js';
 import { storyChecks } from './story.js';
 import { fingerprint, average, compare } from './style.js';
 import { dedupe, buildReport, digest } from './report.js';
@@ -66,6 +67,7 @@ export async function finish(P, parts, o = {}, emit = () => {}) {
   if (want(o, 'story')) issues.push(...storyChecks(P, sums, lang, B));
   let sound = null;
   if (want(o, 'sound') && o.scope !== 'shots') { const s = await soundChecks(P, lang, B); issues.push(...s.issues); sound = { measured: s.measured, note: s.note }; }
+  if (want(o, 'sound')) for (const l of P.config.langs ?? [lang]) issues.push(...voiceChecks(P, l));
   let style = null;
   if (want(o, 'style')) {
     const fps = sums.map((s) => s.style).filter(Boolean);
