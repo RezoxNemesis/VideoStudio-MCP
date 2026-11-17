@@ -53,9 +53,23 @@ export const hut = (at, o = {}) => { const y = o.yaw ?? 0, w = o.w ?? 5, d = o.d
 export const barn = (at, o = {}) => hut(at, { w: 9, d: 7, h: 4.2, rise: 3, wall: '#a8443a', roof: '#5a5a62', tiles: true, ...o });
 /** A block of a modern town: plain walls, rows of windows (lit at night). o: { w, d, h, yaw, color, lit, floors, seed } */
 export const building = (at, o = {}) => {
-  const w = o.w ?? 10, d = o.d ?? 9, h = o.h ?? 14, c = o.color ?? '#b9b2a6', floors = o.floors ?? Math.max(2, Math.round(h / 3.2)), cols = Math.max(2, Math.round(w / 2.4)), seed = o.seed ?? 1;
-  const face = (n) => { const m = []; for (let r = 0; r < floors; r++) for (let i = 0; i < n; i++) { const on = o.lit && hash(r * 3.7 + i * 5.1 + seed) > 0.45; if (r === 0 && i === Math.floor(n / 2)) { m.push(['rect', (i + 0.2) / n, 0, (i + 0.8) / n, 0.8 / floors, '#3a3430']); continue; } m.push([on ? 'glow' : 'rect', (i + 0.2) / n, (r + 0.3) / floors, (i + 0.8) / n, (r + 0.78) / floors, on ? o.lit : '#5d7388']); } return DET.marks(m); };
-  return mesh([...box([at[0], 0, at[1]], w, h, d, o.yaw ?? 0, { side: c, top: shade(c, -0.25) }, { front: face(cols), back: face(cols), left: face(Math.max(2, Math.round(d / 2.4))), right: face(Math.max(2, Math.round(d / 2.4))) }), ...box([at[0], h, at[1]], w + 0.4, 0.35, d + 0.4, o.yaw ?? 0, { side: shade(c, -0.18) })], at);
+  const w = o.w ?? 10, d = o.d ?? 9, h = o.h ?? 14, c = o.color ?? '#b9b2a6', floors = o.floors ?? Math.max(2, Math.round(h / 3.2)), cols = Math.max(2, Math.round(w / 2.4)), seed = o.seed ?? 1, yaw = o.yaw ?? 0;
+  if (o.plain) { // the old flat block (for very far rings of town where detail is never seen)
+    const face = (n) => { const m = []; for (let r = 0; r < floors; r++) for (let i = 0; i < n; i++) { const on = o.lit && hash(r * 3.7 + i * 5.1 + seed) > 0.45; m.push([on ? 'glow' : 'rect', (i + 0.2) / n, (r + 0.3) / floors, (i + 0.8) / n, (r + 0.78) / floors, on ? o.lit : '#5d7388']); } return DET.marks(m); };
+    return mesh([...box([at[0], 0, at[1]], w, h, d, yaw, { side: c, top: shade(c, -0.25) }, { side: face(cols) }), ...box([at[0], h, at[1]], w + 0.4, 0.35, d + 0.4, yaw, { side: shade(c, -0.18) })], at);
+  }
+  // walls painted as a town's are (DET.facade): a shop floor on the long sides when asked (o.shop, default on for blocks low enough to be walked past)
+  const shop = o.shop ?? h < 40, bal = o.balcony ?? (hash(seed * 2.7) > 0.5 ? 0.5 : 0);
+  const long = (k) => DET.facade({ floors, cols, seed: seed * 3 + k, lit: o.lit, shop, balcony: bal });
+  const end = (k) => DET.facade({ floors, cols: Math.max(2, Math.round(d / 2.4)), seed: seed * 5 + k, lit: o.lit, shop: false, balcony: 0 });
+  const roofC = shade(c, -0.25), f = [...box([at[0], 0, at[1]], w, h, d, yaw, { side: c, top: roofC }, { front: long(1), back: long(2), left: end(3), right: end(4) }),
+    // the parapet, and on the roof what a real roof carries: a water tank on legs, a stair hut, a vent box
+    ...box([at[0], h, at[1]], w + 0.3, 0.6, d + 0.3, yaw, { side: shade(c, -0.12), top: shade(c, -0.3) })];
+  const R = (dx, dz) => { const a = yaw * Math.PI / 180; return [at[0] + dx * Math.cos(a) + dz * Math.sin(a), at[1] - dx * Math.sin(a) + dz * Math.cos(a)]; };
+  if (w > 6 && hash(seed * 4.1) > 0.35) { const q = R((hash(seed) - 0.5) * w * 0.5, (hash(seed * 1.7) - 0.5) * d * 0.4); f.push(...box([q[0], h + 0.6, q[1]], 1.8, 1.0, 1.8, yaw, { side: '#8a8c90', top: '#6a6c70' }), ...box([q[0], h + 1.6, q[1]], 1.5, 1.4, 1.5, yaw + 45, { side: hash(seed * 9) > 0.5 ? '#3a6a9a' : '#d8d2c4', top: '#5a5a5e' })); }
+  if (w > 8) { const q = R(-w * 0.3, d * 0.2); f.push(...box([q[0], h + 0.6, q[1]], 2.4, 2.2, 2.0, yaw, { side: shade(c, -0.08), top: shade(c, -0.3) })); }
+  if (hash(seed * 6.3) > 0.4) { const q = R(w * 0.28, -d * 0.25); f.push(...box([q[0], h + 0.6, q[1]], 1.2, 0.7, 0.9, yaw, { side: '#a8aaa8', top: '#7a7c7a' })); }
+  return mesh(f, at);
 };
 export const bush = (at, o = {}) => tree({ p: [at[0], 0, at[1]], h: o.h ?? 1.3, kind: 'bush', seed: o.seed ?? 5, leaf: o.leaf ?? '#4f9440', leafLit: '#79b856', leafShade: '#35702e', trunk: '#5a4332' });
 export const leafTree = (at, o = {}) => tree({ p: [at[0], 0, at[1]], h: o.h ?? 7, kind: 'leaf', seed: o.seed ?? 4, leaf: o.leaf ?? '#4f9440', leafLit: o.leafLit ?? '#79b856', leafShade: o.leafShade ?? '#35702e', trunk: '#5a4332', n: o.n, spread: o.spread });

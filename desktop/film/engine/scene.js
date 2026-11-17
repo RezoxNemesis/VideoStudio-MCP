@@ -503,6 +503,60 @@ export const DET = {
       else { g.lineWidth = F.lw * 1.2; g.strokeStyle = F.col(c); g.stroke(); }
     }
   },
+  /**
+   * A town building's wall as background painters draw it: floor ledges, framed windows whose glass holds the sky (or a
+   * warm room at night), sills, curtains in some, air-conditioner boxes, balconies with their shadow, rain streaks under
+   * the sills, a drainpipe, and on a street side a shop floor (glass front, striped awning, a sign board).
+   * o: { floors, cols, seed, lit (window glow colour or null), shop (true: the ground floor is a shop), sign, awning, balcony (0…1) }
+   */
+  facade: (o = {}) => Object.assign((g, F) => {
+    const fl = o.floors ?? 3, nc = o.cols ?? 3, seed = o.seed ?? 1; // v = 0 at the ground, 1 at the top
+    const px = F.px, cw = F.w / nc, rh = F.h / fl, simple = px * cw < 9;
+    const wall = F.tone, dark = F.col(shadeHex(wall, -0.35)), ledge = F.col(shadeHex(wall, -0.2)), light = F.col(shadeHex(wall, 0.22));
+    const frame = F.col(shadeHex(wall, 0.32)), glassT = F.col('#b9d0e2'), glassB = F.col('#4a6074'), curtainC = ['#efe4cc', '#d9b48a', '#c8d4dc', '#e8c8c0'];
+    const R = (u0, v0, u1, v1, c, a = 1) => { g.beginPath(); quad(g, F, u0, v0, u1, v1); g.fillStyle = c; g.globalAlpha = a; g.fill(); g.globalAlpha = 1; };
+    const shop = o.shop && fl >= 2, f0 = shop ? 1 : 0;
+    // rain streaks first (under everything else): long faint darker runs down the wall from some sills
+    if (!simple) for (let r = f0; r < fl; r++) for (let i = 0; i < nc; i++) if (hash(r * 5.3 + i * 2.9 + seed) > 0.72) { const u = (i + 0.3 + 0.4 * hash(i + r + seed)) / nc; R(u - 0.04 / nc, 0, u + 0.04 / nc, (r + 0.24) / fl, dark, 0.12); }
+    // floor ledges
+    if (px * rh > 6) for (let r = 1; r < fl; r++) { const v = r / fl; R(0, v - 0.025 / fl, 1, v + 0.035 / fl, ledge, 0.9); R(0, v + 0.035 / fl, 1, v + 0.06 / fl, light, 0.5); }
+    for (let r = f0; r < fl; r++) for (let i = 0; i < nc; i++) {
+      const u0 = (i + 0.2) / nc, u1 = (i + 0.8) / nc, v0 = (r + 0.28) / fl, v1 = (r + 0.8) / fl, k = hash(r * 3.7 + i * 5.1 + seed), on = o.lit && k > 0.45;
+      if (simple) { R(u0, v0, u1, v1, on ? o.lit : F.col('#5d7388')); continue; }
+      R(u0 - 0.04 / nc, v0 - 0.05 / fl, u1 + 0.04 / nc, v1 + 0.03 / fl, frame); // frame
+      if (on) { const a = F.uv(0, v1), b = F.uv(0, v0), gr = g.createLinearGradient(a[0], a[1], b[0], b[1]); gr.addColorStop(0, shadeHex(o.lit, 0.15)); gr.addColorStop(1, shadeHex(o.lit, -0.25)); g.beginPath(); quad(g, F, u0, v0, u1, v1); g.fillStyle = gr; g.fill(); }
+      else { const a = F.uv(0, v1), b = F.uv(0, v0), gr = g.createLinearGradient(a[0], a[1], b[0], b[1]); gr.addColorStop(0, glassT); gr.addColorStop(0.55, F.col('#7d97ab')); gr.addColorStop(1, glassB); g.beginPath(); quad(g, F, u0, v0, u1, v1); g.fillStyle = gr; g.fill();
+        // a diagonal glint of sky across the pane
+        if (px * cw > 22) { g.beginPath(); const p1 = F.uv(u0 + (u1 - u0) * 0.15, v1), p2 = F.uv(u0 + (u1 - u0) * 0.45, v1), p3 = F.uv(u0 + (u1 - u0) * 0.15, v0 + (v1 - v0) * 0.35), p4 = F.uv(u0, v0 + (v1 - v0) * 0.55); g.moveTo(p1[0], p1[1]); g.lineTo(p2[0], p2[1]); g.lineTo(p3[0], p3[1]); g.lineTo(p4[0], p4[1]); g.closePath(); g.fillStyle = '#ffffff'; g.globalAlpha = 0.16; g.fill(); g.globalAlpha = 1; } }
+      // curtains drawn in some
+      if (k < 0.3) { const left = hash(k * 31 + seed) > 0.5, w = 0.25 + 0.3 * hash(k * 17); R(left ? u0 : u1 - (u1 - u0) * w, v0, left ? u0 + (u1 - u0) * w : u1, v1, F.col(curtainC[Math.floor(hash(k * 7 + seed) * 4)]), on ? 0.7 : 0.92); }
+      // the mullion and the sill
+      if (px * cw > 16) { R((u0 + u1) / 2 - 0.012 / nc, v0, (u0 + u1) / 2 + 0.012 / nc, v1, frame); }
+      R(u0 - 0.07 / nc, v0 - 0.075 / fl, u1 + 0.07 / nc, v0 - 0.035 / fl, light); R(u0 - 0.07 / nc, v0 - 0.1 / fl, u1 + 0.07 / nc, v0 - 0.075 / fl, dark, 0.45);
+      // an air-conditioner box by some windows
+      if (hash(r * 9.7 + i * 1.3 + seed) > 0.78 && px * cw > 14) { const a0 = u1 + 0.06 / nc, a1 = a0 + 0.22 / nc; if (a1 < (i + 1) / nc) { R(a0, v0 + 0.02 / fl, a1, v0 + 0.2 / fl, F.col('#d4d6d2')); R(a0, v0 + 0.02 / fl, a1, v0 + 0.045 / fl, dark, 0.5); R(a0 + 0.03 / nc, v0 + 0.07 / fl, a1 - 0.03 / nc, v0 + 0.16 / fl, F.col('#8a8e92')); } }
+      // a balcony: slab, rail and its shadow on the wall
+      if (o.balcony && r >= f0 + 0 && r > 0 && hash(i * 4.4 + seed * 1.3) < o.balcony) {
+        R(u0 - 0.08 / nc, v0 - 0.1 / fl, u1 + 0.08 / nc, v0 - 0.02 / fl, F.col(shadeHex(wall, 0.12))); R(u0 - 0.08 / nc, v0 - 0.2 / fl, u1 + 0.08 / nc, v0 - 0.1 / fl, dark, 0.35);
+        g.beginPath(); for (let j = 0; j <= 8; j++) { const uu = u0 - 0.08 / nc + (u1 - u0 + 0.16 / nc) * j / 8; seg(g, F, uu, v0 - 0.02 / fl, uu, v0 + 0.3 / fl); } seg(g, F, u0 - 0.08 / nc, v0 + 0.3 / fl, u1 + 0.08 / nc, v0 + 0.3 / fl); g.lineWidth = Math.max(0.8, F.lw * 0.9); g.strokeStyle = F.col('#3a3a40'); g.stroke();
+      }
+    }
+    if (shop) {
+      const v1 = 0.78 / fl, sg = o.sign ?? ['#c0392b', '#2a6aa8', '#e0a030', '#3a8a5a', '#8a4a9a'][Math.floor(hash(seed * 3.3) * 5)], aw = o.awning ?? ['#c0392b', '#2a7a5a', '#d08a2a', '#3a5a9a'][Math.floor(hash(seed * 5.9) * 4)];
+      // shop glass and its door
+      const a = F.uv(0, v1), b = F.uv(0, 0.04 / fl), gr = g.createLinearGradient(a[0], a[1], b[0], b[1]); gr.addColorStop(0, o.lit ? shadeHex(o.lit, 0.1) : '#9fb6c6'); gr.addColorStop(1, o.lit ? shadeHex(o.lit, -0.3) : '#3e4f5c');
+      R(0.06, 0, 0.94, v1 + 0.02 / fl, frame); g.beginPath(); quad(g, F, 0.08, 0.04 / fl, 0.92, v1); g.fillStyle = gr; g.fill();
+      if (px * cw > 10) { R(0.42, 0.04 / fl, 0.58, v1 - 0.06 / fl, F.col('#2e2a28'), 0.55); for (const u of [0.25, 0.75]) R(u - 0.006, 0.04 / fl, u + 0.006, v1, frame); }
+      // awning: stripes, its shadow below
+      const v2 = v1 + 0.04 / fl, v3 = v1 + 0.2 / fl; R(0.05, v2 - 0.07 / fl, 0.95, v2, dark, 0.35);
+      const ns = 9; for (let j = 0; j < ns; j++) R(0.05 + 0.9 * j / ns, v2, 0.05 + 0.9 * (j + 1) / ns, v3, F.col(j % 2 ? '#f2ece0' : aw));
+      if (px * F.w > 50) { g.beginPath(); for (let j = 0; j < ns; j++) { const a = F.uv(0.05 + 0.9 * j / ns, v2), b = F.uv(0.05 + 0.9 * (j + 1) / ns, v2), m = F.uv(0.05 + 0.9 * (j + 0.5) / ns, v2 - 0.09 / fl); g.moveTo(a[0], a[1]); g.quadraticCurveTo(m[0], m[1] + (m[1] - a[1]) * 0.6, b[0], b[1]); g.closePath(); } g.fillStyle = F.col(aw); g.fill(); }
+      // the sign board above
+      R(0.12, v3 + 0.04 / fl, 0.88, v3 + 0.17 / fl, F.col(sg)); if (px * F.w > 60) { R(0.2, v3 + 0.09 / fl, 0.8, v3 + 0.12 / fl, F.col('#f6efe0'), 0.85); }
+    }
+    // a drainpipe down one edge
+    if (px * F.w > 30) { const u = hash(seed * 7.7) > 0.5 ? 0.025 : 0.975; R(u - 0.006, 0, u + 0.006, 1, F.col(shadeHex(wall, -0.28)), 0.9); }
+  }, { lod: 2 }),
   /** several details in order */
   all: (...fs) => Object.assign((g, F) => { for (const f of fs) f(g, F); }, { lod: Math.min(...fs.map((f) => f.lod ?? 6)), near: fs.every((f) => f.near) }), // (drawn as soon as the finest of its parts would be)
   /** a paper screen: a grid of thin bars */
@@ -516,6 +570,20 @@ function blob(g, x, y, r, seed, n = 9) {
   for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2, rr = r * (0.84 + 0.3 * hash(i * 2.3 + seed)); pts.push([x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.92]); }
   smoothClosed(g, pts, 1);
 }
+/** A clump of leaves as painted backgrounds draw it: an outline of small leaf-bumps (scallops) round an uneven ring —
+ * more and smaller bumps the bigger it is on screen — so a crown reads as leaves, not as a ball. */
+function leafEdge(g, x, y, r, seed, sq = 0.9) {
+  const n = clamp(Math.round(r / 4.5), 7, 26), pts = [];
+  for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2 + (hash(seed + i * 0.37) - 0.5) * 0.25, rr = r * (0.8 + 0.28 * hash(i * 2.3 + seed)); pts.push([x + Math.cos(a) * rr, y + Math.sin(a) * rr * sq]); }
+  g.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, ox = mx - x, oy = my - y, ol = Math.hypot(ox, oy) || 1, sp = Math.hypot(b[0] - a[0], b[1] - a[1]) * (0.32 + 0.3 * hash(i * 4.7 + seed));
+    g.quadraticCurveTo(mx + (ox / ol) * sp, my + (oy / ol) * sp, b[0], b[1]);
+  }
+  g.closePath();
+}
+/** A little bunch of leaves (three overlapping bumps) for the painted sparkle on a lit crown. */
+function leafBunch(g, x, y, s, a) { for (let k = 0; k < 3; k++) { const b = a + k * 2.1; g.moveTo(x + Math.cos(b) * s * 0.55 + s * 0.5, y + Math.sin(b) * s * 0.45); g.arc(x + Math.cos(b) * s * 0.55, y + Math.sin(b) * s * 0.45, s * 0.5, 0, 6.29); } }
 /**
  * A tree. o: { p: [x, y, z], h, kind: 'leaf' | 'pine' | 'sakura' | 'bare' | 'bush', seed, leaf, leafLit, leafShade, trunk, snow }
  */
@@ -539,7 +607,15 @@ export function tree(o) {
       const trunk = sc.col(o.trunk ?? '#5b4636', d), trunkSh = sc.col(shadeHex(o.trunk ?? '#5b4636', -0.3), d);
       const top = cam.project([p[0] + sway, p[1] + h * (kind === 'pine' ? 0.98 : kind === 'bush' ? 0.3 : 0.62), p[2]]);
       const tw = (kind === 'bush' ? 0.02 : 0.045) * h * ppm * (o.thick ?? 1);
+      // the crown's shadow on the ground: a soft pool under the tree, thrown away from the sun (painted trees stand IN their light)
+      if (kind !== 'pine' && lobes.length && h * ppm > 24) {
+        const sy = Math.max(0.35, sc.sun[1]), off = clamp(h * 0.55 / sy, 0, h * 1.6), R = h * 0.3 * (o.spread ?? 1) * (kind === 'bush' ? 1.5 : 1), cx = p[0] - sc.sun[0] * off * 0.45, cz = p[2] - sc.sun[2] * off * 0.45;
+        const ring = []; for (let i = 0; i < 14; i++) { const a = (i / 14) * 6.283, k = 0.85 + 0.25 * hash(i * 3.1 + seed); ring.push(cam.project([cx + Math.cos(a) * R * k * 1.15, p[1] + 0.01, cz + Math.sin(a) * R * k])); }
+        if (ring.every((q) => q[2] > 0.3)) { g.beginPath(); smoothClosed(g, ring.map((q) => [q[0], q[1]]), 1); g.fillStyle = sc.o.shadowColor ?? '#1c2433'; g.globalAlpha = (sc.o.shadowAlpha ?? 0.3) * 0.75; g.fill(); g.globalAlpha = 1; }
+      }
       if (kind !== 'bush') {
+        // roots: the trunk flares into the ground
+        if (tw > 2.5) { g.beginPath(); g.moveTo(b[0] - tw * 2.8, b[1] + tw * 0.15); g.quadraticCurveTo(b[0] - tw * 1.3, b[1] - tw * 0.25, b[0] - tw * 1.1, b[1] - tw * 1.8); g.lineTo(b[0] + tw * 1.1, b[1] - tw * 1.8); g.quadraticCurveTo(b[0] + tw * 1.3, b[1] - tw * 0.25, b[0] + tw * 2.6, b[1] + tw * 0.2); g.quadraticCurveTo(b[0], b[1] + tw * 0.45, b[0] - tw * 2.8, b[1] + tw * 0.15); g.fillStyle = trunk; g.fill(); }
         g.beginPath(); g.moveTo(b[0] - tw * 1.5, b[1]); g.quadraticCurveTo(b[0] - tw * 0.7, (b[1] + top[1]) / 2, top[0] - tw * 0.35, top[1]); g.lineTo(top[0] + tw * 0.35, top[1]); g.quadraticCurveTo(b[0] + tw * 0.7, (b[1] + top[1]) / 2, b[0] + tw * 1.5, b[1]); g.closePath();
         g.fillStyle = trunk; g.fill();
         g.save(); g.clip(); g.fillStyle = trunkSh; g.fillRect(b[0] - (L[0] < 0 ? -tw * 0.15 : tw * 2), top[1], tw * 2, b[1] - top[1]); g.restore();
@@ -567,24 +643,47 @@ export function tree(o) {
       }
       if (!lobes.length) return;
       const leaf = sc.col(o.leaf ?? '#4f8a3c', d), lit = sc.col(o.leafLit ?? shadeHex(o.leaf ?? '#4f8a3c', 0.22), d), sh = sc.col(o.leafShade ?? shadeHex(o.leaf ?? '#4f8a3c', -0.28), d);
-      const all = lobes.map((q) => { const s = cam.project([p[0] + q[0] + sway * (q[1] / h) * 1.5, p[1] + q[1], p[2] + q[2]]); return [s[2], s[0], s[1], q[3] * cam.f / Math.max(0.3, s[2]), q[4]]; });
+      const deep = sc.col(shadeHex(o.leafShade ?? shadeHex(o.leaf ?? '#4f8a3c', -0.28), -0.3), d), low = sc.col(shadeHex(o.leaf ?? '#4f8a3c', -0.13), d);
+      const glint = sc.col(shadeHex(o.leafLit ?? shadeHex(o.leaf ?? '#4f8a3c', 0.22), 0.18), d), rimC = sc.o.rim ? sc.col(sc.o.rim, d) : null;
+      // each clump sways on its own a little (a crown is many branches, not one ball on a stick)
+      const all = lobes.map((q) => { const w = sc.wind ? noise1(t * 1.1 + q[4] * 1.7, seed + q[4]) * 0.02 * h : 0, s = cam.project([p[0] + q[0] + sway * (q[1] / h) * 1.5 + w, p[1] + q[1] + w * 0.3, p[2] + q[2]]); return [s[2], s[0], s[1], q[3] * cam.f / Math.max(0.3, s[2]), q[4], q[1] / h]; });
       const ls = all.filter((q) => q[0] > 0.3).sort((a, b) => b[0] - a[0]); // a clump at or behind the lens plane would project as a smear
       if (ls.length < all.length && globalThis.__cullLog) globalThis.__cullLog('tree', p, cam, null, t);
       if (!ls.length) return;
-      // the crown as one shape in shade, then each clump's lit side
-      g.beginPath(); for (const q of ls) blob(g, q[1], q[2], q[3], q[4] + seed); g.fillStyle = sh; g.fill();
-      for (const q of ls) { g.beginPath(); blob(g, q[1] + L[0] * q[3] * 0.16, q[2] + L[1] * q[3] * 0.16, q[3] * 0.86, q[4] + seed + 3); g.fillStyle = leaf; g.fill(); }
-      if (ppm * h > 60) for (const q of ls) { g.beginPath(); blob(g, q[1] + L[0] * q[3] * 0.42, q[2] + L[1] * q[3] * 0.42, q[3] * 0.48, q[4] + seed + 7, 7); g.fillStyle = lit; g.fill(); }
-      if (painted() && ppm * h > 45) {
-        // painted foliage: leaf dabs over each clump — lit on top, darker underneath — so a crown is not one flat shape
+      const big = ppm * h, fine = big > 70;
+      const ys = ls.map((q) => q[5]), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      // 0 — a thin dark line round the whole crown's outside (cel ink): stroked first, so the fill hides every inner edge
+      if (fine) { g.beginPath(); for (const q of ls) leafEdge(g, q[1], q[2], q[3], q[4] + seed); g.lineWidth = clamp(big * 0.008, 1.2, 3.6); g.strokeStyle = deep; g.globalAlpha = 0.6; g.lineJoin = 'round'; g.stroke(); g.globalAlpha = 1; }
+      // 1 — the crown as one shape in shade, with a deeper core (light never reaches the middle of a tree)
+      g.beginPath(); for (const q of ls) leafEdge(g, q[1], q[2], q[3], q[4] + seed); g.fillStyle = sh; g.fill();
+      if (fine) { g.beginPath(); for (const q of ls) leafEdge(g, q[1] - L[0] * q[3] * 0.18, q[2] - L[1] * q[3] * 0.1 + q[3] * 0.18, q[3] * 0.55, q[4] + seed + 11); g.fillStyle = deep; g.globalAlpha = 0.55; g.fill(); g.globalAlpha = 1; }
+      // 2 — the limbs: from the top of the trunk up into the lower clumps, seen dark in the gaps between them
+      if (kind !== 'bush' && fine) {
+        g.fillStyle = sc.col(shadeHex(o.trunk ?? '#5b4636', -0.22), d);
+        for (const q of ls) { if (q[5] > y0 + (y1 - y0) * 0.75) continue; const ex = top[0] + (q[1] - top[0]) * 0.72, ey = top[1] + (q[2] - top[1]) * 0.72, nx = -(ey - top[1]), ny = ex - top[0], nl = Math.hypot(nx, ny) || 1, w0 = tw * 0.42, w1 = tw * 0.12;
+          g.beginPath(); g.moveTo(top[0] + (nx / nl) * w0, top[1] + (ny / nl) * w0); g.quadraticCurveTo((top[0] + ex) / 2 + (nx / nl) * w0 * 0.6, (top[1] + ey) / 2 - tw * 0.3, ex + (nx / nl) * w1, ey + (ny / nl) * w1); g.lineTo(ex - (nx / nl) * w1, ey - (ny / nl) * w1); g.quadraticCurveTo((top[0] + ex) / 2 - (nx / nl) * w0 * 0.6, (top[1] + ey) / 2 - tw * 0.3, top[0] - (nx / nl) * w0, top[1] - (ny / nl) * w0); g.closePath(); g.fill(); }
+      }
+      // 3 — each clump, back to front: its body toward the light (lower clumps are in the crown's own shade), then its lit cap
+      for (const q of ls) {
+        const up = clamp((q[5] - y0) / Math.max(0.05, y1 - y0)), k = q[3];
+        g.beginPath(); leafEdge(g, q[1] + L[0] * k * 0.14, q[2] + L[1] * k * 0.14 - k * 0.12, k * 0.8, q[4] + seed + 3); g.fillStyle = up > 0.45 ? leaf : low; g.fill();
+        if (big > 40) { g.beginPath(); leafEdge(g, q[1] + L[0] * k * 0.36, q[2] + L[1] * k * 0.3 - k * 0.24, k * (0.42 + 0.12 * up), q[4] + seed + 7, 0.75); g.fillStyle = lit; g.globalAlpha = 0.55 + 0.45 * up; g.fill(); g.globalAlpha = 1; }
+        // a rim of low sun along the clump's lit edge
+        if (rimC && fine && up > 0.3) { g.save(); g.beginPath(); leafEdge(g, q[1] + L[0] * k * 0.14, q[2] + L[1] * k * 0.14 - k * 0.12, k * 0.8, q[4] + seed + 3); g.clip(); g.beginPath(); leafEdge(g, q[1] + L[0] * k * 0.5, q[2] + L[1] * k * 0.4 - k * 0.3, k * 0.6, q[4] + seed + 9); g.fillStyle = rimC; g.globalAlpha = 0.28; g.fill(); g.restore(); g.globalAlpha = 1; }
+      }
+      // 4 — painted sparkle: bunches of leaves catching light on the lit caps, dark bunches in the shade (not polka dots)
+      if (painted() && big > 45) {
         for (const q of ls) {
-          const n = Math.min(30, Math.round(q[3] / 2.6));
-          for (let k = 0; k < n; k++) {
-            const a = hash(q[4] * 7.3 + k * 1.7 + seed) * 6.28, rr = Math.sqrt(hash(k * 3.1 + q[4] + seed * 2)) * q[3] * 0.88;
-            const x = q[1] + Math.cos(a) * rr, y = q[2] + Math.sin(a) * rr * 0.85, top = y < q[2] - q[3] * 0.15;
-            g.fillStyle = top ? lit : hash(k * 5.7 + seed) > 0.45 ? sh : leaf; g.globalAlpha = top ? 0.65 : 0.5;
-            const sz = q[3] * 0.1 * (0.6 + 0.8 * hash(k * 9.1 + seed));
-            g.beginPath(); g.ellipse(x, y, sz * 1.35, sz * 0.7, a, 0, 7); g.fill();
+          const k = q[3], n = big > 160 ? Math.min(26, Math.round(k / 3.2)) : Math.min(8, Math.round(k / 6)), up = clamp((q[5] - y0) / Math.max(0.05, y1 - y0));
+          for (let j = 0; j < n; j++) {
+            const a = hash(q[4] * 7.3 + j * 1.7 + seed) * 6.28, rr = Math.sqrt(hash(j * 3.1 + q[4] + seed * 2)) * k * 0.82, x = q[1] + Math.cos(a) * rr, y = q[2] + Math.sin(a) * rr * 0.85;
+            const toward = (Math.cos(a) * L[0] + Math.sin(a) * L[1]) * (rr / k) - Math.sin(a) * 0.4 * (rr / k);
+            const sz = k * 0.085 * (0.7 + 0.7 * hash(j * 9.1 + seed));
+            g.beginPath(); leafBunch(g, x, y, sz, a);
+            if (toward > 0.15) { g.fillStyle = hash(j * 2.9 + seed) > 0.6 ? glint : lit; g.globalAlpha = 0.5 + 0.35 * up; }
+            else if (toward < -0.25) { g.fillStyle = deep; g.globalAlpha = 0.4; }
+            else { g.fillStyle = leaf; g.globalAlpha = 0.45; }
+            g.fill();
           }
         }
         g.globalAlpha = 1;

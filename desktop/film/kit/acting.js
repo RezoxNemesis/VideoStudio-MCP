@@ -24,6 +24,7 @@ export const EMO = {
   sad: { browTilt: 0.6, eyeOpen: 0.78, smile: -0.4 }, grief: { browTilt: 0.9, eyeOpen: 0.7, smile: -0.6, tears: 0.95, blush: 0.35 }, weep: { browTilt: 1, eyeOpen: 0.12, smile: -0.7, tears: 1, blush: 0.4 },
   afraid: { browTilt: 0.7, eyeOpen: 1.25, pupil: 0.72, smile: -0.3 }, shock: { browL: 1, browR: 1, eyeOpen: 1.38, pupil: 0.58, mouthOpen: 0.3 },
   happy: { smile: 0.6, eyeSmile: 0.35, browL: 0.3, browR: 0.3 }, joy: { smile: 1, eyeSmile: 1, eyeOpen: 0.05, browL: 0.5, browR: 0.5, mouthOpen: 0.4, blush: 0.4 }, laugh: { smile: 1, eyeSmile: 1, eyeOpen: 0.06, mouthOpen: 0.7, mouthWide: 0.4 },
+  cheeky: { smile: 0.62, eyeSmile: 0.45, browL: 0.6, browR: -0.1, eyeOpen: 0.82, blush: 0.4 }, // a mischief-maker's grin: one brow up, eyes narrowed by the smile
   smirk: { smile: 0.38, browL: 0.45, browR: -0.25, eyeOpen: 0.84 }, sneer: { smile: -0.25, browL: 0.5, browR: -0.4, eyeOpen: 0.8, mouthWide: 0.2 },
   pain: { browTilt: 0.5, eyeOpen: 0.3, smile: -0.6, mouthOpen: 0.22, mouthWide: 0.3 }, tired: { eyeOpen: 0.55, browTilt: 0.3, smile: -0.2 }, fading: { eyeOpen: 0.4, browTilt: 0.35, smile: 0.2 },
   dead: { eyeOpen: 0, smile: 0.1, browTilt: 0.1 }, wonder: { browL: 0.8, browR: 0.8, eyeOpen: 1.2, smile: 0.25, mouthOpen: 0.15 },
