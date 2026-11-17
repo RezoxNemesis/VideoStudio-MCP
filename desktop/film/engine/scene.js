@@ -4,6 +4,8 @@ import { V, clamp, lerp, hex, rgb, rgba, mixc, shade as shadeHex, hash, hash2, n
 import { smoothClosed, smoothOpen, poly } from './draw.js';
 import { createCanvas } from '@napi-rs/canvas';
 import { look } from './look.js';
+import { plant } from './flora.js';
+const FLORA_OF = { leaf: 'oak', sakura: 'sakura', bare: 'dead', bush: 'bush', pine: 'pine', oak: 'oak', autumn: 'autumn', young: 'young', flowerBush: 'flowerBush' };
 /** the painted anime look: soft clouds, hazy mountain feet, light falling across walls, the ground darkening near */
 const painted = () => look()?.paint?.mode === 'paint';
 
@@ -588,6 +590,13 @@ function leafBunch(g, x, y, s, a) { for (let k = 0; k < 3; k++) { const b = a + 
  * A tree. o: { p: [x, y, z], h, kind: 'leaf' | 'pine' | 'sakura' | 'bare' | 'bush', seed, leaf, leafLit, leafShade, trunk, snow }
  */
 export function tree(o) {
+  // painted trees (engine/flora.js): a branching skeleton, crowns of leaf bunches in five steps of light. o.flora: false
+  // keeps the older drawing. The place's leaf colours become the five steps.
+  if (o.flora !== false && FLORA_OF[o.kind ?? 'leaf']) {
+    const lf = o.leaf ?? (o.kind === 'pine' ? '#2f5a45' : '#4f8a3c'), lit = o.leafLit ?? shadeHex(lf, 0.22), sh = o.leafShade ?? shadeHex(lf, -0.28);
+    const palette = o.kind === 'sakura' && !o.leaf ? undefined : [shadeHex(sh, -0.3), sh, lf, lit, shadeHex(lit, 0.28)];
+    return plant({ p: o.p, h: o.h, seed: o.seed, kind: FLORA_OF[o.kind ?? 'leaf'], palette, spread: o.kind === 'pine' ? o.spread : undefined, shape: o.spread ? { spread: 0.5 * o.spread } : undefined });
+  }
   const seed = o.seed ?? 1, h = o.h ?? 6, kind = o.kind ?? 'leaf', p = o.p;
   const lobes = [];
   if (kind !== 'pine' && kind !== 'bare') {

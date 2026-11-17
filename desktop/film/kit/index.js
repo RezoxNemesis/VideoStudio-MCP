@@ -23,6 +23,10 @@ export { LOOKS, resolveLook } from '../engine/look.js';
 export * from './seq.js';
 export * from './acting.js';
 export * from './titles.js';
+export { title, drawTitles, TYPE_STYLES } from '../engine/type.js'; // animated lettering: post.titles
+export { transition, TRANSITION_TYPES } from '../engine/transitions.js'; // shot transitions: post.into
+export { effect, effects, EFFECT_TYPES, GRADES } from '../engine/effects.js'; // picture effects and grades: post.fx
+export { plant, PLANT_KINDS, LEAF } from '../engine/flora.js'; // painted trees and plants: sc.add('world', plant({ p, kind, h }))
 export * from './arrows.js';
 export * from './riders.js';
 export * from './legions.js';

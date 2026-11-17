@@ -96,7 +96,7 @@ export async function openProject(dir) {
 export function linkDissolves(P) { for (const sh of P.shots) withPrev(P, sh, sh.id, 0); return P; }
 /** A shot that opens with a dissolve (post.dissolve) is told how to draw the last picture of the shot before it in the film. */
 function withPrev(P, r, id, off) {
-  if (!(r.post?.dissolve > off)) return;
+  if (!((r.post?.into?.dur ?? r.post?.dissolve) > off)) return;
   const all = P.FILM.flatMap((seq) => seq.shotList.map((sh) => ({ id: `${seq.id}_${sh.id}`, dur: sh.t1 - sh.t0 }))), i = all.findIndex((s) => s.id === id), pv = i > 0 ? all[i - 1] : null;
   if (pv) r.prev = (W, H, o = {}) => new ShotRun(shotFrom(P, pv.id, pv.dur - 1 / P.config.fps), P.CAST, { ...o, W, H, fps: P.config.fps, noGrain: true }).draw(0);
 }
@@ -270,7 +270,7 @@ export function fingerprints(P, ids = null) {
         const key = shotKey(sh, lang);
         let fp = m.fp[key], error;
         if (!fp) { try { fp = m.fp[key] = fingerprint(sh, P.CAST, { lang, W, H, fps, shared: P.shared }); dirty = true; } catch (e) { error = String(e?.message ?? e); } }
-        if (fp && sh.post?.dissolve) { const pv = lastFp; if (pv) fp = md5(fp + '|after|' + pv).slice(0, 20); } // a dissolve shows the shot before: when that one changes, this one is drawn again
+        if (fp && (sh.post?.dissolve || sh.post?.into)) { const pv = lastFp; if (pv) fp = md5(fp + '|after|' + pv).slice(0, 20); } // a dissolve shows the shot before: when that one changes, this one is drawn again
         if (fp) lastFp = m.fp[key] ?? fp;
         const clean = fp, pk = fp ? paintKey(sh.paint) : '';
         if (pk) fp = md5(fp + '|paint|' + pk).slice(0, 20);

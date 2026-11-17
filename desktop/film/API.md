@@ -876,3 +876,37 @@ lettering), **Bebas Neue** and **Anton** (tall condensed headlines), **Montserra
 **Bangers** and **Luckiest Guy** (comic, for jokes; Luckiest Guy has no ₹). Variable fonts take any weight:
 `g.font = '800 96px "Baloo 2"'`. A film may bring its own: every .ttf / .otf in its `fonts/` folder is loaded
 when the film opens. All bundled fonts are under the SIL Open Font License or Apache 2.0 (assets/fonts/licenses).
+
+## Lettering, transitions and effects (17 Nov 2026)
+
+Three libraries, all set as data on a shot's `post` (or called directly in `top`):
+
+- **Lettering** (`engine/type.js`, `post.titles: [{ style, text, sub, t0, x, y, size, scale, colors, font, out, … }]`;
+  or `title(g, W, H, u, o)` in `top`). Styles (`TYPE_STYLES`): impact, pop (o.key: index of the boxed word), typewriter
+  (o.cps), glitch, neon, cinematic, chapter (sub = "Chapter Two"), lowerThird (text = name, sub = role), stamp, comic,
+  rise, wave, scramble, handwrite, gold, split, counter (o.from, o.to, o.prefix '₹', o.suffix, o.decimals, text = label),
+  animeTitle, horror, retro, epic, bubble (o.tail: [x, y] the speaker), marker. Hindi text is set in a face with
+  Devanagari (Baloo 2, Yatra One, Kalam, Khand, Rozha One, Teko) and animated word by word. Light, thin styles get a
+  soft dark scrim (o.scrim: false / a strength). `out`: the second the lettering leaves.
+- **Transitions** (`engine/transitions.js`, `post.into: { type, dur, dir, color, x, y, shape, seed }` on the shot that
+  comes in): dissolve, dip, flash, whip, push, slide, zoom, spin, iris, clock, wipe, diagonal, blinds, ink, shape
+  (star, heart, diamond, burst), glitch, filmBurn, lightLeak, pixel, smash, doors, shutter, grid, bars.
+  `post.dissolve: s` still works (= into dissolve).
+- **Effects** (`engine/effects.js`, `post.fx: [{ type, t0, t1, ramp, amt, … }]`, drawn in order before the vignette and
+  grain): grade (look: tealOrange, warm, cool, noir, sepia, vibrant, faded, night, golden, bleach, matrix, dream, anime,
+  horror, memory — or { f: css filter, w: [[colour, alpha, blend]] }), bloom, glow, chroma (radial), vhs (stamp, date),
+  scanlines, halftone, oldFilm, lightLeak, flare (x, y or at(t) → [x, y]; streak), rays, letterbox (ratio), shake (amt,
+  freq), impact (invert, color), flash, zoomBlur, motes (kind: motes, bokeh, fireflies, snow, petals, embers, ash),
+  rainLens, sparkle (box), focusLines, heartbeat (bpm), glitch (rate), pixelate, duotone (light, dark), fog, shockwave,
+  tiltShift.
+
+Fonts added with these (all OFL / Apache, licences in assets/fonts/licenses): Permanent Marker, Bungee, Bungee Shade,
+Monoton, Press Start 2P, Creepster, Caveat, Black Ops One, Orbitron, Righteous, Kalam, Teko, Yatra One, Rubik Glitch,
+Shrikhand, Fredericka the Great, Special Elite, Cinzel, Cinzel Decorative, Russo One, Khand, Rozha One, Staatliches,
+Abril Fatface, Pacifico, Nosifer, Audiowide. A showreel of all of it: a 13-shot film (seq fx) in the art lab.
+
+**Painted plants** (`engine/flora.js`): `sc.add('world', plant({ p: [x, 0, z], kind, h, seed, palette, lean, shape }))`.
+Kinds (`PLANT_KINDS`): oak, sakura (petals fall), autumn (leaves fall), pine, dead, young, stump, log, bush, flowerBush
+(o.flower colour), rock (mossy), grass, sprout, vines (hang from p). A branching skeleton shows through crowns built of
+leaf bunches lit in five steps (`LEAF`: oak, spring, dusk, night, sakura, autumn, gold, pine). Every `tree()` of the
+places now draws through it (kinds leaf → oak, bare → dead, bush, pine, sakura); `tree({ flora: false })` keeps the old.

@@ -1,6 +1,9 @@
 // A shot: a set, actors with their solved performances, a camera, effects — rendered frame by frame at 60 a second
 // to a video file (or to a contact sheet for review).
 import { createCanvas } from '@napi-rs/canvas';
+import { transition, snapshot } from './transitions.js';
+import { effects } from './effects.js';
+import { drawTitles } from './type.js';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { makeCam, inView } from './camera.js';
@@ -196,15 +199,19 @@ export class ShotRun {
     if (L.vignette !== undefined) ps.vignette *= L.vignette;
     if (L.grain !== undefined) ps.grain *= L.grain;
     if (ps.wash) for (const w of ps.wash) { const a = typeof w.a === 'function' ? w.a(t) : w.a; if (w.to) post.washGrad(g, W, H, w.color, w.to, a, w.op); else post.wash(g, W, H, w.color, a, w.op); }
+    if (ps.fx) effects(g, W, H, t + (shot.into ?? 0), ps.fx); // post.fx: grades, bloom, flares, film looks, shakes… (engine/effects.js)
     post.vignette(g, W, H, ps.vignette, ps.vignetteColor);
     if (!this.ctx.o.noGrain) post.grain(g, W, H, ps.grain, this.frame + (shot.seed ?? 0) * 977); // videos get their grain at the final encode
     if (shot.top) shot.top(g, cam, scene, t, ctx);
+    if (ps.titles) drawTitles(g, W, H, t + (shot.into ?? 0), ps.titles); // post.titles: [{ style, text, t0, … }] (engine/type.js)
     if (ps.fadeIn && t < ps.fadeIn) post.fade(g, W, H, 1 - t / ps.fadeIn, ps.fadeColor);
     if (ps.fadeOut && t > shot.dur - ps.fadeOut) post.fade(g, W, H, (t - (shot.dur - ps.fadeOut)) / ps.fadeOut, ps.fadeOutColor ?? ps.fadeColor);
-    // a dissolve: the shot opens on the last picture of the shot before it (shot.prev draws it, once) and lets it go, eased
-    if (ps.dissolve && shot.prev && t + (shot.into ?? 0) < ps.dissolve) {
-      if (this.prevFrame === undefined) { try { const c0 = shot.prev(W, H, { lang: this.o.lang, look: this.o.look }), c = createCanvas(W, H); c.getContext('2d').drawImage(c0, 0, 0, W, H); this.prevFrame = c; } catch (e) { throw new Error(`The dissolve into ${shot.id ?? 'this shot'} could not draw the shot before it: ${e?.message ?? e}`); } finally { setLook(L); } }
-      if (this.prevFrame) { const k = (t + (shot.into ?? 0)) / ps.dissolve; g.save(); g.globalAlpha = 1 - k * k * k * (k * (k * 6 - 15) + 10); g.drawImage(this.prevFrame, 0, 0, W, H); g.restore(); }
+    // a transition in (post.into, or the older post.dissolve): the shot opens on the last picture of the shot before it
+    // (shot.prev draws it, once) and gives way to this one by the transition's own pattern (engine/transitions.js)
+    const into = ps.into ?? (ps.dissolve ? { type: 'dissolve', dur: ps.dissolve } : null);
+    if (into && into.dur > 0 && shot.prev && t + (shot.into ?? 0) < into.dur) {
+      if (this.prevFrame === undefined) { try { const c0 = shot.prev(W, H, { lang: this.o.lang, look: this.o.look }), c = createCanvas(W, H); c.getContext('2d').drawImage(c0, 0, 0, W, H); this.prevFrame = c; } catch (e) { throw new Error(`The transition into ${shot.id ?? 'this shot'} could not draw the shot before it: ${e?.message ?? e}`); } finally { setLook(L); } }
+      if (this.prevFrame) transition(g, W, H, this.prevFrame, snapshot(this.canvas, W, H), (t + (shot.into ?? 0)) / into.dur, into);
     }
     if (shot.subs && !this.ctx.o.noSubs) { const s = shot.subs(t, ctx); if (s) post.subtitle(g, W, H, s.text ?? s, s); }
     this.frame++;
