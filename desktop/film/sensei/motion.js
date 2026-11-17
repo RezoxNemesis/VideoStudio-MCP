@@ -123,13 +123,19 @@ export function motionChecks(D, B) {
     }
     // ---------- per frame: own body passing through itself, wrists, neck, knees
     const selfHits = new Map(); // pair → flags with depth
+    const palmN = (j, h) => { const W = j[`wrist.${h}`], a = j[`finger2-1.${h}`], b = j[`finger5-1.${h}`]; if (!W || !a || !b) return null; const ax = norm(sub(a, b)), kc = mid(a, b); let f = sub(kc, W); f = norm(sub(f, ax.map((x) => x * dot(f, ax)))); const c = [ax[1] * f[2] - ax[2] * f[1], ax[2] * f[0] - ax[0] * f[2], ax[0] * f[1] - ax[1] * f[0]]; return { n: h === 'R' ? c : c.map((x) => -x), c: kc }; };
+    const palmsPressed = (j, k) => { const L = palmN(j, 'L'), R = palmN(j, 'R'); return !!(L && R && dot(L.n, R.n) < -0.7 && dist(L.c, R.c) < 0.07 * k); };
     const wristBad = { L: [], R: [] }, neckBad = [], twistBad = [], kneeBad = { L: [], R: [] };
     for (let i = 0; i < N; i++) {
       const j = a.J[i];
       if (!a.vis[i]) { for (const s of ['L', 'R']) { wristBad[s].push(0); kneeBad[s].push(0); } neckBad.push(0); twistBad.push(0); continue; }
       const caps = capsulesOf(j, k), byG = {};
       for (const c of caps) (byG[c.group] ??= []).push(c);
+      // palm pressed to palm (a namaste, a clap) is contact, not the body passing through itself: hands whose palms face
+      // each other closer than a hand's thickness are left alone
+      const pressed = palmsPressed(j, k);
       for (const [ga, gb, only] of SELF_PAIRS) {
+        if (pressed && ga === 'handL' && gb === 'handR') continue;
         let best = null;
         for (const ca of byG[ga] ?? []) { if (only && ca.name !== only) continue; for (const cb of byG[gb] ?? []) {
           const r = segSeg(ca.a, ca.b, cb.a, cb.b), depth = ca.r + cb.r - r.d;

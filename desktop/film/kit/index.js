@@ -54,3 +54,4 @@ export * from './robot.js';
 export * from './sword3d.js';
 export * from './animalhead.js';
 export * from './use.js';
+export * from './greet.js';

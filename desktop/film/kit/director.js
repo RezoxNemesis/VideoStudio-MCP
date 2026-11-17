@@ -3,7 +3,8 @@
 // description: the place, the people, what they say and do; the coverage is shot the way a film editor would want it
 // (an establishing wide, shot and reverse shot over the shoulders on one side of the line, close-ups, reactions, a
 // closing two-shot), with focus, breathing cameras, footsteps and the music bed.
-import { usePose, takeFrom } from './use.js';
+import { usePose, takeFrom, drink } from './use.js';
+import { greet } from './greet.js';
 import { V, clamp, lerp } from '../engine/core.js';
 import { makeSeq, at, breathe } from './seq.js';
 import { person, presetOf } from './people.js';
@@ -199,7 +200,7 @@ export function scene(def) {
         if (cur) ov.push({ t0: +last.toFixed(3), t1: +(T.dur + 1).toFixed(3), fade: 0.35, look: cur, head: 0.8 });
         if (ov.length) steps.push({ op: 'stage.overlay', actor: c.id, add: ov });
         // what this one does with things (kit/use.js): a phone read, a drawing held out, a sheet taken from someone
-        if (c.uses) { const us = c.uses(T).flatMap((u) => (u.raw ? u.raw : u.take ? takeFrom(u.take, u.t, u) : usePose(u.use, { ...u, actor: c.id, height: c.height ?? 1.75 }))); if (us.length) steps.push({ op: 'stage.overlay', actor: c.id, add: us }); }
+        if (c.uses) { const us = c.uses(T).flatMap((u) => (u.raw ? u.raw : u.take ? takeFrom(u.take, u.t, u) : u.drink != null ? drink({ ...u, t: u.drink, actor: c.id, height: c.height ?? 1.75 }).overlays : u.greet ? greet(u.greet, { ...u, actor: c.id, height: c.height ?? 1.75 }).overlays : usePose(u.use, { ...u, actor: c.id, height: c.height ?? 1.75 }))); if (us.length) steps.push({ op: 'stage.overlay', actor: c.id, add: us }); }
       }
       return { bodies: def.bodies ?? true, actors: cast.map((c, i) => ({ id: c.id, preset: c.preset ?? (typeof c.person === 'string' ? presetOf(c.person) : 'villager'), kit: c.kit ?? 'none', ...(c.props ? { props: c.props } : {}), ...(c.stage ?? {}), at: c.at, yaw: c.face ?? (cast.length > 1 ? yawTo(c.at, cast[(i + 1) % cast.length].at) : 0) })), steps: [...steps, ...(def.steps ? def.steps(T) : [])] };
     },
@@ -212,7 +213,10 @@ export function scene(def) {
       emote.sort((x, y) => x[0] - y[0]);
       const th = thingsOf(T), held = th.length ? (ts, ctx) => th.flatMap((x) => x.held(c.id)(ts, ctx) ?? []) : undefined;
       const hands = th.length ? (ts) => Object.assign({}, ...th.map((x) => x.hands(c.id)(ts))) : undefined;
-      return { id: c.id, design: typeof c.person === 'string' ? person(c.person, c.changes ?? {}) : c.person, ...(c.who ? { who: c.who } : {}), emote, ...(held ? { held, hands } : {}), ...(c.actor ?? {}) };
+      // a drink shuts the eyes through the sip (kit/use.js drink: the eyes close as the cup tips, open once it is level)
+      const drinks = c.uses ? c.uses(T).filter((u) => u.drink != null || u.greet).map((u) => (u.greet ? greet(u.greet, { ...u, actor: c.id, height: c.height ?? 1.75 }) : drink({ ...u, t: u.drink, actor: c.id, height: c.height ?? 1.75 }))) : [];
+      const own = c.actor?.faceFx, faceFx = drinks.length ? (f, ts, ctx) => { if (own) own(f, ts, ctx); const e = Math.max(...drinks.map((d) => d.eyes(ts))); if (e > 0) f.blink = Math.max(f.blink ?? 0, e); } : own;
+      return { id: c.id, design: typeof c.person === 'string' ? person(c.person, c.changes ?? {}) : c.person, ...(c.who ? { who: c.who } : {}), emote, ...(held ? { held, hands } : {}), ...(c.actor ?? {}), ...(faceFx ? { faceFx } : {}) };
     }),
     shots: (T) => {
       let shots = typeof def.coverage === 'function' ? def.coverage(T, D) : coverage(T, def, cast, beats, D, byOf);

@@ -973,3 +973,21 @@ metres, the same for a child); a held sheet is always upright. A hand-off: the t
 above the giver's (`take` uses from 'L' and 'R'), close enough that the arms bend (an arm locked straight never
 arrives), both hold it a beat (`hold` longer than the take's fade), and the taker's own use starts before the take ends.
 A kneel keeps the chest upright (a lean from the start of the kneel, not after it).
+
+## Actions from key-pose sheets: drink, handshake, high five, namaste (17 Nov 2026)
+
+Every action is built from a 12-pose breakdown (the owner's reference sheets): notice (eyes, face) → start → approach
+(the hand opens and turns ON THE WAY) → **align** (stopped short, already shaped as at contact) → contact → the action
+(only at contact) → release in reverse order (fingers open first) → lower → settle. The drawings bunch at contact.
+
+- `uses: () => [{ drink: t, dur: 3 }]` — the cup rises LEVEL (measured wrist turns DRINK.mid/chin), tips only at the
+  lips, eyes shut and head back through the sip, levelled before it comes down. Hold a cup at the chest with the wrist
+  at [-30, 0, 0] (level). A cup shows best held low in the fist: `inHand: (F, k) => ({ c: V.add(F.c, V.mul(F.axis, 0.034 * k)), u: F.axis, v: F.fwd, n: F.palm })`.
+- `uses: () => [{ greet: 'handshake' | 'five', t, with: 'b', lead: true }]` for one, `{ greet, t, with: 'a' }` for the
+  other: the follower's hand goes to the lead's wrist (solved after it), so the hands always meet.
+  `greetMarks(kind, at, yaw)` → where the other stands. `{ greet: 'namaste', t, with }` — both hands, elbows out, a bow
+  with the eyes shut; the elder answers ~0.2 s after the younger.
+- Wrist turns were measured on lab grids (Greet_Lab g1/g2, Drink_Lab 3–6) — measure, never guess: palm and finger
+  directions in the body's frame for every turn, pick by score.
+- Sensei: palms pressed together (facing, < 7 cm) is contact, not self-intersection.
+- Overhead scene items must never use a small `depth` (it is the sort distance): at 0.6 lane wires were drawn across faces.

@@ -213,3 +213,52 @@ export function takeFrom(giver, t, o = {}) {
   return [{ t0: t - go, t1: t + (o.hold ?? 0.5), fade: o.fade ?? 0.5, reach: { actor: giver, bone: o.bone ?? `wrist.${from}`, offset: o.offset ?? [0, 0.07, 0.05] }, side },
     { t0: t - go - 0.2, t1: t + (o.hold ?? 0.5) + 0.3, fade: 0.3, look: { actor: giver, bone: `wrist.${from}` }, head: 0.6 }];
 }
+
+/**
+ * DRINKING FROM A CUP held in the hand, by the key poses of a drinking sheet (the owner's 12-pose reference, 17 Nov
+ * 2026): the cup comes up from the chest LEVEL (nothing spills) on an arc, the head meets it, at the lips — and only
+ * there — the wrist turns and the cup tips towards the face (about 20° on contact, about 42° in the hold) while the head
+ * goes back and the eyes close; a beat held; the cup levels first, then comes down to the chest; the eyes open on a
+ * small satisfied smile. The wrist turns are MEASURED (Drink_Lab lab 3: a grid of 686 turns with a wrapped cup at the
+ * chest and at the lips): chest [-30, 0, 0] keeps it level (4°), at the lips [0, -60, 90] level with the rim 3 cm from the
+ * lips, and turning z from 90 to 0 tips it to 42° towards the face.
+ * o: { actor, t (when the cup leaves the chest), dur (3.2 s), height (m), hand ('R') }
+ * → { overlays (for the actor's uses: [{ raw: overlays }]), eyes(ts) → 0…1 shut (put into the actor's faceFx), at: the phase times }
+ */
+export const DRINK = {
+  // where the wrist goes, [right, up, forward] for a body 1.75 m tall (measured from the chest like usePose), and how it is turned
+  chest: { p: [0.14, 1.22, 0.21], r: [-30, 0, 0] },
+  // (lab 6: the turns that keep it LEVEL on the way up — 8° at mid-lift, 3.5° at the chin)
+  mid: { p: [0.11, 1.32, 0.23], r: [-30, -15, 30] },
+  chin: { p: [0.07, 1.42, 0.24], r: [-30, -30, 60] },
+  lips: { p: [0.03, 1.53, 0.21], r: [0, -60, 90] },
+  // (lab 5, a grid of 864 places × turns: at the lips the ARM hardly moves, the wrist turns — as in the sheet's 07→09)
+  touch: { p: [0.04, 1.55, 0.2], r: [-15, -75, 15] },  // first contact: tipped 24°, the rim on the lips
+  sip: { p: [0.04, 1.55, 0.2], r: [-15, -60, 0] },     // the hold: tipped 42° straight towards the face, the rim on the lips, the wrist bent 41°
+  // the phases as parts of the whole (the sheet's spacing: more drawings at the contact and the sip, few on the travel)
+  phases: { lift: 0.2, align: 0.32, touch: 0.42, hold: 0.52, holdEnd: 0.7, level: 0.78, lower: 0.92 },
+};
+export function drink(o) {
+  const D = o.dur ?? 3.2, t = o.t, s = (o.height ?? 1.75) / 1.75, mir = o.hand === 'L', side = mir ? 'L' : 'R', Ph = DRINK.phases, at = (k) => +(t + Ph[k] * D).toFixed(3);
+  const off = (p) => [-(mir ? -p[0] : p[0]) * s, (p[1] - 1.36) * s, (p[2] + 0.05) * s], turn = (r) => (mir ? [r[0], -r[1], -r[2]] : r);
+  const pole = (p) => (mir ? [-p[0], p[1], p[2]] : p), L = DRINK, LIP_POLE = [0.85, -0.3, 0.55], CHEST_POLE = [0.6, -0.6, 0.2];
+  // the arm through its places; each holds until the next has fully taken over (a later reach is laid over an earlier
+  // one), so the hand never drops between two of them
+  const path = [[t - 0.4, L.chest.p, CHEST_POLE], [+(t + Ph.lift * D * 0.5).toFixed(3), L.mid.p, LIP_POLE], [at('lift'), L.chin.p, LIP_POLE], [at('align'), L.lips.p, LIP_POLE], [at('touch'), L.touch.p, LIP_POLE],
+    [at('hold'), L.sip.p, LIP_POLE], [at('level'), L.lips.p, LIP_POLE], [at('lower'), L.chest.p, CHEST_POLE]];
+  const ov = path.map(([t0, p, pl], i) => {
+    const prev = i ? path[i - 1][0] : t0 - 0.3, fade = Math.max(0.12, Math.min(0.45, (t0 - prev) * 0.85)), next = path[i + 1];
+    return { t0: +(t0 - fade).toFixed(3), t1: +(next ? next[0] + 0.5 : t + D + 0.8).toFixed(3), fade, reach: { actor: o.actor, bone: 'spine01', offset: off(p) }, side, pole: pole(pl) };
+  });
+  ov.push(
+    // the wrist: level the whole way up, tips only at the lips, levels again before coming down
+    { t0: t - 0.4, t1: t + D + 0.8, fade: 0.3, keys: [{ on: `wrist.${side}`, keys: [[0, turn(L.chest.r)], [0.4, turn(L.chest.r)], [+(Ph.lift * D * 0.5 + 0.4).toFixed(3), turn(L.mid.r)], [+(Ph.lift * D + 0.4).toFixed(3), turn(L.chin.r)], [+(Ph.align * D + 0.4).toFixed(3), turn(L.lips.r)], [+(Ph.touch * D + 0.4).toFixed(3), turn(L.touch.r)], [+(Ph.hold * D + 0.4).toFixed(3), turn(L.sip.r)], [+(Ph.holdEnd * D + 0.4).toFixed(3), turn(L.sip.r)], [+(Ph.level * D + 0.4).toFixed(3), turn(L.lips.r)], [+(Ph.lower * D + 0.4).toFixed(3), turn(L.chest.r)], [+(D + 1.2).toFixed(3), turn(L.chest.r)]] }] },
+    // the eyes go to the cup as it rises, the head comes forward a little to meet it, then goes back for the sip
+    { t0: t - 0.3, t1: at('align') + 0.1, fade: 0.25, look: { actor: o.actor, bone: `wrist.${side}` }, head: 0.35 },
+    { t0: at('lift'), t1: at('touch') + 0.1, fade: 0.25, rot: [7, 0, 0], bone: 'head' },
+    { t0: at('touch'), t1: at('level') + 0.05, fade: 0.3, rot: [-14, 0, 0], bone: 'head' },
+  );
+  // the eyes shut as the cup tips and stay shut through the hold; they open once it is level again
+  const eyes = (ts) => { const a = at('touch'), b = at('level') + 0.15; if (ts <= a - 0.12 || ts >= b + 0.15) return 0; if (ts < a) return (ts - (a - 0.12)) / 0.12; if (ts > b) return 1 - (ts - b) / 0.15; return 1; };
+  return { overlays: ov, eyes, at: Object.fromEntries(Object.keys(Ph).map((k) => [k, at(k)])) };
+}
