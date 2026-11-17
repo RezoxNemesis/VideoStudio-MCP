@@ -19,6 +19,15 @@ export function facing(ctx, id) {
   const d = [e[0] - h[0], 0, e[2] - h[2]], l = Math.hypot(d[0], d[2]) || 1;
   return [d[0] / l, 0, d[2] / l];
 }
+/** Which way the BODY faces (the line of the shoulders), steadier than the head for aiming cameras: a head turns and
+ *  nods with every word, and a camera that follows it jerks (the judge counted 24 jerks in one close-up). */
+export function bodyFacing(ctx, id) {
+  const j = ctx.poses[id].j, a = j['clavicle.L'], b = j['clavicle.R'], hf = facing(ctx, id);
+  if (!a || !b) return hf;
+  const d = [b[0] - a[0], 0, b[2] - a[2]], l = Math.hypot(d[0], d[2]) || 1; let f = [-d[2] / l, 0, d[0] / l];
+  if (f[0] * hf[0] + f[2] * hf[2] < 0) f = [-f[0], 0, -f[2]];
+  return f;
+}
 /** A steady point near a body part: the hips carry it, the head only nudges it (no shiver from breathing). */
 export function steady(ctx, id, part = 'eyes', off = [0, 0, 0], k = 0.35) {
   const p = at(ctx, id, part), hips = at(ctx, id, 'hips'), base = [hips[0], p[1], hips[2]];
@@ -26,7 +35,7 @@ export function steady(ctx, id, part = 'eyes', off = [0, 0, 0], k = 0.35) {
 }
 /** A shot of a face. o: { az (degrees round from straight in front), dist (m), up (m above the eyes), fov, tilt, off, roll } */
 export function cu(ctx, id, o = {}) {
-  const eye = steady(ctx, id, 'eyes', o.off ?? [0, 0, 0], o.k ?? 0.6), f = facing(ctx, id), dir = rotY(f, (o.az ?? 22) * D2R), d = o.dist ?? 1.25;
+  const eye = steady(ctx, id, 'eyes', o.off ?? [0, 0, 0], o.k ?? 0.35), f = bodyFacing(ctx, id), dir = rotY(f, (o.az ?? 22) * D2R), d = o.dist ?? 1.25;
   return { pos: [eye[0] + dir[0] * d, eye[1] + (o.up ?? 0.03), eye[2] + dir[2] * d], target: [eye[0], eye[1] - (o.tilt ?? 0.04), eye[2]], fov: o.fov ?? 26, roll: o.roll ?? 0 };
 }
 /** Over the shoulder of `from`, onto the face of `to`. side 1 = over the right shoulder, -1 the left. */
@@ -44,12 +53,12 @@ export function two(ctx, a, b, o = {}) {
 }
 /** A low shot looking up at someone (power), from the front-side. */
 export function low(ctx, id, o = {}) {
-  const c = steady(ctx, id, 'chest'), f = facing(ctx, id), dir = rotY(f, (o.az ?? 30) * D2R), d = o.dist ?? 2.6;
+  const c = steady(ctx, id, 'chest'), f = bodyFacing(ctx, id), dir = rotY(f, (o.az ?? 30) * D2R), d = o.dist ?? 2.6;
   return { pos: [c[0] + dir[0] * d, (o.h ?? 0.35), c[2] + dir[2] * d], target: [c[0], c[1] + (o.lift ?? 0.25), c[2]], fov: o.fov ?? 38, roll: o.roll ?? 0 };
 }
 /** A high shot looking down on someone (small, alone), from the front-side. */
 export function high(ctx, id, o = {}) {
-  const c = steady(ctx, id, 'chest'), f = facing(ctx, id), dir = rotY(f, (o.az ?? 25) * D2R), d = o.dist ?? 3.4;
+  const c = steady(ctx, id, 'chest'), f = bodyFacing(ctx, id), dir = rotY(f, (o.az ?? 25) * D2R), d = o.dist ?? 3.4;
   return { pos: [c[0] + dir[0] * d, c[1] + (o.h ?? 2.6), c[2] + dir[2] * d], target: [c[0], c[1] - 0.2, c[2]], fov: o.fov ?? 34, roll: o.roll ?? 0 };
 }
 /** Follow a moving body from the side or behind: az 90 = from its left side, 180 = from behind. */
@@ -101,7 +110,7 @@ const letters = (i) => (i < 26 ? String.fromCharCode(97 + i) : `z${String.fromCh
  *            preset?, props?, mood? (its first emotion), alive? ('clip': a captured standing instead of the Stage's idle),
  *            changes? (to the person's design sheet), stage? (more for the body: { outfit: 'hoodie' | 'school_girl' | …, height, age }) }],
  *   beats: [ { say: lineId, by?, to?, emote?, gesture?, travel?, gap?, vo?, hands? (talking hands, default true) }
- *          | { wait: s } | { walk: id, to: [x, z], gait?, speed?, face? } | { do: id, gesture, travel? (let the clip carry the body; default on the spot) } | { emote: { id: emotion | [emotion, blend] } }
+ *          | { wait: s } | { walk: id, to: [x, z], gait?, speed?, face? } | { do: id, gesture, travel? (let the clip carry the body; default on the spot), warp? ([[s, clip s]…]: hold or time it) } | { emote: { id: emotion | [emotion, blend] } }
  *          | { look: id, at: id | 'cam' | [x, y, z] } | { mark: name } ],
  *   coverage?: 'dialogue' | 'single' | (T, D) => shots,  extra?: (T, D) => [shots placed by their times],
  *   amb?: name | [names], music?: cue name, title?: { word, sub } (over the first shot), caption?: text | { text, sub }, warm? (s of fx before each shot),
@@ -147,7 +156,7 @@ export function scene(def) {
           if (b.walk === c.id) { const from = busy.filter((x) => x.to).pop()?.to ?? c.at, dur = Math.hypot(b.to[0] - from[0], b.to[1] - from[1]) / (b.speed ?? 1.3); busy.push({ t0: t, t1: t + dur + 0.4, to: b.to, act: { t, go: b.to, gait: b.gait ?? 'walk', speed: b.speed ?? 1.3, ...(b.face != null ? { face: b.face } : {}), blend: 0.4 } }); }
           const g = b.do === c.id ? b.gesture : b.say && byOf(b) === c.id ? b.gesture : null;
           // a gesture is done on the spot (a captured clip's own steps would carry the body off its mark), unless the beat says travel: true
-          if (g) { const [clip, inn, out] = gestureClip(g), gt = b.say ? Math.max(0, t - 0.15) : t; busy.push({ t0: gt, t1: gt + (out - inn), act: { t: +gt.toFixed(3), clip, in: inn, out, blend: 0.4, ...(b.travel ? {} : { inPlace: true }) } }); }
+          if (g) { const [clip, inn, out] = gestureClip(g), gt = b.say ? Math.max(0, t - 0.15) : t, len = b.warp ? b.warp[b.warp.length - 1][0] : out - inn; busy.push({ t0: gt, t1: gt + len, act: { t: +gt.toFixed(3), clip, in: inn, out, blend: b.blend ?? 0.4, ...(b.warp ? { warp: b.warp } : {}), ...(b.travel ? {} : { inPlace: true }) } }); } // b.warp: [[local s, clip s]…] times a gesture (a kneel held by slowing its end)
         }
         busy.sort((x, y) => x.t0 - y.t0);
         // standing between beats: the Stage's own idle (it breathes and its weight drifts); alive: 'clip' plays a captured standing
