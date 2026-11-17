@@ -991,3 +991,15 @@ Every action is built from a 12-pose breakdown (the owner's reference sheets): n
   directions in the body's frame for every turn, pick by score.
 - Sensei: palms pressed together (facing, < 7 cm) is contact, not self-intersection.
 - Overhead scene items must never use a small `depth` (it is the sort distance): at 0.6 lane wires were drawn across faces.
+
+## Sound upgrades (17 Nov 2026)
+
+- Footsteps are laid on the REAL foot strikes of the solved motion (kit/project.js `footsteps`): a foot that travelled
+  and comes down low and still. Louder for a long stride than a shuffle; each foot its own pitch. Scene options:
+  `steps: 'step' | 'stepstone' | 'snowstep' | false`, `stepGain`.
+- Contact foley by itself: a thing set down knocks (`click` for a cup/phone/tablet, `paper` for sheets), a high five
+  claps, a handshake's palms meet, a namaste's palms touch.
+- Every voice line goes through the dialogue chain (`voiceChain`: high-pass 90 Hz, 2.5:1 compressor above −24 dB,
+  soft de-esser), then into its place's acoustic: scene option `space: 'open' | 'street' | 'room' | 'hall' | 'cave' | 'car'`.
+- Hands: a reaching hand pre-shapes to the thing — its own grip opened only a little wider than the thing (aperture
+  from the thing's radius), widest two thirds of the way there.

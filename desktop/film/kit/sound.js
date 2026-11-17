@@ -53,6 +53,28 @@ function pitched(x, f) {
   for (let i = 0; i < n; i++) { const p = (i * (x.n - 1)) / (n - 1), i0 = Math.floor(p), fr = p - i0, i1 = Math.min(x.n - 1, i0 + 1); o.l[i] = x.l[i0] * (1 - fr) + x.l[i1] * fr; o.r[i] = x.r[i0] * (1 - fr) + x.r[i1] * fr; }
   return o;
 }
+/**
+ * THE DIALOGUE CHAIN every line goes through, as a mixer would: a high-pass at ~90 Hz (rumble and the boom of a close
+ * voice out), then a gentle compressor (about 2.5 : 1 above −24 dB, 10 ms attack, 120 ms release, the loud words
+ * brought in so the quiet ones are heard over the bed), then a soft de-esser (a 6 kHz+ band held down when it spikes).
+ */
+export function voiceChain(x) {
+  const n = x.n, o = bus(n), hpA = Math.exp(-2 * Math.PI * 90 / SR), at = Math.exp(-1 / (0.01 * SR)), rl = Math.exp(-1 / (0.12 * SR));
+  const th = Math.pow(10, -24 / 20), ratio = 2.5, sA = Math.exp(-2 * Math.PI * 6000 / SR);
+  for (const ch of ['l', 'r']) {
+    const src = x[ch], dst = o[ch]; let px = 0, py = 0, env = 0, lp = 0, senv = 0, benv = 0;
+    for (let i = 0; i < n; i++) {
+      const hp = hpA * (py + src[i] - px); px = src[i]; py = hp;
+      lp = sA * lp + (1 - sA) * hp; const hi = hp - lp; // the sibilant band
+      const a = Math.abs(hp); env = a > env ? at * env + (1 - at) * a : rl * env + (1 - rl) * a;
+      const g = env > th ? Math.pow(env / th, 1 / ratio - 1) : 1;
+      const ah = Math.abs(hi), al = Math.abs(lp); senv = ah > senv ? 0.9 * senv + 0.1 * ah : 0.999 * senv + 0.001 * ah; benv = 0.999 * benv + 0.001 * al;
+      const ds = senv > 0.6 * benv + 0.02 ? Math.max(0.45, (0.6 * benv + 0.02) / senv) : 1;
+      dst[i] = (lp + hi * ds) * g;
+    }
+  }
+  return o;
+}
 /** A small natural room added to a bus (feedback delays with damping). */
 function room(b, wet = 0.1, secs = 0.7) {
   const taps = [1557, 1617, 1491, 1422, 1277, 1356].map((d) => Math.round((d * SR) / 44100)), fb = Math.pow(0.001, taps[0] / (secs * SR));
@@ -76,16 +98,19 @@ export function mix(TL, D, lang, outFile) {
   const N = Math.round((TL.total + 0.5) * SR), dia = bus(N), mus = bus(N), amb = bus(N), fx = bus(N), missing = [];
   // the film's own sounds first, then the kit's (footsteps, cloth, hits, whooshes; wind, birds, rain, sea …)
   const where = [path.join(D.audio, 'music'), path.join(D.audio, 'sfx'), path.join(D.audio, 'amb'), D.audio, path.join(KIT_SOUNDS, 'sfx'), path.join(KIT_SOUNDS, 'amb')];
+  // where each sequence is heard: the voices sit in that place's own acoustic (a lane in the rain is dry and open, a
+  // room has walls close by, a hall rings). Sequences say so with `space`; the rest get a small neutral room.
+  const SPACES = { open: [0.012, 0.22], street: [0.03, 0.35], room: [0.075, 0.55], hall: [0.15, 1.5], cave: [0.22, 2.4], car: [0.03, 0.18] };
+  const spaceOf = {}; for (const e of TL.sounds) if (e.space) spaceOf[e.seq] = SPACES[e.space] ?? SPACES.room;
   for (const c of TL.cues) {
     const p = path.join(D.vo, lang, `${c.id}.wav`);
     if (!fs.existsSync(p)) { missing.push(`voice ${c.id}`); continue; }
-    const x = load(p); let pk = 1e-9, sq = 0;
+    const x = voiceChain(load(p)); let pk = 1e-9, sq = 0;
     for (let i = 0; i < x.n; i++) { const a = Math.abs(x.l[i]); if (a > pk) pk = a; sq += x.l[i] * x.l[i]; }
     const g = Math.min(0.9 / pk, 0.075 / (Math.sqrt(sq / Math.max(1, x.n)) + 1e-9)); // every line at a similar loudness, never clipping
-    if (c.vo) { const o = bus(x.n + SR); place(o, x, 0, g); room(o, 0.2, 1.4); place(dia, o, c.at + (c[lang]?.off ?? 0)); } // the narrator: a little larger than life
-    else place(dia, x, c.at + (c[lang]?.off ?? 0), g);
+    const [wet, secs] = c.vo ? [0.2, 1.4] : spaceOf[c.seq] ?? [0.05, 0.5]; // (the narrator: a little larger than life)
+    const o = bus(x.n + Math.round(SR * Math.min(2.5, secs + 0.4))); place(o, x, 0, g); room(o, wet, secs); place(dia, o, c.at + (c[lang]?.off ?? 0));
   }
-  room(dia, 0.05, 0.5);
   for (const e of TL.sounds) {
     if ('sfx' in e) {
       const p = find(where, e.sfx); if (!p) { missing.push(`sound ${e.sfx}`); continue; }

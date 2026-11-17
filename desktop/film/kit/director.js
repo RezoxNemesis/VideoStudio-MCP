@@ -231,6 +231,7 @@ export function scene(def) {
     sound: (T) => {
       const ev = [], ambs = def.amb ? (Array.isArray(def.amb) ? def.amb : [def.amb]) : [];
       for (const a of ambs) ev.push({ t0: 0, t1: T.dur, amb: a, gain: 0.32 });
+      if (def.space) ev.push({ t0: 0, t1: T.dur, space: def.space }); // where the voices are heard (kit/sound.js SPACES)
       if (def.music) ev.push({ t0: def.musicAt ?? 0.3, t1: T.dur, music: def.music, gain: def.musicGain ?? 0.55, fadeIn: 1.6, fadeOut: 2.2 });
       // footsteps: laid on the real foot strikes of the solved motion (kit/project.js footsteps); these timed ones are
       // only the stand-in until the motion is solved
