@@ -496,6 +496,13 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     // armour of small plates (design.body.plates): the part's body is painted by a map of its plates, laid round it
     const pl8 = d.body?.plates?.[p.name];
     if (pl8 && p.idxCore.length) cp.add(p.out, p.idxCore, platePaint({ ...paint, group: paint.group ?? p.name }, pl8, rgbOf), nr, p.u, girthXY(p));
+    else if (iCore.length && drawn && p.material === 'skin' && !p.u && d.face?.neckShadow !== false && lmk.mouth) {
+      // a drawn face throws its shadow down the neck: the upper neck under the jaw is in shade, as every reference painting
+      // has it (17 Nov 2026) — the lower neck towards the collarbones keeps the light
+      const nu = p.neckU ?? (p.neckU = (() => { const nb = new Set(B.names.map((n, i) => (/neck/i.test(n) ? i : -1)).filter((i) => i >= 0)), base = p.base ?? p.pos, a = new Float32Array(p.n), y0 = lmk.mouth[1] - 0.15;
+        for (let v = 0; v < p.n; v++) { let w = 0; for (let k = 0; k < 4; k++) if (nb.has(p.si[v * 4 + k])) w += p.sw[v * 4 + k]; a[v] = w > 0.35 && base[v * 3 + 1] > y0 ? 1 : 0; } return a; })());
+      cp.add(p.out, iCore, { ...paint, group: paint.group ?? p.name, bands: [[0, 0.5, { ...paint }], [0.5, 2, { ...paint, fill: paint.shade, flat: true }]] }, nr, nu);
+    }
     else if (iCore.length) cp.add(p.out, iCore, { ...paint, group: paint.group ?? p.name }, nr, p.u);
     if (iLimb.length) { const pl = limbPaint({ ...paint, group: paint.group ?? p.name }, p.name, d, rgbOf); const id = cp.add(p.out, iLimb, pl, nr, p.u); limbIds.add(id); for (const b of pl.bandIds ?? []) limbIds.add(b); if (p.material === 'skin') handIds.add(id); }
     // fingers: each its own part of the skin, so two that lie side by side have a line between them (none where they leave the palm)
@@ -529,7 +536,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
       const maps = drawn ? decP : [browP, ...decP];
       const map = drawn ? (dec ? dec.map : null) : (x, y) => { if (brow(x, y) === 0) return 0; const k = dec ? dec.map(x, y) : -1; return k < 0 ? -1 : k + 1; };
       const nrF = rounded(p.out, nr, 0.55, 0.13);
-      const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: drawn ? d.face?.hairShadow === true : d.face?.hairShadow !== false, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
+      const fp = { ...paint, thr: drawn ? (fd.thr ?? -0.08) : -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: drawn ? d.face?.hairShadow === true : d.face?.hairShadow !== false, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
       eyeIds.add(fid); faceIds.add(fid); for (const k of fp.mapIds ?? []) faceIds.add(k);
       const mi = p.idxMouth.length ? mouthInside(mouthShut, rgbOf) : null; if (mi) cp.add(p.out, p.idxMouth, mi, nr);
     }
@@ -566,11 +573,11 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
     if (!ch.hair3 || ch.hair3.B !== B) { const h3 = makeHair(B, d.hair3 ?? (d.headgear?.type === 'helmet' ? 'buzz' : d.hair.tufts?.some((t) => t.body) ? 'long' : 'short'), (d.name ?? 'x').length * 7 + (d.name ?? 'x').charCodeAt(0)); ch.hair3 = h3 ? { ...h3, B } : { B, none: true }; }
     if (!ch.hair3.none) {
       const hp = hairPaint(d, rgbOf, { edge: ch.hair3.cut && (ch.hair3.cut.top ?? 0.06) < 0.07 ? 2.6 : 1.5 });
-      const tieC = d.hair.tie ?? (d.hair.paint === 'clean' ? '#2b2b31' : '#9c1f26'), tieP = { fill: rgbOf(tieC), shade: rgbOf(shadeHex(tieC, -0.32)), thr: 0.05, group: 'tie', bias: 0.003, noAO: true, recv: false };
+      const tieC = d.hair.tie ?? ((d.hair.paint ?? (drawn ? 'clean' : 'strands')) === 'clean' ? '#2b2b31' : '#9c1f26'), tieP = { fill: rgbOf(tieC), shade: rgbOf(shadeHex(tieC, -0.32)), thr: 0.05, group: 'tie', bias: 0.003, noAO: true, recv: false };
       for (const m of hairMeshes(ch.hair3, B, clamp(ch.t - (ch.hairT ?? ch.t), 0, 0.05) || 1 / 60, ch.t, o.wind ?? null)) { if (m.tie) { eyeIds.add(cp.add(m.pos, m.idx, tieP)); continue; } // (hair.paint 'clean' — the anime way: the whole head of hair is ONE form in ONE colour: one terminator over all of
       //  it, one band of shine, ink only round its outline; no strokes, no streaks, no line round every lock — 16 Nov 2026,
       //  the owner: hair "full of paint")
-      const clean = d.hair.paint === 'clean', hq = clean ? { ...hp, bands: undefined, group: 'hair', bias: m.mass ? 0.001 : 0.002, zig: 0, edge: 0.45, lap: 0.007, ring: [0.6, 0.63, 0.67, 0.71], hiAt: 2 } : null;
+      const clean = (d.hair.paint ?? (drawn ? 'clean' : 'strands')) === 'clean', hq = clean ? { ...hp, bands: undefined, group: 'hair', bias: m.mass ? 0.001 : 0.002, zig: 0, edge: 0.45, lap: 0.007, ring: [0.6, 0.63, 0.67, 0.71], hiAt: 2 } : null;
       const id = cp.add(m.pos, m.idx, clean ? hq : m.mass ? { ...hp, bands: undefined, bias: 0.001 } : m.set !== undefined ? { ...hp, group: m.set ? 'hair-b' : 'hair-a' } : hp, rounded(m.pos, normalsOf(m.pos, m.idx, new Float32Array(m.pos.length)), clean ? (m.tail ? 0.35 : 1) : 0.82), !clean && hp.bands ? m.u ?? null : null); eyeIds.add(id); for (const b of hp.bandIds ?? []) eyeIds.add(b); }
       ch.hairT = ch.t;
     }
