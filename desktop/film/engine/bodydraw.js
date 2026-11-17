@@ -417,7 +417,7 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
   if (typeof pb.after === 'function') pb.after(B); // a film's own change to the posed body (moves and turns of kit/combat.js are applied by poseBody)
   const sun = V.norm(o.sun ?? [-0.45, 0.7, 0.5]);
   // the light a cel is drawn under leans towards the lens, so a face-on figure is never all shadow
-  const L = V.norm(V.add(V.mul(sun, 0.78), V.add(V.mul(cam.F, -0.34), V.mul(cam.U, 0.22))));
+  const L = V.norm(V.add(V.mul(sun, 0.78), V.add(V.mul(cam.F, -0.34), V.mul(cam.U, 0.42)))); // (and from above: the neck under the chin falls into shadow, as drawn faces always have it)
   const ss = hpx > 900 ? 2 : hpx > 240 ? 2 : 3;
   const pm = look()?.paint?.mode === 'paint';
   const cp = new CelPainter(cam, { ss, light: L, ink: hex(ink), lw: lwB * (pm ? 2.1 : 1.75), lwIn: lwB * (pm ? 1.05 : 0.95), rimColor: typeof o.rim === 'string' ? hex(o.rim) : Array.isArray(o.rim) ? o.rim : undefined, rimAmt: o.rimAmt }); // (the scene's rim light gives the rim its colour: a warm lamp, a cold moon)
@@ -455,7 +455,13 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
           bands: [[0, pu, { fill: [16, 12, 16], shade: [16, 12, 16], flat: true }], [pu, ir * 0.82, { fill: rgbOf(ic), shade: rgbOf(shadeHex(ic, -0.35)), thr: 0.15 }], [ir * 0.82, ir, { fill: rgbOf(shadeHex(ic, -0.55)), shade: rgbOf(shadeHex(ic, -0.6)), flat: true }]] }, nr, u);
         eyeIds.add(id);
       } else if ((p.name === 'teeth' || p.name === 'tongue') && mouthShut) { /* lips that only touch show no teeth between them: a closed mouth is a line */ }
-      else if (p.name === 'teeth') cp.add(p.out, p.idx, { fill: [244, 240, 232], shade: [200, 190, 190], line: false, group: 'mouth', thr: -0.3 }, nr);
+      else if (p.name === 'teeth') {
+        // drawn mouths show the UPPER teeth as a thin band under the lip; the lower teeth sit in the mouth's shadow
+        // (a full set lit from corner to corner reads as a grin, whatever the mouth is saying)
+        const rest = p.base ?? p.pos, my = lmk.mouth?.[1] ?? lmk.eyeL[1] - 0.075, ut = p.uTeeth ?? (p.uTeeth = Float32Array.from({ length: p.n }, (_, v) => (rest[v * 3 + 1] < my - 0.004 || Math.abs(rest[v * 3]) > 0.0105 ? 1 : 0)));
+        const inside = rgbOf('#5a2228');
+        cp.add(p.out, p.idx, { fill: [238, 230, 220], shade: [196, 178, 172], line: false, group: 'mouth', thr: 0.05, bands: [[0, 0.5, { fill: [238, 230, 220], shade: [196, 178, 172], thr: 0.05 }], [0.5, 2, { fill: inside, shade: inside, flat: true }]] }, nr, ut);
+      }
       else if (p.name === 'tongue') cp.add(p.out, p.idx, { fill: rgbOf('#b0565a'), shade: rgbOf('#7a3238'), line: false, group: 'mouth' }, nr);
       else cp.add(p.out, p.idx, { fill: hex(ink), shade: hex(ink), flat: true, two: true, bias: 0.002, line: false, group: 'eye' }, nr);
       continue;
@@ -512,16 +518,18 @@ export function drawBodyMesh(ch, g, cam, pose, face, lit, o) {
           for (const v of hv) { let w = 0; for (let k = 0; k < 4; k++) if (jaw.has(p.si[v * 4 + k])) w += p.sw[v * 4 + k]; lower[v] = w; } // how much of each bit of skin hangs from the jaw: the lower lip does, the upper does not
           return faceMarksOf(base, p.idxHead, lmk, jaw.size ? lower : null);
         })());
-        const ey = fd.eye ?? {}, e3 = fd.eye3 ?? {}, ehw = e3.w ?? 0.0215, ehh = e3.h ?? ehw * ((ey.h ?? 0.15) / (ey.w ?? 0.2)) * 1.05;
+        const ey = fd.eye ?? {}, e3 = fd.eye3 ?? {}, ehw = e3.w ?? 0.0235, ehh = e3.h ?? ehw * ((ey.h ?? 0.15) / (ey.w ?? 0.2)) * 1.05;
         const marks = faceMarkOptions(d, rgbOf);
-        dec = faceDecals(M, { ...marks, shadeSide: V.dot(L, dirOnBone(B, 'head', [1, 0, 0])) > 0 ? -1 : 1, lips: fd.lips ?? 0.45, nostrils: fd.nostrils, eye: drawn ? { cx: M.eyeX + (e3.dx ?? 0.003), cy: e3.dy ?? 0.003, hw: ehw, hh: ehh } : { cx: M.eyeX, cy: 0.001, hw: 0.017, hh: 0.0085 } });
-        decP = decalPaints(dec, paint.fill, paint.shade, { ...marks, lips: fd.lips ?? 0.45, lip: fd.lipColor ? rgbOf(fd.lipColor) : undefined, nose: fd.nose, hairShadow: fd.hairShadow });
+        dec = faceDecals(M, { ...marks, shadeSide: V.dot(L, dirOnBone(B, 'head', [1, 0, 0])) > 0 ? -1 : 1, lips: fd.lips ?? (drawn ? 0.2 : 0.45), nostrils: fd.nostrils ?? false, eye: drawn ? { cx: M.eyeX + (e3.dx ?? 0.003), cy: e3.dy ?? 0.003, hw: ehw, hh: ehh } : { cx: M.eyeX, cy: 0.001, hw: 0.017, hh: 0.0085 } });
+        // (a drawn face, the anime way: the nose a light touch, the lips barely coloured, no hair shadow smeared over the cheek —
+        //  17 Nov 2026, compared with the owner's reference paintings)
+        decP = decalPaints(dec, paint.fill, paint.shade, { ...marks, lips: fd.lips ?? (drawn ? 0.2 : 0.45), lip: fd.lipColor ? rgbOf(fd.lipColor) : undefined, nose: fd.nose ?? (drawn ? 0.45 : undefined), hairShadow: drawn ? fd.hairShadow === true : fd.hairShadow });
       }
       const browP = { fill: rgbOf(bc), shade: rgbOf(bc), flat: true, line: false };
       const maps = drawn ? decP : [browP, ...decP];
       const map = drawn ? (dec ? dec.map : null) : (x, y) => { if (brow(x, y) === 0) return 0; const k = dec ? dec.map(x, y) : -1; return k < 0 ? -1 : k + 1; };
       const nrF = rounded(p.out, nr, 0.55, 0.13);
-      const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: d.face?.hairShadow !== false, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
+      const fp = { ...paint, thr: -0.32, group: 'skin', ...(drawn ? { edge: 2.4 } : {}), recv: false, recvHair: drawn ? d.face?.hairShadow === true : d.face?.hairShadow !== false, noAO: true, ...(map ? { map, maps } : {}) }, fid = cp.add(p.out, p.idxHead, fp, nrF, null, map ? xy : null);
       eyeIds.add(fid); faceIds.add(fid); for (const k of fp.mapIds ?? []) faceIds.add(k);
       const mi = p.idxMouth.length ? mouthInside(mouthShut, rgbOf) : null; if (mi) cp.add(p.out, p.idxMouth, mi, nr);
     }

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { V, clamp, lerp, hash, smooth } from '../engine/core.js';
 
 import { ENV, onEnv } from '../engine/env.js';
+import { look } from '../engine/look.js';
 const readJ = (f) => { try { return fs.existsSync(ENV.voDir + f) ? JSON.parse(fs.readFileSync(ENV.voDir + f, 'utf8')) : {}; } catch { return {}; } };
 /** Spoken lines per language: VO[lang][id] = { seconds, who, text, show }, LIP[lang][id] = { n, open[], wide[] }. */
 export const VO = { en: {}, hi: {} };
@@ -56,6 +57,16 @@ export function mouthAt(cues, who, t, lang) {
     const lp = LIP[lang]?.[c.id]; if (!lp) continue;
     const u = (t - c.t0 - lineOff(c.id, lang)) * 60;
     if (u < -2 || u > lp.n + 3) continue;
+    // the anime way (serifu / kuchipaku): a mouth has a few drawings — shut, half open, open — and each is HELD a
+    // twelfth of a second; it opens downwards, small when the voice is quiet, and widens only a little on wide vowels.
+    // A smooth, every-frame mouth that also spreads to the corners reads as a grin (the owner, 17 Nov 2026: the lips
+    // were "more on wide"). look.lip: 'smooth' keeps the old, continuous mouth.
+    const L = look(), serifu = (L?.lip ?? (L?.style === 'anime' ? 'serifu' : 'smooth')) === 'serifu';
+    if (serifu) {
+      const k = clamp(Math.floor(u / 5) * 5, 0, lp.n - 1), k2 = Math.min(lp.n - 1, k + 2), o = Math.max(lp.open[k], lp.open[k2]), w = (lp.wide[k] + lp.wide[k2]) / 2;
+      const open = o < 0.14 ? 0 : o < 0.45 ? 0.36 : 0.7;
+      return { open, wide: clamp(w * 0.45, -0.6, 0.3), id: c.id };
+    }
     const i = clamp(Math.floor(u), 0, lp.n - 1), j = Math.min(lp.n - 1, i + 1), f = clamp(u - i);
     return { open: lerp(lp.open[i], lp.open[j], f), wide: lerp(lp.wide[i], lp.wide[j], f), id: c.id };
   }

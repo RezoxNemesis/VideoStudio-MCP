@@ -543,28 +543,40 @@ function eyesAndBrows(g, k) {
       g.fillStyle = lit(ey.white ?? '#fdfbf7'); g.fill();
       g.clip();
       // iris and pupil follow the gaze
-      const ir = ey.iris ?? 0.56, gx = clamp(look[0], -1, 1) * 0.34 * (mirror ? -1 : 1), gy = clamp(look[1], -1, 1) * 0.22 + 0.02;
-      const pup = face.pupil ?? 1;
+      const ir = (ey.iris ?? 0.56) * (k.frame3 ? 1.2 : 1), gx = clamp(look[0], -1, 1) * 0.34 * (mirror ? -1 : 1), gy = clamp(look[1], -1, 1) * 0.22 + 0.02;
+      const pup = Math.max(0.15, face.pupil ?? 1);
       inFrame(fm, mirror, () => { g.beginPath(); g.ellipse(gx, gy, ir * pup, ir * 1.18 * pup, 0, 0, 7); });
-      const c1 = lit(ey.color ?? '#5a3a22');
-      g.fillStyle = c1; g.fill();
+      const c1 = lit(ey.color ?? '#5a3a22'), cDark = lit(shadeHex(ey.color ?? '#5a3a22', -0.55)), cLight = lit(shadeHex(ey.color ?? '#5a3a22', 0.45)), cGlow = lit(shadeHex(ey.color ?? '#5a3a22', 0.75));
+      // paint inside the eye's own frame (gradients then live on the eye, not on the picture)
+      const paintIn = (path, style, alpha = 1) => { g.save(); g.transform(fm.ex[0] * (mirror ? -1 : 1), fm.ex[1] * (mirror ? -1 : 1), fm.ey[0], fm.ey[1], fm.c0[0], fm.c0[1]); g.beginPath(); path(); g.fillStyle = typeof style === 'function' ? style() : style; g.globalAlpha *= alpha; g.fill(); g.restore(); };
+      const irisPath = () => g.ellipse(gx, gy, ir * pup, ir * 1.18 * pup, 0, 0, 7);
       if (big) {
-        // darker top of the iris (the lid's shade) and a lighter crescent below
-        g.save(); g.clip();
-        inFrame(fm, mirror, () => { g.beginPath(); g.ellipse(gx, gy + ir * 0.75, ir * 1.3, ir * 0.95, 0, 0, 7); }); g.fillStyle = lit(shadeHex(ey.color ?? '#5a3a22', -0.45)); g.fill();
-        inFrame(fm, mirror, () => { g.beginPath(); g.ellipse(gx, gy - ir * 0.55, ir * 0.7, ir * 0.45, 0, 0, 7); }); g.fillStyle = lit(shadeHex(ey.color ?? '#5a3a22', 0.3)); g.globalAlpha = 0.75; g.fill(); g.globalAlpha = 1;
-        g.restore();
+        // the anime iris: dark under the lid, clearing to a warm glow at the bottom, a dark ring at its edge,
+        // fine spokes, a soft pupil — the way the references paint it
+        paintIn(irisPath, () => { const gr = g.createLinearGradient(gx, gy + ir * 1.18, gx, gy - ir * 1.18); gr.addColorStop(0, cDark); gr.addColorStop(0.42, c1); gr.addColorStop(0.8, cLight); gr.addColorStop(1, cGlow); return gr; });
+        g.save(); g.transform(fm.ex[0] * (mirror ? -1 : 1), fm.ex[1] * (mirror ? -1 : 1), fm.ey[0], fm.ey[1], fm.c0[0], fm.c0[1]);
+        g.beginPath(); irisPath(); g.clip();
+        g.strokeStyle = cDark; g.globalAlpha = 0.35; g.lineWidth = ir * 0.035;
+        for (let q = 0; q < 14; q++) { const an = q / 14 * Math.PI * 2 + 0.3; g.beginPath(); g.moveTo(gx + Math.cos(an) * ir * 0.45 * pup, gy + Math.sin(an) * ir * 0.53 * pup); g.lineTo(gx + Math.cos(an) * ir * 0.92 * pup, gy + Math.sin(an) * ir * 1.08 * pup); g.stroke(); }
+        g.globalAlpha = 1; g.restore();
+        paintIn(() => { g.ellipse(gx, gy, ir * pup, ir * 1.18 * pup, 0, 0, 7); g.ellipse(gx, gy, ir * pup * 0.84, ir * 1.18 * pup * 0.86, 0, 0, 7); }, cDark, 0.9);
+        // (fill-rule nonzero would fill both; draw the ring as a stroke instead)
+        g.save(); g.transform(fm.ex[0] * (mirror ? -1 : 1), fm.ex[1] * (mirror ? -1 : 1), fm.ey[0], fm.ey[1], fm.c0[0], fm.c0[1]); g.beginPath(); irisPath(); g.lineWidth = ir * 0.13; g.strokeStyle = cDark; g.stroke(); g.restore();
+        paintIn(() => g.ellipse(gx, gy + 0.04, ir * 0.4 * pup, ir * 0.52 * pup, 0, 0, 7), () => { const gr = g.createRadialGradient(gx, gy + 0.04, 0, gx, gy + 0.04, Math.max(0.01, Math.abs(ir * 0.55 * pup))); gr.addColorStop(0, ink); gr.addColorStop(0.75, ink); gr.addColorStop(1, cDark); return gr; });
+      } else {
+        paintIn(irisPath, c1);
+        paintIn(() => g.ellipse(gx, gy + 0.03, ir * 0.42 * pup, ir * 0.55 * pup, 0, 0, 7), ink);
       }
-      inFrame(fm, mirror, () => { g.beginPath(); g.ellipse(gx, gy + 0.03, ir * 0.42 * pup, ir * 0.55 * pup, 0, 0, 7); }); g.fillStyle = ink; g.fill();
       if (face.glow) { inFrame(fm, mirror, () => { g.beginPath(); g.ellipse(gx, gy, ir * pup, ir * 1.18 * pup, 0, 0, 7); }); g.fillStyle = face.glow; g.globalAlpha = clamp(face.glowAmt ?? 0.8); g.fill(); g.globalAlpha = 1; }
-      // shade under the upper lid
-      inFrame(fm, mirror, () => { g.beginPath(); g.moveTo(inX, inY); g.bezierCurveTo(-0.55, lidTop * (1 - sharp * 0.35), 0.35, lidTop * 1.02, outX, outY); g.bezierCurveTo(0.35, lidTop * 0.62, -0.55, lidTop * 0.55, inX, inY); g.closePath(); });
-      g.fillStyle = 'rgba(40,30,60,0.22)'; g.fill();
-      // highlights: the light's reflection
+      // the shade the upper lid and lashes throw over the eye (soft, cool)
+      paintIn(() => { g.moveTo(inX, inY); g.bezierCurveTo(-0.55, lidTop * (1 - sharp * 0.35), 0.35, lidTop * 1.02, outX, outY); g.bezierCurveTo(0.35, lidTop * 0.5, -0.55, lidTop * 0.42, inX, inY); g.closePath(); },
+        () => { const gr = g.createLinearGradient(0, lidTop, 0, lidTop * 0.35); gr.addColorStop(0, 'rgba(50,30,70,0.42)'); gr.addColorStop(1, 'rgba(50,30,70,0)'); return gr; });
+      // highlights: a big soft one up on the light's side, a small sharp one opposite, a faint glint low in the iris
       if (big && !face.dead) {
-        const hx = gx + (mirror ? 1 : -1) * ir * 0.3 * (L[0] < 0 ? 1 : -1), hy = gy + ir * 0.5;
-        inFrame(fm, mirror, () => { g.beginPath(); g.ellipse(hx, hy, ir * 0.24, ir * 0.3, 0, 0, 7); g.ellipse(gx - (hx - gx) * 0.9, gy - ir * 0.45, ir * 0.11, ir * 0.13, 0, 0, 7); });
-        g.fillStyle = '#ffffff'; g.fill();
+        const sdL = (mirror ? 1 : -1) * (L[0] < 0 ? 1 : -1), hx = gx + sdL * ir * 0.32, hy = gy + ir * 0.48;
+        paintIn(() => g.ellipse(hx, hy, ir * 0.27, ir * 0.33, -0.3, 0, 7), '#ffffff');
+        paintIn(() => g.ellipse(gx - sdL * ir * 0.38, gy - ir * 0.42, ir * 0.12, ir * 0.12, 0, 0, 7), '#ffffff', 0.9);
+        paintIn(() => g.ellipse(gx + sdL * ir * 0.1, gy - ir * 0.75, ir * 0.36, ir * 0.12, 0, 0, 7), cGlow, 0.55);
       }
       g.restore();
       // upper lash: a thick tapered line; lower lid: a hair line
@@ -614,6 +626,15 @@ function eyesAndBrows(g, k) {
 function drawEyes3(g, k) {
   const face = k.face, blink = clamp(face.blink ?? 0), open = clamp((face.eyeOpen ?? 1) * (1 - blink), 0, 1.4);
   const inFrame = (fm, mirror, fn) => { g.save(); g.transform(fm.ex[0] * (mirror ? -1 : 1), fm.ex[1] * (mirror ? -1 : 1), fm.ey[0], fm.ey[1], fm.c0[0], fm.c0[1]); fn(); g.restore(); };
+  // a soft blush on the cheeks, under and outside each eye (drawn faces always carry a little warmth there)
+  const bl = clamp(face.blush ?? k.d.face?.blush ?? 0.3);
+  if (k.px > 26 && bl > 0.02) for (const sd of [1, -1]) {
+    const fm = k.frame3(sd, 'eye', 0); if (!fm || fm.vis < 0.2) continue;
+    g.save(); g.transform(fm.ex[0] * (sd < 0 ? -1 : 1), fm.ex[1] * (sd < 0 ? -1 : 1), fm.ey[0], fm.ey[1], fm.c0[0], fm.c0[1]);
+    g.translate(0.35, -1.75); g.scale(1.25, 0.6);
+    const gr = g.createRadialGradient(0, 0, 0, 0, 0, 1); gr.addColorStop(0, `rgba(240,110,110,${0.42 * bl})`); gr.addColorStop(1, 'rgba(240,110,110,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 1, 0, 7); g.fill(); g.restore();
+  }
   eyesAndBrows(g, { ...k, over: true, mid: k.px > 12, big: k.px > 26, open, look: face.look ?? [0, 0], frame: k.frame3, inFrame });
 }
 export function drawEyesOn(g, k) { drawEyes3(g, k); }

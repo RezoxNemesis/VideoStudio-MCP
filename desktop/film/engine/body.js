@@ -806,9 +806,11 @@ export function faceShapes(f) {
   const c01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x), w = {};
   const open = c01(f.mouthOpen ?? 0), wide = f.mouthWide ?? 0, smile = f.smile ?? 0, tilt = f.browTilt ?? 0, eo = f.eyeOpen ?? 1, es = f.eyeSmile ?? 0, blink = c01(f.blink ?? 0);
   const anger = c01(-tilt), sad = c01(tilt), up = c01(smile), down = c01(-smile), round = c01(-wide), wd = c01(wide);
-  const openAmt = open * (0.52 - 0.14 * wd) + c01(eo - 1.1) * 0.25;
+  const openAmt = open * (0.78 - 0.18 * wd) + c01(eo - 1.1) * 0.25; // (a drawn mouth that talks drops the jaw: taller than it is wide)
   w['mouth-open'] = openAmt; w['mouth-part-later'] = open * 0.22 + down * 0.1 * open;
-  w['mouth-retraction'] = open * 0.4 * wd + wd * 0.35 + up * 0.25; w['mouth-protusion'] = open * 0.5 * round + round * 0.3; w['mouth-pursing'] = open * 0.45 * round + round * 0.4;
+  // a drawn talking mouth opens DOWN more than it spreads: the corners stay near where they rest unless the face smiles
+  // (wide vowels pull them out a little, never into a grin), and an open jaw draws the lips slightly in
+  w['mouth-retraction'] = open * 0.16 * wd + wd * 0.14 + up * 0.22; w['mouth-protusion'] = open * 0.5 * round + round * 0.3; w['mouth-pursing'] = open * 0.45 * round + round * 0.4 + open * 0.16 * (1 - up);
   w['mouth-corner-puller'] = up * 0.9; w['mouth-elevation'] = up * 0.25 + (f.sneer ?? 0) * 0.3; w['mouth-upward-retraction'] = up * 0.35 + anger * 0.2 * down;
   w['mouth-depression'] = down * 0.75; w['mouth-depression-retraction'] = down * 0.3; w['mouth-compression'] = down * 0.35 * (1 - open) + anger * 0.3 * (1 - open); w['mouth-eversion'] = open * 0.1;
   const cl = c01(blink + c01(1 - eo) + es * 0.5);
@@ -822,7 +824,7 @@ export function faceShapes(f) {
   w['eyebrows-left-down'] = anger * 0.95 + c01(-bl) * 0.8; w['eyebrows-right-down'] = anger * 0.95 + c01(-br) * 0.8;
   const nose = anger * 0.45 * (0.4 + 0.6 * down) + (f.sneer ?? 0) * 0.7; w['nose-left-elevation'] = nose; w['nose-right-elevation'] = nose;
   w['nose-left-dilatation'] = anger * 0.4; w['nose-right-dilatation'] = anger * 0.4;
-  return { w, jaw: openAmt * 0.11 };
+  return { w, jaw: openAmt * 0.15 };
 }
 /**
  * Ink drawn onto a surface after the painter has made its picture: strokes in the world (a knuckle, a crease) that
