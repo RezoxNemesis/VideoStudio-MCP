@@ -910,3 +910,12 @@ Kinds (`PLANT_KINDS`): oak, sakura (petals fall), autumn (leaves fall), pine, de
 (o.flower colour), rock (mossy), grass, sprout, vines (hang from p). A branching skeleton shows through crowns built of
 leaf bunches lit in five steps (`LEAF`: oak, spring, dusk, night, sakura, autumn, gold, pine). Every `tree()` of the
 places now draws through it (kinds leaf → oak, bare → dead, bush, pine, sakura); `tree({ flora: false })` keeps the old.
+
+## Ready-made assets (17 Nov 2026)
+
+Built and checked in the concept tests; each returns items for a sequence's `dyn`.
+
+- `robot3d(at, o)` — Tinku, a home robot about a metre tall: a boxy head with an LED face (`mood`, `talk` 0–1, `look`, `blink`), a chest light that warms with `love` 0–1, arms `armL` / `armR: [lift, out, elbow]` in degrees (0 = hanging, 90 = straight ahead), `yaw`, head `tilt` / `nod`, body `lean`, `bob`. To put a hand on a target, search the three arm angles on a grid (the hand sits 0.25 m down the forearm from the elbow; the shoulder is 0.265 m to the side, 0.66 m up).
+- `sword3d(at, o)` — a longsword: `at` is the middle of the guard, `yaw`, `pitch` (0 = point down), `len`. Buried in a stone: give it `bias: 0.5` (drawn before the stone, so the stone hides the buried blade) and drop the bias as it comes out.
+- `animalHead(id, 'lion' | 'cat', { talk: (t) => 0…1, mood: (t) => 'calm' | 'stern' | 'afraid' | 'happy', size })` — a painted animal head worn by a Stage body (`dyn: (t, ctx) => [animalHead('sher', 'lion', …)(t, ctx)]`): it follows the body's real head, turns with it, blinks and talks with the line. Give the body a short haircut and no beard.
+- `ledFace(g, cx, cy, h, f, t)` — the LED-dot face on its own, for screens and gadgets.

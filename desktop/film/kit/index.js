@@ -49,3 +49,7 @@ export * from './choreo.js';
 export * from './gait.js';
 export * from './library2d.js';
 export * from './director.js';
+export * from './ledface.js';
+export * from './robot.js';
+export * from './sword3d.js';
+export * from './animalhead.js';
