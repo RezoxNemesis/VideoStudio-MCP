@@ -705,7 +705,7 @@ export function tree(o) {
 /** A rock: o: { p, r, h, seed, color } */
 export function rock(o) {
   const seed = o.seed ?? 1, n = 8, sh = [];
-  for (let i = 0; i < n; i++) { const a = Math.PI + (i / (n - 1)) * Math.PI; sh.push([Math.cos(a) * (0.8 + 0.4 * hash(i * 1.7 + seed)), -Math.sin(a) * (0.55 + 0.5 * hash(i * 3.3 + seed))]); }
+  for (let i = 0; i < n; i++) { const a = Math.PI + (i / (n - 1)) * Math.PI; sh.push([Math.cos(a) * (0.8 + 0.4 * hash(i * 1.7 + seed)), Math.sin(a) * (0.55 + 0.5 * hash(i * 3.3 + seed))]); } // (a dome: screen y grows downwards, so the top is negative)
   return {
     p: o.p, r: o.r,
     draw(g, cam, sc) {
