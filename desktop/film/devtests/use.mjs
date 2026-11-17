@@ -60,5 +60,9 @@ for (const k of Object.keys(THINGS)) {
   ok(sp(1.45) < sp(1.7), 'reach: the hand opens as it goes', [sp(1.45), sp(1.7)]);
   ok(curl(H(2.3).R) > curl(H(1.85).R), 'reach: then closes on the thing', [curl(H(1.85).R), curl(H(2.3).R)]);
 }
+// 5. a sip lifts the elbow out and forward (a pole on its reach), mirrored for the left hand
+{ const r = usePose('sip', { t0: 1, t1: 2, actor: 'a' }).find((x) => x.reach), l = usePose('sip', { t0: 1, t1: 2, actor: 'a', hand: 'L' }).find((x) => x.reach);
+  ok(r?.pole && r.pole[0] > 0.5 && r.pole[2] > 0.3, 'sip: the right elbow out and forward', r?.pole);
+  ok(l?.pole && l.pole[0] < -0.5 && l.side === 'L', 'sip: the left elbow mirrored', l?.pole); }
 if (fails.length) { console.log(`use: ${fails.length} of ${checks} rules broken`); for (const f of fails) console.log('  ✗ ' + f); process.exit(1); }
 console.log(`use: all ${checks} rules hold`);

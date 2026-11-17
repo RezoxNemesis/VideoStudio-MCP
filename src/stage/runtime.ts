@@ -1098,7 +1098,8 @@ export class StageRuntime {
           const p = this.target(ov.target, new THREE.Vector3());
           if (!p) continue;
           const before = h.snapshot();
-          SK.reach(a, ov.side, p);
+          // (the elbow towards the overlay's pole, given in the body's own [right, up, forward]; none: down and back)
+          SK.reach(a, ov.side, p, ov.pole ? new THREE.Vector3(-ov.pole[0], ov.pole[1], ov.pole[2]).applyQuaternion(a.root.quaternion) : null);
           h.blendTo(before, 1 - w);
           h.root.updateMatrixWorld(true);
         } else if (ov.kind === "strike") {

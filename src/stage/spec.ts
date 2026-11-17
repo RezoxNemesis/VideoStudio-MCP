@@ -124,7 +124,8 @@ interface OverlayBase {
 export type Overlay = OverlayBase &
   (
     | { kind: "look"; target: TargetRef; head?: number; eyes?: number }
-    | { kind: "reach"; side: "L" | "R"; target: TargetRef }
+    /** pole: where the elbow points, actor space [right, up, forward] (a sip lifts it out and forward; default down and back). */
+    | { kind: "reach"; side: "L" | "R"; target: TargetRef; pole?: Vec3 }
     | { kind: "rot"; bone: string; euler: Vec3 }
     | { kind: "face"; face: Record<string, number> }
     | { kind: "fingers"; side: "L" | "R" | "both"; curl: number; thumb?: number; spread?: number }

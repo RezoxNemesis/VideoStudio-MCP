@@ -532,7 +532,7 @@ export function registerStageCommands(): void {
           const base = { id: sid("o"), t0, t1, fade: typeof x.fade === "number" ? x.fade : undefined };
           let ov: Overlay;
           if (x.look !== undefined) ov = { ...base, kind: "look", target: targetRef(x.look, "look"), head: typeof x.head === "number" ? x.head : undefined, eyes: typeof x.eyes === "number" ? x.eyes : undefined };
-          else if (x.reach !== undefined) ov = { ...base, kind: "reach", target: targetRef(x.reach, "reach"), side: x.side === "L" ? "L" : "R" };
+          else if (x.reach !== undefined) ov = { ...base, kind: "reach", target: targetRef(x.reach, "reach"), side: x.side === "L" ? "L" : "R", ...(x.pole !== undefined ? { pole: vec3(x.pole, "pole") } : {}) };
           else if (x.rot !== undefined) ov = { ...base, kind: "rot", bone: String(x.bone ?? ""), euler: vec3(x.rot, "rot") };
           else if (x.face !== undefined) {
             const f = typeof x.face === "string" ? MOODS[x.face] : (x.face as Record<string, number>);

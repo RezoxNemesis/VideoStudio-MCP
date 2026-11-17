@@ -168,7 +168,9 @@ export const USES = {
   tablet: { R: [0.13, 1.12, 0.3], L: [-0.13, 1.12, 0.3], span: 0.14, wristR: [0, 85, 0], wristL: [0, -85, 0], look: 'thing', head: 0.9 },
   // a cup held at the chest, and lifted to the mouth
   cup: { R: [0.1, 1.2, 0.2], wristR: [0, 10, 0], look: null },
-  sip: { R: [0.04, 1.47, 0.14], wristR: [-30, 20, 0], look: null },
+  // the glass to the lips: the elbow lifts OUT and forward (with the elbow left down and back the forearm went into the
+  // chest, 17 Nov 2026), the wrist tips the rim to the mouth
+  sip: { R: [0.04, 1.5, 0.15], wristR: [-35, 25, 0], look: null, pole: [0.85, -0.3, 0.55] },
 };
 /**
  * The overlays that put a body into a use from t0 to t1 (they ease in and out over `fade`, so the hand travels).
@@ -190,7 +192,8 @@ export function usePose(kind, o) {
     const p = U[h]; if (!p) continue; const hh = mir ? (h === 'R' ? 'L' : 'R') : h, v0 = side(p);
     // (both hands on one thing hold it at its edges: their spacing is the thing's, not the body's — a child's hands too)
     const v = U.span ? [Math.sign(v0[0]) * U.span / s, v0[1], v0[2]] : v0;
-    if (rel) reaches.push({ t0: o.t0, t1: o.t1, fade, reach: { actor: o.actor, bone: 'spine01', offset: [-v[0] * s, (v[1] - 1.36) * s, (v[2] + 0.05) * s] }, side: hh });
+    // (U.pole: where the elbow points, [right, up, forward] for the right hand — a sip lifts it out and forward)
+    if (rel) reaches.push({ t0: o.t0, t1: o.t1, fade, reach: { actor: o.actor, bone: 'spine01', offset: [-v[0] * s, (v[1] - 1.36) * s, (v[2] + 0.05) * s] }, side: hh, ...(U.pole ? { pole: hh === 'L' ? [-U.pole[0], U.pole[1], U.pole[2]] : U.pole } : {}) });
     else tracks.push({ on: `hand.${hh}`, keys: [[0, v.map((x) => x * s)]] });
     const w = U[`wrist${h}`]; if (w) tracks.push({ on: `wrist.${hh}`, keys: [[0, turn(w)]] });
   }
