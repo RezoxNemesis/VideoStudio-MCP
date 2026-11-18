@@ -16,6 +16,13 @@ const WORDS: Record<string, string> = {
   team: "टीम", match: "मैच", game: "गेम", movie: "मूवी", film: "फ़िल्म", song: "सॉन्ग", music: "म्यूज़िक", dance: "डांस", room: "रूम", house: "हाउस",
   market: "मार्केट", shop: "शॉप", money: "मनी", card: "कार्ड", bank: "बैंक", hotel: "होटल", restaurant: "रेस्टोरेंट", dinner: "डिनर", lunch: "लंच", breakfast: "ब्रेकफ़ास्ट",
   coffee: "कॉफ़ी", tea: "टी", ice: "आइस", cream: "क्रीम", chocolate: "चॉकलेट", first: "फ़र्स्ट", last: "लास्ट", next: "नेक्स्ट", best: "बेस्ट", life: "लाइफ़",
+  busy: "बिज़ी", free: "फ़्री", wait: "वेट", start: "स्टार्ट", stop: "स्टॉप", ready: "रेडी", fine: "फ़ाइन", normal: "नॉर्मल", report: "रिपोर्ट", reports: "रिपोर्ट्स",
+  result: "रिज़ल्ट", check: "चेक", checkup: "चेकअप", sugar: "शुगर", blood: "ब्लड", pressure: "प्रेशर", tablet: "टैबलेट", tablets: "टैबलेट्स", injection: "इंजेक्शन", nurse: "नर्स",
+  ward: "वार्ड", operation: "ऑपरेशन", bill: "बिल", salary: "सैलरी", rent: "रेंट", online: "ऑनलाइन", whatsapp: "व्हाट्सऐप", status: "स्टेटस", reel: "रील", reels: "रील्स",
+  tests: "टेस्ट्स", doctors: "डॉक्टर्स", calls: "कॉल्स", missed: "मिस्ड", photos: "फ़ोटोज़", videos: "वीडियोज़", mom: "मॉम", dad: "डैड", bro: "ब्रो", sis: "सिस",
+  hey: "हे", haan: "हाँ", tired: "टायर्ड", stress: "स्ट्रेस", pain: "पेन", fever: "फ़ीवर", cold: "कोल्ड", headache: "हेडेक", appointment: "अपॉइंटमेंट",
+  update: "अपडेट", deadline: "डेडलाइन", project: "प्रोजेक्ट", client: "क्लाइंट", manager: "मैनेजर", interview: "इंटरव्यू", flight: "फ़्लाइट", hostel: "हॉस्टल",
+  important: "इंपॉर्टेंट", urgent: "अर्जेंट", alone: "अलोन", always: "ऑलवेज़", never: "नेवर", maybe: "मेबी",
   wow: "वाओ", super: "सुपर", cool: "कूल", nice: "नाइस", perfect: "परफ़ेक्ट", special: "स्पेशल", promise: "प्रॉमिस", miss: "मिस", sweet: "स्वीट", dear: "डियर",
 };
 

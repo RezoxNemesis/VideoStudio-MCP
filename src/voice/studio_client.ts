@@ -10,7 +10,10 @@
 import { lookupVoiceRef } from "./engine/plan";
 import { mixLang, parseMix, resolveVoice } from "./engine/voicebank";
 import { hinglishShare, transliterateHinglish } from "./engine/hinglish";
-import type { Tone } from "./engine/open";
+import { moodTone, TONES, type Tone } from "./engine/open";
+import { peakFor, shapeStudio, swellOf } from "./engine/studio_shape";
+import { GOOD_TAKE, MAX_TAKES, heardError } from "./engine/studio_check";
+import { transcribe } from "../media/asr";
 import { referenceLine } from "./engine/studio_refs";
 import { devanagariLoanwords } from "./engine/studio_loanwords";
 import { NATURAL_PACE, NATURAL_PACE_HI, phrases, pacing } from "./engine/studio_pace";
@@ -78,7 +81,7 @@ export async function installStudio(onProgress?: (done: number, what: string) =>
  * Say one line with the studio engine, or return null when it is not available here (not the desktop app,
  * not installed, switched off, or a language it cannot read) so the caller uses the standard voice.
  */
-export async function studioSay(text: string, voice: string, tone?: Tone, lang?: string, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string; pace: StudioPace } | null> {
+export async function studioSay(text: string, voice: string, tone?: Tone, lang?: string, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string; pace: StudioPace; peak: number } | null> {
   const b = bridge();
   if (!b || voiceEngine() !== "studio") return null;
   if (installed === null) await studioStatus().catch(() => (installed = false));
@@ -115,7 +118,7 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
     // (A slow line is not asked for with a weaker hold on its words, as Chatterbox advises for a slower delivery:
     //  measured, the model's pace does not follow it, and with less of it the model murmurs for seconds, skips words
     //  and runs sentences together. Of eight Hindi sentences five were clean at the first attempt, against seven.)
-    const sayOne = (t: string) => b.say({ key, text: t, lang: code, mood, moodAmount: tone?.moodAmount, ...(tone?.take ? { take: tone.take } : {}), ...(bank ? { bank } : {}) });
+    const sayOne = (t: string, take = 0) => b.say({ key, text: t, lang: code, mood, moodAmount: tone?.moodAmount, ...((tone?.take ?? 0) + take ? { take: (tone?.take ?? 0) + take } : {}), ...(bank ? { bank } : {}) });
     let r = await sayOne(list[0] ?? words);
     if (r.needRef) {
       onProgress?.(0, "Preparing the voice");
@@ -125,15 +128,57 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
       r = await sayOne(list[0] ?? words);
     }
     if (!r.pcm?.length) return null;
-    const parts = [r.pcm];
+    // every sentence is listened back to (studio_check.ts): a take that strays from its words is made again
+    const checked = async (t: string, first: Float32Array): Promise<Float32Array> => {
+      let best = first, err = await heard(first, t, code);
+      for (let k = 1; k < MAX_TAKES && err > GOOD_TAKE; k++) {
+        onProgress?.(0, `Saying it again (take ${k + 1})`);
+        const x = await sayOne(t, k);
+        if (!x.pcm?.length) continue;
+        const e = await heard(x.pcm, t, code);
+        if (e < err) { best = x.pcm; err = e; }
+      }
+      return best;
+    };
+    const parts = [await checked(list[0] ?? words, r.pcm)];
     for (const t of list.slice(1)) {
       const x = await sayOne(t);
       if (!x.pcm?.length) return null;
-      parts.push(x.pcm);
+      parts.push(await checked(t, x.pcm));
     }
     const { pcm, ...how } = pacing(parts, list, pace);
-    return { pcm, voice: mix, pace: how };
+    // the rest of the tone, worked onto the acted speech: what a line asks beyond its mood (higher, louder, a rising
+    // end, a tremble); a mood's own curves are the model's to act (studio_shape.ts)
+    const own0 = mood ? TONES[mood] ?? {} : {};
+    const moodPitch = mood ? moodTone(mood).pitch ?? 0 : 0;
+    const extra = (k: "ending" | "shake") => (tone?.[k] !== undefined && tone[k] !== own0[k] ? tone[k] : undefined);
+    const shaped = shapeStudio(pcm, {
+      pitch: tone?.pitch !== undefined ? tone.pitch - moodPitch : 0,
+      energy: tone?.energy,
+      ending: extra("ending") as "rise" | "fall" | "level" | undefined ?? (/\?\s*$/.test(words) && !mood ? "rise" : undefined),
+      shake: (extra("shake") as number | undefined) ?? (tone?.shake ? tone.shake * 0.5 : 0),
+      swell: swellOf(words),
+    });
+    return { pcm: shaped, voice: mix, pace: how, peak: peakFor(tone?.energy) };
   } finally {
     off();
+  }
+}
+
+/** Can takes be listened back to here (the desktop app has Whisper on the graphics card)? Off: every take is kept. */
+let listening: boolean | null = null;
+/** How far a take strays from its words (0 exact; 0 when it cannot be heard here, so the take is kept). */
+async function heard(pcm: Float32Array, meant: string, lang: string): Promise<number> {
+  if (listening === false) return 0;
+  try {
+    const n = Math.floor((pcm.length * 2) / 3), x = new Float32Array(n); // 24 kHz → 16 kHz
+    for (let i = 0; i < n; i++) { const p = i * 1.5, j = Math.floor(p), f = p - j; x[i] = pcm[j]! * (1 - f) + (pcm[j + 1] ?? pcm[j]!) * f; }
+    const r = await transcribe(x, { model: "turbo", device: "webgpu", language: lang === "hi" ? "hindi" : "english" });
+    listening = true;
+    return heardError(meant, r.text);
+  } catch {
+    // no graphics card for Whisper (or it failed): the takes are not checked from here on
+    listening = false;
+    return 0;
   }
 }

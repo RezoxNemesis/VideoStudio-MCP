@@ -82,7 +82,9 @@ export async function sayToAsset(s: Studio, line: string, voice: string, toneIn?
     if (!pcm.length) throw new ops.OpError("The voice returned no sound for this line.");
     let peak = 0;
     for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]!));
-    if (peak > 0) for (let i = 0; i < pcm.length; i++) pcm[i] = pcm[i]! * Math.min(3, 0.85 / peak);
+    // (a studio line sits at the level its tone asks for: hushed lines quieter, forceful ones fuller)
+    const target = studio?.peak ?? 0.85;
+    if (peak > 0) for (let i = 0; i < pcm.length; i++) pcm[i] = pcm[i]! * Math.min(3, target / peak);
     const label = text.trim().split(/\s+/).slice(0, 5).join(" ");
     const asset = await s.addBlobAsset(wavBlob(pcm), `Voice – ${label}.wav`, "voice", { mouth: mouthEnvelope(pcm, 30) });
     return { asset, seconds: pcm.length / SAMPLE_RATE, voice: used, ...(studio ? { pace: studio.pace } : {}) };

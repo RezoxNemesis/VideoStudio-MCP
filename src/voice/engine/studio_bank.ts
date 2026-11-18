@@ -22,12 +22,14 @@ export interface BankVoice {
 }
 
 export const BANK: readonly BankVoice[] = [
-  // Hindi
-  { file: "hi_f_dc", lang: "hi", female: true, f0: 211, credit: "dc, Panchatantra (LibriVox, public domain)" },
-  { file: "hi_f_sonali", lang: "hi", female: true, f0: 231, credit: "Sonali Ekka, Do Sakhiyan (LibriVox, public domain)" },
-  { file: "hi_f_pratibha", lang: "hi", female: true, f0: 185, credit: "pratibhanair, Kshama (LibriVox, public domain)" },
-  { file: "hi_m_shashank", lang: "hi", female: false, f0: 117, credit: "Shashank Jakhmola, UDHR in Hindi (LibriVox, public domain)" },
-  { file: "hi_m_shashank2", lang: "hi", female: false, f0: 132, credit: "Shashank Jakhmola, UDHR in Hindi (LibriVox, public domain)" },
+  // Hindi (each clip chosen from dozens of a reader's sentences by measured naturalness, UTMOS, and clarity, DNSMOS)
+  { file: "hi_f_pratibha", lang: "hi", female: true, f0: 188, credit: "pratibhanair, Kshama (LibriVox, public domain)" },
+  { file: "hi_f_pratibha2", lang: "hi", female: true, f0: 185, credit: "pratibhanair, Kshama (LibriVox, public domain)" },
+  { file: "hi_f_dc", lang: "hi", female: true, f0: 207, credit: "dc, Panchatantra (LibriVox, public domain)" },
+  { file: "hi_f_dc2", lang: "hi", female: true, f0: 180, credit: "dc, Panchatantra (LibriVox, public domain)" },
+  { file: "hi_m_deep", lang: "hi", female: false, f0: 106, credit: "Panchatantra, section 41 (LibriVox, public domain)" },
+  { file: "hi_m_shashank", lang: "hi", female: false, f0: 113, credit: "Shashank Jakhmola, UDHR in Hindi (LibriVox, public domain)" },
+  { file: "hi_m_shashank2", lang: "hi", female: false, f0: 121, credit: "Shashank Jakhmola, UDHR in Hindi (LibriVox, public domain)" },
   // English
   { file: "en_m_1188", lang: "en", female: false, f0: 103, credit: "LibriTTS-R speaker 1188 (CC BY 4.0)" },
   { file: "en_m_7127", lang: "en", female: false, f0: 126, credit: "LibriTTS-R speaker 7127 (CC BY 4.0)" },
