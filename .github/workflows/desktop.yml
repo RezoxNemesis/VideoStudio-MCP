@@ -33,9 +33,11 @@ jobs:
 
       - name: Engine — install, typecheck, test
         run: |
-          npm ci
-          npx tsc --noEmit
-          npm test
+          # (each stage says in an annotation why it failed, so the cause can be read without opening the log)
+          say() { echo "::error title=$1::$(tail -c 1500 /tmp/stage.log | tr '\n' ' ' | sed 's/%/%25/g')"; exit 1; }
+          npm ci > /tmp/stage.log 2>&1 || say "npm ci"
+          npx tsc --noEmit > /tmp/stage.log 2>&1 || say "typecheck"
+          npm test > /tmp/stage.log 2>&1 || say "tests"
 
       - name: Desktop — install and typecheck
         working-directory: desktop

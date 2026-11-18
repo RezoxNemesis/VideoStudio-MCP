@@ -81,7 +81,7 @@ function createCine(o) {
             p.on("close", () => { j.dead = true; }); p.stdin.on("error", () => { j.dead = true; });
           }
           if (b.length !== +q.w * +q.h * 4) throw new Error(`frame of ${b.length} bytes for ${q.w}x${q.h}`);
-          if (!j.p.stdin.write(b)) await new Promise((r) => { j.p.stdin.once("drain", r); j.p.once("close", r); });
+          if (!j.p.stdin.write(b)) await new Promise((r) => { const go = () => { j.p.stdin.off("drain", go); j.p.off("close", go); r(); }; j.p.stdin.once("drain", go); j.p.once("close", go); });
           j.n++; if (run) run.frames = (run.frames || 0) + 1;
           res.end("ok");
         } else if (u.pathname === "/done") {
