@@ -22,7 +22,7 @@ const CHAR_VS = `
 #include <skinning_pars_vertex>
 attribute float reg, loose, lip, eye; attribute vec3 blink, smile, paint;
 uniform float uBlink, uSmile, uOutline, uTime, uFlut, uShadowPass; uniform vec3 uLightDir; uniform vec3 uPal[11];
-varying vec3 vN, vW, vBase, vPaint; varying float vReg, vLip, vEye, vH;
+varying vec3 vN, vW, vBase, vPaint; varying float vReg, vLip, vEye, vH, vLid;
 ${FOGV}
 void main(){
   vec3 objectNormal = normal;
@@ -34,7 +34,7 @@ void main(){
   vec3 wn = normalize(mat3(modelMatrix) * objectNormal);
   wp.xyz += wn * loose * uFlut * (sin(uTime * 11.0 + position.y * 23.0 + position.x * 31.0) + 0.6 * sin(uTime * 17.0 + position.z * 41.0));
   int r = int(reg + 0.5);
-  vBase = uPal[r]; vReg = reg; vLip = lip; vEye = eye; vH = wp.y; vPaint = paint;
+  vBase = uPal[r]; vReg = reg; vLip = lip; vEye = eye; vH = wp.y; vPaint = paint; vLid = step(0.0004, length(blink)) * uBlink;
   if (uShadowPass > 0.5) { wp.xz -= uLightDir.xz / max(uLightDir.y, 0.08) * max(wp.y, 0.0); wp.y = 0.012; }
   else if (uOutline > 0.0) { float d = length(cameraPosition - wp.xyz); float k = (r == 6 || r == 7) ? 0.0 : 1.0; wp.xyz += wn * min(uOutline * d, 0.0065) * k; }
   vN = wn; vW = wp.xyz; calcFog(wp.xyz);
@@ -42,7 +42,7 @@ void main(){
 }`;
 const CHAR_FS = `
 uniform vec3 uLightDir, uLightCol, uShadeCol, uRimCol, uRimDir, uAmbCol, uOutCol; uniform float uOutline, uShadowPass, uDark;
-uniform vec3 uIris; uniform float uFace; varying vec3 vN, vW, vBase, vPaint; varying float vReg, vLip, vEye, vH; varying vec4 vFog;
+uniform vec3 uIris; uniform float uFace, uBlink; varying vec3 vN, vW, vBase, vPaint; varying float vReg, vLip, vEye, vH, vLid; varying vec4 vFog;
 void main(){
   if (uShadowPass > 0.5) { float s = mix(0.80, 0.42, clamp(vH / 1.7, 0.0, 1.0)); gl_FragColor = vec4(vec3(1.0 - s), 1.0); return; }
   vec3 base = vBase; int r = int(vReg + 0.5);
@@ -58,17 +58,17 @@ void main(){
   if (r == 6) { // the eye: white shaded by the lid, an iris with a dark rim and a lit lower half, pupil, two catch-lights
     float a = acos(clamp(vEye, -1.0, 1.0)); vec2 q = vPaint.xy;
     vec3 e = vec3(0.97, 0.96, 0.94) * (0.80 + 0.20 * smoothstep(0.42, -0.1, q.y));
-    float ir = smoothstep(0.50, 0.47, a); vec3 ic = uIris * mix(1.55, 0.62, smoothstep(0.18, 0.48, a)); ic = mix(ic, uIris * 1.9, smoothstep(0.05, -0.32, q.y) * 0.45); ic *= 0.72 + 0.28 * smoothstep(0.34, 0.0, q.y);
+    float ir = smoothstep(0.50, 0.47, a); vec3 ic = uIris * mix(1.55, 0.62, smoothstep(0.18, 0.48, a)); ic = mix(ic, uIris * 1.45, smoothstep(0.05, -0.32, q.y) * 0.4); ic *= 0.72 + 0.28 * smoothstep(0.34, 0.0, q.y);
     ic = mix(ic, uIris * 0.25, smoothstep(0.43, 0.49, a));
     e = mix(e, ic, ir); e = mix(e, vec3(0.025, 0.02, 0.02), smoothstep(0.235, 0.205, a));
     e += vec3(1.0) * smoothstep(0.085, 0.055, length(q - vec2(0.17, 0.20))) * 0.95 + vec3(1.0) * smoothstep(0.05, 0.03, length(q - vec2(-0.14, -0.13))) * 0.5;
-    base = e; lit = max(lit, 0.82); }
+    base = e * (1.0 - 0.92 * smoothstep(0.25, 0.85, uBlink)); lit = max(lit, 0.55); }   // (0.82 made eyes glow in a dark room; a closing lid leaves no bright slit of iris)
   if (r == 5 && vPaint.y > -1.0) { float st = sin(vPaint.x * 46.0 + sin(vPaint.y * 9.0) * 1.4) * 0.5 + 0.5; base *= 0.86 + 0.24 * st * st; }
   if (!gl_FrontFacing) lit *= 0.25;
   vec3 c = mix(base * uShadeCol, base * uLightCol, lit) + base * uAmbCol * (0.5 + 0.5 * n.y);
   if (r == 0) c += base * vec3(0.30, 0.07, 0.03) * lit * (1.0 - lit) * 0.9 * uFace; // blood under the skin where light turns to shade
   float fr = 1.0 - max(dot(n, v), 0.0); fr = fr * fr * sqrt(fr);
-  c += uRimCol * fr * smoothstep(-0.1, 0.6, dot(n, uRimDir)) * (r == 5 ? 0.7 : 1.0);
+  c += uRimCol * fr * smoothstep(-0.1, 0.6, dot(n, uRimDir)) * (r == 5 ? 0.7 : (r == 7 || r == 6) ? 0.0 : 1.0) * (1.0 - smoothstep(0.05, 0.5, vLid));   // (lashes, eyes and closing lids take no rim: a blink lit up as an orange slit in a dark room)
   vec3 h = normalize(uLightDir + v);
   if (r == 5 && vPaint.y > -1.0) { float band = exp(-pow((vPaint.y - 0.52 - 0.05 * sin(vPaint.x * 23.0)) / 0.13, 2.0)); c += uLightCol * (0.10 * smoothstep(0.55, 0.9, dot(n, h)) * smoothstep(0.35, 0.8, n.y) + 0.16 * band * smoothstep(0.0, 0.5, ndl + 0.3)); }
   if (shine > 0.01) c += uLightCol * shine * 0.34 * smoothstep(0.2, 0.8, lit);
