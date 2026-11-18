@@ -35,7 +35,9 @@ jobs:
         run: |
           # (each stage says in an annotation why it failed, so the cause can be read without opening the log)
           say() { echo "::error title=$1::$(tail -c 1500 /tmp/stage.log | tr '\n' ' ' | sed 's/%/%25/g')"; exit 1; }
-          npm ci > /tmp/stage.log 2>&1 || say "npm ci"
+          # (onnxruntime-node 1.21 of the engine's dev tree fetches CUDA libraries from a release file that no longer exists
+          #  (404 since 18 Nov 2026); nothing here uses them — the app's voices carry their own onnxruntime in desktop/voice)
+          ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci > /tmp/stage.log 2>&1 || say "npm ci"
           npx tsc --noEmit > /tmp/stage.log 2>&1 || say "typecheck"
           npm test > /tmp/stage.log 2>&1 || say "tests"
 
