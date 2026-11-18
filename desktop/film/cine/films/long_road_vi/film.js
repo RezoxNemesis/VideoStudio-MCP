@@ -263,13 +263,13 @@ S.s16 = { dur: 16, about: 'through the gate, crane over the crowd', async build(
 // 16b. The boulevard. They slow to a walk and look up; the lens walks backwards before them, then climbs as the night turns to first light and the sign comes on.
 S.s16b = { dur: 16, about: 'the city: Now, it is all yours', async build(E) {
     const G = 1040; K.roadSet(E, { mood: 'neon', x0: 1060, x1: 1200, seed: 29, trees: { palm: 1 }, dens: 0.05, grass: 300, clouds: 12, cloudv: 14, clear: (x, z) => true, half: 6.4, shoulder: 0.8, wet: 0.55, puddle: 0.5, hills: false });
-    const c = { G }; await city(E); c.city = K.viceCity(E, G + 12, { towers: 26, len: 330 }); const X = G + 112;
+    const c = { G }; await city(E); c.city = K.viceCity(E, G + 12, { towers: 26, len: 330 }); c.pave = true; const X = G + 112;
     c.h = await mk(E, 'hero23', PAL.hero, 's16b_hero', X, 0.2); c.a = await mk(E, 'frA23', PAL.frA, 's16b_frA', X - 0.9, -1.5); c.b = await mk(E, 'frB23', PAL.frB, 's16b_frB', X - 1.2, 1.7);
     const R = rng(12); const L = []; for (let i = 0; i < 18; i++) { const as = CR[i % 4]; L.push([as, 'cw_' + as, X - 3.5 - i * 1.3 - R() * 1.5, -4.2 + 8.4 * R(), R() * 0.9, i + 3, i < 6]); } c.cr = await crowd(E, L);
-    c.s1 = K.neonSign(E, G + 236, 19.5, 0, 62, 8.4, "NOW, IT'S ALL YOURS", { col: '#ff5aa8', core: '#fff0f6' }); c.s2 = K.neonSign(E, G + 236, 10.6, 0, 26, 8.2, 'GTA 6', { col: '#ffc84a', core: '#fff6dc', legs: false, size: 0.86 });
+    c.s1 = K.neonSign(E, G + 236, 19.5, 0, 62, 8.4, "NOW, IT'S ALL YOURS", { col: '#ff5aa8', core: '#fff0f6', size: 0.6 }); c.s2 = K.neonSign(E, G + 236, 10.6, 0, 26, 8.2, 'GTA 6', { col: '#ffc84a', core: '#fff6dc', legs: false, size: 0.86 });
     const F = []; const cols = ['#ff7aa8', '#ffd27a', '#8ad8ff', '#ff9a6a', '#c8a0ff', '#9affc0']; for (let i = 0; i < 16; i++) F.push([7.6 + i * 0.5 + R() * 0.3, G + 400 + R() * 240, 90 + R() * 100, -200 + R() * 400, cols[i % 6], 30 + R() * 14, 8 + R() * 3]); c.fw = K.fireworks(E, F); return c; },
   frame(t, c, E) { play(c.h, t); play(c.a, t); play(c.b, t); for (const a of c.cr) play(a, t); const G = c.G; const a = anc(c.h, c.h.f);
-    const dawn = sm(seg(t, 7.5, 14.5)); K.mixMood(E, 'neon', 'vice', dawn); E.G.uRoad.value.w = 0.55; c.city.beams.set(1 - 0.7 * dawn);
+    const dawn = sm(seg(t, 7.5, 14.5)); K.mixMood(E, 'neon', 'vice', dawn); E.G.uRoad.value.w = 0.55; E.G.uGTint.value.set('#5a4a70').lerp(new THREE.Color('#8a6a80'), dawn);   // between the hotels the ground is paving, not field c.city.beams.set(1 - 0.7 * dawn);
     K.look(c.h, 22 * Math.sin(t * 0.55), -16 - 6 * Math.sin(t * 0.8 + 1)); K.look(c.a, -30 * Math.sin(t * 0.5 + 1), -18); K.look(c.b, 34 * Math.sin(t * 0.45 + 2.2), -14); for (const q of [c.h, c.a, c.b]) q.mat.uniforms.uSmile.value = 0.85;
     c.s1.set(c.s1.n * seg(t, 8.4, 11.6)); c.s2.set(t > 12.2 ? (Math.sin(t * 70) > -0.3 || t > 12.7 ? 5 : 0) : 0);
     const u = sm2(seg(t, 5.2, 12.5)); const a1 = sm(seg(t, 13.2, 14.2)), fo = 1 - sm(seg(t, 15.2, 15.95)); E.P.uPost.value.z = sm(seg(t, 15.2, 16)); E.P.uFadeCol.value.set('#000000');
