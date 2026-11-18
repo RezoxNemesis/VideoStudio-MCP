@@ -21,8 +21,12 @@ const DEVANAGARI = /[\u0900-\u097F]/;
 export function leadFor(text: string, lang: string): string {
   if (!text.trim()) return "";
   // (a whole sentence: after a single word, "Listen." or "सुनो।", the model often runs on into the line)
-  if (lang === "en") return "Listen to me. ";
-  if (lang === "hi" && DEVANAGARI.test(text)) return "मेरी बात सुनो। ";
+  // (never a lead that shares a word with the line: "मेरी बात सुनो।" before "प्लीज़, मेरी बात सुन लो" let the model
+  //  jump from the lead's "मेरी बात" to the line's, and the cut took the line's first word with the lead)
+  const words = new Set(text.toLowerCase().split(/[\s,.!?।…"'-]+/u).filter(Boolean));
+  const pick = (c: string[]) => c.find((l) => !l.toLowerCase().split(/[\s,.!?।…]+/u).filter((w) => [...w].length > 2).some((w) => words.has(w))) ?? c[0]!;
+  if (lang === "en") return pick(["Listen to me. ", "Now, hear this. ", "So, here it is. "]);
+  if (lang === "hi" && DEVANAGARI.test(text)) return pick(["मेरी बात सुनो। ", "अच्छा, तो सुनिए। ", "देखिए, एक चीज़ है। "]);
   return "";
 }
 

@@ -18,6 +18,8 @@ export interface Pace {
 
 const TITLES = new Set(["mr", "mrs", "ms", "dr", "st", "sr", "jr", "vs", "etc", "prof", "capt", "col", "gen", "lt", "sgt"]);
 const MARK = /[.!?…।॥]/;
+/** A sentence of this many words or fewer is said together with its neighbour. */
+export const SHORT = 4;
 const words = (s: string) => s.replace(/[.!?…।॥,;:—–-]+/g, " ").trim().split(/\s+/).filter(Boolean).length;
 
 /** A line as the sentences a studio voice speaks one at a time, each keeping its closing mark. */
@@ -39,9 +41,11 @@ export function phrases(text: string): string[] {
     i = j;
   }
   if (from < t.length && t.slice(from).trim()) out.push(t.slice(from).trim());
-  // a word alone goes with what follows it (or, at the end, with what came before): one word is too little to act
+  // a short sentence goes with what follows it (or, at the end, with what came before): four words or fewer are too
+  // little to act alone ("बेटा, मैं ठीक हूँ।" said by itself came out "बेड़ा मा थीकूं" in take after take; with the
+  // sentence after it, clean)
   for (let k = 0; k < out.length && out.length > 1; ) {
-    if (words(out[k]!) > 1) { k++; continue; }
+    if (words(out[k]!) > SHORT) { k++; continue; }
     if (k + 1 < out.length) out.splice(k, 2, `${out[k]} ${out[k + 1]}`);
     else { out.splice(k - 1, 2, `${out[k - 1]} ${out[k]}`); break; }
   }

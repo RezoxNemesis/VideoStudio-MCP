@@ -6,18 +6,19 @@ import { phrases, pauseAfter, paced, pacing, tidyEnd, trimmed } from "../src/voi
 // sentence at a time, with the silences between them and the pace the tone asks for.
 describe("a studio voice keeps the pace of a line", () => {
   it("a line is taken a sentence at a time, each with its own mark", () => {
-    expect(phrases("He is not a man. He is a story. And today I end it.")).toEqual(["He is not a man.", "He is a story.", "And today I end it."]);
-    expect(phrases("I promise. I promise! Just stay with me!")).toEqual(["I promise.", "I promise!", "Just stay with me!"]);
-    expect(phrases("वो आदमी नहीं है। वो एक कहानी है। और आज मैं उसे ख़त्म करूँगा।")).toEqual(["वो आदमी नहीं है।", "वो एक कहानी है।", "और आज मैं उसे ख़त्म करूँगा।"]);
-    expect(phrases("Wait... is that him? No — it cannot be.")).toEqual(["Wait... is that him?", "No — it cannot be."]);
+    expect(phrases("He is not a man. Then he became a story. And today I end it.")).toEqual(["He is not a man.", "Then he became a story.", "And today I end it."]);
+    expect(phrases("वो आदमी नहीं है। वो एक कहानी है। और आज मैं उसे ख़त्म करूँगा।")).toEqual(["वो आदमी नहीं है। वो एक कहानी है।", "और आज मैं उसे ख़त्म करूँगा।"]);
+    expect(phrases("Wait, wait... is that really him? No — it cannot be him at all.")).toEqual(["Wait, wait... is that really him?", "No — it cannot be him at all."]);
   });
   it("a comma, a number or a title does not break a sentence", () => {
     expect(phrases("When the river rises, a king carries the first sandbag.")).toEqual(["When the river rises, a king carries the first sandbag."]);
-    expect(phrases("It cost 3.5 crore. Dr. Rao paid.")).toEqual(["It cost 3.5 crore.", "Dr. Rao paid."]);
+    expect(phrases("It cost 3.5 crore in the end. Dr. Rao paid all of it.")).toEqual(["It cost 3.5 crore in the end.", "Dr. Rao paid all of it."]);
     expect(phrases("  one line without a stop  ")).toEqual(["one line without a stop"]);
   });
-  it("a word alone goes with what follows it (a model given one word to act stumbles)", () => {
-    expect(phrases("No. When the river rises, a king carries the first sandbag. And the last.")).toEqual(["No. When the river rises, a king carries the first sandbag.", "And the last."]);
+  it("a short sentence goes with what follows it (a model given four words or fewer to act alone stumbles)", () => {
+    expect(phrases("No. When the river rises, a king carries the first sandbag. And the last.")).toEqual(["No. When the river rises, a king carries the first sandbag. And the last."]);
+    expect(phrases("I promise. I promise! Just stay with me!")).toEqual(["I promise. I promise! Just stay with me!"]);
+    expect(phrases("बेटा, मैं ठीक हूँ। तुम अपना ख़याल रखना।")).toEqual(["बेटा, मैं ठीक हूँ। तुम अपना ख़याल रखना।"]);
     expect(phrases("Run!")).toEqual(["Run!"]);
   });
   it("the silence after a sentence: longer after a trailing-off, longer for a slow or a pausing tone", () => {
