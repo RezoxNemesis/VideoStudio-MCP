@@ -30,7 +30,7 @@ const txt = (E, s, a = 1, sub) => K.stamp(E, s, a, sub);
 const io = (t, a, b, f = 0.6) => sm(seg(t, a, a + f)) * (1 - sm(seg(t, b - f, b)));
 const CR = ['manA', 'womA', 'manB', 'teenC'];
 async function crowd(E, list) { const out = []; for (const [asset, track, x, z, off, pi, line] of list) { const a = await mk(E, asset, CROWD[pi % CROWD.length], track, x, z); a.off = off; if (!line) a.outline.visible = false; out.push(a); } return out; }
-export const META = { name: 'The Long Road to VI', width: 2560, height: 1440, fps: 30, audio: 'audio.wav', order: ['s01', 's02', 's03', 's04', 's05', 's06', 's07', 's08', 's09', 's10', 's11', 's12', 'm1', 'm2', 's13', 's14', 's15', 's16', 's16b', 's17'] };
+export const META = { name: 'The Long Road to VI', width: 2560, height: 1440, fps: 30, audio: 'audio.flac', order: ['s00', 's01', 's02', 's03', 's04', 's05', 's06', 's07', 's08', 's09', 's10', 's11', 's12', 'm1', 'm2', 's13', 's14', 's15', 's16', 's16b', 's17'] };
 const CITY = K.CITY_TEX; let cityReady = null; const city = async E => { for (const t of CITY) await E.loadTex(t, { repeat: t === 'water', raw: /^(deco|tower)\d/.test(t) }); };
 export const S = {};
 // 1. September 2013. A milestone, and a boy who has just bought the game.
@@ -249,6 +249,14 @@ S.s15 = { soft: true, dur: 24, about: 'the goodbye to the boy of 2013 and to GTA
       return { p: [c.hx - 2.35 + 0.35 * u, 1.50, 0.3 + 1.05 - 0.1 * u], t: [c.hx, 1.53, 0.3], fov: lerp(31, 27, u), focus: 2.5 - 0.3 * u, dof: 12 }; }
     const u = sm(seg(t, 17.4, 24));   // D: from behind him, a long lens: the boy turns and walks home into the light
     return { p: [c.hx + 2.4, 1.64, 0.3 + 1.0], t: [lerp(c.kx, ka[0], 0.6), 1.05, 0.7], fov: lerp(13, 11.5, u), focus: 40, dof: 24, maxBlur: 4.2 }; } };
+// 0. Before the title: ten seconds of the ending. The boy waves at the far neon gate; the man waves back; black; "13 years earlier".
+//    (the same staging as shot 15, seen at its two strongest moments, with one spoken line laid over it)
+S.s00 = { soft: true, dur: 10, about: 'cold open: the goodbye, before the story starts', build: E => S.s15.build(E),
+  frame(t, c, E) { const ts = t < 4.1 ? 6.3 + t : 11.5 + (t - 4.1) * 0.95; const cam = S.s15.frame(Math.min(ts, 15.4), c, E);
+    const cut = Math.exp(-Math.pow((t - 4.1) / 0.07, 2)); E.P.uFadeCol.value.set('#000000'); E.P.uPost.value.z = Math.max(1 - sm(seg(t, 0, 0.9)), 0.85 * cut, sm(seg(t, 7.3, 8.0)));
+    const a = sm(seg(t, 8.15, 8.6)) * (1 - sm(seg(t, 9.55, 9.95)));
+    E.text(a > 0.004 ? (g, W, H) => { const s = H / 1440; g.globalAlpha = a; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff4e2'; g.font = `500 ${64 * s}px Oswald`; g.letterSpacing = `${16 * s}px`; g.fillText('13 YEARS EARLIER', W / 2, H / 2); g.letterSpacing = '0px'; g.globalAlpha = 1; } : null);
+    if (t < 4.1) cam.focus = lerp(1.9, 38, sm2(seg(t, 2.0, 3.2))); return cam; } };
 // 16. Through the gate. The crane lifts over all of them, towards the lights.
 S.s16 = { dur: 16, about: 'through the gate, crane over the crowd', async build(E) {
     const G = 1040; K.roadSet(E, { mood: 'neon', x0: 1010, x1: 1140, seed: 23, trees: { neem: 2, palm: 2 }, dens: 0.8, grass: 1400, clouds: 10, cloudv: 10, clear: (x, z) => Math.abs(z) < 9 && x > 1020 });
