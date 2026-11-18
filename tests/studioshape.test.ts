@@ -40,3 +40,13 @@ describe("a studio line takes the rest of its tone", () => {
     expect(Math.max(...blocks) / Math.min(...blocks)).toBeGreaterThan(1.15);
   });
 });
+
+describe("a script's directions reach the studio voice", () => {
+  it("turns louder/softer, whispered and shouted into the tone's energy", async () => {
+    const { deliveryEnergy } = await import("../src/voice/service");
+    expect(deliveryEnergy()).toBe(0);
+    expect(deliveryEnergy(0.55, 0.85)).toBeLessThan(-0.8); // whispering
+    expect(deliveryEnergy(0.75, 0.35)).toBeLessThan(-0.5); // softly
+    expect(deliveryEnergy(1.45, 0, 0.55)).toBeGreaterThan(0.9); // shouting
+  });
+});

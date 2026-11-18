@@ -1,11 +1,13 @@
 /** VolTune inside VideoStudio: script → natural speech (Kokoro, on device) → WAV + lip-sync envelope. */
 import { SpeechEngine, isSupported, type Progress } from "./engine/client";
-import { buildPlan } from "./engine/plan";
+import { buildPlan, type PlanItem } from "./engine/plan";
 import { MemoryClipStore } from "./engine/store";
 import { buildWavBlob } from "./engine/export";
-import { SAMPLE_RATE, mouthEnvelope, toFloat32 } from "./engine/audio";
+import { SAMPLE_RATE, encodeWav, mouthEnvelope, toFloat32 } from "./engine/audio";
 import { DEFAULT_VOICE } from "./engine/voices";
-import { PRESETS } from "./engine/voicebank";
+import { PRESETS, resolveVoice } from "./engine/voicebank";
+import { studioSay } from "./studio_client";
+import type { Tone } from "./engine/open";
 import { VOICES } from "./engine/voices";
 import { loadCustoms } from "./voicelab";
 
@@ -74,6 +76,9 @@ export class VoiceService {
       customs: loadCustoms(),
     });
     if (items.length === 0) throw new Error("Nothing to speak in that script.");
+    // On the desktop the studio voice acts every line (VolTune Studio): the script's directions become its tone
+    const acted = await this.studioScript(items, req.lang, onClip);
+    if (acted) return { ...acted, cast };
     const store = new MemoryClipStore();
     const jobId = `vs_${Date.now()}`;
     await store.startJob({ id: jobId, planHash: jobId, total: items.length, createdAt: Date.now() });
@@ -97,7 +102,48 @@ export class VoiceService {
     return { wav, seconds: pcm.length / SAMPLE_RATE, mouth: mouthEnvelope(pcm, 30), cast, lines };
   }
 
+  /**
+   * A script said by the studio voice, line by line, each line's directions (mood, louder/softer, whispered, shouted,
+   * slower, higher…) as its tone; null when the studio cannot say one of its lines here (then VolTune says it all).
+   */
+  private async studioScript(items: PlanItem[], lang: string | undefined, onClip?: (done: number, total: number) => void): Promise<Omit<SpeakResult, "cast"> | null> {
+    const parts: Float32Array[] = [];
+    for (const [i, it] of items.entries()) {
+      const own = resolveVoice(it.voice, loadCustoms());
+      const tone: Tone = {
+        ...(it.mood ? { mood: it.mood, moodAmount: it.moodAmount } : {}),
+        rate: it.speed,
+        // the delivery's own pitch (the voice's recipe pitch is the voice's: the studio keeps it)
+        ...(it.pitch !== undefined && Math.abs(it.pitch - own.pitch) >= 0.25 ? { pitch: it.pitch - own.pitch } : {}),
+        energy: deliveryEnergy(it.gain, it.soft, it.edge),
+      };
+      const r = await studioSay(it.text, it.voice, tone, it.lang ?? lang);
+      if (!r) return null;
+      // the level its tone asks for (hushed lines quieter, shouted ones fuller), then the pause after it
+      let peak = 0;
+      for (const v of r.pcm) peak = Math.max(peak, Math.abs(v));
+      const k = peak > 0 ? Math.min(3, r.peak / peak) : 1;
+      parts.push(r.pcm.map((v) => v * k), new Float32Array(Math.round((it.pauseMs / 1000) * SAMPLE_RATE)));
+      onClip?.(i + 1, items.length);
+    }
+    const pcm = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+    const lines: SpeakResult["lines"] = [];
+    let o = 0;
+    for (const [j, p] of parts.entries()) {
+      if (j % 2 === 0) lines.push({ speaker: items[j / 2]?.speaker, text: items[j / 2]?.text ?? "", start: o / SAMPLE_RATE, end: (o + p.length) / SAMPLE_RATE });
+      pcm.set(p, o);
+      o += p.length;
+    }
+    return { wav: new Blob([encodeWav(pcm)], { type: "audio/wav" }), seconds: pcm.length / SAMPLE_RATE, mouth: mouthEnvelope(pcm, 30), lines };
+  }
+
   cancel(): void {
     this.engine.cancel();
   }
+}
+
+/** A delivery's colour as the studio tone's energy (−1 hushed … 1 forceful): gain in octaves, whisper down, shout up. */
+export function deliveryEnergy(gain = 1, soft = 0, edge = 0): number {
+  const e = Math.log2(Math.max(0.1, gain)) * 1.4 - soft * 0.6 + edge * 0.5;
+  return Math.round(Math.max(-1, Math.min(1, e)) * 100) / 100;
 }
