@@ -111,6 +111,8 @@ export interface Vsd {
     convert(from: string, name?: string): Promise<ForgeResult>;
     list(): Promise<{ folder: string; models: { name: string; path: string; bytes: number; modified: number }[] }>;
   };
+  /** Cine 3D: films staged in real depth and drawn on the graphics card (electron/cine.cjs). */
+  cine?: CineApi;
   /** Code Studio: films written as code, drawn by the film farm (electron/film.cjs). */
   film?: import("./film/types").FilmApi;
   /** Sensei's brain in the main process (electron/sensei.cjs). */
@@ -177,3 +179,21 @@ export function guessMime(name: string): string {
 }
 
 export const fmtSize = (n: number): string => (n > 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n > 1e3 ? `${Math.round(n / 1e3)} KB` : `${n} B`);
+
+export interface CineShot { id: string; dur: number; about: string }
+export interface CineProgress { state: string; film?: string; pieces?: string; piece?: string | null; frames?: number; size?: string; fps?: number; seconds?: number; framesPerSecond?: number; left?: string; out?: unknown; error?: string; said?: string[]; log?: string[] }
+export interface CineApi {
+  help(): Promise<string>;
+  list(): Promise<{ root: string; films: { name: string; dir: string }[]; assets: { folder: string; bodies: number; textures: number; fonts: number }; engine: string; guide: string }>;
+  open(film: string): Promise<{ dir: string; name: string; width: number; height: number; fps: number; shots: CineShot[]; seconds: number; files: string[]; piecesDrawn: number }>;
+  create(name: string): Promise<{ dir: string; next: string }>;
+  read(film: string, file: string): Promise<string>;
+  write(film: string, file: string, text: string): Promise<{ file: string; loads?: boolean; shots?: number; mistake?: string }>;
+  frame(film: string, shot: string, t?: number, width?: number, height?: number): Promise<{ jpeg: string; file: string; shot: string; t: number; width: number; height: number }>;
+  sheet(film: string, shot: string, times: number[], cols?: number, cell?: number): Promise<{ jpeg: string; file: string; shot: string; times: number[]; cols: number; rows: number }>;
+  render(film: string, p?: Record<string, unknown>): Promise<CineProgress>;
+  join(film: string, p?: Record<string, unknown>): Promise<Record<string, unknown>>;
+  progress(): Promise<CineProgress>;
+  stop(): Promise<{ stopping: boolean }>;
+  tool(film: string | undefined, script: string, args?: string[]): Promise<{ code: number; out: string; err: string }>;
+}

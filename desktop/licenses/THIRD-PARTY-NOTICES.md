@@ -23,3 +23,13 @@ own code at run time; they contain no samples from anywhere else.
 
 GPL: the source of eSpeak NG and of FFmpeg is at the addresses above; VideoStudio's own source is public in its
 repository. You may ask for the exact source of any GPL part shipped with a release and it will be provided.
+
+## Cine 3D (film/cine)
+
+- three.js r170 (film/cine/web/three.module.js) — MIT License, © 2010-2024 three.js authors.
+- Bodies are built from the MakeHuman base mesh, rig and targets as published in MPFB2
+  (github.com/makehumancommunity/mpfb2) — assets CC0 1.0.
+- Performances are retargeted from the CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu), BVH conversion
+  from github.com/una-dinosauria/cmu-mocap — free for use, "The data used in this project was obtained from
+  mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217."
+- Fonts used by Cine films: Bebas Neue, Oswald, Noto Sans Devanagari — SIL Open Font License 1.1.

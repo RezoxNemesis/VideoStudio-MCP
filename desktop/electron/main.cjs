@@ -1418,6 +1418,8 @@ function setupIpc() {
   studioHost = require("./voice-studio.cjs").setupStudio({ handle, userData: app.getPath("userData"), resources: process.resourcesPath, send: (channel, msg) => { if (win && !win.isDestroyed()) win.webContents.send(channel, msg); } });
   // The Blender forge: the person's own Blender as a machine for making 3D assets.
   require("./forge.cjs").setupForge({ handle, mustAllow, models: path.join(OUT.Movies, "Models"), resources: process.resourcesPath });
+  // Cine 3D: films staged in real depth, drawn in a hidden window on the graphics card (film/cine).
+  try { require("./cine.cjs").setupCine({ handle, mustAllow, ffmpeg: FFMPEG, ffprobe: FFPROBE, root: path.join(OUT.Movies, "Cine"), movies: OUT.Movies, resources: process.resourcesPath, log: (m) => crashLog(m), send: (channel, msg) => { if (win && !win.isDestroyed()) win.webContents.send(channel, msg); } }); } catch (e) { crashLog(`cine: ${e && e.message}`); }
   handle("win.capture", async (max = 1600, quality = 78) => {
     const img = await win.webContents.capturePage();
     const sz = img.getSize();

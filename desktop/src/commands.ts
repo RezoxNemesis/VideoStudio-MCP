@@ -9,6 +9,7 @@ import { registerSmartCommands } from "../../src/agent/smart";
 import { registerStageCommands } from "../../src/agent/stage";
 import { setModelFileUrl } from "../../src/stage/models";
 import { registerForgeCommands } from "./forge";
+import { registerCineCommands } from "./cine";
 import { registerMusicCommands } from "../../src/agent/music";
 import { registerOpenVoiceCommands } from "../../src/agent/voiceopen";
 import * as ops from "../../src/core/ops";
@@ -76,6 +77,7 @@ export function registerDesktopCommands(s: Studio): void {
   registerMusicCommands();
   registerOpenVoiceCommands();
   registerForgeCommands(s);
+  registerCineCommands(s);
   registerCommand("desktop.info", "This PC: folders, drives, CPU, memory, GPU status, app version, where renders are saved.", () => need().info());
 
   registerCommand("fs.roots", "The person's main folders (Videos, Music, Pictures, Downloads, Desktop, Documents, home), mounted drives and the VideoStudio output folders.", async () => {
