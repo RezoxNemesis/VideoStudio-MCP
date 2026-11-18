@@ -1109,7 +1109,14 @@ const newer = (a, b) => {
 // Started as an older system install while a newer app is unpacked in the person's own folder: that one runs instead.
 if (process.platform === "linux" && app.isPackaged && !process.argv.includes("--vsd-no-handover")) {
   const h = SELF.handover(process.execPath, os.homedir(), app.getVersion(), newer);
-  if (h) { spawn(h.exe, SELF.startArgs(h.dir, process.argv.slice(1)), { detached: true, stdio: "ignore" }).unref(); app.exit(0); }
+  if (h) {
+    // (this start hands over, it did not fail: its start guard and session marker go, or the newer app would read them
+    //  as a crashed start and open in safe graphics, software rendering — it did, every time it was started this way)
+    for (const f of [GUARD, SESSION, RUNNING_PID]) { try { fs.unlinkSync(f); } catch { /* not there */ } }
+    try { app.releaseSingleInstanceLock(); } catch { /* not held */ }
+    spawn(h.exe, SELF.startArgs(h.dir, process.argv.slice(1)), { detached: true, stdio: "ignore" }).unref();
+    app.exit(0);
+  }
 }
 async function updateCheck() {
   const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`, { headers: { accept: "application/vnd.github+json", "user-agent": "VideoStudio" } });
