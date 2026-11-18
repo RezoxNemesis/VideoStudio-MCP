@@ -126,7 +126,9 @@
         "to": "voice",
         "filter": [
           "worker.mjs",
-          "package.json"
+          "package.json",
+          "refs/*.wav",
+          "refs/CREDITS.md"
         ]
       },
       {

@@ -18,9 +18,14 @@ import { lineOver, linePass, lineStart, withoutLead } from "./studio_lead";
 import { cleanPass, tailOver } from "./studio_pass";
 
 export const STUDIO_SR = 24000;
-export const STUDIO_REPO = "onnx-community/chatterbox-multilingual-ONNX";
+/**
+ * Chatterbox Multilingual V3 (Resemble AI, MIT), as ONNX graphs with the onnx-community V2 layout (Masterx's export):
+ * clearer Hindi and fewer slips than V2 (mean WER 2.0 % against 7.3 % over four languages). Its tokenizer reads
+ * full-case text, its speech encoder crops the style prompt to 6 s itself, and the last speech token's sound is dropped.
+ */
+export const STUDIO_REPO = "Masterx/chatterbox-multilingual-v3-ONNX";
 /** Pinned so the byte offsets below stay valid. */
-export const STUDIO_REVISION = "452d3f434aa592098f1eedac9099f33642ab2da5";
+export const STUDIO_REVISION = "19b94afe41de738624b2f3afc75b4cd56221fbeb";
 export const STUDIO_FILES = [
   "tokenizer.json",
   "onnx/speech_encoder.onnx",
@@ -31,8 +36,12 @@ export const STUDIO_FILES = [
   "onnx/conditional_decoder.onnx",
   "onnx/conditional_decoder.onnx_data",
 ] as const;
+/** The full-precision language model: what a graphics card runs (4-bit loses words and sounds: CER 4.9 % against 2.7 %). */
+export const STUDIO_FULL_LM = ["onnx/language_model.onnx", "onnx/language_model.onnx_data"] as const;
 /** text_pos_emb.weight (2050×1024 float32) inside embed_tokens.onnx_data at this revision. */
-export const TEXT_POS = { offset: 43200512, rows: 2050, dim: 1024 } as const;
+export const TEXT_POS = { offset: 43618304, rows: 2050, dim: 1024 } as const;
+/** Samples of sound one speech token makes (24 kHz, 25 tokens a second); V3 drops the last token's. */
+const TOKEN_SAMPLES = 960;
 
 const START = 6561;
 const STOP = 6562;
@@ -91,9 +100,13 @@ export function puncNorm(text: string): string {
   return t;
 }
 
-/** Text as the multilingual tokenizer expects it: cleaned, lower case, NFKD, language tag, spaces marked. */
-export function prepareText(text: string, lang: string): string {
-  const t = puncNorm(text).toLowerCase().normalize("NFKD");
+/**
+ * Text as the multilingual tokenizer expects it: cleaned, NFKD, language tag, spaces marked. V2 was trained on lower-case
+ * text; V3 on full-case text (its tokenizer.json carries an NFKD normalizer, which is how the two are told apart).
+ */
+export function prepareText(text: string, lang: string, cased = false): string {
+  const c = puncNorm(text);
+  const t = (cased ? c : c.toLowerCase()).normalize("NFKD");
   return `[${lang}]${t}`.replace(/ /g, "[SPACE]");
 }
 
@@ -103,10 +116,11 @@ export function prepareText(text: string, lang: string): string {
  */
 export function leadEnd(tokenizer: StudioTokenizer, lead: string, text: string, lang: string): number {
   if (!lead) return 0;
-  return tokenizer.encode(prepareText(lead + text, lang)).length - tokenizer.encode(prepareText(text, lang)).length + 2;
+  return tokenizer.encode(prepareText(lead + text, lang, tokenizer.cased)).length - tokenizer.encode(prepareText(text, lang, tokenizer.cased)).length + 2;
 }
 
 interface TokenizerJson {
+  normalizer?: { type?: string; normalizers?: Array<{ type?: string }> } | null;
   model: { vocab: Record<string, number>; merges: Array<string | [string, string]>; unk_token?: string };
   added_tokens: Array<{ id: number; content: string }>;
 }
@@ -117,8 +131,12 @@ export class StudioTokenizer {
   private ranks = new Map<string, number>();
   private added: Array<[string, number]>;
   private unk: number;
+  /** V3: trained on full-case text (the tokenizer normalizes NFKD itself); V2: lower case. */
+  readonly cased: boolean;
   constructor(json: TokenizerJson | string) {
     const j: TokenizerJson = typeof json === "string" ? JSON.parse(json) : json;
+    const norms = j.normalizer ? [j.normalizer, ...(j.normalizer.normalizers ?? [])] : [];
+    this.cased = norms.some((n) => n?.type === "NFKD");
     this.vocab = new Map(Object.entries(j.model.vocab));
     j.model.merges.forEach((m, i) => this.ranks.set(Array.isArray(m) ? m.join(" ") : m, i));
     this.added = j.added_tokens.map((a) => [a.content, a.id] as [string, number]).sort((a, b) => b[0].length - a[0].length);
@@ -416,7 +434,7 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   const rand = rng(o.seed ?? 1);
   const lead = o.lead ?? "";
   const lineAt = leadEnd(models.tokenizer, lead, text, o.lang);
-  const ids = models.tokenizer.encode(prepareText(lead + text, o.lang));
+  const ids = models.tokenizer.encode(prepareText(lead + text, o.lang, models.tokenizer.cased));
   const n = ids.length;
   const pos = ids.map((id, k) => (id >= START ? 0 : k - 1));
   const exT = T("float32", new Float32Array([ex]), [1]);
@@ -559,6 +577,8 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
     speaker_features: T("float32", spk.promptFeat, [1, spk.featLen, 80]),
   });
   let wav: Float32Array = Float32Array.from(Object.values(dec)[0]!.data as Float32Array);
+  // (V3: the final token's sound is a click or a cut-off breath; the reference drops it)
+  if (wav.length > TOKEN_SAMPLES * 4) wav = wav.subarray(0, wav.length - TOKEN_SAMPLES);
   // (for study: the frames left out before the line, and the samples of silence taken off its start)
   if (al.trace) { al.trace.skip = skip; al.trace.head = soundBounds(wav)[0]; }
   // The lead is cut away where the speech comes to the line (a speech token is 40 ms of sound). A take whose lead

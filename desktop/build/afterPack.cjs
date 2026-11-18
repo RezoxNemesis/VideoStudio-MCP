@@ -4,11 +4,14 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-/** onnxruntime-node ships every platform and the CUDA / TensorRT providers; this package needs Linux x64 on the CPU. */
+/**
+ * onnxruntime-node ships every platform and the CUDA / TensorRT providers; this package needs Linux x64, and the CUDA
+ * provider so the studio voices run on an NVIDIA card (CUDA 12 and cuDNN 9 on the PC; without them the CPU is used).
+ */
 const skipVoice = (rel) =>
   /onnxruntime-node[/\\]bin[/\\]napi-v\d+[/\\](darwin|win32)([/\\]|$)/.test(rel) ||
   /onnxruntime-node[/\\]bin[/\\]napi-v\d+[/\\]linux[/\\]arm64([/\\]|$)/.test(rel) ||
-  /libonnxruntime_providers_(cuda|tensorrt)\.so$/.test(rel);
+  /libonnxruntime_providers_tensorrt\.so$/.test(rel);
 
 exports.default = async function afterPack(ctx) {
   const res = path.join(ctx.appOutDir, "resources");
@@ -20,5 +23,5 @@ exports.default = async function afterPack(ctx) {
   const voice = path.join(__dirname, "..", "voice", "node_modules");
   if (!fs.existsSync(path.join(voice, "onnxruntime-node", "package.json"))) throw new Error("desktop/voice/node_modules is missing: run `npm install --prefix voice` in desktop/ first.");
   fs.cpSync(voice, path.join(res, "voice", "node_modules"), { recursive: true, filter: (src) => !skipVoice(path.relative(voice, src)) });
-  console.log("  • studio voices: onnxruntime-node (linux x64, CPU) copied");
+  console.log("  • studio voices: onnxruntime-node (linux x64, CPU + CUDA) copied");
 };

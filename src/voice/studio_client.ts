@@ -15,13 +15,14 @@ import { referenceLine } from "./engine/studio_refs";
 import { devanagariLoanwords } from "./engine/studio_loanwords";
 import { phrases, pacing } from "./engine/studio_pace";
 import { studioSpeaker } from "./engine/studio_speaker";
+import { bankKey, bankVoice } from "./engine/studio_bank";
 import { loadCustoms } from "./voicelab";
 import { openVoice } from "./open_client";
 
 interface StudioBridge {
   status(): Promise<{ available: boolean; installed?: boolean; downloadBytes?: number; totalBytes?: number }>;
   install(): Promise<unknown>;
-  say(p: { key: string; text: string; lang: string; mood?: string; moodAmount?: number; cfg?: number; take?: number }): Promise<{ pcm?: Float32Array; needRef?: boolean }>;
+  say(p: { key: string; text: string; lang: string; mood?: string; moodAmount?: number; cfg?: number; take?: number; bank?: string }): Promise<{ pcm?: Float32Array; needRef?: boolean }>;
   speaker(p: { key: string; pcm: Float32Array }): Promise<boolean>;
   onProgress(fn: (m: { done: number; total?: number; what: string }) => void): () => void;
 }
@@ -97,10 +98,14 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
   }
   if (!LANGS.has(code)) return null;
   const mood = tone?.mood;
-  const female = /^[a-z]f_/.test(parseMix(mix)[0]?.[0] ?? mix);
+  const female = own.gender ? own.gender === "Female" : /^[a-z]f_/.test(parseMix(mix)[0]?.[0] ?? mix);
   // a character voice has a pitch of its own, a line may add to it: each is a speaker of its own (studio_speaker.ts)
   const spk = studioSpeaker({ mix, pitch: own.pitch }, mood, tone);
-  const key = spk.key;
+  // A real reader of the voice's language, gender and register speaks it (studio_bank.ts); the mood is acted by the
+  // model (exaggeration), so one speaker serves every mood. A voice no reader fits (a child) keeps its VolTune clip.
+  const real = bankVoice(vlang, female, spk.pitch, mix);
+  const key = real ? `v3-${bankKey(real)}` : spk.key;
+  const bank = real?.file;
   const off = b.onProgress((m) => onProgress?.(m.total ? m.done / m.total : 0, m.what));
   try {
     // The line keeps its pace: it is spoken a sentence at a time (the model runs short sentences together and
@@ -110,7 +115,7 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
     // (A slow line is not asked for with a weaker hold on its words, as Chatterbox advises for a slower delivery:
     //  measured, the model's pace does not follow it, and with less of it the model murmurs for seconds, skips words
     //  and runs sentences together. Of eight Hindi sentences five were clean at the first attempt, against seven.)
-    const sayOne = (t: string) => b.say({ key, text: t, lang: code, mood, moodAmount: tone?.moodAmount, ...(tone?.take ? { take: tone.take } : {}) });
+    const sayOne = (t: string) => b.say({ key, text: t, lang: code, mood, moodAmount: tone?.moodAmount, ...(tone?.take ? { take: tone.take } : {}), ...(bank ? { bank } : {}) });
     let r = await sayOne(list[0] ?? words);
     if (r.needRef) {
       onProgress?.(0, "Preparing the voice");

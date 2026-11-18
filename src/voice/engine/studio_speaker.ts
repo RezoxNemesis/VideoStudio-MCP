@@ -13,6 +13,8 @@ export interface StudioSpeaker {
   key: string;
   /** How the reference clip is spoken (by the character voice itself, which brings its own pitch and pace). */
   tone: Tone;
+  /** Semitones the line stands above the voice's usual register (the voice's own pitch and the line's), to the half semitone. */
+  pitch: number;
 }
 
 /**
@@ -26,5 +28,6 @@ export function studioSpeaker(voice: { mix: string; pitch?: number }, mood: stri
   // to the half semitone (less is not heard, and every pitch is a reference clip of its own)
   const total = Math.round(((voice.pitch ?? 0) + (tone?.pitch ?? moods) - moods) * 2) / 2;
   if (tone?.pitch !== undefined) ref.pitch = tone.pitch;
-  return { key: `v2-${seedFor(voice.mix, mood ?? "neutral").toString(36)}${total ? `-p${total}` : ""}`, tone: ref };
+  // (v3: speakers made by the V3 speech encoder; V2's do not fit it)
+  return { key: `v3-${seedFor(voice.mix, mood ?? "neutral").toString(36)}${total ? `-p${total}` : ""}`, tone: ref, pitch: total };
 }

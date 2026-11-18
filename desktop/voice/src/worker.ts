@@ -13,6 +13,8 @@ import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import * as ort from "onnxruntime-node";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import {
   acting,
   exposeAlignment,
@@ -22,6 +24,7 @@ import {
   seedFor,
   takeSeed,
   STUDIO_FILES,
+  STUDIO_FULL_LM,
   STUDIO_REPO,
   STUDIO_REVISION,
   StudioTokenizer,
@@ -36,29 +39,50 @@ import { leadFor } from "../../../src/voice/engine/studio_lead";
 type Msg = { id: string; method: string; params: Record<string, unknown> };
 const send = (m: unknown) => process.send?.(m);
 let dataDir = "";
-const modelDir = () => path.join(dataDir, "models", "chatterbox");
-const ALL_FILES = [...STUDIO_FILES, "onnx/language_model_q4.onnx"];
+// (V3 lives in its own folder: V2's files and speakers are of no use to it)
+const modelDir = () => path.join(dataDir, "models", "chatterbox-v3");
+/** The real readers the voices are spoken from (studio_bank.ts), shipped beside this worker. */
+const bankDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "refs");
+
+/** Is there a graphics card the voice can run on (NVIDIA, CUDA 12 and cuDNN 9 present, the provider shipped)? */
+let gpuKnown: boolean | null = null;
+function gpu(): boolean {
+  if (gpuKnown !== null) return gpuKnown;
+  let ld = "";
+  try { ld = execFileSync("ldconfig", ["-p"], { encoding: "utf8", timeout: 3000 }); } catch { /* no ldconfig: CPU */ }
+  let provider = false;
+  try {
+    const pkg = path.dirname(createRequire(import.meta.url).resolve("onnxruntime-node/package.json"));
+    provider = execFileSync("find", [path.join(pkg, "bin"), "-name", "libonnxruntime_providers_cuda.so"], { encoding: "utf8", timeout: 5000 }).trim().length > 0;
+  } catch { /* not shipped: CPU */ }
+  return (gpuKnown = cudaReady(process.platform, ld) && provider);
+}
+/** The files this PC needs: the 4-bit language model on the CPU, the full one on a graphics card. */
+const ALL_FILES = () => [...STUDIO_FILES, "onnx/language_model_q4.onnx", ...(gpu() ? STUDIO_FULL_LM : [])];
 /** Download sizes at the pinned revision, for progress. */
 const SIZES: Record<string, number> = {
-  "tokenizer.json": 71798,
-  "onnx/speech_encoder.onnx": 1184608,
+  "tokenizer.json": 72765,
+  "onnx/speech_encoder.onnx": 1204600,
   "onnx/speech_encoder.onnx_data": 591274880,
-  "onnx/embed_tokens.onnx": 13286,
-  "onnx/embed_tokens.onnx_data": 68390912,
-  "onnx/language_model_q4.onnx": 227911,
+  "onnx/embed_tokens.onnx": 17616,
+  "onnx/embed_tokens.onnx_data": 68808704,
+  "onnx/language_model_q4.onnx": 228633,
   "onnx/language_model_q4.onnx_data": 353621248,
-  "onnx/conditional_decoder.onnx": 6350448,
+  "onnx/language_model.onnx": 171445,
+  "onnx/language_model.onnx_data": 2080632832,
+  "onnx/conditional_decoder.onnx": 6371670,
   "onnx/conditional_decoder.onnx_data": 533970816,
 };
-const TOTAL = Object.values(SIZES).reduce((a, b) => a + b, 0);
+const total = () => ALL_FILES().reduce((n, f) => n + (SIZES[f] ?? 0), 0);
 
 function status() {
-  const missing = ALL_FILES.filter((f) => !existsSync(path.join(modelDir(), f)));
-  return { installed: missing.length === 0, missing, downloadBytes: missing.reduce((n, f) => n + (SIZES[f] ?? 0), 0), totalBytes: TOTAL, dir: modelDir() };
+  const missing = ALL_FILES().filter((f) => !existsSync(path.join(modelDir(), f)));
+  return { installed: missing.length === 0, missing, downloadBytes: missing.reduce((n, f) => n + (SIZES[f] ?? 0), 0), totalBytes: total(), dir: modelDir(), gpu: gpu(), model: "Chatterbox Multilingual V3" };
 }
 
 async function install(id: string) {
-  let done = ALL_FILES.filter((f) => existsSync(path.join(modelDir(), f))).reduce((n, f) => n + (SIZES[f] ?? 0), 0);
+  const TOTAL = total();
+  let done = ALL_FILES().filter((f) => existsSync(path.join(modelDir(), f))).reduce((n, f) => n + (SIZES[f] ?? 0), 0);
   for (const f of status().missing) {
     const to = path.join(modelDir(), f);
     mkdirSync(path.dirname(to), { recursive: true });
@@ -88,18 +112,19 @@ function load(): Promise<StudioModels> {
   models ??= (async () => {
     if (!status().installed) throw new Error("The studio voice model is not installed yet.");
     const dir = path.join(modelDir(), "onnx");
-    const aligned = path.join(dir, "language_model_q4_align.onnx");
-    if (!existsSync(aligned)) await writeFile(aligned, exposeAlignment(new Uint8Array(await readFile(path.join(dir, "language_model_q4.onnx")))));
+    const onGpu = gpu();
+    // on a graphics card the full-precision language model (clearer words); on the CPU the 4-bit one (fast enough)
+    const lmName = onGpu && existsSync(path.join(dir, "language_model.onnx_data")) ? "language_model" : "language_model_q4";
+    const aligned = path.join(dir, `${lmName}_align.onnx`);
+    if (!existsSync(aligned)) await writeFile(aligned, exposeAlignment(new Uint8Array(await readFile(path.join(dir, `${lmName}.onnx`)))));
     try { setPriority(10); } catch { /* not allowed: keep the normal priority */ }
     const opts: ort.InferenceSession.SessionOptions = { graphOptimizationLevel: "all", intraOpNumThreads: voiceThreads(availableParallelism()) };
-    let ld = ""; try { ld = execFileSync("ldconfig", ["-p"], { encoding: "utf8", timeout: 3000 }); } catch { /* no ldconfig: CPU */ }
-    const gpu = cudaReady(process.platform, ld);
     const open = async (f: string, o = opts) => {
-      if (gpu) { try { return (await ort.InferenceSession.create(path.join(dir, f), { ...o, executionProviders: ["cuda", "cpu"] })) as unknown as OrtSession; } catch { /* the GPU would not take it: the CPU does */ } }
+      if (onGpu) { try { return (await ort.InferenceSession.create(path.join(dir, f), { ...o, executionProviders: ["cuda", "cpu"] })) as unknown as OrtSession; } catch { /* the GPU would not take it: the CPU does */ } }
       return (await ort.InferenceSession.create(path.join(dir, f), o)) as unknown as OrtSession;
     };
     // The decoder's graph is huge: onnxruntime 1.31's sequential planner takes minutes on it, the parallel one seconds.
-    const [embed, lm, decoder] = await Promise.all([open("embed_tokens.onnx"), open("language_model_q4_align.onnx"), open("conditional_decoder.onnx", { ...opts, executionMode: "parallel", interOpNumThreads: 1 })]);
+    const [embed, lm, decoder] = await Promise.all([open("embed_tokens.onnx"), open(`${lmName}_align.onnx`), open("conditional_decoder.onnx", { ...opts, executionMode: "parallel", interOpNumThreads: 1 })]);
     let enc: Promise<OrtSession> | null = null;
     const fd = openSync(path.join(dir, "embed_tokens.onnx_data"), "r");
     const buf = new Uint8Array(TEXT_POS.rows * TEXT_POS.dim * 4);
@@ -120,7 +145,25 @@ function load(): Promise<StudioModels> {
 }
 
 const speakers = new Map<string, Speaker>();
-const speakerFile = (key: string) => path.join(dataDir, "studio", "speakers", `${key.replace(/[^\w.-]/g, "_")}.bin`);
+const speakerFile = (key: string) => path.join(dataDir, "studio", "speakers-v3", `${key.replace(/[^\w.-]/g, "_")}.bin`);
+
+/** A bank clip (RIFF WAVE, 16-bit PCM, mono, 24 kHz) as samples. */
+function readWav(b: Buffer): Float32Array {
+  if (b.toString("ascii", 0, 4) !== "RIFF" || b.toString("ascii", 8, 12) !== "WAVE") throw new Error("A voice bank clip is not a WAV file.");
+  let o = 12, fmt = { ch: 1, bits: 16, rate: 24000 };
+  while (o + 8 <= b.length) {
+    const id = b.toString("ascii", o, o + 4), n = b.readUInt32LE(o + 4);
+    if (id === "fmt ") fmt = { ch: b.readUInt16LE(o + 10), rate: b.readUInt32LE(o + 12), bits: b.readUInt16LE(o + 22) };
+    if (id === "data") {
+      if (fmt.bits !== 16 || fmt.ch !== 1 || fmt.rate !== 24000) throw new Error("A voice bank clip must be 24 kHz mono 16-bit.");
+      const k = Math.floor(n / 2), x = new Float32Array(k);
+      for (let i = 0; i < k; i++) x[i] = b.readInt16LE(o + 8 + i * 2) / 32768;
+      return x;
+    }
+    o += 8 + n + (n & 1);
+  }
+  throw new Error("A voice bank clip has no sound.");
+}
 async function speaker(key: string): Promise<Speaker | null> {
   if (speakers.has(key)) return speakers.get(key)!;
   const f = speakerFile(key);
@@ -149,7 +192,16 @@ async function handle(m: Msg): Promise<unknown> {
     }
     case "say": {
       const key = String(p.key);
-      const spk = await speaker(key);
+      let spk = await speaker(key);
+      if (!spk && typeof p.bank === "string" && /^[\w-]+$/.test(p.bank)) {
+        // a real reader from the bank (studio_bank.ts): the speaker is made here, from the clip shipped with the worker
+        const clip = readWav(await readFile(path.join(bankDir, `${p.bank}.wav`)));
+        const s = await makeSpeaker(await load(), clip);
+        mkdirSync(path.dirname(speakerFile(key)), { recursive: true });
+        await writeFile(speakerFile(key), packSpeaker(s));
+        speakers.set(key, s);
+        spk = s;
+      }
       if (!spk) return { needRef: true };
       const mdl = await load();
       const mood = typeof p.mood === "string" ? p.mood : undefined;

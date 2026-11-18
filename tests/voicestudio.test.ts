@@ -8,6 +8,10 @@ describe("studio text", () => {
     expect(puncNorm("wait: what")).toBe("Wait, what.");
     expect(puncNorm("“Hi”  there — friend")).toBe('"Hi" there - friend.');
     expect(prepareText("Main yahin hoon", "hi")).toBe("[hi]main[SPACE]yahin[SPACE]hoon.");
+    // V3 was trained on full-case text: its tokenizer (NFKD normalizer) keeps the capitals
+    expect(prepareText("Main yahin hoon", "hi", true)).toBe("[hi]Main[SPACE]yahin[SPACE]hoon.");
+    expect(new StudioTokenizer({ normalizer: { type: "Sequence", normalizers: [{ type: "NFKD" }] }, model: { vocab: { "[UNK]": 1 }, merges: [] }, added_tokens: [] }).cased).toBe(true);
+    expect(new StudioTokenizer({ model: { vocab: { "[UNK]": 1 }, merges: [] }, added_tokens: [] }).cased).toBe(false);
     // Devanagari nukta letters are decomposed (NFKD), as the model was trained
     expect(prepareText("ज़रा", "hi")).toBe("[hi]ज़रा.");
     // a Hindi sentence ends with its own full stop: no second one is put after it (the model babbles on after "।.")

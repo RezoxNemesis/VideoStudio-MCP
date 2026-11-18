@@ -6,11 +6,11 @@ describe("the speaker a studio line is acted from", () => {
   const boy = { mix: "am_puck*0.6+af_sky*0.4", pitch: 4.6 }, plain = { mix: "am_michael", pitch: 0 };
 
   it("is one per voice and mood for a plain voice at its mood's own pitch", () => {
-    // (v2: speakers made from reference clips that end in silence; the ones before spoiled first words)
-    expect(studioSpeaker(plain, "serious", {}).key).toBe(`v2-${seedFor("am_michael", "serious").toString(36)}`);
-    expect(studioSpeaker(plain, undefined, undefined).key).toBe(`v2-${seedFor("am_michael", "neutral").toString(36)}`);
+    // (v3: speakers made by the V3 encoder from reference clips that end in silence)
+    expect(studioSpeaker(plain, "serious", {}).key).toBe(`v3-${seedFor("am_michael", "serious").toString(36)}`);
+    expect(studioSpeaker(plain, undefined, undefined).key).toBe(`v3-${seedFor("am_michael", "neutral").toString(36)}`);
     // a line's tone arrives worked out: a serious line already carries the serious mood's own pitch (−1, halved)
-    expect(studioSpeaker(plain, "serious", { pitch: -0.5, mood: "serious" }).key).toBe(`v2-${seedFor("am_michael", "serious").toString(36)}`);
+    expect(studioSpeaker(plain, "serious", { pitch: -0.5, mood: "serious" }).key).toBe(`v3-${seedFor("am_michael", "serious").toString(36)}`);
   });
 
   it("carries a character voice's own pitch: a little boy is not acted from a grown man's voice", () => {
