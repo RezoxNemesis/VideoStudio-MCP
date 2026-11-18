@@ -49,8 +49,10 @@ describe("a studio voice keeps the pace of a line", () => {
   it("a model that hurries is held to the pace, one that dawdles is not slowed further", () => {
     const sr = 24000, tone = (s: number) => Float32Array.from({ length: Math.round(sr * s) }, (_, i) => 0.5 * Math.sin((2 * Math.PI * 220 * i) / sr));
     const six = ["They brought ten thousand armed men."];
-    // six words in one second is twice the natural pace: stretched, but never by more than 1.4 (more would sound drawn out)
-    expect(paced([tone(1)], six, {}, sr).length / sr).toBeCloseTo(1.4, 1);
+    // six words in one second is twice the natural pace: stretched, but never by more than 1.25 (more is heard as smearing)
+    expect(paced([tone(1)], six, {}, sr).length / sr).toBeCloseTo(1.25, 1);
+    // Hindi has more, shorter words a second: eight words in two seconds is its calm pace, left alone
+    expect(paced([tone(2)], ["बेटा मैं ठीक हूँ तुम अपना ख़याल रखना"], { natural: 3.9 }, sr).length / sr).toBeCloseTo(2, 1);
     // six words in 2.4 s is 2.5 a second: with a tone of 0.86 (2.58 a second) that is already right
     expect(paced([tone(2.4)], six, { rate: 0.86 }, sr).length / sr).toBeCloseTo(2.4, 1);
     // six words in four seconds is slower than the tone asks: brought up a little, never rushed
@@ -64,7 +66,7 @@ describe("a studio voice keeps the pace of a line", () => {
     expect(r.words).toBe(6);
     expect(r.spoken).toBeCloseTo(1, 1); // seconds of speech as the model gave it
     expect(r.asked).toBeCloseTo(2, 1); // how far it would have to be stretched to sit at the pace
-    expect(r.factor).toBeCloseTo(1.4, 2); // how far it was
+    expect(r.factor).toBeCloseTo(1.25, 2); // how far it was
     expect(r.pcm.length).toBe(paced([tone(1)], ["They brought ten thousand armed men."], {}, sr).length);
   });
   it("the model's own silence around a sentence is taken off, a word's dying sound is kept", () => {

@@ -23,7 +23,7 @@ hai=है hain=हैं hoon|hun|hu=हूँ ho=हो tha=था thi=थी 
 ka=का ki=की ke=के ko=को se=से me|mein|men=में par=पर pe=पे tak=तक ne=ने liye|liy|lie=लिए saath|sath=साथ baad|bad_h=बाद pehle|pahle|pehele=पहले upar|oopar=ऊपर neeche|niche=नीचे andar=अंदर bahar|baahar=बाहर paas|pas=पास door|dur=दूर
 saamne|samne=सामने peeche|piche=पीछे beech|bich=बीच taraf=तरफ़ bina=बिना dwara=द्वारा wala|vala=वाला wali|vali=वाली wale|vale=वाले bare|baare=बारे jaisa=जैसा jaisi=जैसी jaise=जैसे waisa|vaisa=वैसा waise|vaise=वैसे aisa=ऐसा aisi=ऐसी aise=ऐसे kaisa=कैसा kaisi=कैसी kaise=कैसे
 aur|or_h=और ya=या lekin=लेकिन magar=मगर par_b=पर kyunki|kyonki|kyuki=क्योंकि isliye|isiliye=इसलिए to|toh=तो bhi=भी hi_h=ही na|naa=ना nahi|nahin|nhi|nahee=नहीं mat=मत agar=अगर warna|varna=वरना phir|fir=फिर tab=तब jab=जब ab=अब abhi=अभी kabhi=कभी
-tabhi=तभी jabhi=जभी yahan|yaha=यहाँ wahan|waha|vahan=वहाँ kahan|kaha=कहाँ jahan|jaha=जहाँ idhar=इधर udhar=उधर kidhar=किधर kya=क्या kyun|kyon|kyu=क्यों kab=कब kaun|kon=कौन kitna=कितना kitni=कितनी kitne=कितने kaunsa|konsa=कौनसा
+tabhi=तभी jabhi=जभी yahan|yaha=यहाँ wahan|waha|vahan=वहाँ kahan|kahaan|kaha=कहाँ jahan|jaha=जहाँ idhar=इधर udhar=उधर kidhar=किधर kya=क्या kyun|kyon|kyu=क्यों kab=कब kaun|kon=कौन kitna=कितना kitni=कितनी kitne=कितने kaunsa|konsa=कौनसा
 haan|han|haa=हाँ ji|jee=जी achha|accha|acha|achchha=अच्छा achhi|acchi|achi=अच्छी achhe|acche|ache=अच्छे theek|thik|theekh=ठीक sahi=सही galat=ग़लत bahut|bohot|bahot|bhot=बहुत thoda|thora=थोड़ा thodi|thori=थोड़ी thode=थोड़े zyada|jyada|zyaada=ज़्यादा kam=कम
 bada|bara=बड़ा badi|bari=बड़ी bade|bare_b=बड़े chhota|chota=छोटा chhoti|choti=छोटी chhote|chote=छोटे naya=नया nayi|nai=नई naye=नए purana=पुराना purani=पुरानी purane=पुराने lamba=लंबा lambi=लंबी sundar=सुंदर pyara|pyaara=प्यारा pyari|pyaari=प्यारी pyare=प्यारे
 khush=ख़ुश udaas|udas=उदास pagal|paagal=पागल sachcha|sacha=सच्चा jhootha|jhutha=झूठा mushkil=मुश्किल aasan|asaan|aasaan=आसान zaroori|zaruri|jaruri=ज़रूरी tez=तेज़ dheere|dhire=धीरे jaldi=जल्दी der=देर poora|pura=पूरा poori|puri=पूरी aadha|adha=आधा khaali|khali=ख़ाली bhara=भरा
@@ -39,6 +39,9 @@ umeed|ummeed=उम्मीद khwab|khwaab=ख़्वाब chand|chaand=च
 aankh=आँख aankhen|aankhein=आँखें haath|hath=हाथ pair=पैर sar|sir_h=सिर muh|munh=मुँह baal=बाल chehra=चेहरा awaaz|awaz|aavaaz=आवाज़ naam=नाम kaam=काम baat=बात baatein|baaten=बातें cheez|chiz=चीज़ paisa=पैसा paise=पैसे rupaye|rupaiye=रुपये
 sawaal|sawal=सवाल jawab|jawaab=जवाब matlab=मतलब wajah|vajah=वजह tarah=तरह tareeka|tarika=तरीक़ा madad=मदद zaroorat|zarurat|jarurat=ज़रूरत koshish=कोशिश galti=ग़लती sach=सच jhooth|jhuth=झूठ kahani=कहानी gaana|gana=गाना khel=खेल kitab|kitaab=किताब
 safar=सफ़र manzil=मंज़िल raah=राह musafir=मुसाफ़िर dushman=दुश्मन jung=जंग jeet=जीत haar=हार taqat|taakat|takat=ताक़त himmat=हिम्मत darr|dar=डर gussa=ग़ुस्सा shanti|shaanti=शांति sukoon|sukun=सुकून junoon|junun=जुनून
+gyarah|gyara=ग्यारह barah|baara|bara_n=बारह terah|tera_n=तेरह chaudah|chauda=चौदह pandrah|pandra=पंद्रह solah|sola=सोलह satrah|satra=सत्रह atharah|athara=अठारह unnees|unnis=उन्नीस pachees|pachchis=पच्चीस tees|tis_n=तीस chalees|chalis=चालीस saintalees|saintalis|saintaalis=सैंतालीस pachaas|pachas=पचास saath_n=साठ sattar=सत्तर assi=अस्सी nabbe=नब्बे
+baj=बज baje=बजे bajkar|baj_kar=बजकर bajne=बजने teesri|tisri=तीसरी teesre|tisre=तीसरे doosri|dusri=दूसरी pehli|pahli=पहली
+karwana|karvana=करवाना karwane|karvane=करवाने karwaya|karvaya=करवाया karwayi|karvayi|karwai=करवाई karwaenge|karwayenge=करवाएँगे
 ek=एक do_h=दो teen=तीन chaar|char=चार paanch|panch=पाँच chhe|chhah|cheh=छह saat=सात aath=आठ nau=नौ das=दस bees=बीस sau=सौ hazaar|hazar=हज़ार lakh|laakh=लाख crore|karod=करोड़ pehla|pahla=पहला doosra|dusra=दूसरा teesra|tisra=तीसरा dono=दोनों
 namaste=नमस्ते namaskar=नमस्कार shukriya=शुक्रिया dhanyavaad|dhanyawad=धन्यवाद maaf|maf=माफ़ kripya=कृपया arey|arre|are_h=अरे oye=ओए chalo=चलो bas=बस shayad=शायद zaroor|zarur|jarur=ज़रूर bilkul=बिल्कुल sirf=सिर्फ़ bhai_e=भाई wah|waah=वाह
 hey_h=हे suno=सुनो dekho=देखो ruko=रुको jao=जाओ aao=आओ lo=लो baitho=बैठो bolo=बोलो batao=बताओ karo=करो raho=रहो socho=सोचो samjho=समझो chhodo|chodo=छोड़ो pakdo=पकड़ो maaro|maro=मारो bhaago|bhago=भागो utho=उठो
@@ -241,7 +244,11 @@ export function transliterateHinglish(text: string, force = false): string {
   if (!hindiLine && hinglishShare(text) < 0.12) return text;
   // "bacha" is बच्चा (a child) except as a verb: "bacha nahi paaya", "bacha liya" → बचा (saved)
   const t = hindiLine ? text.replace(/\bbach(?:a|aa)\b(?=\s+(?:nahi|nahin|na|liya|li|lo|le|lena|leta|leti|lete|loon|lu|lijiye|paaya|paya|payi|paayi|paa|pa|paata|paati|paate|pata|pati|pate|paaun|paaunga|paaungi|paoge|paaoge|paaye|paye|sakta|sakti|sakte|sake|sako|sakoon|sakun|sakenge|diya|dena|do|de|lunga|lungi|lenge|chuke|chuka|chuki)\b)/gi, "बचा") : text;
-  return t.replace(/[A-Za-z][A-Za-z']*/g, (w) => romanToDevanagari(w, hindiLine) ?? w);
+  // "kaha" is कहाँ (where) as people type it, but कहा (said) after someone who says (maine/unhone/…ne, "ko") or
+  // before tha/thi/the/ki: "unhone tests karwane ko kaha hai" said, "tum kaha ho" where
+  const said = /\b(?:\w+ne|ko)\b(?:\s+\S+){0,3}?\s+kaha\b|\bkaha\b(?=\s+(?:tha|thi|the|ki|ke|na|toh|to|gaya|gayi|ja\s+raha)\b)/i;
+  const t2 = hindiLine ? t.replace(/\bkaha\b/gi, (w, at: number) => (said.test(t.slice(Math.max(0, at - 40), at + 20)) ? "कहा" : w)) : t;
+  return t2.replace(/[A-Za-z][A-Za-z']*/g, (w) => romanToDevanagari(w, hindiLine) ?? w);
 }
 
 /** Words whose "a" is the long aa of "father" in Indian (and British) English, though American English says them as in "cat". */

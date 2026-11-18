@@ -13,7 +13,7 @@ import { hinglishShare, transliterateHinglish } from "./engine/hinglish";
 import type { Tone } from "./engine/open";
 import { referenceLine } from "./engine/studio_refs";
 import { devanagariLoanwords } from "./engine/studio_loanwords";
-import { phrases, pacing } from "./engine/studio_pace";
+import { NATURAL_PACE, NATURAL_PACE_HI, phrases, pacing } from "./engine/studio_pace";
 import { studioSpeaker } from "./engine/studio_speaker";
 import { bankKey, bankVoice } from "./engine/studio_bank";
 import { loadCustoms } from "./voicelab";
@@ -110,7 +110,7 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
   try {
     // The line keeps its pace: it is spoken a sentence at a time (the model runs short sentences together and
     // hurries a long line), joined with the silences its marks ask for, and brought to the tone's rate.
-    const pace = { rate: (tone?.rate ?? 1) * (own.speed || 1), pauses: tone?.pauses };
+    const pace = { rate: (tone?.rate ?? 1) * (own.speed || 1), pauses: tone?.pauses, natural: code === "hi" ? NATURAL_PACE_HI : NATURAL_PACE };
     const list = phrases(words);
     // (A slow line is not asked for with a weaker hold on its words, as Chatterbox advises for a slower delivery:
     //  measured, the model's pace does not follow it, and with less of it the model murmurs for seconds, skips words

@@ -12,6 +12,8 @@ export interface Pace {
   rate?: number;
   /** Lengthens the silences between sentences (1 natural). */
   pauses?: number;
+  /** Words a second of the language at an unhurried pace (NATURAL_PACE for English; Hindi has more, shorter words). */
+  natural?: number;
 }
 
 const TITLES = new Set(["mr", "mrs", "ms", "dr", "st", "sr", "jr", "vs", "etc", "prof", "capt", "col", "gen", "lt", "sgt"]);
@@ -116,22 +118,30 @@ function bounds(pcm: Float32Array, sr: number): { from: number; to: number; lead
 
 /** Words a second of unhurried speech (a tone's rate of 1); a slow, weighty line of 0.86 is about 2.6. */
 export const NATURAL_PACE = 3;
+/**
+ * Hindi and Hinglish: short words (है, के, पर, तो) make more of them a second at the same unhurried pace. Measured on
+ * the studio's real Hindi readers and on the V3 voice: 3.5–4.2 a second sounds calm; held to 3, every Hindi line was
+ * stretched 12–22 % and sounded drawn out.
+ */
+export const NATURAL_PACE_HI = 3.9;
+/** The most a line is ever drawn out: beyond a quarter the stretch is heard (a smeared, slowed voice). */
+export const MAX_STRETCH = 1.25;
 
 /**
  * How much longer (or shorter) the speech must be made to sit at the tone's pace. The model does not keep a
  * pace of its own accord: it hurries some lines to five or six words a second. A hurried line is held back
- * (never by more than 1.4: beyond that it sounds drawn out), a dawdling one is brought up a little (never
+ * (never by more than MAX_STRETCH: beyond that it sounds drawn out), a dawdling one is brought up a little (never
  * below 0.85: speech squeezed further sounds rushed), and one that is within a few percent is left alone.
  * A word or two is too little to measure a pace on: there only the tone's own rate applies.
  */
 export function paceFactor(seconds: number, wordCount: number, tone: Pace = {}): number {
   const k = paceAsked(seconds, wordCount, tone);
-  return wordCount < 3 || seconds <= 0 ? k : Math.abs(k - 1) < 0.06 ? 1 : Math.max(0.85, Math.min(1.4, k));
+  return wordCount < 3 || seconds <= 0 ? k : Math.abs(k - 1) < 0.08 ? 1 : Math.max(0.85, Math.min(MAX_STRETCH, k));
 }
 /** How far the speech would have to be stretched to sit exactly at the tone's pace (not limited to what sounds well). */
 export function paceAsked(seconds: number, wordCount: number, tone: Pace = {}): number {
   const rate = rateOf(tone);
-  return wordCount < 3 || seconds <= 0 ? 1 / rate : wordCount / seconds / (NATURAL_PACE * rate);
+  return wordCount < 3 || seconds <= 0 ? 1 / rate : wordCount / seconds / ((tone.natural ?? NATURAL_PACE) * rate);
 }
 
 /** Spoken sentences joined with their silences, the speech brought to the tone's pace (pitch kept). */

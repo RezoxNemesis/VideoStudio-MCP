@@ -58,3 +58,17 @@ describe("Hinglish dialogue words", () => {
     expect(transliterateHinglish("ab sirf yaadon mein sunai deti hai")).toBe("अब सिर्फ़ यादों में सुनाई देती है");
   });
 });
+
+describe("Hinglish words the studio voices misread (Nov 2026)", () => {
+  it("kaha: said after someone who says, where otherwise", async () => {
+    const { transliterateHinglish } = await import("../src/voice/engine/hinglish");
+    expect(transliterateHinglish("Unhone kuch tests karwane ko kaha hai", true)).toContain("करवाने को कहा है");
+    expect(transliterateHinglish("Maine kaha tha na", true)).toContain("कहा था");
+    expect(transliterateHinglish("Tum kaha ho beta?", true)).toContain("कहाँ हो");
+  });
+  it("numbers and times", async () => {
+    const { transliterateHinglish } = await import("../src/voice/engine/hinglish");
+    expect(transliterateHinglish("Raat ke gyarah baj kar saintalees minute par. Teesri baar.", true)).toContain("ग्यारह बज कर सैंतालीस");
+    expect(transliterateHinglish("Teesri baar.", true)).toContain("तीसरी");
+  });
+});
