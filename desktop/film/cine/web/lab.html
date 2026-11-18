@@ -8,7 +8,7 @@ window.onerror = (m, s, l) => log('ERR ' + m + ' @' + l);
   for (const t of ['grass', 'dirt', 'road', 'var']) await E.loadTex(t, { repeat: true });
   E.ground(); E.G.uRoad.value.set(3, 1.6, 1, 0);
   const views = (q.get('views') || 'hero23:front,hero23:q,hero23:side,hero23:back,hero23:face,hero10:front,hero10:q,hero10:face').split(',');
-  E.L.uLightDir.value.set(-0.55, 0.62, 0.55).normalize(); E.L.uSunDir.value.copy(E.L.uLightDir.value); E.L.uRimDir.value.set(0.7, 0.2, -0.6).normalize();
+  E.L.uLightDir.value.set(-0.45, 0.55, 0.7).normalize(); E.L.uSunDir.value.copy(E.L.uLightDir.value); E.L.uRimDir.value.set(0.7, 0.2, -0.6).normalize();
   for (const v of views) { const [name, view, tr, fr] = v.split(':'); await E.loadChar(name);
     const a = E.actor(name, PAL.hero); const track = await E.loadTrack(tr || ('lab_walk_' + name)); const f = +(fr || 14);
     a.place(0, 0, 0, 0); a.pose(track, f); const root = a.rootAt(track, f, new V3()); a.place(-root.x, 0, -root.z, 0); a.autoBlink = false; a.mat.uniforms.uBlink.value = 0;
@@ -17,12 +17,12 @@ window.onerror = (m, s, l) => log('ERR ' + m + ' @' + l);
     if (view === 'q') cam = { p: [2.6 * Hh / 1.7, Hh * 0.6, 3.3 * Hh / 1.7], t: [0, Hh * 0.52, 0], fov: 28 };
     if (view === 'side') cam = { p: [4.2 * Hh / 1.7, Hh * 0.55, 0], t: [0, Hh * 0.52, 0], fov: 28 };
     if (view === 'back') cam = { p: [-1.0, Hh * 0.6, -4.1 * Hh / 1.7], t: [0, Hh * 0.52, 0], fov: 28 };
-    if (view === 'face') cam = { p: [0.28, Hh * 0.93, 0.95], t: [0, Hh * 0.925, 0], fov: 22 };
+    if (view === 'face' || view === 'face3' || view === 'faceside') { const hd = a.world('head'); hd.y += 0.075 * a.meta.S; const o = view === 'face' ? [0.06, 0.0, 0.8] : view === 'face3' ? [0.5, 0.02, 0.62] : [0.8, 0, 0.05]; cam = { p: [hd.x + o[0], hd.y + o[1], hd.z + o[2]], t: [hd.x, hd.y, hd.z], fov: 20 }; }
     if (view === 'hand') { const h = a.world('hand_r'); cam = { p: [h.x - 0.25, h.y + 0.1, h.z + 0.55], t: [h.x, h.y - 0.05, h.z], fov: 24 }; }
     if (view === 'strip') { const r0 = a.rootAt(track, f, new V3()); a.place(0, 0, 0, Math.PI / 2); a.pose(track, f); cam = { p: [r0.z, Hh * 0.55, 5.2 * Hh / 1.7], t: [r0.z, Hh * 0.5, 0], fov: 24 }; }
     if (view === 'stripf') { const r0 = a.rootAt(track, f, new V3()); a.place(0, 0, 0, 0); a.pose(track, f); cam = { p: [0.6, Hh * 0.55, r0.z + 5.2 * Hh / 1.7], t: [0, Hh * 0.5, r0.z], fov: 24 }; }
     if (view === 'feet') cam = { p: [1.2, 0.25, 0.9], t: [0, 0.1, 0], fov: 28 };
-    E.setCam(cam); E.render(1.0); await post(`/png?name=lab_${name}_${view}${fr ? '_' + fr : ''}&w=${W}&h=${H}`, E.pixels());
+    E.setCam(cam); E.render(1.0); await post(`/png?name=lab_${name}_${view}${fr ? '_' + fr : ''}&w=${W}&h=${H}&fmt=jpg`, E.pixels());
     a.show(false); E.actors.pop(); }
   await post('/flag?name=lab', ''); } catch (e) { await log('EXC ' + e.message + ' ' + (e.stack || '').slice(0, 400)); await post('/flag?name=lab', ''); } })();
 </script>

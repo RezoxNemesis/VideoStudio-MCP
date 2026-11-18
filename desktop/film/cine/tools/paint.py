@@ -206,5 +206,120 @@ def city():
         for a in np.linspace(-0.5, 3.6, 10): cv2.line(img, (px, int(H - ph)), (int(px + np.cos(a) * 44), int(H - ph - np.sin(a) * 26 + 20)), (16.0, 22.0, 40.0, 255.0), 4, cv2.LINE_AA)
     save('city', img)
 
+# ---------------- the neon city (original: no real place, no real brand) ----------------
+PASTEL = [(244, 170, 178), (150, 222, 204), (250, 214, 140), (150, 198, 240), (236, 190, 232), (250, 240, 226), (255, 158, 122), (128, 214, 226)]
+NEON = [(255, 70, 160), (60, 240, 255), (255, 200, 60), (170, 110, 255), (90, 255, 170), (255, 110, 70)]
+def _font(sz):
+    from PIL import ImageFont
+    import glob
+    for p in glob.glob(T + '../fonts/*.ttf') + ['/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf']:
+        try: return ImageFont.truetype(p, sz)
+        except Exception: pass
+    return ImageFont.load_default()
+def _text(img, txt, cx, cy, sz, col, vertical=False, glow=0):
+    """letters drawn into an RGBA float image (alpha = how much the pixel shines by itself)"""
+    from PIL import Image, ImageDraw
+    H, W = img.shape[:2]; lay = Image.new('L', (W, H), 0); d = ImageDraw.Draw(lay); f = _font(sz)
+    if vertical:
+        y = cy - len(txt) * sz * 0.5
+        for ch in txt: d.text((cx, y + sz * 0.5), ch, font=f, fill=255, anchor='mm'); y += sz
+    else: d.text((cx, cy), txt, font=f, fill=255, anchor='mm')
+    m = np.asarray(lay, np.float32) / 255
+    if glow: m = np.clip(m + cv2.GaussianBlur(m, (0, 0), glow) * 0.9, 0, 1)
+    for k in range(3): img[..., k] = img[..., k] * (1 - m) + col[k] * m
+    img[..., 3] = np.maximum(img[..., 3], m * 255)
+def _tube(img, pts, col, w=3, glow=7):
+    """a neon tube: bright core, soft halo, shines by itself"""
+    H, W = img.shape[:2]; m = np.zeros((H, W), np.float32); cv2.polylines(m, [np.array(pts, np.int32)], False, 1.0, w, cv2.LINE_AA)
+    g = np.clip(m + cv2.GaussianBlur(m, (0, 0), glow) * 1.4, 0, 1)
+    for k in range(3): img[..., k] = img[..., k] * (1 - g) + (col[k] * 0.75 + 255 * 0.25 * m) * g
+    img[..., 3] = np.maximum(img[..., 3], g * 255)
+def deco(seed, W=1024, H=1024, floors=None, name='HOTEL'):
+    """an art-deco seafront hotel front: pastel stucco, rounded corner, eyebrow ledges, a fin with a neon name, lit rooms.
+    rgb = the wall as painted (lit by the place's light); alpha = what glows by itself at night (rooms, neon)."""
+    r = np.random.RandomState(seed); img = np.zeros((H, W, 4), np.float32); base = np.array(PASTEL[seed % len(PASTEL)], np.float32); trim = np.array(PASTEL[(seed * 3 + 5) % len(PASTEL)], np.float32); neon = NEON[seed % len(NEON)]; neon2 = NEON[(seed + 2) % len(NEON)]
+    floors = floors or r.randint(4, 8); gh = int(H * 0.16); fh = (H - gh - int(H * 0.07)) / floors; top = int(H * 0.07)
+    n = fbm(H, W, 6, 4, seed, tile=False)[..., None]; img[..., :3] = base * (0.90 + 0.14 * n); img[..., 3] = 0
+    img[:top, :, :3] = trim * 0.96; cv2.rectangle(img, (0, top - 6), (W, top), (*[float(v) for v in base * 0.62], 0.0), -1)
+    bays = r.randint(5, 9); bw = W / bays; fin = r.randint(1, bays - 1)
+    for fl in range(floors):
+        y0 = int(top + fl * fh); y1 = int(y0 + fh)
+        cv2.rectangle(img, (0, y0 + int(fh * 0.10) - 5), (W, y0 + int(fh * 0.10)), (*[float(v) for v in trim * 1.02], 0.0), -1)      # eyebrow ledge
+        cv2.rectangle(img, (0, y0 + int(fh * 0.10)), (W, y0 + int(fh * 0.10) + 9), (*[float(v) for v in base * 0.60], 0.0), -1)       # its shadow
+        for b in range(bays):
+            if b == fin: continue
+            x0 = int(b * bw + bw * 0.16); x1 = int((b + 1) * bw - bw * 0.16); wy0 = y0 + int(fh * 0.26); wy1 = y1 - int(fh * 0.14)
+            lit = r.rand() < 0.62; warm = np.array([255, 214, 150]) if r.rand() < 0.7 else np.array([170, 226, 255]); warm = warm * r.uniform(0.75, 1.0)
+            cv2.rectangle(img, (x0 - 4, wy0 - 4), (x1 + 4, wy1 + 4), (*[float(v) for v in trim * 0.9], 0.0), -1)
+            if lit:
+                gy = np.linspace(1.0, 0.72, max(1, wy1 - wy0))[:, None, None]; img[wy0:wy1, x0:x1, :3] = warm * gy; img[wy0:wy1, x0:x1, 3] = 235
+                if r.rand() < 0.5: cx = r.randint(x0 + 6, x1 - 6); cv2.rectangle(img, (cx - 7, wy1 - int((wy1 - wy0) * r.uniform(0.3, 0.6))), (cx + 7, wy1), (*[float(v) for v in warm * 0.25], 235.0), -1)   # someone at the window
+                cv2.rectangle(img, (x0, wy0), (x0 + int((x1 - x0) * r.uniform(0.1, 0.3)), wy1), (*[float(v) for v in base * 0.8], 120.0), -1)   # a curtain
+            else: img[wy0:wy1, x0:x1, :3] = np.array([30, 38, 62]) * r.uniform(0.8, 1.3); img[wy0:wy1, x0:x1, 3] = 0
+            cv2.line(img, ((x0 + x1) // 2, wy0), ((x0 + x1) // 2, wy1), (*[float(v) for v in trim * 0.85], 0.0), 3)
+            cv2.rectangle(img, (x0 - 8, wy1 + 2), (x1 + 8, wy1 + 9), (*[float(v) for v in trim], 0.0), -1)                           # balcony slab
+    # the fin: a tall rounded pylon with the name in neon
+    fx0 = int(fin * bw + bw * 0.12); fx1 = int((fin + 1) * bw - bw * 0.12); cv2.rectangle(img, (fx0, 0), (fx1, H - gh), (*[float(v) for v in trim * 0.98], 0.0), -1)
+    for k in range(3): cv2.line(img, (fx0 + 8 + k * 9, 6), (fx0 + 8 + k * 9, H - gh), (*[float(v) for v in base * 0.8], 0.0), 2)
+    _text(img, name, (fx0 + fx1) // 2 + 8, int((H - gh) * 0.48), int(min((fx1 - fx0) * 0.62, (H - gh) * 0.8 / max(1, len(name)))), neon, vertical=True, glow=6)
+    _tube(img, [(fx0 + 3, H - gh), (fx0 + 3, 8), (fx1 - 3, 8), (fx1 - 3, H - gh)], neon2, 3, 6)
+    # ground floor: a glowing lobby, awnings, a neon line along the cornice
+    gy0 = H - gh; img[gy0:, :, :3] = base * 0.72
+    for b in range(bays):
+        x0 = int(b * bw + bw * 0.08); x1 = int((b + 1) * bw - bw * 0.08); c = np.array([255, 196, 120]) * r.uniform(0.7, 1.0) if r.rand() < 0.8 else np.array(NEON[r.randint(6)]) * 0.9
+        img[gy0 + int(gh * 0.30):H - 8, x0:x1, :3] = c * np.linspace(1.0, 0.6, H - 8 - gy0 - int(gh * 0.30))[:, None, None]; img[gy0 + int(gh * 0.30):H - 8, x0:x1, 3] = 240
+        aw = np.array(NEON[(seed + b) % 6], np.float32) * 0.6 + 60
+        cv2.fillPoly(img, [np.array([(x0 - 6, gy0 + int(gh * 0.10)), (x1 + 6, gy0 + int(gh * 0.10)), (x1 + 14, gy0 + int(gh * 0.34)), (x0 - 14, gy0 + int(gh * 0.34))], np.int32)], (*[float(v) for v in aw], 0.0), cv2.LINE_AA)
+    _tube(img, [(0, gy0 + 3), (W, gy0 + 3)], neon, 3, 7); _tube(img, [(0, top + 2), (W, top + 2)], neon2, 2, 5)
+    img[..., :3] = cv2.GaussianBlur(img[..., :3], (0, 0), 0.6); return img
+def tower(seed, W=512, H=1536):
+    """a glass tower: sky-coloured glass in bands, lit floors, a crown light"""
+    r = np.random.RandomState(seed); img = np.zeros((H, W, 4), np.float32); yy = np.linspace(0, 1, H)[:, None]
+    g0 = np.array([[60, 80, 150], [90, 70, 150], [50, 110, 150], [120, 80, 140]][seed % 4], np.float32); g1 = np.array([[250, 150, 170], [255, 180, 140], [120, 220, 230], [255, 140, 190]][seed % 4], np.float32)
+    glass = g0[None, None] * (1 - yy[..., None] * 0.0) + (g1 - g0)[None, None] * (np.clip(1 - yy, 0, 1) ** 2.2)[..., None] * 0.55
+    img[..., :3] = glass * (0.8 + 0.3 * fbm(H, W, 3, 3, seed, tile=False)[..., None]); img[..., 3] = 0
+    fw = r.choice([14, 18, 22]); cw = r.choice([10, 13, 16])
+    for y in range(8, H - 6, fw):
+        on = r.rand() < 0.55; rowc = np.array([255, 220, 160]) if r.rand() < 0.75 else np.array([160, 230, 255])
+        for x in range(4, W - cw, cw):
+            if r.rand() < (0.62 if on else 0.14): c = rowc * r.uniform(0.55, 1.0); img[y + 3:y + fw - 4, x + 2:x + cw - 2, :3] = c; img[y + 3:y + fw - 4, x + 2:x + cw - 2, 3] = 230
+        img[y:y + 2, :, :3] *= 0.6
+    for x in range(0, W, cw * r.choice([3, 4, 5])): img[:, x:x + 2, :3] *= 0.55
+    col = NEON[seed % 6]; _tube(img, [(2, 6), (W - 2, 6)], col, 4, 9); _tube(img, [(3, 0), (3, H)], col, 2, 5); _tube(img, [(W - 3, 0), (W - 3, H)], col, 2, 5)
+    return img
+def skyline(seed, W=4096, H=1024, n=70, hmin=0.18, hmax=0.92, dark=1.0):
+    """a whole far shore of towers on one sheet (alpha = the silhouette; lit windows painted bright)"""
+    r = np.random.RandomState(seed); img = np.zeros((H, W, 4), np.float32); x = 0; k = 0
+    while x < W:
+        w = int(r.uniform(46, 150)); hh = int(H * r.uniform(hmin, hmax) * (0.5 + 0.5 * np.exp(-((x - W * 0.5) / (W * 0.30)) ** 2)) * (1.25 if r.rand() < 0.12 else 1)); hh = min(hh, H - 4)
+        t = tower(seed * 31 + k, 128, 384); t = cv2.resize(t, (w, hh), interpolation=cv2.INTER_AREA); y0 = H - hh; x1 = min(W, x + w)
+        img[y0:H, x:x1, :3] = t[:, :x1 - x, :3] * dark; img[y0:H, x:x1, 3] = 255
+        if r.rand() < 0.3:
+            sw = w // 3; sh = int(hh * 0.12); img[y0 - sh:y0, x + sw:x + 2 * sw, :3] = t[:sh, :sw, :3] * dark * 0.9; img[y0 - sh:y0, x + sw:x + 2 * sw, 3] = 255
+        if r.rand() < 0.25: cv2.line(img, (x + w // 2, y0), (x + w // 2, max(0, y0 - int(r.uniform(30, 90)))), (90.0, 90.0, 130.0, 255.0), 2); cv2.circle(img, (x + w // 2, max(2, y0 - 60)), 3, (255.0, 80.0, 80.0, 255.0), -1)
+        x += w + int(r.uniform(-8, 22)); k += 1
+    for q in range(60):  # palms along the water
+        px = int(r.uniform(0, W)); ph = r.uniform(50, 120)
+        cv2.line(img, (px, H), (px + int(r.uniform(-10, 10)), int(H - ph)), (14.0, 18.0, 36.0, 255.0), 4, cv2.LINE_AA)
+        for a in np.linspace(-0.5, 3.6, 10): cv2.line(img, (px, int(H - ph)), (int(px + np.cos(a) * 40), int(H - ph - np.sin(a) * 24 + 18)), (12.0, 22.0, 38.0, 255.0), 4, cv2.LINE_AA)
+    return img
+def water(W=1024, H=1024, seed=3):
+    """night water under a lit shore: dark blue with broken columns of the city's lights"""
+    r = np.random.RandomState(seed); img = np.zeros((H, W, 4), np.float32); yy = np.linspace(0, 1, H)[:, None]
+    img[..., :3] = np.array([18, 30, 70]) * (0.7 + 0.6 * yy[..., None]); n = fbm(H, W, 6, 5, seed)
+    for k in range(46):
+        x = r.randint(0, W); c = np.array(NEON[r.randint(6)] if r.rand() < 0.6 else (255, 214, 150), np.float32); wd = r.uniform(4, 16)
+        col = np.exp(-((np.arange(W)[None, :] - x) / wd) ** 2) * (0.35 + 0.65 * (np.sin(np.arange(H)[:, None] * r.uniform(0.25, 0.6) + n * 9) > 0.1)) * np.linspace(1, 0.15, H)[:, None]
+        img[..., :3] += c * col[..., None] * 0.75
+    img[..., :3] *= 0.85 + 0.3 * n[..., None]; img[..., 3] = 255; return img
+def beam(W=128, H=1024):
+    yy = np.linspace(1, 0, H)[:, None]; xx = np.abs(np.linspace(-1, 1, W))[None, :]; a = np.clip(1 - xx / (0.15 + 0.85 * (1 - yy)), 0, 1) ** 1.5 * yy ** 0.8
+    img = np.zeros((H, W, 4), np.float32); img[..., :3] = 255; img[..., 3] = a * 255; return img
+def vice():
+    names = ['SUNSET', 'CORAL', 'LUNA', 'PALMS', 'MIRAGE', 'TROPIC', 'AURORA', 'NEONBAY']
+    for i in range(8): save(f'deco{i}', deco(40 + i, name=names[i], floors=[5, 7, 4, 6, 8, 5, 6, 7][i]))
+    for i in range(4): save(f'tower{i}', tower(90 + i))
+    save('skyfar', skyline(7, n=70, hmin=0.25, hmax=0.95, dark=0.8)); save('skymid', skyline(8, hmin=0.12, hmax=0.6, dark=1.0)); save('water', water()); save('beam', beam())
+
 if __name__ == '__main__':
     for f in (sys.argv[1:] or ['ground']): globals()[f]()

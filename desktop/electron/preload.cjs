@@ -156,6 +156,7 @@ contextBridge.exposeInMainWorld("vsd", {
     progress: () => call("cine.progress"),
     stop: () => call("cine.stop"),
     tool: (film, script, args) => call("cine.tool", film, script, args),
+    unpack: (file) => call("cine.unpack", file),
   },
   process: (kind, input, o) => call("media.process", kind, input, o),
   voice16k: (p, from, seconds) => call("audio.voice16k", p, from, seconds),

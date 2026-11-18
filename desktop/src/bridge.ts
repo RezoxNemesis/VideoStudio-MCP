@@ -196,4 +196,5 @@ export interface CineApi {
   progress(): Promise<CineProgress>;
   stop(): Promise<{ stopping: boolean }>;
   tool(film: string | undefined, script: string, args?: string[]): Promise<{ code: number; out: string; err: string }>;
+  unpack(file: string): Promise<{ files: number; into: string; folders: string[] }>;
 }

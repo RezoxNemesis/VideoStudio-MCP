@@ -20,9 +20,9 @@ const DOFV = `uniform vec3 uDof; float dofBias(float d){ float c = uDof.y * abs(
 const CHAR_VS = `
 #include <common>
 #include <skinning_pars_vertex>
-attribute float reg, loose, lip, eye; attribute vec3 blink, smile;
+attribute float reg, loose, lip, eye; attribute vec3 blink, smile, paint;
 uniform float uBlink, uSmile, uOutline, uTime, uFlut, uShadowPass; uniform vec3 uLightDir; uniform vec3 uPal[11];
-varying vec3 vN, vW, vBase; varying float vReg, vLip, vEye, vH;
+varying vec3 vN, vW, vBase, vPaint; varying float vReg, vLip, vEye, vH;
 ${FOGV}
 void main(){
   vec3 objectNormal = normal;
@@ -34,7 +34,7 @@ void main(){
   vec3 wn = normalize(mat3(modelMatrix) * objectNormal);
   wp.xyz += wn * loose * uFlut * (sin(uTime * 11.0 + position.y * 23.0 + position.x * 31.0) + 0.6 * sin(uTime * 17.0 + position.z * 41.0));
   int r = int(reg + 0.5);
-  vBase = uPal[r]; vReg = reg; vLip = lip; vEye = eye; vH = wp.y;
+  vBase = uPal[r]; vReg = reg; vLip = lip; vEye = eye; vH = wp.y; vPaint = paint;
   if (uShadowPass > 0.5) { wp.xz -= uLightDir.xz / max(uLightDir.y, 0.08) * max(wp.y, 0.0); wp.y = 0.012; }
   else if (uOutline > 0.0) { float d = length(cameraPosition - wp.xyz); float k = (r == 6 || r == 7) ? 0.0 : 1.0; wp.xyz += wn * min(uOutline * d, 0.0065) * k; }
   vN = wn; vW = wp.xyz; calcFog(wp.xyz);
@@ -42,22 +42,36 @@ void main(){
 }`;
 const CHAR_FS = `
 uniform vec3 uLightDir, uLightCol, uShadeCol, uRimCol, uRimDir, uAmbCol, uOutCol; uniform float uOutline, uShadowPass, uDark;
-uniform vec3 uIris; varying vec3 vN, vW, vBase; varying float vReg, vLip, vEye, vH; varying vec4 vFog;
+uniform vec3 uIris; uniform float uFace; varying vec3 vN, vW, vBase, vPaint; varying float vReg, vLip, vEye, vH; varying vec4 vFog;
 void main(){
   if (uShadowPass > 0.5) { float s = mix(0.80, 0.42, clamp(vH / 1.7, 0.0, 1.0)); gl_FragColor = vec4(vec3(1.0 - s), 1.0); return; }
   vec3 base = vBase; int r = int(vReg + 0.5);
   if (uOutline > 0.0) { vec3 c = mix(base * 0.30, uOutCol, 0.45) * (1.0 - uDark); gl_FragColor = vec4(mix(c, vFog.rgb, vFog.a), 1.0); return; }
-  if (r == 0) base = mix(base, base * vec3(0.86, 0.60, 0.60), vLip * 0.75);
   vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
   vec3 v = normalize(cameraPosition - vW);
-  float lit = smoothstep(-0.03, 0.09, dot(n, uLightDir));
-  if (r == 6) { float a = acos(clamp(vEye, -1.0, 1.0)); vec3 e = vec3(0.96, 0.95, 0.93) * (0.84 + 0.16 * smoothstep(-0.2, 0.5, 0.3 - n.y));
-    e = mix(e, uIris, smoothstep(0.50, 0.46, a)); e = mix(e, vec3(0.03, 0.02, 0.02), smoothstep(0.24, 0.20, a)); base = e; lit = max(lit, 0.8); }
+  float ndl = dot(n, uLightDir); float lit = smoothstep(-0.03, 0.09, ndl); float shine = 0.0;
+  if (r == 0) { // skin: lips, a blush, placed shadows in the creases, a warm turn of the light
+    base = mix(base, base * vec3(0.84, 0.56, 0.56), vLip * 0.78);
+    base = mix(base, base * vec3(1.03, 0.76, 0.74), clamp(vPaint.x, 0.0, 1.0) * 0.5 * uFace);
+    base *= mix(vec3(1.0), vec3(0.60, 0.44, 0.42), clamp(vPaint.y, 0.0, 1.0) * 0.85 * uFace);
+    lit *= 1.0 - 0.5 * clamp(vPaint.y, 0.0, 1.0) * uFace; shine = vPaint.z * uFace; }
+  if (r == 6) { // the eye: white shaded by the lid, an iris with a dark rim and a lit lower half, pupil, two catch-lights
+    float a = acos(clamp(vEye, -1.0, 1.0)); vec2 q = vPaint.xy;
+    vec3 e = vec3(0.97, 0.96, 0.94) * (0.80 + 0.20 * smoothstep(0.42, -0.1, q.y));
+    float ir = smoothstep(0.50, 0.47, a); vec3 ic = uIris * mix(1.55, 0.62, smoothstep(0.18, 0.48, a)); ic = mix(ic, uIris * 1.9, smoothstep(0.05, -0.32, q.y) * 0.45); ic *= 0.72 + 0.28 * smoothstep(0.34, 0.0, q.y);
+    ic = mix(ic, uIris * 0.25, smoothstep(0.43, 0.49, a));
+    e = mix(e, ic, ir); e = mix(e, vec3(0.025, 0.02, 0.02), smoothstep(0.235, 0.205, a));
+    e += vec3(1.0) * smoothstep(0.085, 0.055, length(q - vec2(0.17, 0.20))) * 0.95 + vec3(1.0) * smoothstep(0.05, 0.03, length(q - vec2(-0.14, -0.13))) * 0.5;
+    base = e; lit = max(lit, 0.82); }
+  if (r == 5 && vPaint.y > -1.0) { float st = sin(vPaint.x * 46.0 + sin(vPaint.y * 9.0) * 1.4) * 0.5 + 0.5; base *= 0.86 + 0.24 * st * st; }
   if (!gl_FrontFacing) lit *= 0.25;
   vec3 c = mix(base * uShadeCol, base * uLightCol, lit) + base * uAmbCol * (0.5 + 0.5 * n.y);
+  if (r == 0) c += base * vec3(0.30, 0.07, 0.03) * lit * (1.0 - lit) * 0.9 * uFace; // blood under the skin where light turns to shade
   float fr = 1.0 - max(dot(n, v), 0.0); fr = fr * fr * sqrt(fr);
   c += uRimCol * fr * smoothstep(-0.1, 0.6, dot(n, uRimDir)) * (r == 5 ? 0.7 : 1.0);
-  if (r == 5) { vec3 h = normalize(uLightDir + v); c += uLightCol * 0.10 * smoothstep(0.55, 0.9, dot(n, h)) * smoothstep(0.35, 0.8, n.y); }
+  vec3 h = normalize(uLightDir + v);
+  if (r == 5 && vPaint.y > -1.0) { float band = exp(-pow((vPaint.y - 0.52 - 0.05 * sin(vPaint.x * 23.0)) / 0.13, 2.0)); c += uLightCol * (0.10 * smoothstep(0.55, 0.9, dot(n, h)) * smoothstep(0.35, 0.8, n.y) + 0.16 * band * smoothstep(0.0, 0.5, ndl + 0.3)); }
+  if (shine > 0.01) c += uLightCol * shine * 0.34 * smoothstep(0.2, 0.8, lit);
   c *= (1.0 - uDark);
   gl_FragColor = vec4(mix(c, vFog.rgb, vFog.a), 1.0);
 }`;
@@ -219,11 +233,11 @@ const PROP_VS = `varying vec3 vN; varying vec2 vUv; uniform float uShadowPass; u
 ${FOGV}
 void main(){ vUv = uv; vec4 wp = modelMatrix * vec4(position, 1.0); vN = normalize(mat3(modelMatrix) * normal);
   if (uShadowPass > 0.5) { wp.xz -= uLightDir.xz / max(uLightDir.y, 0.08) * max(wp.y, 0.0); wp.y = 0.012; } calcFog(wp.xyz); gl_Position = projectionMatrix * viewMatrix * wp; }`;
-const PROP_FS = `uniform sampler2D map; uniform vec3 uColor, uLightDir, uLightCol, uShadeCol, uAmbCol, uEmis; uniform float uUseMap, uShadowPass, uDark; varying vec3 vN; varying vec2 vUv; varying vec4 vFog;
+const PROP_FS = `uniform sampler2D map; uniform vec3 uColor, uLightDir, uLightCol, uShadeCol, uAmbCol, uEmis; uniform float uUseMap, uShadowPass, uDark, uGlow; varying vec3 vN; varying vec2 vUv; varying vec4 vFog;
 void main(){ if (uShadowPass > 0.5) { gl_FragColor = vec4(vec3(0.3), 1.0); return; }
-  vec3 base = uColor; if (uUseMap > 0.5) base *= texture2D(map, vUv).rgb; vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+  vec3 base = uColor; vec4 tx = vec4(1.0, 1.0, 1.0, 0.0); if (uUseMap > 0.5) { tx = texture2D(map, vUv); base *= tx.rgb; } vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
   float lit = smoothstep(-0.05, 0.25, dot(n, uLightDir)); vec3 c = mix(base * mix(uShadeCol, vec3(1.0), 0.35), base * uLightCol, lit) + base * uAmbCol * (0.5 + 0.5 * n.y);
-  c = c * (1.0 - uDark) + uEmis; gl_FragColor = vec4(mix(c, vFog.rgb, vFog.a), 1.0); }`;
+  c = c * (1.0 - uDark) + uEmis; c = mix(c, tx.rgb * uGlow, clamp(tx.a * min(uGlow, 1.0), 0.0, 1.0)); /* what is painted as shining (lit rooms, neon) keeps its own light */ gl_FragColor = vec4(mix(c, vFog.rgb, vFog.a), 1.0); }`;
 
 export class Engine {
   constructor(canvas, W, H) {
@@ -262,7 +276,7 @@ export class Engine {
   }
   async loadTex(name, o = {}) {
     if (this.tex[name]) return this.tex[name];
-    const img = await createImageBitmap(await (await fetch('tex/' + name + '.png')).blob(), { premultiplyAlpha: 'premultiply', colorSpaceConversion: 'none', imageOrientation: 'flipY' });
+    const img = await createImageBitmap(await (await fetch('tex/' + name + '.png')).blob(), { premultiplyAlpha: o.raw ? 'none' : 'premultiply', colorSpaceConversion: 'none', imageOrientation: 'flipY' });
     const t = new THREE.Texture(img); t.premultiplyAlpha = false; t.colorSpace = THREE.NoColorSpace; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.flipY = false;
     if (o.repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapNearestFilter; } t.anisotropy = o.aniso || 1; t.needsUpdate = true; t.userData = { w: img.width, h: img.height };
     return this.tex[name] = t;
@@ -274,6 +288,7 @@ export class Engine {
     const g = new THREE.BufferGeometry(); const fa = (k, n) => new THREE.BufferAttribute(A(k, Float32Array), n);
     g.setAttribute('position', fa('pos', 3)); g.setAttribute('normal', fa('nor', 3)); g.setAttribute('skinIndex', new THREE.BufferAttribute(A('si', Uint16Array), 4)); g.setAttribute('skinWeight', fa('sw', 4));
     for (const [k, n] of [['reg', 1], ['loose', 1], ['lip', 1], ['eye', 1], ['blink', 3], ['smile', 3]]) g.setAttribute(k, fa(k, n));
+    g.setAttribute('paint', meta.blobs.paint ? fa('paint', 3) : new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 3), 3)); // (bodies made before faces were painted)
     g.setIndex(new THREE.BufferAttribute(A('idx', Uint32Array), 1)); g.boundingSphere = new THREE.Sphere(new V3(0, 1, 0), 1e6);
     return this.assets[name] = { meta, geo: g, bi: Object.fromEntries(meta.bones.map((b, i) => [b, i])) };
   }
@@ -284,12 +299,12 @@ export class Engine {
   }
   actor(assetName, pal) { const a = new Actor(this, this.assets[assetName], pal); this.actors.push(a); return a; }
   charMat(pal, outline) {
-    const L = this.L; const u = { uPal: U(pal), uBlink: U(0), uSmile: U(0), uOutline: outline ? this.L.uOutK : U(0), uFlut: U(0.0015), uIris: U(col('#3a2416')), uFade: U(0) };
+    const L = this.L; const u = { uPal: U(pal), uBlink: U(0), uSmile: U(0), uOutline: outline ? this.L.uOutK : U(0), uFlut: U(0.0015), uIris: U(col('#5a3418')), uFace: U(1), uFade: U(0) };
     for (const k of ['uLightDir', 'uLightCol', 'uShadeCol', 'uRimCol', 'uRimDir', 'uAmbCol', 'uOutCol', 'uFogCol', 'uFog', 'uSunDir', 'uFogSun', 'uTime', 'uShadowPass', 'uDark']) u[k] = L[k];
     return new THREE.ShaderMaterial({ vertexShader: CHAR_VS, fragmentShader: CHAR_FS, uniforms: u, side: outline ? THREE.BackSide : THREE.DoubleSide });
   }
   card(tex, o) { const c = new Card(this, tex, o); this.cards.push(c); return c; }
-  propMat(o = {}) { const L = this.L; const u = { map: U(o.map || null), uUseMap: U(o.map ? 1 : 0), uColor: U(col(o.color || '#ffffff')), uEmis: U(col(o.emis || '#000000')) };
+  propMat(o = {}) { const L = this.L; const u = { map: U(o.map || null), uUseMap: U(o.map ? 1 : 0), uColor: U(col(o.color || '#ffffff')), uEmis: U(col(o.emis || '#000000')), uGlow: U(o.glow || 0) };
     for (const k of ['uLightDir', 'uLightCol', 'uShadeCol', 'uAmbCol', 'uFogCol', 'uFog', 'uSunDir', 'uFogSun', 'uShadowPass', 'uDark']) u[k] = L[k];
     return new THREE.ShaderMaterial({ vertexShader: PROP_VS, fragmentShader: PROP_FS, uniforms: u, side: o.side || THREE.FrontSide }); }
   prop(geo, o = {}) { const m = new THREE.Mesh(geo, this.propMat(o)); this.scene.add(m); (this.props = this.props || []).push(m); if (!geo.boundingBox) geo.computeBoundingBox(); if (o.shadow !== false) { const sm = minBlend(this.propMat(o)); sm.depthTest = false; const s = new THREE.Mesh(geo, sm); s.matrixAutoUpdate = false; s.userData.follow = m; s.frustumCulled = false; this.shadowScene.add(s); m.userData.sh = s; } return m; }

@@ -271,42 +271,76 @@ def build(name, gender='male', child=0.0, weight=0.0, muscle=0.0, eth=(0.55, 0.4
     smile = exp_attr(['expression/units/caucasian/mouth-corner-puller'], 0.9)
     i_, dl = target('expression/units/caucasian/mouth-eversion'); lipw = np.zeros(nv); mg = np.linalg.norm(dl, axis=1); lipw[i_] = np.clip(mg / mg.max() * 2.2 - 0.25, 0, 1)
     bd.attr['blink'] = blink[ids]; bd.attr['smile'] = smile[ids]; bd.attr['lip'] = lipw[ids]
+    # face paint, worked out from the head's own shape: x blush (cheeks, nose tip, ears), y placed shadow (nostrils, under
+    # the nose, lid crease, between the lips, under the lower lip, inside the ear), z shine (nose tip, lower lip)
+    hw_all = W[:, bi['head']]; bodyset = np.array(sorted({i for f_ in groups['body'] for i in f_})); BNf = normals(V, tri(groups['body']))
+    hmask = np.zeros(nv, bool); hmask[bodyset] = True; hmask &= hw_all > 0.5
+    eL, eR = jpos('joint-l-eye'), jpos('joint-r-eye'); ec = (eL + eR) / 2; ex = abs(eL[0] - eR[0]) / 2
+    front = hmask & (np.abs(V[:, 0]) < 0.012 * S) & (V[:, 1] < ec[1] - 0.012 * S) & (V[:, 1] > ec[1] - 0.075 * S)
+    tip = V[np.where(front)[0][np.argmax(V[front][:, 2])]]
+    lw = lipw * hmask; mouth = (V * lw[:, None]).sum(0) / max(lw.sum(), 1e-9)
+    conc = np.zeros(nv)
+    for it_, wt in ((2, 1.0), (7, 0.7)):
+        Vs_ = smooth(V, groups['body'], it_, 0.5, mask=hmask); conc += wt * np.clip(((Vs_ - V) * BNf).sum(1) / (0.0016 * S), 0, 1.6)
+    ao = np.clip(conc * 0.55 - 0.10, 0, 1) * hmask
+    g = lambda c, r: np.exp(-(((V - c) ** 2).sum(1)) / (r * r))
+    under = g(tip + np.array([0, -0.013, -0.008]) * S, 0.011 * S) * 0.55 + g(mouth + np.array([0, -0.017, -0.004]) * S, 0.012 * S) * 0.4
+    ao = np.clip(ao + under * hmask, 0, 1)
+    blush = np.zeros(nv)
+    for sx in (-1, 1): blush += g(np.array([sx * ex * 1.18, tip[1] - 0.004 * S, tip[2] - 0.036 * S]), 0.024 * S)
+    blush += 0.22 * g(tip, 0.011 * S); blush += 0.5 * np.clip((np.abs(V[:, 0]) - ex * 2.15) / (0.012 * S), 0, 1) * (np.abs(V[:, 1] - (ec[1] - 0.012 * S)) < 0.04 * S)
+    shine = 0.6 * g(tip + np.array([0, 0.005, 0.0]) * S, 0.0045 * S) + 0.7 * g(mouth + np.array([0, -0.0065, 0.004]) * S, 0.0075 * S) * (lipw > 0.2)
+    paint = np.c_[np.clip(blush, 0, 1) * hmask, ao, np.clip(shine, 0, 1) * hmask]
+    bd.attr['paint'] = paint[ids]
     parts.append(bd)
     # ---- eyes, lashes ----
     for side, g in (('l', 'helper-l-eye'), ('r', 'helper-r-eye')):
         ids, fs = sub(V, W, groups[g]); P = V[ids]; c = P.mean(0)
         dn = (P - c); dn /= np.linalg.norm(dn, axis=1, keepdims=True)
-        ey = Part(P, fs, W[ids], REG['eye'], 'eye'); ey.attr['eye'] = dn[:, 2] * 0.999 + 0.0; ey.attr['blink'] = blink[ids] * 0
+        ey = Part(P, fs, W[ids], REG['eye'], 'eye'); ey.attr['eye'] = dn[:, 2] * 0.999 + 0.0; ey.attr['blink'] = blink[ids] * 0; ey.attr['paint'] = np.c_[dn[:, 0], dn[:, 1], np.zeros(len(dn))]
         parts.append(ey)
     for g in groups:
         if 'eyelashes' in g:
-            ids, fs = sub(V, W, groups[g]); la = Part(V[ids], fs, W[ids], REG['dark'], 'lash'); la.attr['blink'] = blink[ids]; parts.append(la)
+            eyy = (jpos('joint-l-eye')[1] + jpos('joint-r-eye')[1]) / 2; upv = V[:, 1] > eyy + 0.0005 * S
+            ids, fs = sub(V, W, groups[g], upv)
+            if len(fs): la = Part(V[ids], fs, W[ids], REG['dark'], 'lash'); la.attr['blink'] = blink[ids]; parts.append(la)
     # ---- brows: ribbons hugging the skin ----
     bodyids = np.array(sorted({i for f_ in groups['body'] for i in f_})); BN = normals(V, tri(groups['body']))
-    for side in ('left', 'right'):
-        i_, dl = target(f'expression/units/caucasian/eyebrows-{side}-up'); mg = np.linalg.norm(dl, axis=1)
-        sel = i_[mg > 0.55 * mg.max()]; sel = sel[np.isin(sel, bodyids)]; Q = V[sel]
-        x0, x1 = np.percentile(Q[:, 0], [4, 96]); cy = np.polyfit(Q[:, 0], Q[:, 1], 2)
-        A = np.c_[np.ones(len(Q)), Q[:, 0], Q[:, 1], Q[:, 0] ** 2, Q[:, 0] * Q[:, 1], Q[:, 1] ** 2]; cz = np.linalg.lstsq(A, Q[:, 2], rcond=None)[0]
-        n = 12; xs = np.linspace(x0, x1, n); inner = xs[np.argmin(np.abs(xs))]
-        pts = [];
-        for x in xs:
-            u = abs(x - inner) / max(abs(x1 - x0), 1e-6); hw = (0.0042 - 0.0026 * u ** 1.5) * S ** 0.5
-            yc = np.polyval(cy, x) - 0.0015 * S + 0.002 * S * (u - 0.5)
+    hw_b = W[:, bi['head']] > 0.5; fm = np.zeros(nv, bool); fm[bodyids] = True; fm &= hw_b & (BN[:, 2] > 0.25)
+    kdb = cKDTree(V[fm][:, :2]); Vf = V[fm]
+    for side, sg in (('left', 1), ('right', -1)):
+        ecx = jpos('joint-l-eye' if sg > 0 else 'joint-r-eye'); n = 14; pts = []
+        for k in range(n):
+            u = k / (n - 1); x = ecx[0] + sg * (-0.021 + 0.047 * u) * S   # from beside the nose bridge out past the eye's corner
+            yc = ecx[1] + (0.0185 + 0.0075 * np.sin(np.pi * min(u * 1.25, 1.0)) - 0.0035 * u) * S
+            hw = (0.0031 * (1 - 0.72 * u ** 1.6) * (0.55 + 0.45 * min(1.0, u * 6))) * S
             for yy in (yc + hw, yc - hw):
-                zz = cz @ [1, x, yy, x * x, x * yy, yy * yy]; pts.append([x, yy, zz + 0.0016])
-        pts = np.array(pts); fsb = [[2 * k, 2 * k + 1, 2 * k + 3, 2 * k + 2] if side == 'left' else [2 * k, 2 * k + 2, 2 * k + 3, 2 * k + 1] for k in range(n - 1)]
+                _, j = kdb.query([x, yy], k=6); zz = Vf[j][:, 2].max(); pts.append([x, yy, zz + 0.0022 * S ** 0.5])
+        pts = np.array(pts); fsb = [[2 * k, 2 * k + 1, 2 * k + 3, 2 * k + 2] for k in range(n - 1)]
         if normals(pts, tri(fsb))[:, 2].mean() < 0: fsb = [f_[::-1] for f_ in fsb]
         wb = np.zeros((len(pts), nb), np.float32); wb[:, bi['head']] = 1
-        br = Part(pts, fsb, wb, REG['dark'], 'brow'); parts.append(br)
+        br = Part(pts, fsb, wb, REG['hair'], 'brow'); br.attr['paint'] = np.c_[np.zeros(len(pts)), np.full(len(pts), -9.0), np.zeros(len(pts))]; parts.append(br)
     # ---- hair: a shell grown from the scalp, cut along a designed hairline ----
     eyec = (jpos('joint-l-eye') + jpos('joint-r-eye')) / 2; c0 = np.array([0, eyec[1] + 0.022 * S, eyec[2] - 0.088 * S])
     hm = np.isin(np.arange(nv), bodyids) & B('head', 'neck_01')
     dd = V - c0; rl = np.linalg.norm(dd, axis=1) + 1e-9; az = np.degrees(np.arctan2(np.abs(dd[:, 0]), dd[:, 2])); el = np.degrees(np.arcsin(np.clip(dd[:, 1] / rl, -1, 1)))
-    emin = np.interp(az, [0, 30, 62, 80, 108, 135, 160, 180], [46, 43, 30, 22, 20, -12, -30, -33] if hair != 'bob' else [44, 42, 30, 22, 20, -14, -30, -33])
+    emin = np.interp(az, [0, 30, 62, 80, 108, 135, 160, 180], [46, 43, 31, 17, 13, -12, -30, -33] if hair != 'bob' else [44, 42, 30, 22, 20, -14, -30, -33])
     scalp = hm & (el > emin) & (rl > 0.06 * S)
-    hf = [f_ for f_ in groups['body'] if all(scalp[i] for i in f_)]
-    ids, fs = sub(V, W, hf); P = V[ids].copy(); Wh = W[ids].copy(); Nh = BN[ids]; bnd = boundary(fs)
+    hf = [f_ for f_ in groups['body'] if any(scalp[i] for i in f_) and all(hm[i] for i in f_)]
+    Vh = V.copy(); nbh = adjacency(nv, hf)
+    for i in {i for f_ in hf for i in f_}:
+        if scalp[i]: continue
+        ins = [j for j in nbh[i] if scalp[j]]
+        if not ins: continue
+        j = max(ins, key=lambda q: el[q] - emin[q]); t_ = np.clip((emin[i] - el[i]) / max((el[j] - emin[j]) + (emin[i] - el[i]), 1e-6), 0, 1); Vh[i] = V[i] + (V[j] - V[i]) * t_
+    ids, fs = sub(Vh, W, hf); P = Vh[ids].copy(); Wh = W[ids].copy(); Nh = BN[ids]; bnd = boundary(fs)
+    nbl = adjacency(len(P), fs)
+    for _ in range(10):  # the hairline itself is drawn as one smooth line
+        Pn = P.copy()
+        for i in bnd:
+            kn = [j for j in nbl[i] if j in bnd]
+            if len(kn) >= 2: Pn[i] = P[i] * 0.5 + np.mean(P[kn], 0) * 0.5
+        P = Pn
     tt = np.clip((el[ids] - emin[ids]) / 26.0, 0, 1); azl = az[ids]; x_ = P[:, 0] / S; fr = np.clip(1 - azl / 70.0, 0, 1)
     if hair == 'short':
         off = (0.0035 + 0.017 * tt ** 0.6 + 0.010 * tt * fr) * S
@@ -325,7 +359,7 @@ def build(name, gender='male', child=0.0, weight=0.0, muscle=0.0, eth=(0.55, 0.4
     elif hair == 'bun':
         off = (0.003 + 0.012 * tt ** 0.6) * S; P += Nh * off[:, None]
     P = smooth(P, fs, 2, 0.4, keep=bnd)
-    hp = Part(P, fs, Wh, REG['hair'], 'hair'); parts.append(hp)
+    hp = Part(P, fs, Wh, REG['hair'], 'hair'); hp.attr['paint'] = np.c_[np.radians(az[ids]) * np.sign(V[ids][:, 0] + 1e-9), tt, np.zeros(len(P))]; parts.append(hp)
     if hair == 'bun':
         u_, v_ = np.meshgrid(np.linspace(0, np.pi, 9), np.linspace(0, 2 * np.pi, 13)[:-1], indexing='ij')
         ctr = np.array([0, c0[1] + 0.035 * S, c0[2] - 0.115 * S]); sp = np.stack([np.sin(u_) * np.cos(v_), np.cos(u_), np.sin(u_) * np.sin(v_)], -1).reshape(-1, 3) * 0.048 * S + ctr
@@ -372,21 +406,21 @@ def build(name, gender='male', child=0.0, weight=0.0, muscle=0.0, eth=(0.55, 0.4
         parts.append(Part(pts, fsS, Ws, fr, 'shoe'))
     # ---- assemble ----
     lift = sole_h
-    Vs = []; Ns = []; Ws_ = []; Rg = []; Ts = []; A = {k: [] for k in ('loose', 'blink', 'smile', 'lip', 'eye')}; base_i = 0
+    Vs = []; Ns = []; Ws_ = []; Rg = []; Ts = []; A = {k: [] for k in ('loose', 'blink', 'smile', 'lip', 'eye', 'paint')}; base_i = 0
     for p in parts:
         T_ = tri(p.faces);
         if len(T_) == 0: continue
         Np = normals(p.V, T_)
         if getattr(p, 'round_head', False):  # one clean shadow shape on the face: normals leaned towards a ball
             hw_ = p.W[:, bi['head']][:, None]; sphn = p.V - c0; sphn /= np.linalg.norm(sphn, axis=1, keepdims=True) + 1e-9
-            Np = Np * (1 - 0.6 * hw_) + sphn * 0.6 * hw_; Np /= np.linalg.norm(Np, axis=1, keepdims=True) + 1e-9
+            Np = Np * (1 - 0.5 * hw_) + sphn * 0.5 * hw_; Np /= np.linalg.norm(Np, axis=1, keepdims=True) + 1e-9
         fr = np.array([r_ for f_, r_ in zip(p.faces, p.freg) for _ in range(len(f_) - 2)])
         for rg in sorted(set(fr)):
             Tr = T_[fr == rg]; u, inv = np.unique(Tr, return_inverse=True)
             Vs.append(p.V[u]); Ns.append(Np[u]); Ws_.append(p.W[u]); Rg.append(np.full(len(u), rg)); Ts.append(inv.reshape(-1, 3) + base_i)
             for k in A:
                 a = p.attr.get(k)
-                A[k].append(a[u] if a is not None else np.zeros((len(u), 3) if k in ('blink', 'smile') else len(u)) + (-2.0 if k == 'eye' else 0))
+                A[k].append(a[u] if a is not None else np.zeros((len(u), 3) if k in ('blink', 'smile', 'paint') else len(u)) + (-2.0 if k == 'eye' else 0))
             base_i += len(u)
     Vc = np.vstack(Vs) * scale; Vc[:, 1] += lift * scale; Nc = np.vstack(Ns); Wc = np.vstack(Ws_); Rc = np.concatenate(Rg); Tc = np.vstack(Ts)
     top4 = np.argsort(-Wc, 1)[:, :4]; w4 = np.take_along_axis(Wc, top4, 1); w4 /= w4.sum(1, keepdims=True)
@@ -394,7 +428,7 @@ def build(name, gender='male', child=0.0, weight=0.0, muscle=0.0, eth=(0.55, 0.4
     os.makedirs(OUT, exist_ok=True)
     blobs = [('pos', Vc.astype('<f4')), ('nor', Nc.astype('<f4')), ('si', top4.astype('<u2')), ('sw', w4.astype('<f4')), ('reg', Rc.astype('<f4')),
              ('loose', np.concatenate(A['loose']).astype('<f4')), ('blink', (np.vstack(A['blink']) * scale).astype('<f4')), ('smile', (np.vstack(A['smile']) * scale).astype('<f4')),
-             ('lip', np.concatenate(A['lip']).astype('<f4')), ('eye', np.concatenate(A['eye']).astype('<f4')), ('idx', Tc.astype('<u4'))]
+             ('lip', np.concatenate(A['lip']).astype('<f4')), ('eye', np.concatenate(A['eye']).astype('<f4')), ('paint', np.vstack(A['paint']).astype('<f4')), ('idx', Tc.astype('<u4'))]
     meta = dict(name=name, bones=bnames, parent=par.tolist(), head=head_s.round(5).tolist(), tail=tail_s.round(5).tolist(), height=float(H * scale + lift * scale), S=float(S * scale), blobs={})
     off = 0; data = b''
     for k, a in blobs:

@@ -1003,3 +1003,10 @@ Every action is built from a 12-pose breakdown (the owner's reference sheets): n
   soft de-esser), then into its place's acoustic: scene option `space: 'open' | 'street' | 'room' | 'hall' | 'cave' | 'car'`.
 - Hands: a reaching hand pre-shapes to the thing — its own grip opened only a little wider than the thing (aperture
   from the thing's radius), widest two thirds of the way there.
+
+
+## Cine 3D
+
+Films with real depth, captured body movement and a directed lens, drawn on the graphics card, are made with the
+Cine 3D engine instead of this one: `cine.help` returns its whole guide (film/cine/GUIDE.md), and
+`film/cine/films/long_road_vi` is a complete film made with it.

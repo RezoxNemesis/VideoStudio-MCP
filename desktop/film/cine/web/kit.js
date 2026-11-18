@@ -20,6 +20,12 @@ export const MOODS = {
     fog: '#1c2748', fogs: '#28386a', fogp: [0.0042, 0.012, 0.9, 0.3], g: '#6a82b6', rd: '#7084b4', sht: '#343e6c', tree: ['#44568c', '#20294e'], gr: ['#5870a8', '#2c3662'], cl: ['#4e5c92', '#1c2444'], grade: [1.22, 0.97, 1.0, 0.8], lift: '#04060e', gain: '#eef2ff' },
   neon: { zen: '#0d1030', hor: '#6e3e86', low: '#1e1840', sunc: '#000000', glow: '#ff6c9c', sky: [9, 0.55, 0.8], sun: [0.985, 0.05, -0.16], light: '#d2b4ea', shade: '#584c84', rim: '#ff8ab8', amb: '#322a52', out: '#0c0a1e',
     fog: '#3a2e64', fogs: '#e074a2', fogp: [0.0034, 0.012, 0.9, 0.9], g: '#8e7cb4', rd: '#9484b8', sht: '#3c3468', tree: ['#544a88', '#241f4c'], gr: ['#6c62a4', '#322c62'], cl: ['#8a66a8', '#2c2656'], grade: [1.2, 0.97, 1.02, 0.85], lift: '#05050f', gain: '#fff0fa' },
+  // first light over the neon city: peach horizon, teal high sky, warm low sun, windows still lit
+  vice: { zen: '#2c5fa8', hor: '#ffb08a', low: '#7a4a7a', sunc: '#fff0d0', glow: '#ff8a70', sky: [9, 0.85, 0.12], sun: [0.97, 0.10, -0.22], light: '#ffd0b0', shade: '#6a5a9a', rim: '#ffb090', amb: '#30284c', out: '#22163a',
+    fog: '#d090a0', fogs: '#ffb48a', fogp: [0.0024, 0.01, 0.88, 0.95], g: '#e0b0b4', rd: '#d8b0c0', sht: '#4c4488', tree: ['#c08090', '#42386a'], gr: ['#e0a09a', '#6a5680'], cl: ['#ffc8a8', '#8060a0'], grade: [1.06, 0.97, 1.12, 0.7], lift: '#0c0618', gain: '#fff4ee' },
+  // a bedroom at night lit by one lamp and the television
+  room: { zen: '#05060c', hor: '#05060c', low: '#05060c', sunc: '#000000', glow: '#000000', sky: [4, 0.0, 0], sun: [-0.35, 0.72, 0.6], light: '#ffd9a8', shade: '#5a4e78', rim: '#8ab4ff', amb: '#2a2436', out: '#1a1220',
+    fog: '#0a0a14', fogs: '#0a0a14', fogp: [0.0001, 0.01, 0.2, 0], g: '#ffffff', rd: '#ffffff', sht: '#404060', tree: ['#ffffff', '#888888'], gr: ['#ffffff', '#888888'], cl: ['#ffffff', '#888888'], grade: [1.08, 0.97, 1.06, 0.55], lift: '#08060c', gain: '#fff6ea' },
 };
 export function setMood(E, name, mix) {
   const m = MOODS[name]; const L = E.L, S = E.S, P = E.P; E.mood = m; E.moodName = name;
@@ -34,7 +40,7 @@ export function setMood(E, name, mix) {
 }
 export const TEX = ['city', 'grass', 'dirt', 'road', 'var', 'grassA', 'neem0', 'neem1', 'neem2', 'banyan0', 'gulmohar0', 'bare0', 'bare1', 'bush0', 'bush1', 'palm0', 'palm1', 'cloud0', 'cloud1', 'cloud2', 'cloud3', 'cloud4', 'cloud5', 'mist', 'glow', 'ring', 'hills0', 'hills1', 'treeline'];
 export async function init(E, extra = []) {
-  for (const t of TEX.concat(extra)) await E.loadTex(t, { repeat: ['grass', 'dirt', 'road', 'var', 'hills0', 'hills1', 'treeline'].includes(t) });
+  for (const t of TEX.concat(extra)) await E.loadTex(t, { repeat: ['grass', 'dirt', 'road', 'var', 'hills0', 'hills1', 'treeline', 'water'].includes(t), raw: /^(deco|tower)\d/.test(t) });
   await loadMarks();
   for (const [fam, file, w] of [['Bebas', 'bebas-neue-latin-400-normal', '400'], ['Oswald', 'oswald-latin-500-normal', '500'], ['Oswald', 'oswald-latin-700-normal', '700'], ['Deva', 'noto-sans-devanagari-devanagari-500-normal', '500'], ['Deva', 'noto-sans-devanagari-devanagari-700-normal', '700']]) {
     const f = new FontFace(fam, `url(fonts/${file}.woff2)`, { weight: w }); await f.load(); document.fonts.add(f); }
@@ -181,3 +187,73 @@ export function look(a, yawDeg, pitchDeg, torso = 0) { // turn the head on the n
   if (torso) a.extra.spine_03 = new THREE.Quaternion().setFromEuler(new THREE.Euler(torso * Math.PI / 180, yawDeg * 0.12 * Math.PI / 180, 0, 'YXZ')); else delete a.extra.spine_03; }
 export function placeBy(a, mark, wx, wz, yaw) { // put a body so that a marked moment of its performance lands on a given spot
   const c = Math.cos(yaw), s = Math.sin(yaw); a.yaw = yaw; a.x0 = wx - (mark[0] * c + mark[2] * s); a.z0 = wz - (-mark[0] * s + mark[2] * c); a.place(a.x0, 0, a.z0, yaw); return a; }
+
+// ---------- the neon city ----------
+export const CITY_TEX = ['deco0', 'deco1', 'deco2', 'deco3', 'deco4', 'deco5', 'deco6', 'deco7', 'tower0', 'tower1', 'tower2', 'tower3', 'skyfar', 'skymid', 'water', 'beam'];
+export function building(E, tex, x, z, w, h, d, o = {}) { // a block with a painted front on its four walls; what is painted as shining glows at night
+  const g = new THREE.BoxGeometry(w, h, d); g.translate(0, h / 2, 0); const uv = g.getAttribute('uv'), nr = g.getAttribute('normal'), rep = o.rep || 1;
+  for (let i = 0; i < uv.count; i++) { if (Math.abs(nr.getY(i)) > 0.5) uv.setXY(i, 0.02, 0.995); else if (Math.abs(nr.getX(i)) > 0.5) uv.setX(i, uv.getX(i) * Math.max(0.25, d / w) * rep); else uv.setX(i, uv.getX(i) * rep); }
+  if (rep !== 1 || d !== w) { E.tex[tex].wrapS = THREE.RepeatWrapping; E.tex[tex].needsUpdate = true; }
+  const m = E.prop(g, { map: E.tex[tex], glow: o.glow ?? 1.15, shadow: o.shadow === true }); m.position.set(x, o.y || 0, z); m.rotation.y = o.ry || 0; return m; }
+export function beams(E, list) { // searchlights sweeping the sky: [x, z, colour, phase]
+  const L = list.map(([x, z, c, ph]) => { const b = E.card(E.tex.beam, { x, z, y: 0, w: 26, h: 420, tint: c, add: true, fog: 0, blur: 0, op: 0.2, order: -600 }); b.ph = ph; return b; });
+  for (const b of L) { const u0 = b.update.bind(b); b.update = (cam, t) => { u0(cam, t); b.m.rotateZ(0.5 * Math.sin(t * 0.45 + b.ph)); }; } return { L, set(k) { for (const b of L) b.u.uOpacity.value = 0.2 * k; } }; }
+export function neonSign(E, x, y, z, w, h, text, o = {}) { // letters that come on one after another: set(n) lights the first n
+  const draw = n => (g, W, H) => { g.fillStyle = '#0c0a16'; g.fillRect(0, 0, W, H); g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = `${o.weight || 400} ${H * (o.size || 0.78)}px ${o.font || 'Bebas'}`; const tw = g.measureText(text).width; let cx = W / 2 - tw / 2; g.textAlign = 'left';
+    for (let i = 0; i < text.length; i++) { const ch = text[i], cw = g.measureText(ch).width; const on = i < n; g.shadowColor = on ? (o.col || '#ff5aa8') : 'transparent'; g.shadowBlur = on ? H * 0.22 : 0; g.fillStyle = on ? (o.core || '#fff2f8') : '#2a2438'; g.fillText(ch, cx, H * 0.54); if (on) g.fillText(ch, cx, H * 0.54); cx += cw; } g.shadowBlur = 0; };
+  const tex = canvasTex(o.tw || 2048, Math.round((o.tw || 2048) * h / w), draw(0)); const m = E.prop(new THREE.PlaneGeometry(w, h), { map: tex, shadow: false, side: THREE.DoubleSide, emis: '#000000' }); m.position.set(x, y, z); m.rotation.y = o.ry ?? -Math.PI / 2;
+  m.material.uniforms.uColor.value.set('#000000'); const emisT = m.material.uniforms.uEmis; let cur = -1; const gl = glow(E, x - 1, y, z, w * 0.9, o.col || '#ff5aa8', { op: 0, order: 45 });
+  // drawn by its own light only: the board's colour is its texture, added as light
+  m.material = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide, fog: false, toneMapped: false }); if (o.legs !== false) for (const s of [-1, 1]) { const l = box(E, 0.5, y, 0.5, { color: '#2a2a34', shadow: false }); l.position.set(x + 0.3, 0, z + s * w * 0.4); }
+  return { m, set(n) { n = Math.round(clamp(n, 0, text.length)); if (n !== cur) { cur = n; redraw(tex, draw(n)); } gl.u.uOpacity.value = 0.55 * n / text.length; }, n: text.length }; }
+export function viceCity(E, x0, o = {}) { // everything beyond the gate: palms, hotel fronts, towers behind towers, water, searchlights
+  const R = rng(o.seed || 77); const out = { b: [], glows: [] }; const len = o.len || 260;
+  // the boulevard: hotel fronts on both sides, stepping back with distance
+  let i = 0; for (const sd of [-1, 1]) { let x = x0 + 16 + R() * 8; while (x < x0 + len) { const w = 20 + R() * 14, h = 15 + R() * 20 + (x - x0) * 0.05, d = 14; const z = sd * (19 + R() * 4 + d / 2);
+      out.b.push(building(E, 'deco' + (i++ % 8), x + w / 2, z, w, h, d, { ry: 0 })); const c = ['#ff5aa8', '#4ae8ff', '#ffc84a', '#b07aff', '#5affb0', '#ff7a4a'][i % 6];
+      out.glows.push(glow(E, x + w / 2, 2.2, sd * 17.5, 16, c, { op: 0.28 })); x += w + 1.5 + R() * 5; } }
+  // palms along both kerbs, lit from below
+  for (let x = x0 + 8; x < x0 + len; x += 9 + R() * 3) for (const sd of [-1, 1]) { const t = tree(E, 'palm', x + R() * 2, sd * (7.6 + R() * 0.8), { R, h: 9 + R() * 4, tint: '#ffd0e0', tint2: '#6a4a8a', shadow: false }); if (R() < 0.5) out.glows.push(glow(E, x, 0.6, sd * 7.6, 5, '#ff8ad0', { op: 0.22 })); }
+  for (let x = x0 + 14; x < x0 + len; x += 26) for (const sd of [-1, 1]) lamp(E, x, sd * 6.9, { col: sd > 0 ? '#ffb0d8' : '#a0e8ff', pool: 0.28 });
+  // towers standing behind the fronts, then two far shores of skyline
+  for (let k = 0; k < (o.towers ?? 22); k++) { const sd = k % 2 ? 1 : -1; const w = 22 + R() * 16, h = 70 + R() * 130; out.b.push(building(E, 'tower' + (k % 4), x0 + 40 + R() * (len + 260), sd * (52 + R() * 150), w, h, w, { rep: 1, glow: 1.0 })); }
+  out.mid = E.card(E.tex.skymid, { x: x0 + len + 420, z: 0, y: -4, w: 2400, h: 2400 * 0.25, ry: -Math.PI / 2, tint: '#ffffff', tint2: '#d0c0ff', fog: 0.25, blur: 0, order: -770 });
+  out.far = E.card(E.tex.skyfar, { x: x0 + len + 900, z: 0, y: -6, w: 3600, h: 3600 * 0.25, ry: -Math.PI / 2, tint: '#e8d8ff', tint2: '#a090e0', fog: 0.45, blur: 0, order: -780 });
+  out.glow = glow(E, x0 + len + 700, 120, 0, 2600, o.glow || '#ff7aa0', { order: -790, op: 0.5 });
+  // the bay: water beyond the last fronts, carrying the lights
+  const wt = E.tex.water; wt.wrapS = wt.wrapT = THREE.RepeatWrapping; for (const sd of [-1, 1]) { const g = new THREE.PlaneGeometry(1400, 900).rotateX(-Math.PI / 2); const uv = g.getAttribute('uv'); for (let q = 0; q < uv.count; q++) uv.setXY(q, uv.getX(q) * 9, uv.getY(q) * 6);
+    const m = E.prop(g, { map: wt, shadow: false, emis: '#0a1030' }); m.position.set(x0 + len + 500, 0.05, sd * 520); out.b.push(m); }
+  out.beams = beams(E, [[x0 + 150, -70, '#ff9ad0', 0], [x0 + 210, 80, '#9ae8ff', 2.1], [x0 + 320, -40, '#ffe09a', 4.0], [x0 + 400, 120, '#c8a0ff', 1.2]]);
+  // lights of cars far down the boulevard
+  const cars = []; for (let k = 0; k < 14; k++) { const g = glow(E, 0, 0.7, 0, 1.4, k % 2 ? '#ff5a4a' : '#fff0c8', { op: 0.9 }); g.q = [x0 + 60 + R() * len, (k % 2 ? 1 : -1) * 1.6, (k % 2 ? 1 : -1) * (9 + R() * 6)]; cars.push(g); }
+  E.updaters.push(t => { for (const c of cars) { const x = c.q[0] + ((t * c.q[2]) % 200 + 200) % 200; c.m.position.set(x, 0.7, c.q[1]); } });
+  return out; }
+// ---------- a room, for memories ----------
+export function blob(E, x, z, s = 1.2, op = 0.5) { const t = E._blobTex || (E._blobTex = (() => { const tt = canvasTex(64, 64, (g) => { const gr = g.createRadialGradient(32, 32, 2, 32, 32, 31); gr.addColorStop(0, 'rgba(10,8,20,0.9)'); gr.addColorStop(1, 'rgba(10,8,20,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); }); tt.premultiplyAlpha = true; return tt; })());
+  return E.card(t, { x, y: 0.012, z, w: s, h: s, ry: 0, rx: -Math.PI / 2, center: true, fog: 0, blur: 0, op }); }
+export function room(E, o = {}) { // a bedroom facing a television: x is across the room, the TV stands at -z, the bed along +z
+  const W = o.w || 5.2, D = o.d || 4.6, Hh = 2.7; const wall = o.wall || '#6c7aa8', out = {};
+  const wallTex = (w, draw) => canvasTex(1024, Math.round(1024 * Hh / w), (g, cw, ch) => { g.fillStyle = wall; g.fillRect(0, 0, cw, ch); const gr = g.createLinearGradient(0, 0, 0, ch); gr.addColorStop(0, 'rgba(0,0,0,0.25)'); gr.addColorStop(0.5, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,0.3)'); g.fillStyle = gr; g.fillRect(0, 0, cw, ch); g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(0, ch * 0.9, cw, ch * 0.1); if (draw) draw(g, cw, ch); });
+  const fl = E.prop(new THREE.PlaneGeometry(W + 2, D + 2).rotateX(-Math.PI / 2), { shadow: false, map: canvasTex(512, 512, (g, w, h) => { for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#7a5a44' : '#84624a'; g.fillRect(i * 64, 0, 64, h); } g.strokeStyle = 'rgba(0,0,0,0.25)'; for (let i = 0; i < 8; i++) { g.strokeRect(i * 64, (i * 97) % 300, 64, 300); } }) }); fl.position.set(0, 0, 0);
+  const poster = (g, x, y, w, h, c1, c2, txt) => { g.fillStyle = c1; g.fillRect(x, y, w, h); g.fillStyle = c2; g.beginPath(); g.moveTo(x, y + h); g.lineTo(x + w * 0.5, y + h * 0.35); g.lineTo(x + w, y + h); g.fill(); g.fillStyle = '#fff'; g.font = `700 ${h * 0.16}px Oswald`; g.textAlign = 'center'; g.fillText(txt, x + w / 2, y + h * 0.24); g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 3; g.strokeRect(x, y, w, h); };
+  const back = E.prop(new THREE.PlaneGeometry(W, Hh), { shadow: false, map: wallTex(W, (g, cw, ch) => { (o.posters || [['#e8a030', '#c8402c', 'SPEED'], ['#3a6ad8', '#1c2c5c', 'CITY']]).forEach((p, i) => poster(g, cw * (0.08 + i * 0.74), ch * 0.18, cw * 0.16, ch * 0.34, p[0], p[1], p[2])); }) }); back.position.set(0, Hh / 2, -D / 2);
+  const left = E.prop(new THREE.PlaneGeometry(D, Hh), { shadow: false, map: wallTex(D, (g, cw, ch) => { g.fillStyle = o.night === false ? '#ffd9a0' : '#1a2a5a'; g.fillRect(cw * 0.3, ch * 0.2, cw * 0.36, ch * 0.42); g.strokeStyle = '#e8e2d4'; g.lineWidth = 14; g.strokeRect(cw * 0.3, ch * 0.2, cw * 0.36, ch * 0.42); g.beginPath(); g.moveTo(cw * 0.48, ch * 0.2); g.lineTo(cw * 0.48, ch * 0.62); g.stroke(); }) }); left.position.set(-W / 2, Hh / 2, 0); left.rotation.y = Math.PI / 2;
+  const right = E.prop(new THREE.PlaneGeometry(D, Hh), { shadow: false, map: wallTex(D, (g, cw, ch) => { g.fillStyle = '#4a3a30'; g.fillRect(cw * 0.55, ch * 0.3, cw * 0.3, ch * 0.7); g.fillStyle = '#e8c070'; g.beginPath(); g.arc(cw * 0.6, ch * 0.68, 8, 0, 7); g.fill(); }) }); right.position.set(W / 2, Hh / 2, 0); right.rotation.y = -Math.PI / 2;
+  // the bed they sit on (its edge faces the TV), a rug, a stand, the television
+  const bh = o.bed ?? 0.42; const bed = box(E, 2.3, bh, 1.9, { color: o.blanket || '#c8503c', shadow: false }); bed.position.set(0, 0, 0.95 + (o.bedz || 0)); const pil = box(E, 0.7, 0.14, 0.42, { color: '#f0e8dc', shadow: false }); pil.position.set(-0.6, bh, 1.6 + (o.bedz || 0));
+  const rug = E.prop(new THREE.PlaneGeometry(2.6, 1.5).rotateX(-Math.PI / 2), { shadow: false, color: o.rug || '#3c6a7a' }); rug.position.set(0, 0.008, -0.75);
+  const st = box(E, 1.5, 0.5, 0.45, { color: '#3a2c26', shadow: false }); st.position.set(0, 0, -D / 2 + 0.35);
+  const tvw = o.tvw || 1.15, tvh = tvw * 0.6; const body = box(E, tvw + 0.08, tvh + 0.08, 0.07, { color: '#15151a', shadow: false }); body.position.set(0, 0.52, -D / 2 + 0.36);
+  const stex = canvasTex(512, 300, o.screen ? o.screen(0) : (g, w, h) => { g.fillStyle = '#204080'; g.fillRect(0, 0, w, h); }); const scr = new THREE.Mesh(new THREE.PlaneGeometry(tvw, tvh), new THREE.MeshBasicMaterial({ map: stex, toneMapped: false })); scr.position.set(0, 0.52 + tvh / 2 + 0.04, -D / 2 + 0.40); E.scene.add(scr);
+  const con = box(E, 0.34, 0.07, 0.26, { color: o.console || '#18181c', shadow: false }); con.position.set(0.45, 0.5, -D / 2 + 0.36);
+  out.tvGlow = glow(E, 0, 0.9, -D / 2 + 0.6, 4.2, '#7aa8ff', { op: 0.35 }); out.lampGlow = glow(E, W / 2 - 0.5, 1.5, D / 2 - 0.6, 3.2, '#ffc880', { op: 0.3 }); const ls = box(E, 0.06, 1.3, 0.06, { color: '#2a2a2a', shadow: false }); ls.position.set(W / 2 - 0.5, 0, D / 2 - 0.6);
+  const fw = E.prop(new THREE.PlaneGeometry(W, Hh), { shadow: false, map: wallTex(W, (g, cw, ch) => { g.fillStyle = '#3a2c26'; g.fillRect(cw * 0.62, ch * 0.12, cw * 0.3, ch * 0.88); for (let i = 0; i < 4; i++) { g.fillStyle = '#2a1e1a'; g.fillRect(cw * 0.63, ch * (0.16 + i * 0.2), cw * 0.28, ch * 0.015); for (let j = 0; j < 9; j++) { g.fillStyle = ['#c84a3a', '#3a6ad8', '#e8b040', '#4aa870', '#e8e0d0'][(i * 3 + j) % 5]; g.fillRect(cw * (0.635 + j * 0.03), ch * (0.175 + i * 0.2) + (j % 3) * 4, cw * 0.022, ch * 0.16 - (j % 3) * 4); } } }) }); fw.position.set(0, Hh / 2, D / 2); fw.rotation.y = Math.PI;
+  const ceil = E.prop(new THREE.PlaneGeometry(W + 0.2, D + 0.2).rotateX(Math.PI / 2), { shadow: false, color: '#b8b4c8' }); ceil.position.set(0, Hh, 0);
+  out.bedMesh = bed; out.pillow = pil; out.setBed = (h, colr) => { bed.scale.y = h / bh; pil.position.y = h; if (colr) bed.material.uniforms.uColor.value.set(colr); };
+  out.screen = { tex: stex, mesh: scr, draw(fn) { redraw(stex, fn); } }; out.W = W; out.D = D; out.bed = bh; out.seatZ = 0.95 + (o.bedz || 0) - 0.95 + 0.12; return out; }
+// the game on the screen: our own little top-down drive through a night city (no real game's picture)
+export function gameScreen(t, o = {}) { return (g, w, h) => { const sky = g.createLinearGradient(0, 0, 0, h); sky.addColorStop(0, o.a || '#2a1a5a'); sky.addColorStop(0.55, o.b || '#ff7a8a'); sky.addColorStop(0.56, '#1a1a2a'); sky.addColorStop(1, '#0c0c18'); g.fillStyle = sky; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#ffd27a'; g.beginPath(); g.arc(w * 0.5, h * 0.5, h * 0.16, Math.PI, 0); g.fill(); const R = rng(5); g.fillStyle = '#16102e'; for (let i = 0; i < 16; i++) { const bw = 18 + R() * 30, bh = 20 + R() * 80, x = ((i * 40 - t * 12) % (w + 60) + w + 60) % (w + 60) - 30; g.fillRect(x, h * 0.56 - bh, bw, bh); }
+  g.fillStyle = '#22222e'; g.beginPath(); g.moveTo(w * 0.42, h * 0.56); g.lineTo(w * 0.58, h * 0.56); g.lineTo(w * 0.98, h); g.lineTo(w * 0.02, h); g.fill(); g.fillStyle = '#f0e8c0'; for (let i = 0; i < 6; i++) { const u = ((i / 6 + t * 0.9) % 1); const y = h * (0.56 + 0.44 * u * u), ww = 2 + 10 * u; g.fillRect(w / 2 - ww / 2, y, ww, 4 + 18 * u); }
+  const cx = w * (0.5 + 0.13 * Math.sin(t * 1.7)), cy = h * 0.83; g.fillStyle = o.car || '#e8402c'; g.fillRect(cx - 34, cy - 14, 68, 30); g.fillStyle = '#1a1a22'; g.fillRect(cx - 24, cy - 26, 48, 14); g.fillStyle = '#ff3a3a'; g.fillRect(cx - 32, cy + 6, 12, 6); g.fillRect(cx + 20, cy + 6, 12, 6);
+  g.fillStyle = '#ffffff'; g.font = '700 46px Oswald'; g.textAlign = 'left'; g.fillText(o.label ?? 'GTA V', 16, 50); g.font = '500 18px Oswald'; g.fillStyle = '#9affc0'; g.fillText('$ ' + String(1250 + Math.floor(t * 37) * 10), w - 110, 34); }; }

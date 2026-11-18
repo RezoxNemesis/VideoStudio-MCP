@@ -362,6 +362,116 @@ def gait_report(ch, Q, root, label=''):
     hy = P[:, ch.bi['head'], 1]; low = min(con['l']['low'].min(), con['r']['low'].min())
     print(f'{label:16s} {T:5.2f}s {sp:4.2f} m/s  steps/min {steps / T * 60:4.0f}  air {air * 100:3.0f}% both {both * 100:3.0f}%  lean {lean:4.1f}  slide {100 * max(slides):4.1f} cm  wrists {wr.min():.2f}-{wr.max():.2f}  bob {100 * (hy.max() - hy.min()):4.1f} cm  lowest {100 * low:5.1f} cm')
 
+# ---------------- acting layers: laid over a finished performance (global rotations, 60 Hz) ----------------
+def _ease(x): x = np.clip(x, 0, 1); return x * x * x * (x * (6 * x - 15) + 10)
+def subtree(ch, bone):
+    r = ch.bi[bone]; out = []
+    for i in range(ch.nb):
+        j = i
+        while j >= 0 and j != r: j = ch.par[j]
+        if j == r: out.append(i)
+    return out
+def turn_subtree(ch, Q, bone, rv):
+    """rotate a bone and everything that hangs on it by per-frame rotation vectors (world axes)"""
+    r = R.from_rotvec(rv)
+    for i in subtree(ch, bone): Q[:, i] = (r * R.from_quat(Q[:, i])).as_quat()
+    return Q
+def limb_ik(ch, Q, P, a, b, c, tgt, pole_pt, w):
+    """two bones a->b->c: put c on tgt, the middle joint towards pole_pt; w (F,) how much of it"""
+    a, b, c = ch.bi[a], ch.bi[b], ch.bi[c]; A = P[:, a]; B0 = P[:, b]; C0 = P[:, c]
+    l1 = np.linalg.norm(ch.head[b] - ch.head[a]); l2 = np.linalg.norm(ch.head[c] - ch.head[b])
+    tgt = C0 * (1 - w)[:, None] + tgt * w[:, None]; pole_pt = B0 * (1 - w)[:, None] + pole_pt * w[:, None]
+    v = tgt - A; dist = np.linalg.norm(v, axis=1); dmax = (l1 + l2) * 0.985; dist = np.clip(dist, 1e-4, None)  # 0.985: an arm at the end of its reach is never locked straight
+    v = np.where((dist > dmax)[:, None], v / dist[:, None] * dmax, v); dist = np.minimum(dist, dmax); vn = v / dist[:, None]
+    pole = pole_pt - A; pole = pole - vn * (pole * vn).sum(1, keepdims=True); pole /= np.maximum(np.linalg.norm(pole, axis=1, keepdims=True), 1e-9)
+    ca = np.clip((l1 ** 2 + dist ** 2 - l2 ** 2) / (2 * l1 * dist), -1, 1); sa = np.sqrt(1 - ca ** 2)
+    B = A + (vn * ca[:, None] + pole * sa[:, None]) * l1
+    Q[:, a] = (rot_between(B0 - A, B - A) * R.from_quat(Q[:, a])).as_quat()
+    Q[:, b] = (rot_between(C0 - B0, A + v - B) * R.from_quat(Q[:, b])).as_quat()
+    return A + v, B
+def hand_aim(ch, Q, sd, fingers, palm, w):
+    """turn a hand: its fingers along `fingers`, its palm facing `palm` (world, per frame)"""
+    i = ch.bi[f'hand_{sd}']; d0 = ch.head[ch.bi[f'middle_01_{sd}']] - ch.head[i]; n0 = ch.palm[sd]
+    def fr(d, n):
+        d = d / np.linalg.norm(d, axis=-1, keepdims=True); n = n - d * (n * d).sum(-1, keepdims=True); n = n / np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-9); return np.stack([d, n, np.cross(d, n)], -1)
+    M = fr(fingers, palm) @ np.swapaxes(fr(d0[None], n0[None]), -1, -2); q = R.from_matrix(M).as_quat()
+    Q[:, [i]] = qblend(Q[:, [i]], q[:, None], w)
+    for j in subtree(ch, f'hand_{sd}'):
+        if j != i: Q[:, j] = Q[:, i]   # fingers ride the hand (their curl is set at export)
+    return Q
+def _frame(ch, Q, smooth=31):
+    """the body's own directions over time (from the chest, steadied): forward, left, up"""
+    f = R.from_quat(Q[:, ch.bi['spine_03']]).apply([0, 0, 1.0]); f[:, 1] = 0; f = smooth1(f, smooth); f /= np.linalg.norm(f, axis=1, keepdims=True)
+    up = np.tile([0, 1.0, 0], (len(Q), 1)); return f, np.cross(up, f), up
+def wave(ch, Q, root, t0, side='r', swings=5, hz=2.5, amp=24.0, height=0.0, out=1.0, big=1.0, raise_t=0.62, lower_t=0.75, towards=None):
+    """A wave as people wave: the body gives a little first, the ELBOW leads the arm up and the hand trails behind it,
+    the forearm swings from the elbow like a wiper (never the whole arm from the shoulder), the wrist follows the
+    forearm a beat late and the swings die down; the head tips towards the hand; then the elbow drops and the hand
+    comes down last. t0: second it starts. amp: forearm swing in degrees. height: 0 a modest wave (hand by the head),
+    1 a child's big wave (hand high over the head). towards: world direction [x, z] of who is waved at (default: ahead)."""
+    Q = Q.copy(); F = len(Q); t = np.arange(F) / FPS - t0; sg = 1.0 if side == 'l' else -1.0
+    T_w = swings / hz; t_up = raise_t; t_dn = t_up + 0.12 + T_w; T_end = t_dn + lower_t
+    we = _ease(t / t_up) * (1 - _ease((t - t_dn) / (lower_t * 0.8)))                       # elbow: first up, first down
+    wh = _ease((t - 0.13) / t_up) * (1 - _ease((t - t_dn - 0.16) / (lower_t * 0.85)))      # hand: trails both ways
+    body = _ease((t + 0.2) / 0.5) * (1 - _ease((t - t_dn) / lower_t))
+    f, lf, up = _frame(ch, Q)
+    if towards is not None: tw = np.array([towards[0], 0, towards[1]], float); tw /= np.linalg.norm(tw); f = np.tile(tw, (F, 1)); lf = np.cross(up, f)
+    # the body gives: weight to the far side, chest tipped a little away from the raised arm, then the head towards the hand
+    turn_subtree(ch, Q, 'spine_02', f * (np.radians(3.2 * big) * sg * body)[:, None] + lf * (np.radians(-2.0) * body)[:, None])
+    turn_subtree(ch, Q, 'head', f * (np.radians(-5.5) * sg * body * (0.7 + 0.3 * np.sin(2 * np.pi * hz * 0.5 * t)))[:, None])
+    turn_subtree(ch, Q, f'clavicle_{side}', f * (np.radians(-9.0 - 9.0 * height) * sg * we)[:, None])   # the shoulder rides up
+    P = fk(ch, Q, root); S = P[:, ch.bi[f'upperarm_{side}']]
+    l1 = np.linalg.norm(ch.head[ch.bi[f'lowerarm_{side}']] - ch.head[ch.bi[f'upperarm_{side}']]); l2 = np.linalg.norm(ch.head[ch.bi[f'hand_{side}']] - ch.head[ch.bi[f'lowerarm_{side}']])
+    # the upper arm: out to the side and a little forward; lower for a modest wave, above the shoulder for a big one
+    el = np.radians(-34 + 62 * height); fw = np.radians(28 - 8 * height)
+    ud = lf * (sg * np.cos(el) * np.cos(fw) * out) + up * np.sin(el) + f * (np.cos(el) * np.sin(fw))
+    ud /= np.linalg.norm(ud, axis=1, keepdims=True)
+    env = np.clip(t - t_up + 0.1, 0, None); dec = np.exp(-np.clip(t - t_up, 0, None) / (T_w * 1.15))
+    ph = 2 * np.pi * hz * (t - t_up) ; live = (t > t_up - 0.15) & (t < t_dn + 0.2)
+    sw = np.radians(amp) * np.sin(ph) * dec * _ease(env / 0.25) * (1 - _ease((t - t_dn + 0.1) / 0.3))      # forearm, about the forward axis
+    E = S + ud * l1 + lf * (sg * 0.018 * np.sin(ph - 2.6) * dec)[:, None] * live[:, None]                 # the elbow answers the swing a little
+    base = up * 1.0 + lf * (sg * (0.10 + 0.10 * height)) + f * 0.20; base /= np.linalg.norm(base, axis=1, keepdims=True)
+    fd = R.from_rotvec(f * (sg * -1 * sw)[:, None]).apply(base)
+    Wp = E + fd * l2
+    limb_ik(ch, Q, P, f'upperarm_{side}', f'lowerarm_{side}', f'hand_{side}', Wp, E, wh)
+    # the arm between: while the hand trails, the elbow is already on its way (pole = where the elbow wants to be)
+    P2 = fk(ch, Q, root); 
+    wr = np.radians(amp * 0.85) * np.sin(ph - 1.25) * dec * _ease(env / 0.3) * (1 - _ease((t - t_dn + 0.1) / 0.3))   # wrist: a beat behind the forearm
+    droop = (1 - _ease((t - 0.13) / (t_up * 1.25))) * np.radians(38) + _ease((t - t_dn) / (lower_t * 0.7)) * np.radians(30)  # the hand hangs from the wrist on the way up and down
+    fin = R.from_rotvec(f * (sg * -1 * (sw + wr))[:, None]).apply(base); fin = R.from_rotvec(lf * droop[:, None]).apply(fin)
+    hand_aim(ch, Q, side, fin, f + up * 0.12, wh)
+    return Q
+def hold_pad(ch, Q, root, t0=0.0, t1=1e9, seed=1, lively=1.0, reach=0.30, drop=0.20):
+    """Sitting and playing: both hands hold a controller before the belly, forearms towards the knees; thumbs work,
+    the whole body leans into turns, and now and then both arms jerk up at something on the screen."""
+    Q = Q.copy(); F = len(Q); t = np.arange(F) / FPS; w = _ease((t - t0) / 0.6) * (1 - _ease((t - t1) / 0.6)); r = np.random.RandomState(seed)
+    def noise(hz, k=1):
+        n = int(F / FPS * hz) + 4; return np.stack([np.interp(t * hz, np.arange(n), smooth1(r.uniform(-1, 1, n), 3)) for _ in range(k)], 1)
+    f, lf, up = _frame(ch, Q, 61)
+    sway = noise(0.45)[:, 0]; jerk = np.clip(noise(0.33)[:, 0] * 2.2 - 1.15, 0, 1); jerk = smooth1(jerk, 9)
+    turn_subtree(ch, Q, 'spine_01', (lf * np.radians(11.0) + f * (np.radians(6.5 * lively) * sway)[:, None] ) * w[:, None])      # leaning in; rolling with the turns
+    turn_subtree(ch, Q, 'neck_01', (lf * np.radians(-12.0) + f * (np.radians(-3.5 * lively) * sway)[:, None]) * w[:, None])      # the eyes stay on the screen
+    P = fk(ch, Q, root); S = ch.S; hip = P[:, ch.bi['pelvis']]; f, lf, up = _frame(ch, Q, 61)
+    c = hip + f * (reach * S) + up * ((drop + 0.035 * jerk * lively) * S)[:, None] + lf * (0.018 * S * sway)[:, None]
+    tw = noise(3.1, 2) * 0.006 * S * lively
+    for sd, sg in (('l', 1.0), ('r', -1.0)):
+        k = 0 if sd == 'l' else 1
+        tgt = c + lf * (sg * 0.075 * S) + up * tw[:, [k]]
+        pole = P[:, ch.bi[f'upperarm_{sd}']] + lf * (sg * 0.16 * S) - up * (0.26 * S) + f * (0.02 * S)
+        limb_ik(ch, Q, P, f'upperarm_{sd}', f'lowerarm_{sd}', f'hand_{sd}', tgt, pole, w)
+        hand_aim(ch, Q, sd, f * 1.0 + lf * (-sg * 0.45) + up * 0.12, lf * (-sg) * 1.0 + up * -0.35, w)
+    return Q
+def cheer(ch, Q, root, t0, dur=1.3, big=1.0, side='both'):
+    """both fists thrown up at something good (a short, sharp action over whatever the body is doing)"""
+    Q = Q.copy(); F = len(Q); t = np.arange(F) / FPS - t0; w = _ease(t / 0.22) * (1 - _ease((t - dur + 0.45) / 0.45)); f, lf, up = _frame(ch, Q)
+    turn_subtree(ch, Q, 'spine_02', lf * (np.radians(-7.0 * big) * w)[:, None]); P = fk(ch, Q, root); S = ch.S; pump = 0.03 * np.sin(2 * np.pi * 3.2 * t) * (t > 0.2)
+    for sd, sg in (('l', 1.0), ('r', -1.0)):
+        if side not in ('both', sd): continue
+        sh = P[:, ch.bi[f'upperarm_{sd}']]; tgt = sh + lf * (sg * 0.16 * S) + up * ((0.40 * big + pump) * S)[:, None] + f * (0.10 * S)
+        limb_ik(ch, Q, P, f'upperarm_{sd}', f'lowerarm_{sd}', f'hand_{sd}', tgt, sh + lf * (sg * 0.30 * S) + up * (0.02 * S) + f * (0.10 * S), w)
+        hand_aim(ch, Q, sd, up * 1.0 + f * 0.1, f * 1.0, w)
+    return Q
+
 def finger_quats(ch, curl):
     """curl: dict side -> 0..1 (0 open, 1 fist). returns {bone index: local quat}"""
     out = {}

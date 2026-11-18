@@ -54,9 +54,10 @@ export function registerCineCommands(_s: Studio): void {
   registerCommand("cine.progress", "The Cine render that is running or just finished: pieces done, frames a second, time left, the finished file, or the mistake.", async () => cine().progress());
   registerCommand("cine.join", "{film, maxMB?, name?} Join the drawn pieces again and lay the sound under (after changing only audio.wav).", async (_st, a) => cine().join(a.str("film"), { maxMB: a.optNum("maxMB"), name: a.optStr("name") }));
   registerCommand("cine.stop", "Stop the Cine render (pieces already drawn are kept).", async () => cine().stop());
+  registerCommand("cine.unpack", "{file: a .tar.gz lying in the Cine folder} Unpack many files at once into the Cine folder (shared assets, a film's performances): the way data made in a workspace arrives.", async (_st, a) => cine().unpack(a.str("file")));
   registerCommand(
     "cine.tool",
-    "{film?, script (mh.py | mocap.py | paint.py | audio_kit.py, or a .py of the film's own such as moves.py or audio.py), args?: [..]} Run one of the engine's Python tools on this PC (bodies, performances from captured motion, painted textures, synthesised sound). Needs python3 with numpy, scipy, opencv and pillow; if this PC has none, run the tool in a workspace and put the data into the film's folder.",
+    "{film?, script (mh.py | paint.py | qa.py, or a .py of the film's own such as moves.py or audio.py), args?: [..]} Run one of the engine's Python tools on this PC (bodies, performances from captured motion, painted textures, synthesised sound). Needs python3 with numpy, scipy, opencv and pillow; if this PC has none, run the tool in a workspace and put the data into the film's folder.",
     async (_st, a) => { const args = a.any("args"); return cine().tool(a.optStr("film"), a.str("script"), Array.isArray(args) ? args.map(String) : []); },
   );
 }

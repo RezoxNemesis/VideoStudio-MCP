@@ -260,12 +260,25 @@ function createCine(o) {
     if (r.code && /No module named|not found|ENOENT/.test(r.err)) throw new Error(`This PC's python3 cannot run the tool: ${r.err.trim().split("\n").slice(-1)[0]}. It needs: pip install --user numpy scipy opencv-python-headless pillow. (Or run the tool in Claude's workspace and send the data into the film's folder.)`);
     return { code: r.code, out: r.out.slice(-6000), err: r.err.slice(-3000) };
   }
+  /** Many files at once: a .tar.gz that lies in the Cine folder is unpacked there (bodies, textures, a film's performances). */
+  async function unpack(file) {
+    const f = path.resolve(path.isAbsolute(String(file)) ? String(file) : path.join(ROOT, String(file || "")));
+    if (!f.startsWith(ROOT + path.sep) || !/\.(tar\.gz|tgz)$/.test(f) || !fs.existsSync(f)) throw new Error("Give a .tar.gz that lies in the Cine folder.");
+    const ls = await exec("tar", ["-tzf", f]); if (ls.code) throw new Error(`The archive does not open: ${ls.err.slice(-200)}`);
+    const names = ls.out.split("\n").filter(Boolean);
+    for (const n of names) if (n.startsWith("/") || n.split("/").includes("..")) throw new Error(`The archive holds a path that leaves the folder: ${n}`);
+    const x = await exec("tar", ["-xzf", f, "-C", ROOT, "--no-same-owner", "--no-same-permissions"]); if (x.code) throw new Error(`Unpacking failed: ${x.err.slice(-300)}`);
+    const tops = [...new Set(names.map((n) => n.split("/")[0]))];
+    return { files: names.filter((n) => !n.endsWith("/")).length, into: ROOT, folders: tops };
+  }
   return {
-    list, open, create, frame, sheet, render, progress, stop, tool,
+    list, open, create, frame, sheet, render, progress, stop, tool, unpack,
     help: async () => fsp.readFile(o.guide, "utf8"),
     read: async (film, file) => fsp.readFile(source(film, file), "utf8"),
     write: async (film, file, text) => { const f = source(film, file); await fsp.mkdir(path.dirname(f), { recursive: true }); await fsp.writeFile(f, String(text ?? "")); if (path.basename(f) === "film.js") { try { const i = await shots(filmDir(film)); return { file: f, loads: true, shots: i.shots.length }; } catch (e) { return { file: f, loads: false, mistake: String(e.message).slice(0, 1200) }; } } return { file: f }; },
     join: async (film, p) => { const dir = filmDir(film), info = await shots(dir), fps = info.fps || 30, PIECE = 150, plan = []; for (const s of info.shots) { const K = Math.ceil(Math.round(s.dur * fps) / PIECE); for (let k = 0; k < K; k++) plan.push({ job: `${s.id}_${k}` }); } return join(dir, plan, info, p || {}); },
+    /** Any page of the engine (lab.html …) for a film: wait for its flag, then say which pictures it left in out/. */
+    lab: async (film, query, flagName, timeout) => { const dir = filmDir(film), t0 = Date.now(); const r = await page(dir, flagName || 'lab', String(query), null, timeout || 300_000); const out = path.join(dir, 'out'); const files = fs.existsSync(out) ? fs.readdirSync(out).filter((n) => /\.(jpg|png)$/.test(n) && fs.statSync(path.join(out, n)).mtimeMs >= t0 - 500).map((n) => path.join(out, n)) : []; return { said: r, files, log: logs.slice(-6) }; },
     said: () => logs.slice(-60),
     close: () => { try { server && server.close(); } catch { /* closed */ } server = null; },
   };
@@ -300,6 +313,7 @@ function setupCine(o) {
   h("cine.join", (film, p) => cine.join(film, p || {}));
   h("cine.progress", () => ({ ...cine.progress(), log: cine.said().slice(-12) }));
   h("cine.stop", () => cine.stop());
+  h("cine.unpack", (file) => cine.unpack(file));
   h("cine.tool", (film, script, args) => cine.tool(film, script, args));
   return cine;
 }

@@ -7,6 +7,7 @@
  *   node cli.cjs render <film dir> [shot,shot…] [width] [height]     (resumable: pieces already drawn are kept)
  *   node cli.cjs join   <film dir> [maxMB]
  *   node cli.cjs open   <film dir>
+ *   node cli.cjs lab    <film dir> "lab.html?views=hero23:face,hero23:front" [flag]   (close looks at a body: pictures in out/)
  * Environment: CINE_ROOT (folder that holds `assets/`; default: the film's parent), CINE_CHROME, CINE_FFMPEG, CINE_GPU=1 (use the real GPU).
  */
 const path = require("node:path"), fs = require("node:fs"), os = require("node:os"), { spawn } = require("node:child_process");
@@ -29,6 +30,7 @@ const strip = (r) => { if (r && r.jpeg) r = { ...r, jpeg: `(${Math.round(r.jpeg.
   try {
     if (cmd === "frame") console.log(strip(await cine.frame(film, rest[0], +rest[1] || 0, +rest[2] || 1280)));
     else if (cmd === "sheet") console.log(strip(await cine.sheet(film, rest[0], String(rest[1] || "0").split(",").map(Number), +rest[2] || 4, +rest[3] || 640)));
+    else if (cmd === "lab") console.log(await cine.lab(film, rest[0], rest[1]));
     else if (cmd === "open") console.log(JSON.stringify(await cine.open(film), null, 1));
     else if (cmd === "join") console.log(await cine.join(film, { maxMB: +rest[0] || 0 }));
     else if (cmd === "render") {
