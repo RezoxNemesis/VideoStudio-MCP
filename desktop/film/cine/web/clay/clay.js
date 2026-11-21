@@ -88,7 +88,7 @@ export class Engine {
   constructor(canvas, W, H, o = {}) {
     this.W = W; this.H = H; this.t = 0;
     const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' });
-    r.setPixelRatio(1); r.setSize(W, H, false); r.shadowMap.enabled = true; r.shadowMap.type = o.shadow === 'pcf' ? THREE.PCFShadowMap : o.shadow === 'vsm' ? THREE.VSMShadowMap : THREE.PCFSoftShadowMap; const TAPS = o.taps || 26; r.outputColorSpace = THREE.LinearSRGBColorSpace; r.toneMapping = THREE.NoToneMapping;
+    r.setPixelRatio(1); r.setSize(W, H, false); r.shadowMap.enabled = true; r.shadowMap.type = o.shadow === 'pcf' ? THREE.PCFShadowMap : o.shadow === 'vsm' ? THREE.VSMShadowMap : THREE.PCFSoftShadowMap; const TAPS = o.taps || (W >= 1000 ? 84 : 44); r.outputColorSpace = THREE.LinearSRGBColorSpace; r.toneMapping = THREE.NoToneMapping;
     this.scene = new THREE.Scene(); this.cam = new THREE.PerspectiveCamera(35, W / H, 0.06, 60);
     const HF = THREE.HalfFloatType, rt = (w, h, x = {}) => new THREE.WebGLRenderTarget(w, h, { type: HF, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, ...x });
     this.rt = new THREE.WebGLRenderTarget(W, H, { type: HF, samples: o.msaa ?? 4, depthBuffer: true }); this.rt.depthTexture = new THREE.DepthTexture(W, H); this.rt.depthTexture.type = THREE.UnsignedIntType;
@@ -122,7 +122,7 @@ export class Engine {
         float g = h21(floor(gl_FragCoord.xy / uKQ) + floor(uT * 24.) * 17.13) - 0.5; c += g * uGrain * (1.0 - 0.6 * l);
         vec4 ov = texture2D(tOv, vUv); c = c * (1. - ov.a) + ov.rgb * ov.a; gl_FragColor = vec4(c, 1.); }`,
       { tS: { value: null }, tD: { value: null }, tDof: { value: null }, tB1: { value: null }, tB2: { value: null }, tOv: { value: this.ovt }, uRes: res, uFocus: { value: 2 }, uAp: { value: 20 }, uMax: { value: 14 }, uT: { value: 0 }, uExp: { value: 1 }, uSat: { value: 1 }, uVig: { value: 0.4 }, uGrain: { value: 0.05 }, uBloom: { value: 0.5 }, uCA: { value: 0.001 }, uKQ: { value: Math.max(1, Math.round(W / 1080)) }, uLift: { value: new THREE.Vector3() }, uGain: { value: new THREE.Vector3(1, 1, 1) }, uNear: { value: 0.06 }, uFar: { value: 60 } });
-    this.oc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); this.ps = new THREE.Scene(); this.ticks = [];
+    this.oc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); this.ps = new THREE.Scene(); this.ticks = []; this.pre = []; // pre: passes drawn before the picture (a mirror for water …): fn(renderer, scene, camera, t)
   }
   /** cam: { pos, target, fov, roll?, focus?: metres | [x,y,z] (default: the target), ap?, near?, far? } */
   setCam(c) {
@@ -135,7 +135,8 @@ export class Engine {
   render(t) {
     const r = this.renderer, L = this.lens, K = this.look, cam = this.cam; this.t = t;
     const boil = Math.floor(t * 12 + 1e-4); for (const m of mats) m.userData.U.uBoil.value = boil % 97; for (const f of this.ticks) f(t);
-    r.setRenderTarget(this.rt); r.setClearColor(this.clear ?? 0x05060c, 1); r.clear(); r.render(this.scene, cam);
+    r.setClearColor(this.clear ?? 0x05060c, 1); for (const f of this.pre) f(r, this.scene, cam, t);
+    r.setRenderTarget(this.rt); r.clear(); r.render(this.scene, cam);
     const d = this.pDof.material.uniforms; d.tS.value = this.rt.texture; d.tD.value = this.rt.depthTexture; d.uFocus.value = L.focus; d.uAp.value = L.ap; d.uMax.value = L.max; d.uSeed.value = (boil * 0.618) % 1; d.uNear.value = cam.near; d.uFar.value = cam.far; this._run(this.pDof, this.rDof);
     const b = this.pBright.material.uniforms, bl = this.pBlur.material.uniforms, B = this.rB; b.tS.value = this.rt.texture; this._run(this.pBright, B[0]);
     const blur = (src, tmp, dst, w, h, k) => { bl.tS.value = src.texture; bl.uDir.value.set(k / w, 0); this._run(this.pBlur, tmp); bl.tS.value = tmp.texture; bl.uDir.value.set(0, k / h); this._run(this.pBlur, dst); };

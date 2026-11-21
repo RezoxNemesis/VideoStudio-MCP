@@ -30,14 +30,24 @@ export function makeTiffin(o = {}) {
   for (let i = 0; i < 7; i++) food.add(mesh(ball(0.011 + hash(i) * 0.005), mat(i % 3 ? '#d9a02a' : '#e8b848', 'clay'), { p: [0.026 + (hash(i * 3) - 0.5) * 0.03, 0.12, -0.022 + (hash(i * 7) - 0.5) * 0.034] })); food.add(mesh(ball(0.009), mat('#a8281e', 'clay', { rough: 0.3 }), { p: [0.04, 0.122, 0.022] })); g.add(food); g.userData.food = food;
   return g;
 }
-/** his office bag: dark felt, a flap, a zip, a handle; it sags */
+/**
+ * His office bag: dark felt, a zip along the top, two handles, a front pocket. It opens the way a bag does:
+ * .userData.zip(k) runs the slider along (0 shut … 1 open), .userData.gape(k) pulls the mouth apart (0 … 1),
+ * .userData.slider() → where the slider is (in the bag's own frame), .userData.TOP its top, .userData.inside its floor.
+ */
 export function makeBag() {
-  const felt = mat('#252b3a', 'felt', { fuzz: 0.4 }), g = new THREE.Group(); g.add(mesh(rbox(0.36, 0.27, 0.13, 0.04), felt, { p: [0, 0.135, 0] }));
-  const hinge = group([mesh(rbox(0.35, 0.14, 0.012, 0.006), mat('#303850', 'felt', { fuzz: 0.4 }), { p: [0, -0.07, 0.008] })], { p: [0, 0.272, 0.062], r: [-0.06, 0, 0] }); g.add(hinge);
-  const hole = mesh(rbox(0.3, 0.012, 0.09, 0.004), mat('#07080c', 'felt', { fuzz: 0 }), { p: [0, 0.267, 0], cast: false }); hole.visible = false; g.add(hole);
-  g.add(mesh(tube([[-0.15, 0.14, 0.074], [0, 0.136, 0.078], [0.15, 0.14, 0.074]], 0.004, 10, 5), mat('#9aa0aa', 'tin')), mesh(tube([[-0.09, 0.27, -0.03], [-0.07, 0.33, -0.04], [0.07, 0.33, -0.04], [0.09, 0.27, -0.03]], 0.011, 16, 6), felt), mesh(rbox(0.05, 0.03, 0.006, 0.003), mat('#b03a2a', 'felt'), { p: [0.11, 0.09, 0.068] }));
-  const back = mesh(rbox(0.35, 0.14, 0.012, 0.006), mat('#303850', 'felt', { fuzz: 0.4 }), { p: [0, 0.335, -0.1], r: [0.32, 0, 0] }); back.visible = false; g.add(back);
-  g.userData.open = (k) => { hinge.visible = k < 0.5; back.visible = hole.visible = k >= 0.5; };
+  const felt = mat('#252b3a', 'felt', { fuzz: 0.4 }), felt2 = mat('#2e3548', 'felt', { fuzz: 0.4 }), tin = mat('#aab0ba', 'tin'), g = new THREE.Group(), L = 0.17, TOP = 0.292;
+  g.add(mesh(rbox(0.34, 0.2, 0.15, 0.035), felt, { p: [0, 0.135, 0] }), mesh(new THREE.BoxGeometry(0.36, 0.004, 0.13), mat('#06070b', 'felt', { fuzz: 0 }), { p: [0, 0.272, 0], cast: false }));
+  // the mouth: two flaps that meet at the zip
+  const flaps = [1, -1].map((sd) => { const h = group([mesh(rbox(0.37, 0.006, 0.064, 0.004), felt2, { p: [0, 0, -sd * 0.036] })], { p: [0, TOP, sd * 0.075] }); g.add(h); return h; });
+  for (const sd of [1, -1]) g.add(mesh(rbox(0.37, 0.02, 0.006, 0.004), felt2, { p: [0, 0.28, sd * 0.079] }));
+  const teeth = mesh(new THREE.BoxGeometry(1, 0.004, 0.012), tin, { p: [0, TOP + 0.006, 0], cast: false }); g.add(teeth);
+  const slider = group([mesh(rbox(0.014, 0.008, 0.016, 0.003), tin), mesh(rbox(0.008, 0.03, 0.003, 0.002), tin, { p: [0.012, -0.008, 0.012], r: [0.5, 0, 1.2] })], { p: [L, TOP + 0.01, 0] }); g.add(slider);
+  for (const sd of [1, -1]) g.add(mesh(tube([[-0.09, 0.275, sd * 0.082], [-0.075, 0.355, sd * 0.094], [0.075, 0.355, sd * 0.094], [0.09, 0.275, sd * 0.082]], 0.011, 18, 6), felt));
+  g.add(mesh(rbox(0.2, 0.09, 0.012, 0.01), felt2, { p: [0, 0.11, 0.078] }), mesh(new THREE.BoxGeometry(0.17, 0.004, 0.004), tin, { p: [0, 0.155, 0.087], cast: false }), mesh(rbox(0.045, 0.026, 0.006, 0.003), mat('#b03a2a', 'felt'), { p: [0.13, 0.07, 0.078] }));
+  let Z = 0; const zip = (k) => { Z = clamp(k); const x = lerp(L, -L, Z); slider.position.x = x; teeth.scale.x = Math.max(0.001, x + L); teeth.position.x = (x - L) / 2; teeth.visible = Z < 0.995; };   // the slider is pulled from the far end (+x) towards −x
+  const gape = (k) => { flaps.forEach((h, i) => { h.rotation.x = (i ? -1 : 1) * clamp(k) * 1.15; }); };
+  zip(0); gape(0); Object.assign(g.userData, { zip, gape, TOP, inside: 0.274, slider: () => [slider.position.x, slider.position.y, 0], L });
   return g;
 }
 /** the conductor's ticket punch: tin pliers with a star die, on a ball chain */

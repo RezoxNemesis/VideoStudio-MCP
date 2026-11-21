@@ -30,8 +30,8 @@ S.seat = { dur: 5, t0: 0, about: 'a man at the window seat reads a note',
     const p = f(t); p.lids = blink(t, [1.4, 3.6], p.lids); p.mouth = lipAt(LIPS.hello, VO.hello, T, [0.15, 0, 1, 0]); c.man.set(p);
     const h = c.man.at('head').toArray(); over(E, T);
     return ride(shoot([h[0], h[1] - 0.12, h[2]], { w: 0.8, fov: 30, az: 8, el: 4, focus: c.man.at('eyes').toArray(), ap: 22 }), T); } };
-// 2 — the other model: the train on its viaduct, the city behind
+// 2 — the other model: the train on its bridge over the creek, the city behind it and in the water, a moon in cloud
 S.city = { dur: 4, t0: 5, about: 'the last local crosses the city',
-  build: (E) => buildExterior(E.scene, E),
+  build: (E) => buildExterior(E.scene, E, { moonU: 0.437, moonE: 32 }),
   frame(t, c, E) { c.train.position.z = -4 + t * 1.2; const k = easeIO(t / 4), z = c.train.position.z - 1.2; E.overlay((g, W, H) => words(g, W, H, 'MY CLAY FILM', 0.2, 96, { font: 'Baloo2', w: 800, a: fade(t, 0.6, 3.8, 0.4), c: '#fff3d6', edge: 16 }));
-    return { pos: [lerp(7, 4.3, k), lerp(5.5, 2.05, k), lerp(-1, z + 3.3, k)], target: [0, lerp(2.2, 1.55, k), lerp(-1.5, z + 0.3, k)], fov: 32, focus: [0.18, 1.3, z], ap: lerp(8, 13, k) }; } };
+    return { pos: [lerp(9.4, 5.2, k), lerp(2.3, 0.42, k), lerp(-6.4, z + 2.0, k)], target: [-1, lerp(1.75, 2.05, k), lerp(-3.2, z + 0.3, k)], fov: lerp(34, 44, k), focus: [0.18, 1.3, z], ap: 3.2 }; } };

@@ -92,11 +92,23 @@ Within one track a hand must be given the same way in every key (`p` everywhere 
   Names: `bay-2 … bay2` (left benches), `rbay…` (right), `handle`, `rail`, `rack`, `luggage`, `wallL`, `wallR`, `skinL`
   (the car's outside), `winL/R`, `signL/R`, `ceiling`, `tube`, `fan`, `end`, `doorpole`, `chain`, `litter`, `floor`.
   Seat 47 is the window seat of bay 0: hips at about (−0.53, 0.462, 0.21), facing +z. The aisle's middle is x = 0.26.
-- `buildExterior(scene, E)` (`exterior.js`) — the other model: a viaduct, the train (`.train`, move it along z), streets
-  with traffic, rows of buildings into haze, the sky. `city.js`: `building(w, d, h, { seed, near, glow, hoarding })`,
-  `vehicle(kind)`, `tree()`, `sky({ … })`, `facade()`.
+- `buildExterior(scene, E, { moonU, moonE, fog, rip })` (`exterior.js`) — the other model, the city seen from outside: a creek
+  with the city on its far shore and lying again in the water; a stone bridge of arches with the last local on it
+  (`.train`, move it along z; nine cars with painted sides, people in the doorways, a headlight, sparks at the wire);
+  a sea wall, a promenade with palms, lamps and traffic; four rows of buildings into haze, glass towers with red lamps,
+  a clock tower; boats with lanterns; a headland with a tunnel mouth (z ≈ 17) and a lighthouse; a sky all the way round.
+  The camera stands on the +x side (over the water) and looks towards −x. `moonU` places the moon round the sky
+  (0.5 = behind the city, 0.25 = −z, 0.75 = +z), `moonE` is its height in degrees: put it where the frame has room.
+- `city.js`: `building(w, d, h, { seed, near, glow, hoarding, glass })`, `tower(…)` (stepped, with a mast), `clockTower(h)`,
+  `vehicle(kind)`, `tree()`, `palm()`, `boat()`, `facade()`;
+  `skyDome({ moonU, moonE, moonR, glowU, star })` → `{ group, tick, moonDir }` (stars are points, so they stay sharp at 4K);
+  `water(E, scene, { y, x: [x0, x1], z: [z0, z1], moonDir, rip })` — a mirror: before each picture the scene is drawn
+  once more from under the water (`E.pre`), and the water shows it through ripples, drawn out long like lights on a creek.
+  `sky({ … })` is the older flat sky card, still used behind the car's windows.
 - `props.js`: `makeSlip(lines, { write })` (handwriting that writes itself: `slip.userData.write(0…1)`), `makeTiffin()`,
-  `makeBag()` (`.userData.open(k)`), `makePunch()`, `makePen()`.
+  `makeBag()` (a zip that really runs: `.userData.zip(0…1)`, then `.userData.gape(0…1)` opens the mouth; `.userData.slider()`
+  is where the fingers hold it), `makePunch()`, `makePen()`.
+- `E.pre.push(fn(renderer, scene, camera, t))` — a pass drawn before the picture (a mirror, a screen inside the film).
 
 ## 6. Lips from a voice (`lips.py`)
 
@@ -131,3 +143,8 @@ Write the text as it is spoken, with the same pauses (commas, `…`, `?`) the sp
 - Mixing body-frame and world-frame hand targets in one track makes the hand jump across the car.
 - A fill light is needed when a face is turned away from the key; a lamp too close to a wall burns it white.
 - Text-to-speech reads short lines too fast and ignores `…`: speak phrases separately and join them.
+- A rounded box laid as a roof hangs lower than its numbers (its bevel): it hid the whole ceiling. Look up in a wide still.
+- A ceiling gets no light from lamps that point down: give it a little glow of its own (`material.emissive`).
+- Stars painted into a sky texture come out as blobs at 4K (a texel is many pixels): make them points.
+- Faces of buildings that look at the camera need a fill light from the camera's side, or only their windows show.
+- A moon and a title fight for the same sky: decide where the words go, then place the moon beside them.
