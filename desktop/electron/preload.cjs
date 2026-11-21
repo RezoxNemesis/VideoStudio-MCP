@@ -143,14 +143,14 @@ contextBridge.exposeInMainWorld("vsd", {
   },
   /** Cine 3D: films staged in real depth, drawn on the graphics card (see electron/cine.cjs). */
   cine: {
-    help: () => call("cine.help"),
+    help: (topic) => call("cine.help", topic),
     list: () => call("cine.list"),
     open: (film) => call("cine.open", film),
-    create: (name) => call("cine.new", name),
+    create: (name, kind) => call("cine.new", name, kind),
     read: (film, file) => call("cine.read", film, file),
     write: (film, file, text) => call("cine.write", film, file, text),
     frame: (film, shot, t, width, height) => call("cine.frame", film, shot, t, width, height),
-    sheet: (film, shot, times, cols, cell) => call("cine.sheet", film, shot, times, cols, cell),
+    sheet: (film, shot, times, cols, cell, cellHeight) => call("cine.sheet", film, shot, times, cols, cell, cellHeight),
     render: (film, p) => call("cine.render", film, p),
     join: (film, p) => call("cine.join", film, p),
     progress: () => call("cine.progress"),

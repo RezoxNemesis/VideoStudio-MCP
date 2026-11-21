@@ -33,3 +33,5 @@ repository. You may ask for the exact source of any GPL part shipped with a rele
   from github.com/una-dinosauria/cmu-mocap — free for use, "The data used in this project was obtained from
   mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217."
 - Fonts used by Cine films: Bebas Neue, Oswald, Noto Sans Devanagari — SIL Open Font License 1.1.
+- Fonts of the clay engine (film/cine/web/clay/fonts): Kalam (Indian Type Foundry), Poppins (Indian Type Foundry),
+  Baloo 2 (Ek Type) — SIL Open Font License 1.1.

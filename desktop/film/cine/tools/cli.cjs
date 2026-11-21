@@ -2,8 +2,8 @@
 /**
  * Cine 3D without the app: the same engine and the same frame server, drawn by a headless Chrome.
  * For a cloud workspace (software drawing: slow but identical pictures) or any PC with Chrome.
- *   node cli.cjs frame  <film dir> <shot> <t> [width]
- *   node cli.cjs sheet  <film dir> <shot> <t,t,t…> [cols] [cell]
+ *   node cli.cjs frame  <film dir> <shot> <t> [width] [height]
+ *   node cli.cjs sheet  <film dir> <shot> <t,t,t…> [cols] [cell] [cell height]
  *   node cli.cjs render <film dir> [shot,shot…] [width] [height]     (resumable: pieces already drawn are kept)
  *   node cli.cjs join   <film dir> [maxMB]
  *   node cli.cjs open   <film dir>
@@ -28,8 +28,8 @@ const cine = createCine({ root, web: path.join(__dirname, "..", "web"), guide: p
 const strip = (r) => { if (r && r.jpeg) r = { ...r, jpeg: `(${Math.round(r.jpeg.length / 1366)} kB)` }; return r; };
 (async () => {
   try {
-    if (cmd === "frame") console.log(strip(await cine.frame(film, rest[0], +rest[1] || 0, +rest[2] || 1280)));
-    else if (cmd === "sheet") console.log(strip(await cine.sheet(film, rest[0], String(rest[1] || "0").split(",").map(Number), +rest[2] || 4, +rest[3] || 640)));
+    if (cmd === "frame") console.log(strip(await cine.frame(film, rest[0], +rest[1] || 0, +rest[2] || 1280, +rest[3] || undefined)));
+    else if (cmd === "sheet") console.log(strip(await cine.sheet(film, rest[0], String(rest[1] || "0").split(",").map(Number), +rest[2] || 4, +rest[3] || 640, +rest[4] || undefined)));
     else if (cmd === "lab") console.log(await cine.lab(film, rest[0], rest[1]));
     else if (cmd === "open") console.log(JSON.stringify(await cine.open(film), null, 1));
     else if (cmd === "join") console.log(await cine.join(film, { maxMB: +rest[0] || 0 }));

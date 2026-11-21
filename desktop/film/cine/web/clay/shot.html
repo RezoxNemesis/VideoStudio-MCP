@@ -1,0 +1,26 @@
+<canvas id=c></canvas>
+<script>addEventListener('error', e => { const q = new URLSearchParams(location.search), m = 'ERR ' + (e.message || 'a file of the film did not load') + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''); fetch('/log', { method: 'POST', body: m }); fetch(q.get('info') ? '/say?name=info' : '/flag?name=' + (q.get('job') || q.get('id')) + '&v=failed', { method: 'POST', body: m }); }, true);</script>
+<script type=module>
+// CLAY — the stop-motion page of Cine: the same commands (cine.frame / cine.sheet / cine.render) draw a film made of clay puppets and model sets.
+import { Engine, post, log } from './clay.js';
+const q = new URLSearchParams(location.search); const W = +(q.get('w') || 540), H = +(q.get('h') || 960), id = q.get('id'), job = q.get('job') || id; window.Q = q;
+addEventListener('unhandledrejection', (e) => log('ERR ' + (e.reason && e.reason.stack || e.reason)));
+(async () => { try {
+  let fonts = []; try { fonts = await (await fetch('./fonts.json')).json(); } catch (e) { fonts = []; }
+  for (const [n, f, w] of fonts) { try { const ff = new FontFace(n, `url(${encodeURI(f)})`, { weight: w }); await ff.load(); document.fonts.add(ff); } catch (e) { await log('ERR font ' + f); } }
+  const FILM = await import('./film.js?v=' + Date.now()), S = FILM.S, M = FILM.META || {};
+  if (q.get('info')) { const order = M.order || Object.keys(S); await post('/say?name=info', JSON.stringify({ name: M.name || '', width: M.width || 1080, height: M.height || 1920, fps: M.fps || 30, audio: M.audio || 'audio.wav', engine: 'clay', shots: order.map((k) => ({ id: k, dur: S[k].dur, about: S[k].about || '' })) })); return; }
+  const fps = +(q.get('fps') || M.fps || 30), c = document.getElementById('c'); c.width = W; c.height = H;
+  const E = new Engine(c, W, H, { msaa: +(q.get('msaa') || 4), shadow: q.get('shadow'), taps: +(q.get('taps') || 0) });
+  const sh = S[id]; if (!sh) throw new Error('no shot named ' + id); const ctx = await sh.build(E); const T0 = sh.t0 || 0;
+  const stills = q.get('stills') ? q.get('stills').split(',').map(Number) : null; const N = Math.round(sh.dur * fps); const t00 = performance.now(); let tr = 0, nr = 0;
+  const f0 = +(q.get('f0') || 0), f1 = Math.min(N, +(q.get('f1') || N)), list = stills ? stills.map((s) => Math.round(s * fps)) : null;
+  for (let f = stills ? 0 : f0; f < (stills ? list.length : f1); f++) { const fr = stills ? list[f] : f, t = fr / fps;
+    const t0 = performance.now(); const cam = sh.frame(t, ctx, E); E.setCam(cam); E.render(t + T0); const px = E.pixels(); const dt_ = performance.now() - t0; tr += dt_; nr++;
+    if (q.get('prof')) await log(`t=${t.toFixed(2)} ${dt_.toFixed(0)} ms`);
+    if (stills) await post(`/png?name=st_${id}_${String(Math.round(t * 100)).padStart(5, '0')}&w=${W}&h=${H}&fmt=jpg${q.get('scale') ? '&scale=' + q.get('scale') : ''}`, px);
+    else await post(`/frame?job=${job}&w=${W}&h=${H}&fps=${fps}&crf=${q.get('crf') || 15}&preset=${q.get('preset') || 'veryfast'}${q.get('enc') ? '&enc=' + q.get('enc') : ''}${nr === 1 ? '&first=1' : ''}`, px);
+    if (nr % 30 === 0) await log(`${id} frame ${fr}/${N} avg ${(tr / nr).toFixed(0)} ms, wall/frame ${((performance.now() - t00) / nr).toFixed(0)} ms`); }
+  await log(`${id} done ${nr} frames, avg render ${(tr / Math.max(1, nr)).toFixed(0)} ms, wall ${((performance.now() - t00) / 1000).toFixed(1)} s`);
+  if (!stills) await post(`/done?job=${job}`, ''); else await post(`/flag?name=${job}`, ''); } catch (e) { await log('EXC ' + e.message + ' ' + (e.stack || '').slice(0, 900)); await post(q.get('info') ? '/say?name=info' : `/flag?name=${job}&v=failed`, 'EXC ' + e.message); } })();
+</script>

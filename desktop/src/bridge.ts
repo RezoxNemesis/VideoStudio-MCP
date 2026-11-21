@@ -183,14 +183,14 @@ export const fmtSize = (n: number): string => (n > 1e9 ? `${(n / 1e9).toFixed(2)
 export interface CineShot { id: string; dur: number; about: string }
 export interface CineProgress { state: string; film?: string; pieces?: string; piece?: string | null; frames?: number; size?: string; fps?: number; seconds?: number; framesPerSecond?: number; left?: string; out?: unknown; error?: string; said?: string[]; log?: string[] }
 export interface CineApi {
-  help(): Promise<string>;
-  list(): Promise<{ root: string; films: { name: string; dir: string }[]; assets: { folder: string; bodies: number; textures: number; fonts: number }; engine: string; guide: string }>;
+  help(topic?: string): Promise<string>;
+  list(): Promise<{ root: string; films: { name: string; dir: string; engine?: string }[]; assets: { folder: string; bodies: number; textures: number; fonts: number }; engine: string; guide: string }>;
   open(film: string): Promise<{ dir: string; name: string; width: number; height: number; fps: number; shots: CineShot[]; seconds: number; files: string[]; piecesDrawn: number }>;
-  create(name: string): Promise<{ dir: string; next: string }>;
+  create(name: string, kind?: string): Promise<{ dir: string; next: string; engine?: string }>;
   read(film: string, file: string): Promise<string>;
   write(film: string, file: string, text: string): Promise<{ file: string; loads?: boolean; shots?: number; mistake?: string }>;
   frame(film: string, shot: string, t?: number, width?: number, height?: number): Promise<{ jpeg: string; file: string; shot: string; t: number; width: number; height: number }>;
-  sheet(film: string, shot: string, times: number[], cols?: number, cell?: number): Promise<{ jpeg: string; file: string; shot: string; times: number[]; cols: number; rows: number }>;
+  sheet(film: string, shot: string, times: number[], cols?: number, cell?: number, cellHeight?: number): Promise<{ jpeg: string; file: string; shot: string; times: number[]; cols: number; rows: number }>;
   render(film: string, p?: Record<string, unknown>): Promise<CineProgress>;
   join(film: string, p?: Record<string, unknown>): Promise<Record<string, unknown>>;
   progress(): Promise<CineProgress>;

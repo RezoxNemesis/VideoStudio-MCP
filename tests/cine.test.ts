@@ -13,6 +13,7 @@ const put = (root: string, rel: string, text: string) => { const f = path.join(r
 function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "vs-cine-")), web = fs.mkdtempSync(path.join(os.tmpdir(), "vs-cine-web-"));
   put(web, "engine.js", "// engine of the app"); put(web, "kit.js", "// kit of the app"); put(web, "shot.html", "<html></html>");
+  put(web, "clay/engine.js", "// the clay engine"); put(path.dirname(web), "films/clay-starter/film.js", "// @engine clay\nexport const S = {};"); put(path.dirname(web), "films/clay-starter/README.md", "a clay film");
   put(root, "assets/tex/grass.png", "png"); put(root, "A Film/film.js", "export const S = {};"); put(root, "A Film/kit.js", "// the film's own kit");
   const seen: string[] = [];
   // a "window": asks for the page's files as a browser would, then says what the film holds
@@ -41,6 +42,28 @@ describe("Cine 3D", () => {
       expect(seen).toContain("tex/grass.png:200:png"); // shared assets
       expect(seen.find((s) => s.startsWith("nothing.js"))).toBe("nothing.js:404:");
       expect(seen.find((s) => s.startsWith("../secret"))).toMatch(/:404:/);
+    } finally { cine.close(); }
+  });
+  it("draws a clay film with the clay engine: its files come after the film's and the shared assets, before the Cine engine", async () => {
+    const { root, cine, seen } = setup();
+    const web = (cine as unknown as { engineOf: (d: string) => string });
+    try {
+      put(root, "Clay Film/film.js", "// @engine clay\nexport const S = {};");
+      expect(web.engineOf(path.join(root, "Clay Film"))).toBe("clay");
+      expect(web.engineOf(path.join(root, "A Film"))).toBe("cine");
+      expect((await cine.list()).films.find((f: { name: string }) => f.name === "Clay Film").engine).toBe("clay");
+      await cine.open("Clay Film");
+      expect(seen).toContain("engine.js:200:// the clay engine"); // web/clay/engine.js stands before web/engine.js
+      expect(seen).toContain("kit.js:200:// kit of the app"); // what the clay engine has not, the Cine engine gives
+    } finally { cine.close(); }
+  });
+  it("starts a clay film from its starter", async () => {
+    const { root, cine } = setup();
+    try {
+      const r = await cine.create("New Clay", "clay");
+      expect(r.engine).toBe("clay");
+      expect(fs.readFileSync(path.join(root, "New Clay", "film.js"), "utf8")).toContain("@engine clay");
+      expect(fs.existsSync(path.join(root, "New Clay", "data"))).toBe(false);
     } finally { cine.close(); }
   });
   it("keeps to the film's folder", async () => {

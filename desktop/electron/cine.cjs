@@ -9,6 +9,12 @@
  * Files are looked for in this order: the film's own folder, the shared assets folder (Cine/assets: bodies, painted
  * textures, fonts), the engine that came with the app. So a film can carry its own newer engine file.
  *
+ * CLAY — the stop-motion studio. A film whose film.js says `// @engine clay` near its top is drawn by the clay engine
+ * (film/cine/web/clay: clay puppets with talking mouths, felt and card sets, a miniature lens). Its files are looked
+ * for in the film, the shared assets, the clay engine, then the Cine engine. The same commands draw it.
+ *
+ * Pieces are encoded on the graphics card (NVENC) when this PC can, so the processor is left alone; otherwise x264.
+ *
  * `createCine` knows nothing about Electron (it is given a way to open a page), so it is tested with any browser.
  * The whole method, with every number that was used, is film/cine/GUIDE.md (command cine.help).
  */
@@ -35,6 +41,9 @@ function createCine(o) {
   const jobs = {}; // encoder per piece
   const logs = []; // last lines the pages said
   let ctxFilm = null; // the film folder the server answers from
+  let ctxEngine = null; // an engine folder of its own kind (web/clay for a clay film), looked in before the Cine engine
+  let gpuEnc; // undefined: not asked yet; null: this PC cannot; { bin }: the ffmpeg that encodes on the graphics card
+  let useEnc = "auto"; // what the running render asked for: auto | gpu | x264
   let run = null; // the render that is going: { film, total, done, piece, state, started, error?, out? }
 
   const say = (line) => { logs.push(line); if (logs.length > 400) logs.splice(0, logs.length - 400); if (o.log && /^(ERR|EXC)/.test(line)) o.log(`cine: ${line}`); };
@@ -52,17 +61,30 @@ function createCine(o) {
   function resolve(rel) {
     const clean = path.posix.normalize("/" + rel).replace(/^\/+/, "");
     if (!clean || clean.split("/").includes("..")) return null;
-    for (const base of [ctxFilm, ASSETS, o.web]) {
+    for (const base of [ctxFilm, ASSETS, ctxEngine, o.web]) {
       if (!base) continue;
       const f = path.join(base, clean);
       if (f.startsWith(base + path.sep) && fs.existsSync(f) && fs.statSync(f).isFile()) return f;
     }
     return null;
   }
-  function encoder(q, tmp) {
-    const args = ["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${+q.w}x${+q.h}`, "-r", String(+q.fps || 30), "-i", "-", "-vf", "vflip,format=yuv420p",
-      "-c:v", "libx264", "-preset", /^(ultrafast|superfast|veryfast|faster|fast|medium|slow)$/.test(q.preset) ? q.preset : "fast", "-crf", String(Math.min(40, Math.max(0, +q.crf || 15))), "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmp];
-    return spawn(o.ffmpeg, args, { stdio: ["pipe", "ignore", "pipe"] });
+  /** Which engine draws a film: "clay" when its film.js says `@engine clay` in its first lines, else "cine". */
+  function engineOf(dir) {
+    try { const fd = fs.openSync(path.join(dir, "film.js"), "r"), b = Buffer.alloc(600), n = fs.readSync(fd, b, 0, 600, 0); fs.closeSync(fd); return /@engine\s+clay\b/.test(b.toString("utf8", 0, n)) ? "clay" : "cine"; } catch { return "cine"; }
+  }
+  /** The ffmpeg that encodes on the graphics card, if this PC has one that works (asked once). */
+  async function gpuEncoder() {
+    if (gpuEnc !== undefined) return gpuEnc;
+    try { gpuEnc = o.gpuEncoder ? (await o.gpuEncoder()) || null : null; } catch { gpuEnc = null; }
+    return gpuEnc;
+  }
+  function encoder(q, tmp, gpu) {
+    const head = ["-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${+q.w}x${+q.h}`, "-r", String(+q.fps || 30), "-i", "-", "-vf", "vflip,format=yuv420p"], crf = Math.min(40, Math.max(0, +q.crf || 15));
+    // on the graphics card: constant quality a little above the x264 number that looks the same, with look-ahead and adaptive quantisation
+    const args = gpu
+      ? [...head, "-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", String(Math.min(40, crf + 3)), "-b:v", "0", "-maxrate", "160M", "-bufsize", "320M", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "20", "-bf", "3", "-g", String(Math.round((+q.fps || 30) * 2)), "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmp]
+      : [...head, "-c:v", "libx264", "-preset", /^(ultrafast|superfast|veryfast|faster|fast|medium|slow)$/.test(q.preset) ? q.preset : "fast", "-crf", String(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmp];
+    return spawn(gpu ? gpu.bin : o.ffmpeg, args, { stdio: ["pipe", "ignore", "pipe"] });
   }
   async function start() {
     if (server) return port;
@@ -75,7 +97,8 @@ function createCine(o) {
           if (j && (q.first || j.dead)) { try { j.p.kill("SIGKILL"); } catch { /* gone */ } delete jobs[id]; j = null; }
           if (!j) {
             const out = path.join(ctxFilm, "out"); await fsp.mkdir(out, { recursive: true });
-            const tmp = path.join(out, `${id}.part.mp4`), p = encoder(q, tmp);
+            const gpu = useEnc === "x264" ? null : await gpuEncoder();
+            const tmp = path.join(out, `${id}.part.mp4`), p = encoder(q, tmp, gpu);
             j = jobs[id] = { p, tmp, n: 0, err: "" };
             p.stderr.on("data", (d) => { j.err = (j.err + d).slice(-600); });
             p.on("close", () => { j.dead = true; }); p.stdin.on("error", () => { j.dead = true; });
@@ -115,7 +138,7 @@ function createCine(o) {
   }
   /** Open a page of the engine for a film and wait until it raises its flag. → what it said. */
   async function page(dir, name, query, size, timeout) {
-    await start(); ctxFilm = dir;
+    await start(); ctxFilm = dir; ctxEngine = engineOf(dir) === "clay" && o.web ? path.join(o.web, "clay") : null;
     const url = `http://127.0.0.1:${port}/${query}`;
     let win = null, timer = null;
     try {
@@ -143,8 +166,8 @@ function createCine(o) {
     if (r !== "ok" || !fs.existsSync(f)) throw new Error(`The frame was not drawn.\n${lastErr()}`.slice(0, 1500));
     return { jpeg: `data:image/jpeg;base64,${(await fsp.readFile(f)).toString("base64")}`, file: f, shot: id, t: tt, width: W, height: H };
   }
-  async function sheet(film, shot, times, cols, cell) {
-    const dir = filmDir(film), id = safeId(shot), W = Math.min(1920, Math.max(240, Math.round(cell || 640))), H = Math.round(W * 9 / 16);
+  async function sheet(film, shot, times, cols, cell, cellHeight) {
+    const dir = filmDir(film), id = safeId(shot), W = Math.min(1920, Math.max(240, Math.round(cell || 640))), H = Math.min(3840, Math.max(135, Math.round(cellHeight || W * 9 / 16)));
     const ts = (times || []).map((v) => Math.max(0, +v || 0)).slice(0, 24);
     if (!ts.length) throw new Error("Give the moments to look at: times: [seconds…].");
     const r = await page(dir, "still", `shot.html?id=${id}&w=${W}&h=${H}&stills=${ts.join(",")}&job=still`, null, 600_000);
@@ -162,12 +185,18 @@ function createCine(o) {
     if (run && run.state === "drawing") throw new Error(`A film is being drawn (${run.film}). Wait for it or stop it (cine.stop).`);
     const dir = filmDir(film), info = await shots(dir);
     const W = Math.min(3840, Math.max(640, Math.round(p.width || info.width || 2560))), H = Math.round(p.height || W * (info.height || 1440) / (info.width || 2560)), fps = Math.round(p.fps || info.fps || 30);
-    const PIECE = Math.max(30, Math.round(p.piece || 150)), crf = p.crf ?? 15, only = Array.isArray(p.shots) && p.shots.length ? new Set(p.shots.map(String)) : null;
+    const PIECE = Math.max(30, Math.round(p.piece || 150)), crf = p.crf ?? 15; let only = Array.isArray(p.shots) && p.shots.length ? new Set(p.shots.map(String)) : null;
     const seg = path.join(dir, "out", "seg"); await fsp.mkdir(seg, { recursive: true });
+    const want = /^(gpu|nvenc)$/.test(String(p.encoder || "")) ? "gpu" : /^(x264|cpu)$/.test(String(p.encoder || "")) ? "x264" : "auto";
+    const gpu = want === "x264" ? null : await gpuEncoder();
+    if (want === "gpu" && !gpu) throw new Error("This PC has no working GPU encoder (NVENC). Leave encoder out, or give encoder: \"x264\".");
+    const made = gpu ? "nvenc" : "x264", note = path.join(seg, "encoder.txt"); let before = null; try { before = (await fsp.readFile(note, "utf8")).trim(); } catch { /* nothing drawn yet */ }
+    const size = `${W}x${H}@${fps}`, stamp = `${made} ${size}`; if (before && before !== stamp) { p = { ...p, force: true }; only = null; } // pieces of another size or encoder cannot be joined with new ones: all are drawn again
+    await fsp.writeFile(note, stamp); useEnc = gpu ? "auto" : "x264";
     const plan = [];
     for (const s of info.shots) { const N = Math.round(s.dur * fps), K = Math.ceil(N / PIECE); for (let k = 0; k < K; k++) plan.push({ shot: s.id, k, f0: k * PIECE, f1: Math.min(N, (k + 1) * PIECE), job: `${s.id}_${k}`, redo: !!(only && only.has(s.id)) || (!!p.force && !only) }); }
     const todo = plan.filter((x) => x.redo || !fs.existsSync(path.join(seg, `${x.job}.mp4`)));
-    const me = run = { film: path.basename(dir), dir, state: "drawing", total: plan.length, done: plan.length - todo.length, todo: todo.length, piece: null, frames: 0, started: Date.now(), size: `${W}x${H}`, fps };
+    const me = run = { film: path.basename(dir), dir, state: "drawing", total: plan.length, done: plan.length - todo.length, todo: todo.length, piece: null, frames: 0, started: Date.now(), size: `${W}x${H}`, fps, encoder: made, engine: info.engine || "cine" };
     (async () => {
       try {
         for (const x of todo) {
@@ -217,23 +246,23 @@ function createCine(o) {
   function progress() {
     if (!run) return { state: "idle" };
     const el = (Date.now() - run.started) / 1000, drawn = run.done - (run.total - run.todo);
-    return { film: run.film, state: run.state, pieces: `${run.done}/${run.total}`, piece: run.piece, frames: run.frames, size: run.size, fps: run.fps, seconds: Math.round(el),
+    return { film: run.film, state: run.state, pieces: `${run.done}/${run.total}`, piece: run.piece, frames: run.frames, size: run.size, fps: run.fps, encoder: run.encoder, engine: run.engine, seconds: Math.round(el),
       framesPerSecond: run.frames ? Math.round((run.frames / el) * 10) / 10 : 0, left: drawn > 0 && run.state === "drawing" ? `${Math.round((el / drawn) * (run.total - run.done) / 60)} min` : undefined, out: run.out, error: run.error, said: logs.slice(-3) };
   }
   function stop() { if (run && run.state === "drawing") { run.stop = true; for (const w of waits.values()) w.resolve("stopped"); return { stopping: true }; } return { stopping: false }; }
 
   async function list() {
     const films = [];
-    try { for (const e of await fsp.readdir(ROOT, { withFileTypes: true })) if (e.isDirectory() && fs.existsSync(path.join(ROOT, e.name, "film.js"))) films.push({ name: e.name, dir: path.join(ROOT, e.name) }); } catch { /* no films yet */ }
+    try { for (const e of await fsp.readdir(ROOT, { withFileTypes: true })) if (e.isDirectory() && fs.existsSync(path.join(ROOT, e.name, "film.js"))) films.push({ name: e.name, dir: path.join(ROOT, e.name), engine: engineOf(path.join(ROOT, e.name)) }); } catch { /* no films yet */ }
     const have = (d) => { try { return fs.readdirSync(path.join(ASSETS, d)).length; } catch { return 0; } };
-    return { root: ROOT, films, assets: { folder: ASSETS, bodies: Math.floor(have("data") / 2), textures: have("tex"), fonts: have("fonts") }, engine: o.web, guide: "cine.help" };
+    return { root: ROOT, films, assets: { folder: ASSETS, bodies: Math.floor(have("data") / 2), textures: have("tex"), fonts: have("fonts") }, engine: o.web, guide: "cine.help", clay: { engine: path.join(o.web, "clay"), guide: "cine.help {topic: \"clay\"}", start: "cine.new {name, kind: \"clay\"}" } };
   }
   async function open(film) {
     const dir = filmDir(film), info = await shots(dir);
     const files = []; const walk = async (d, rel) => { for (const e of await fsp.readdir(d, { withFileTypes: true })) { if (e.name.startsWith(".") || e.name === "out" || e.name === "__pycache__") continue; const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) { if (r !== "data/mo") await walk(path.join(d, e.name), r); else files.push("data/mo/ (performances)"); } else files.push(r); } };
     await walk(dir, "");
     const seg = path.join(dir, "out", "seg"); let drawn = 0; try { drawn = (await fsp.readdir(seg)).filter((n) => /\.mp4$/.test(n)).length; } catch { /* nothing drawn */ }
-    return { dir, ...info, seconds: info.shots.reduce((a, s) => a + s.dur, 0), files, piecesDrawn: drawn };
+    return { dir, ...info, engine: engineOf(dir), seconds: info.shots.reduce((a, s) => a + s.dur, 0), files, piecesDrawn: drawn };
   }
   const TEXT = /\.(js|mjs|json|md|txt|py|sh|html)$/i;
   function source(film, file) {
@@ -242,12 +271,13 @@ function createCine(o) {
     if (!TEXT.test(f)) throw new Error("Film files are text: .js, .json, .py, .md, .txt, .sh, .html.");
     return f;
   }
-  async function create(name) {
+  async function create(name, kind) {
     const n = safeName(name); if (!n) throw new Error("Give the film a name.");
     const dir = path.join(ROOT, n); if (fs.existsSync(dir)) throw new Error(`There is already a folder named ${n}.`);
-    const tpl = path.join(path.dirname(o.web), "films", "starter");
-    await fsp.mkdir(path.join(dir, "data", "mo"), { recursive: true });
-    for (const f of ["film.js", "moves.py", "README.md"]) if (fs.existsSync(path.join(tpl, f))) await fsp.copyFile(path.join(tpl, f), path.join(dir, f));
+    const clay = String(kind || "") === "clay", tpl = path.join(path.dirname(o.web), "films", clay ? "clay-starter" : "starter");
+    await fsp.mkdir(clay ? dir : path.join(dir, "data", "mo"), { recursive: true });
+    for (const f of clay ? ["film.js", "README.md"] : ["film.js", "moves.py", "README.md"]) if (fs.existsSync(path.join(tpl, f))) await fsp.copyFile(path.join(tpl, f), path.join(dir, f));
+    if (clay) return { dir, engine: "clay", next: "Read cine.help {topic: \"clay\"}. Make the look sheet first (cine.frame / cine.sheet with width and height of a vertical frame), write film.js (cine.write), make the lip tracks from the voices (cine.tool lips.py), then cine.render {width: 2160, height: 3840}." };
     return { dir, next: "Read cine.help, write film.js (cine.write), make the performances (moves.py, in the workspace or with cine.tool), then cine.frame / cine.sheet / cine.render." };
   }
   /** The engine's Python tools (bodies, performances, painting, sound), with this PC's python3 if it has numpy, scipy and OpenCV. */
@@ -273,7 +303,8 @@ function createCine(o) {
   }
   return {
     list, open, create, frame, sheet, render, progress, stop, tool, unpack,
-    help: async () => fsp.readFile(o.guide, "utf8"),
+    help: async (topic) => fsp.readFile(String(topic || "") === "clay" ? path.join(path.dirname(o.guide), "CLAY.md") : o.guide, "utf8"),
+    engineOf,
     read: async (film, file) => fsp.readFile(source(film, file), "utf8"),
     write: async (film, file, text) => { const f = source(film, file); await fsp.mkdir(path.dirname(f), { recursive: true }); await fsp.writeFile(f, String(text ?? "")); if (path.basename(f) === "film.js") { try { const i = await shots(filmDir(film)); return { file: f, loads: true, shots: i.shots.length }; } catch (e) { return { file: f, loads: false, mistake: String(e.message).slice(0, 1200) }; } } return { file: f }; },
     join: async (film, p) => { const dir = filmDir(film), info = await shots(dir), fps = info.fps || 30, PIECE = 150, plan = []; for (const s of info.shots) { const K = Math.ceil(Math.round(s.dur * fps) / PIECE); for (let k = 0; k < K; k++) plan.push({ job: `${s.id}_${k}` }); } return join(dir, plan, info, p || {}); },
@@ -299,16 +330,16 @@ function setupCine(o) {
     void w.loadURL(url);
     return { close: () => { if (!w.isDestroyed()) w.destroy(); }, gone: goneP };
   };
-  const cine = createCine({ root: o.root, web: path.join(base, "web"), guide: path.join(base, "GUIDE.md"), ffmpeg: o.ffmpeg, ffprobe: o.ffprobe, openPage, movies: o.movies, mustAllow: o.mustAllow, log: o.log, send: (m) => o.send && o.send("cine:progress", m) });
+  const cine = createCine({ root: o.root, web: path.join(base, "web"), guide: path.join(base, "GUIDE.md"), ffmpeg: o.ffmpeg, ffprobe: o.ffprobe, openPage, movies: o.movies, mustAllow: o.mustAllow, log: o.log, gpuEncoder: o.gpuEncoder, send: (m) => o.send && o.send("cine:progress", m) });
   const h = o.handle;
-  h("cine.help", () => cine.help());
+  h("cine.help", (topic) => cine.help(topic));
   h("cine.list", () => cine.list());
   h("cine.open", (film) => cine.open(film));
-  h("cine.new", (name) => cine.create(name));
+  h("cine.new", (name, kind) => cine.create(name, kind));
   h("cine.read", (film, file) => cine.read(film, file));
   h("cine.write", (film, file, text) => cine.write(film, file, text));
   h("cine.frame", (film, shot, t, width, height) => cine.frame(film, shot, t, width, height));
-  h("cine.sheet", (film, shot, times, cols, cell) => cine.sheet(film, shot, times, cols, cell));
+  h("cine.sheet", (film, shot, times, cols, cell, cellHeight) => cine.sheet(film, shot, times, cols, cell, cellHeight));
   h("cine.render", (film, p) => cine.render(film, p || {}));
   h("cine.join", (film, p) => cine.join(film, p || {}));
   h("cine.progress", () => ({ ...cine.progress(), log: cine.said().slice(-12) }));

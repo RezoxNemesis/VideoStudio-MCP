@@ -1010,3 +1010,12 @@ Every action is built from a 12-pose breakdown (the owner's reference sheets): n
 Films with real depth, captured body movement and a directed lens, drawn on the graphics card, are made with the
 Cine 3D engine instead of this one: `cine.help` returns its whole guide (film/cine/GUIDE.md), and
 `film/cine/films/long_road_vi` is a complete film made with it.
+
+### CLAY — stop-motion (clay puppets, model sets)
+
+A Cine film whose `film.js` begins with `// @engine clay` is drawn by the clay engine (film/cine/web/clay): clay
+puppets with mouths that really open (lips, teeth, tongue), felt and card sets (a whole train car, a model city at
+night), a shallow-focus lens. `clay.help` returns its guide (film/cine/CLAY.md); `cine.new {name, kind: "clay"}`
+starts one; `cine.frame` / `cine.sheet` take `height` for vertical pictures; `cine.render {width: 2160, height: 3840}`
+draws it at 4K and encodes on the graphics card (NVENC) when the PC can (`encoder: "x264"` to force the processor).
+Mouth shapes for a voice: `cine.tool {film, script: "lips.py", args: ["lines.json", "lips.json"]}` (plain Python).
