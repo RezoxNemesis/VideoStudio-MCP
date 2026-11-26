@@ -362,3 +362,39 @@ joins between pieces (ratio of change across a join to the change around it; abo
 - A lens that looks back along a street sees only what has been built behind the walkers: start them far enough in.
 - `from mocap import *` does not bring names that start with `_`.
 - Chats refuse very large files: make the deliverable under ~350 MB (`maxMB`) and keep the master on the PC.
+
+## CodeScape, the motion library, the deep review and Cine Studio (26 Nov 2026)
+
+**CodeScape films** (stylised real-time 3D, every model and motion written in code) are Cine films whose film.js begins with
+`// @engine codescape`. The app then supplies `engine.js`, `kit.js`, `rig.js`, `people.js`, `face2.js`, `sets.js`, `home.js` and
+`motion.js` (film/cine/web/codescape); a film may still carry its own newer copy of any of them. Any other engine folder under
+`web/` is chosen the same way (`// @engine clay`).
+
+**motion.js — what every film must use** (each rule was paid for with a rejected film):
+- *Hands hold things.* `refineHands(p)` gives a person real hands (shaped palm, tapered fingers, three-bone thumb).
+  `pinchSheet(p, side, sheet, { at, into, flex, th, open })` holds a letter, envelope, card or note: place the sheet first, then the
+  hand takes it — thumb on its front, finger pads solved onto its back — so a hand can never float, slide or pass through.
+  `flex 0` is a flat hold (forearm in the sheet's plane), `flex 1` a curled pinch (forearm square to it); avoid 0.45–0.75 (the thumb
+  cannot oppose). It returns `{ ratio, bend, gap, far }`: note it in `c.rep[name] = { ...r, t }` and the review checks it.
+  Give the elbow's `pole` in the BODY's frame (out to that side, down, a little back), not in world axes.
+  To let go: ramp `open` 0→1, then `snap` the pose and `blendHand` to the next one through a `via` point that slides the fingers
+  out the way they came. To take: the reverse (pre-shape while travelling, stop 4–5 cm short, close, then move the thing).
+- *Staging a hand action.* The camera sees the forearm side-on or three-quarter, never end-on (an arm that points at the lens is a
+  blob). The thing held stays readable. Nothing passes over a flame. Travel takes a quarter of the time; contact and the action half.
+- *Heads talk, cameras do not.* `speechPlan(words)` + `speechHead(plan, T)` + `nodHead(p, sp)`: a small lift before a phrase, a nod
+  on its weightiest word, a settle after, a brow flash. Never a sine of the loudness.
+  `steady(shot, times, sample)` + `anchorAt(c, name, t)`: the lens aims at REST positions measured at fixed moments. A lens aimed at
+  live eyes (or at a trembling prop) shakes the whole picture with every word: 18–28 px in the film that taught this.
+- *Faces act.* `blinks(T, [...])` on changes of thought, `saccade` for eyes that search a face, `tremble` for a lip, `breathCatch`
+  before a hard line. Eyes lead a head turn by ~0.2 s, covered by a blink.
+
+**The deep review** — `cine.review {film}` (seconds, nothing is drawn; `node tools/review/run.mjs <film dir>` in a workspace):
+camera shake per shot (limit 3 px at 720×1280: what a smooth local curve does not explain), the nearest body to the lens (12 cm),
+and every hold in `c.rep` (reach ≤ 92 % of the arm, wrist ≤ 60°, pads within 2 mm, thumb long enough). Run it after EVERY change,
+before looking at a frame; then look at full-size frames. A film is not rendered until it says `REVIEW: clean`.
+
+**Cine Studio** — `cine.studio {film?}` (or the Cine Studio button on the Code page): a window where the film plays live on the
+graphics card with its sound, the code of the current shot beside it; any change to the film's files reloads it by itself, so the
+owner watches the work as it is written. Tabs: Shots, Library (every module the film can use and what each offers — click to read
+the code). Check film runs the review in the window. A render that is running is shown as it is drawn. Film "Library"
+(`@library`) is the CodeScape library itself, live: the people on a turntable, the holds, placing, speech.

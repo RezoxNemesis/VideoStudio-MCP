@@ -68,10 +68,29 @@ function createCine(o) {
     }
     return null;
   }
-  /** Which engine draws a film: "clay" when its film.js says `@engine clay` in its first lines, else "cine". */
+  /** Which engine draws a film: the one its film.js names in its first lines (`// @engine clay`, `// @engine codescape`) if the app has it (web/<name>), else "cine". */
   function engineOf(dir) {
-    try { const fd = fs.openSync(path.join(dir, "film.js"), "r"), b = Buffer.alloc(600), n = fs.readSync(fd, b, 0, 600, 0); fs.closeSync(fd); return /@engine\s+clay\b/.test(b.toString("utf8", 0, n)) ? "clay" : "cine"; } catch { return "cine"; }
+    try { const fd = fs.openSync(path.join(dir, "film.js"), "r"), b = Buffer.alloc(600), n = fs.readSync(fd, b, 0, 600, 0); fs.closeSync(fd); const m = /@engine\s+([a-z][a-z0-9_-]{1,30})\b/.exec(b.toString("utf8", 0, n)); return m && o.web && fs.existsSync(path.join(o.web, m[1])) ? m[1] : "cine"; } catch { return "cine"; }
   }
+  const engineDir = (dir) => { const e = engineOf(dir); return e !== "cine" && o.web ? path.join(o.web, e) : null; };
+  /** A file of one named film, whatever film the drawing pages are on: the film's own, the shared assets, its engine's, the Cine engine's. (Cine Studio reads through /f/<film>/…) */
+  function resolveIn(dir, rel) {
+    const clean = path.posix.normalize("/" + rel).replace(/^\/+/, "");
+    if (!clean || clean.split("/").includes("..")) return null;
+    for (const base of [dir, ASSETS, engineDir(dir), o.web]) { if (!base) continue; const f = path.join(base, clean); if (f.startsWith(base + path.sep) && fs.existsSync(f) && fs.statSync(f).isFile()) return f; }
+    return null;
+  }
+  /** The engine's own library film (people, hands, holds, speech: every piece seen live), or a film by name. */
+  const LIB = "@library";
+  const studioDir = (film) => (String(film) === LIB ? path.join(path.dirname(o.web), "films", "codescape-library") : filmDir(film));
+  /** What a module offers: its exported functions and constants with the comment written above each. */
+  function exportsOf(file) {
+    const out = []; let text = ""; try { text = fs.readFileSync(file, "utf8"); } catch { return out; }
+    const re = /(?:\/\*\*([\s\S]*?)\*\/\s*)?export\s+(?:async\s+)?(function|const|class)\s+([A-Za-z_$][\w$]*)\s*(\([^)]*\))?/g; let m;
+    while ((m = re.exec(text))) out.push({ name: m[3], kind: m[2], args: (m[4] || "").slice(0, 160), doc: (m[1] || "").replace(/^\s*\*\s?/gm, "").replace(/\s+/g, " ").trim().slice(0, 600) });
+    return out;
+  }
+  let lastFrame = null; // the newest frame a drawing page handed over (for Cine Studio's live view of a render)
   /** The ffmpeg that encodes on the graphics card, if this PC has one that works (asked once). */
   async function gpuEncoder() {
     if (gpuEnc !== undefined) return gpuEnc;
@@ -106,6 +125,7 @@ function createCine(o) {
           if (b.length !== +q.w * +q.h * 4) throw new Error(`frame of ${b.length} bytes for ${q.w}x${q.h}`);
           if (!j.p.stdin.write(b)) await new Promise((r) => { const go = () => { j.p.stdin.off("drain", go); j.p.off("close", go); r(); }; j.p.stdin.once("drain", go); j.p.once("close", go); });
           j.n++; if (run) run.frames = (run.frames || 0) + 1;
+          if (j.n % 6 === 1) lastFrame = { b, w: +q.w, h: +q.h, job: id, n: j.n, at: Date.now() };
           res.end("ok");
         } else if (u.pathname === "/done") {
           const id = safeId(q.job), j = jobs[id]; let ok = false;
@@ -124,7 +144,26 @@ function createCine(o) {
         } else if (u.pathname === "/log") { say((await body(req)).toString().slice(0, 2000)); res.end("ok"); }
         else if (u.pathname === "/flag") { res.end("ok"); flag(safeId(q.name), q.v || "ok"); }
         else if (u.pathname === "/say") { res.end("ok"); flag(safeId(q.name), (await body(req)).toString()); }
-        else {
+        else if (u.pathname.startsWith("/f/")) { // a named film's files (Cine Studio): /f/<film>/<file>
+          const rest = decodeURIComponent(u.pathname.slice(3)), k = rest.indexOf("/"), f = k > 0 ? resolveIn(studioDir(rest.slice(0, k)), rest.slice(k + 1)) : null;
+          if (!f) { res.statusCode = 404; return res.end("not found"); }
+          res.setHeader("Content-Type", MIME[path.extname(f).toLowerCase()] || "application/octet-stream"); res.setHeader("Cache-Control", "no-store"); fs.createReadStream(f).pipe(res);
+        } else if (u.pathname.startsWith("/studio/")) {
+          const what = u.pathname.slice(8), json = (v) => { res.setHeader("Content-Type", "application/json"); res.setHeader("Cache-Control", "no-store"); res.end(JSON.stringify(v)); };
+          if (what === "films") { const l = await list(); json({ films: [{ name: LIB, engine: "codescape", library: true }, ...l.films.map((f) => ({ name: f.name, engine: f.engine }))], root: l.root }); }
+          else if (what === "stat") { // what changed (for live reload) and what is being drawn (for the live view of a render)
+            const dir = studioDir(q.film); let newest = 0; const files = [];
+            for (const base of [dir, engineDir(dir)]) { if (!base) continue; for (const e of fs.readdirSync(base, { withFileTypes: true })) if (e.isFile() && /\.(js|mjs|json)$/.test(e.name)) { const m = fs.statSync(path.join(base, e.name)).mtimeMs; newest = Math.max(newest, m); if (base === dir) files.push({ name: e.name, mtime: Math.round(m) }); } }
+            let audio = 0; try { audio = Math.round(fs.statSync(path.join(dir, "audio.wav")).mtimeMs); } catch { /* silent film */ }
+            json({ film: q.film, engine: engineOf(dir), newest: Math.round(newest), audio, files, render: progress(), frame: lastFrame ? { job: lastFrame.job, n: lastFrame.n, w: lastFrame.w, h: lastFrame.h, age: Date.now() - lastFrame.at } : null });
+          } else if (what === "text") { const f = resolveIn(studioDir(q.film), String(q.file || "film.js")); if (!f || !/\.(js|mjs|json|md|txt|py)$/i.test(f)) { res.statusCode = 404; return res.end("not found"); } res.setHeader("Content-Type", "text/plain; charset=utf-8"); res.setHeader("Cache-Control", "no-store"); fs.createReadStream(f).pipe(res); }
+          else if (what === "library") { // every module the film can use: the film's own and its engine's, with what each offers
+            const dir = studioDir(q.film), mods = [], seen = new Set();
+            for (const [base, where] of [[dir, "film"], [engineDir(dir), "engine"], [o.web, "cine"]]) { if (!base) continue; for (const n of fs.readdirSync(base).sort()) { if (!/\.js$/.test(n) || /^three\./.test(n) || seen.has(n)) continue; seen.add(n); const items = exportsOf(path.join(base, n)); if (items.length) mods.push({ file: n, where, items }); } }
+            json({ film: q.film, engine: engineOf(dir), modules: mods });
+          } else if (what === "lastframe") { if (!lastFrame) { res.statusCode = 404; return res.end("none"); } res.setHeader("Content-Type", "application/octet-stream"); res.setHeader("Cache-Control", "no-store"); res.setHeader("X-Size", `${lastFrame.w}x${lastFrame.h}`); res.end(lastFrame.b); }
+          else { res.statusCode = 404; res.end("not found"); }
+        } else {
           const f = resolve(decodeURIComponent(u.pathname));
           if (!f) { res.statusCode = 404; return res.end("not found"); }
           res.setHeader("Content-Type", MIME[path.extname(f).toLowerCase()] || "application/octet-stream"); res.setHeader("Cache-Control", "no-store");
@@ -138,7 +177,7 @@ function createCine(o) {
   }
   /** Open a page of the engine for a film and wait until it raises its flag. → what it said. */
   async function page(dir, name, query, size, timeout) {
-    await start(); ctxFilm = dir; ctxEngine = engineOf(dir) === "clay" && o.web ? path.join(o.web, "clay") : null;
+    await start(); ctxFilm = dir; ctxEngine = engineDir(dir);
     const url = `http://127.0.0.1:${port}/${query}`;
     let win = null, timer = null;
     try {
@@ -310,6 +349,10 @@ function createCine(o) {
     join: async (film, p) => { const dir = filmDir(film), info = await shots(dir), fps = info.fps || 30, PIECE = 150, plan = []; for (const s of info.shots) { const K = Math.ceil(Math.round(s.dur * fps) / PIECE); for (let k = 0; k < K; k++) plan.push({ job: `${s.id}_${k}` }); } return join(dir, plan, info, p || {}); },
     /** Any page of the engine (lab.html …) for a film: wait for its flag, then say which pictures it left in out/. */
     lab: async (film, query, flagName, timeout) => { const dir = filmDir(film), t0 = Date.now(); const r = await page(dir, flagName || 'lab', String(query), null, timeout || 300_000); const out = path.join(dir, 'out'); const files = fs.existsSync(out) ? fs.readdirSync(out).filter((n) => /\.(jpg|png)$/.test(n) && fs.statSync(path.join(out, n)).mtimeMs >= t0 - 500).map((n) => path.join(out, n)) : []; return { said: r, files, log: logs.slice(-6) }; },
+    /** Cine Studio: the film playing live in a window (real time, on the graphics card), its code beside it, the library, the checks, a render watched as it is drawn. */
+    studio: async (film) => { await start(); const name = film ? (String(film) === LIB ? LIB : path.basename(filmDir(film))) : ""; const url = `http://127.0.0.1:${port}/studio.html${name ? `?film=${encodeURIComponent(name)}` : ""}`; if (o.openStudio) await o.openStudio(url); return { url, film: name || null, window: !!o.openStudio }; },
+    /** The deep review, measured without drawing: cameras that shake, lenses with a body on them, hands that do not reach or hold (the film notes its holds in c.rep). → the report */
+    review: async (film, shot) => { const dir = filmDir(film); const r = await page(dir, "review", `review.html?job=review${shot ? `&id=${safeId(shot)}` : ""}`, null, 300_000); try { return JSON.parse(r); } catch { throw new Error(`The review did not run.\n${lastErr() || r}`.slice(0, 1500)); } },
     said: () => logs.slice(-60),
     close: () => { try { server && server.close(); } catch { /* closed */ } server = null; },
   };
@@ -330,7 +373,13 @@ function setupCine(o) {
     void w.loadURL(url);
     return { close: () => { if (!w.isDestroyed()) w.destroy(); }, gone: goneP };
   };
-  const cine = createCine({ root: o.root, web: path.join(base, "web"), guide: path.join(base, "GUIDE.md"), ffmpeg: o.ffmpeg, ffprobe: o.ffprobe, openPage, movies: o.movies, mustAllow: o.mustAllow, log: o.log, gpuEncoder: o.gpuEncoder, send: (m) => o.send && o.send("cine:progress", m) });
+  let studioWin = null;
+  const openStudio = async (url) => {
+    if (studioWin && !studioWin.isDestroyed()) { if (studioWin.webContents.getURL() !== url) void studioWin.loadURL(url); studioWin.show(); studioWin.focus(); return; }
+    studioWin = new BrowserWindow({ width: 1560, height: 980, minWidth: 1000, minHeight: 640, title: "Cine Studio — VideoStudio", backgroundColor: "#121418", autoHideMenuBar: true, webPreferences: { backgroundThrottling: false, contextIsolation: true, nodeIntegration: false, sandbox: true } });
+    studioWin.webContents.setWindowOpenHandler(() => ({ action: "deny" })); studioWin.on("closed", () => { studioWin = null; }); void studioWin.loadURL(url);
+  };
+  const cine = createCine({ root: o.root, web: path.join(base, "web"), guide: path.join(base, "GUIDE.md"), ffmpeg: o.ffmpeg, ffprobe: o.ffprobe, openPage, openStudio, movies: o.movies, mustAllow: o.mustAllow, log: o.log, gpuEncoder: o.gpuEncoder, send: (m) => o.send && o.send("cine:progress", m) });
   const h = o.handle;
   h("cine.help", (topic) => cine.help(topic));
   h("cine.list", () => cine.list());
@@ -346,6 +395,8 @@ function setupCine(o) {
   h("cine.stop", () => cine.stop());
   h("cine.unpack", (file) => cine.unpack(file));
   h("cine.tool", (film, script, args) => cine.tool(film, script, args));
+  h("cine.studio", (film) => cine.studio(film));
+  h("cine.review", (film, shot) => cine.review(film, shot));
   return cine;
 }
 

@@ -56,8 +56,12 @@ describe("a studio voice keeps the pace of a line", () => {
     expect(paced([tone(2)], ["बेटा मैं ठीक हूँ तुम अपना ख़याल रखना"], { natural: 3.9 }, sr).length / sr).toBeCloseTo(2, 1);
     // six words in 2.4 s is 2.5 a second: with a tone of 0.86 (2.58 a second) that is already right
     expect(paced([tone(2.4)], six, { rate: 0.86 }, sr).length / sr).toBeCloseTo(2.4, 1);
-    // six words in four seconds is slower than the tone asks: brought up a little, never rushed
-    expect(paced([tone(4)], six, { rate: 0.86 }, sr).length / sr).toBeCloseTo(4 * 0.85, 1);
+    // six words in four seconds is slower than the tone asks, but it is how the line was acted: it keeps its pace
+    expect(paced([tone(4)], six, { rate: 0.86 }, sr).length / sr).toBeCloseTo(4, 1);
+    // a felt Hindi line at 3 words a second is not squeezed toward 3.9 (that made every aching line sound rushed)
+    expect(paced([tone(2.3)], ["ये तेरे पापा की पहली तनख़्वाह है"], { natural: 3.9 }, sr).length / sr).toBeCloseTo(2.3, 1);
+    // six words in seven seconds truly dawdles (under half the pace): brought up a little, never rushed
+    expect(paced([tone(7)], six, { rate: 0.86 }, sr).length / sr).toBeCloseTo(7 * 0.85, 1);
     // a word or two is too little to measure a pace on: only the tone's own rate applies
     expect(paced([tone(0.5)], ["Run!"], { rate: 0.8 }, sr).length / sr).toBeCloseTo(0.5 / 0.8, 1);
   });

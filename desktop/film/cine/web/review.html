@@ -1,0 +1,10 @@
+<canvas id=c width=64 height=64></canvas>
+<script>addEventListener('error', e => { const m = 'ERR ' + (e.message || 'a file of the film did not load') + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''); fetch('/log', { method: 'POST', body: m }); fetch('/say?name=review', { method: 'POST', body: m }); }, true);</script>
+<script type=module>
+// The deep review of a film, run in the app without drawing a frame (cine.review): cameras, lens clearance, holds. See review.js.
+import { Engine, post, log, V3 } from './engine.js'; import * as K from './kit.js'; import * as FILM from './film.js'; import { reviewFilm, reviewText } from './review.js';
+const q = new URLSearchParams(location.search);
+(async () => { try { const mkE = () => { const c = document.createElement('canvas'); c.width = 64; c.height = 64; return new Engine(c, 64, 64); }; await K.init(mkE());
+  const R = await reviewFilm(FILM, mkE, V3, { shots: q.get('id') ? [q.get('id')] : null }); R.text = reviewText(R); await post('/say?name=review', JSON.stringify(R)); }
+  catch (e) { await log('EXC ' + e.message + ' ' + (e.stack || '').slice(0, 600)); await post('/say?name=review', 'EXC ' + e.message); } })();
+</script>

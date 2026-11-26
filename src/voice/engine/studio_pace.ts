@@ -134,14 +134,23 @@ export const MAX_STRETCH = 1.25;
 /**
  * How much longer (or shorter) the speech must be made to sit at the tone's pace. The model does not keep a
  * pace of its own accord: it hurries some lines to five or six words a second. A hurried line is held back
- * (never by more than MAX_STRETCH: beyond that it sounds drawn out), a dawdling one is brought up a little (never
- * below 0.85: speech squeezed further sounds rushed), and one that is within a few percent is left alone.
+ * (never by more than MAX_STRETCH: beyond that it sounds drawn out); a slow line keeps the pace it was acted at, and
+ * only one that truly dawdles (under DAWDLE of the pace) is brought up a little (0.85: squeezed further it sounds rushed).
  * A word or two is too little to measure a pace on: there only the tone's own rate applies.
  */
 export function paceFactor(seconds: number, wordCount: number, tone: Pace = {}): number {
   const k = paceAsked(seconds, wordCount, tone);
-  return wordCount < 3 || seconds <= 0 ? k : Math.abs(k - 1) < 0.08 ? 1 : Math.max(0.85, Math.min(MAX_STRETCH, k));
+  if (wordCount < 3 || seconds <= 0) return k;
+  if (k >= 1) return k - 1 < 0.08 ? 1 : Math.min(MAX_STRETCH, k);
+  // slower than the tone's pace: a slow line is the actor's choice (a felt, aching line is spoken at 2.2–3 words a second in
+  // Hindi) and keeps its pace; only one that truly dawdles, under DAWDLE of the pace, is brought up, and then only a little
+  return k < DAWDLE ? 0.85 : 1;
 }
+/**
+ * Under this share of the tone's pace a line is dawdling. Above it, slow speech is left exactly as it was acted: squeezing
+ * every Hindi line that fell under 3.9 words a second by 15 % made the felt lines of a film sound rushed (owner, 26 Nov 2026).
+ */
+export const DAWDLE = 0.5;
 /** How far the speech would have to be stretched to sit exactly at the tone's pace (not limited to what sounds well). */
 export function paceAsked(seconds: number, wordCount: number, tone: Pace = {}): number {
   const rate = rateOf(tone);

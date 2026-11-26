@@ -197,4 +197,8 @@ export interface CineApi {
   stop(): Promise<{ stopping: boolean }>;
   tool(film: string | undefined, script: string, args?: string[]): Promise<{ code: number; out: string; err: string }>;
   unpack(file: string): Promise<{ files: number; into: string; folders: string[] }>;
+  /** Cine Studio: the film playing live in its own window, its code beside it, the library, the checks, a render watched as it is drawn. */
+  studio?(film?: string): Promise<{ url: string; film: string | null; window: boolean }>;
+  /** The deep review, measured without drawing: cameras that shake, a body on the lens, hands that do not reach or hold. */
+  review?(film: string, shot?: string): Promise<{ ok: boolean; must: string[]; text: string; shots: unknown[] }>;
 }

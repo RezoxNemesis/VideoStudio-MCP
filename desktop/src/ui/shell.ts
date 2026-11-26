@@ -162,6 +162,13 @@ export class Shell {
     const cd = panel("Code Studio · films written as code");
     cd.body.className = "hosted";
     cd.body.append(this.codePage.el);
+    // Cine Studio (films of Cine / CodeScape / Clay playing live, with their code): its own window, opened from here.
+    {
+      const open = h("button", { class: "d-cine-studio", title: "Cine Studio: a Cine / CodeScape / Clay film playing live on the graphics card, its code beside it, the library, the checks, and a render watched as it is drawn", style: "position:absolute;right:14px;bottom:14px;z-index:5;padding:8px 14px;border-radius:9px;border:1px solid #ffb454;background:#2a2414;color:#ffd9a0;font-weight:600;cursor:pointer" }, "Cine Studio ▸") as HTMLButtonElement;
+      open.addEventListener("click", () => { const c = vsd?.cine; if (c?.studio) void c.studio(); });
+      cd.el.style.position = "relative";
+      cd.el.append(open);
+    }
     this.ws.code = h("div", { class: "d-ws ws-full" }, cd.el);
     registerCodeCommands(s, () => this.cur !== "code" && this.go("code"));
     // Sensei: the judge and helper, with its own workspace.

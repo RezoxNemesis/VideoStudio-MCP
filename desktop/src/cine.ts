@@ -60,6 +60,16 @@ export function registerCineCommands(_s: Studio): void {
   registerCommand("cine.progress", "The Cine render that is running or just finished: pieces done, frames a second, time left, the finished file, or the mistake.", async () => cine().progress());
   registerCommand("cine.join", "{film, maxMB?, name?} Join the drawn pieces again and lay the sound under (after changing only audio.wav).", async (_st, a) => cine().join(a.str("film"), { maxMB: a.optNum("maxMB"), name: a.optStr("name") }));
   registerCommand("cine.stop", "Stop the Cine render (pieces already drawn are kept).", async () => cine().stop());
+  registerCommand(
+    "cine.studio",
+    "{film?: name or folder; \"@library\" for the CodeScape library (people, hands, holds, placing, speech)} Open Cine Studio, a window where the film plays live on the graphics card (real time, with its sound), with the code of the shot on screen beside it; a change to any file of the film (cine.write, or by hand) is loaded by itself. Its Library tab lists everything the film can use (the film's own modules and its engine's: rig, people, motion), its Check button runs the deep review, and a render that is running is shown as it is drawn. The owner watches work here.",
+    async (_st, a) => { const c = cine(); if (!c.studio) throw new Error("This version of VideoStudio Desktop has no Cine Studio."); return c.studio(a.optStr("film")); },
+  );
+  registerCommand(
+    "cine.review",
+    "{film, shot?} The deep review of a Cine / CodeScape film, measured without drawing a frame (seconds): for every shot, how much the picture shakes (a lens tied to a talking head or a trembling hand: limit 3 px at 720×1280), the nearest body or prop to the lens (limit 12 cm), and every hold the film notes in c.rep (reach under 92 % of the arm, wrist under 60°, finger pads within 2 mm, the thumb long enough). → { ok, must: [what to fix], text }. Run it after every change, before any frame is looked at; then look at full-size frames. A CodeScape film (`// @engine codescape`) gets engine.js, kit.js, rig.js, people.js, face2.js and motion.js (hands that hold: pinchSheet; speech movement: speechPlan/speechHead; steady cameras: steady/anchorAt) from the app.",
+    async (_st, a) => { const c = cine(); if (!c.review) throw new Error("This version of VideoStudio Desktop has no review."); const r = await c.review(a.str("film"), a.optStr("shot")); return { ok: r.ok, must: r.must, text: r.text, shots: r.shots }; },
+  );
   registerCommand("cine.unpack", "{file: a .tar.gz lying in the Cine folder} Unpack many files at once into the Cine folder (shared assets, a film's performances): the way data made in a workspace arrives.", async (_st, a) => cine().unpack(a.str("file")));
   registerCommand(
     "cine.tool",
