@@ -6,6 +6,7 @@
  * changing its pitch.
  */
 import { timeStretch } from "./audio";
+import { innerPauses } from "./studio_pause";
 
 export interface Pace {
   /** Speed (1 natural; 0.86 is a slow, weighty line). */
@@ -162,16 +163,30 @@ export function paced(parts: Float32Array[], texts: string[], tone: Pace = {}, s
   return pacing(parts, texts, tone, sr).pcm;
 }
 /** `paced`, with how the line was spoken: its words, the seconds of speech the model gave, the stretch the pace asked for and the one it got. */
-export function pacing(parts: Float32Array[], texts: string[], tone: Pace = {}, sr = 24000): { pcm: Float32Array; words: number; spoken: number; asked: number; factor: number } {
+/**
+ * `stops`: for each sentence, where its inner marks are in its sound (SayResult.stops of the take that was kept), so the
+ * pauses inside a sentence are set as well (studio_pause.ts). `pauses` in the answer: how many were given their length.
+ */
+export function pacing(parts: Float32Array[], texts: string[], tone: Pace = {}, sr = 24000, stops?: (number[] | undefined)[]): { pcm: Float32Array; words: number; spoken: number; asked: number; factor: number; pauses: number } {
   let quiet = parts.map(() => ({ lead: 0, tail: 0 }));
+  const cutBefore: number[] = [];
   parts = parts.map((p, i) => {
     const t = tidyEnd(p, sr), b = bounds(t, sr);
     quiet[i] = { lead: b.lead, tail: b.tail };
+    cutBefore[i] = b.from / sr;
     return b.from === 0 && b.to === t.length ? t : t.slice(b.from, b.to);
   });
   const spoken = parts.reduce((n, p) => n + p.length, 0) / sr, count = texts.reduce((n, t) => n + words(t), 0);
   const k = paceFactor(spoken, count, tone);
   if (Math.abs(k - 1) > 0.02) { parts = parts.map((p) => timeStretch(p, k, sr)); quiet = quiet.map((q) => ({ lead: q.lead * k, tail: q.tail * k })); }
+  // the pauses inside each sentence ("…", a dash, a comma): found in its sound and given their length
+  const kk = Math.abs(k - 1) > 0.02 ? k : 1;
+  let pauses = 0;
+  parts = parts.map((p, i) => {
+    const r = innerPauses(p, texts[i] ?? "", tone, sr, stops?.[i]?.map((s) => (s < 0 ? -1 : Math.max(0, (s - cutBefore[i]!) * kk))));
+    pauses += r.made.filter((m) => m.now > m.had).length;
+    return r.pcm;
+  });
   // the quiet kept around each sentence is part of the pause between two of them
   const gaps = parts.map((_, i) => (i < parts.length - 1 ? Math.round(Math.max(0.05, pauseAfter(texts[i] ?? "", tone) - quiet[i]!.tail - quiet[i + 1]!.lead) * sr) : 0));
   const all = new Float32Array(parts.reduce((n, p, i) => n + p.length + gaps[i]!, 0));
@@ -184,5 +199,5 @@ export function pacing(parts: Float32Array[], texts: string[], tone: Pace = {}, 
     o += p.length + gaps[i]!;
   });
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
-  return { pcm: all, words: count, spoken: r3(spoken), asked: r3(paceAsked(spoken, count, tone)), factor: r3(Math.abs(k - 1) > 0.02 ? k : 1) };
+  return { pcm: all, words: count, spoken: r3(spoken), asked: r3(paceAsked(spoken, count, tone)), factor: r3(kk), pauses };
 }

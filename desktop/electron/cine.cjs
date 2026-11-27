@@ -91,6 +91,18 @@ function createCine(o) {
     return out;
   }
   let lastFrame = null; // the newest frame a drawing page handed over (for Cine Studio's live view of a render)
+  // Cine Studio may also WRITE (save code, set numbers, keep a frame, start a render). Only the studio window may: it is
+  // given this key in its address and must send it in a header, which no other web page on the PC can do to this server.
+  const STUDIO_KEY = require("node:crypto").randomBytes(16).toString("hex");
+  const plainName = (n) => (/^[\w.-]{1,80}\.(js|mjs|json|md|txt)$/.test(String(n || "")) && !String(n).includes("..") ? String(n) : null);
+  /** Keep the file as it was before the studio changes it (film/.studio/<file>.<time>.bak; the newest 20 of each). */
+  function keepBackup(dir, name) {
+    const f = path.join(dir, name); if (!fs.existsSync(f)) return null;
+    const bdir = path.join(dir, ".studio"); fs.mkdirSync(bdir, { recursive: true });
+    const b = path.join(bdir, `${name}.${Date.now()}.bak`); fs.copyFileSync(f, b);
+    const old = fs.readdirSync(bdir).filter((n) => n.startsWith(name + ".") && n.endsWith(".bak")).sort(); for (const n of old.slice(0, Math.max(0, old.length - 20))) fs.rmSync(path.join(bdir, n), { force: true });
+    return b;
+  }
   /** The ffmpeg that encodes on the graphics card, if this PC has one that works (asked once). */
   async function gpuEncoder() {
     if (gpuEnc !== undefined) return gpuEnc;
@@ -161,6 +173,38 @@ function createCine(o) {
             const dir = studioDir(q.film), mods = [], seen = new Set();
             for (const [base, where] of [[dir, "film"], [engineDir(dir), "engine"], [o.web, "cine"]]) { if (!base) continue; for (const n of fs.readdirSync(base).sort()) { if (!/\.js$/.test(n) || /^three\./.test(n) || seen.has(n)) continue; seen.add(n); const items = exportsOf(path.join(base, n)); if (items.length) mods.push({ file: n, where, items }); } }
             json({ film: q.film, engine: engineOf(dir), modules: mods });
+          } else if (what === "mocap") { // a video of a person, sent from Cine Studio → a motion clip in the film's folder (the video itself is not kept)
+            if (req.method !== "POST" || req.headers["x-studio-key"] !== STUDIO_KEY) { res.statusCode = 403; return res.end("not allowed"); }
+            if (String(q.film) === LIB) { res.statusCode = 400; return json({ error: "Open one of your films first: the clip is saved into the film's folder." }); }
+            const dir = filmDir(q.film), tmp = path.join(dir, ".studio"); fs.mkdirSync(tmp, { recursive: true }); const ext = (/\.(mp4|mov|mkv|webm|avi|m4v)$/i.exec(String(q.name || "")) || [".mp4"])[0].toLowerCase(), file = path.join(tmp, `take_${Date.now()}${ext}`);
+            const got = await new Promise((r) => { const w = fs.createWriteStream(file); let n = 0, over = false; req.on("data", (d) => { n += d.length; if (n > 2e9) { over = true; req.destroy(); w.destroy(); r(-1); } }); req.pipe(w); w.on("finish", () => r(over ? -1 : n)); w.on("error", () => r(-1)); });
+            try { if (got <= 0) { res.statusCode = 400; return json({ error: "The video did not arrive whole (2 GB at most)." }); }
+              json(await mocap(q.film, file, { name: String(q.name || "take").replace(/\.[^.]+$/, ""), from: +q.from || 0, to: +q.to || 0 })); }
+            catch (e) { res.statusCode = 500; json({ error: String(e && e.message || e) }); } finally { fs.rm(file, { force: true }, () => {}); }
+          } else if (["write", "undo", "snap", "tune", "render", "stop"].includes(what)) {
+            if (req.method !== "POST" || req.headers["x-studio-key"] !== STUDIO_KEY) { res.statusCode = 403; return res.end("not allowed"); }
+            if (String(q.film) === LIB) { res.statusCode = 400; return json({ error: "The Library is the app's own: copy what you need into a film." }); }
+            const dir = filmDir(q.film), body = await new Promise((r) => { const c = []; let n = 0; req.on("data", (d) => { n += d.length; if (n < 40e6) c.push(d); }); req.on("end", () => r(Buffer.concat(c))); });
+            if (what === "write") { // save a file of the film (the old one is kept)
+              const name = plainName(q.file); if (!name || body.length > 3e6) { res.statusCode = 400; return json({ error: "That file cannot be written here." }); }
+              const backup = keepBackup(dir, name); fs.writeFileSync(path.join(dir, name), body); json({ ok: true, file: name, bytes: body.length, backup: backup ? path.basename(backup) : null });
+            } else if (what === "undo") { // put the last kept copy back
+              const name = plainName(q.file), bdir = path.join(dir, ".studio"); const all = name && fs.existsSync(bdir) ? fs.readdirSync(bdir).filter((n) => n.startsWith(name + ".") && n.endsWith(".bak")).sort() : [];
+              if (!all.length) { res.statusCode = 404; return json({ error: "There is no earlier copy." }); }
+              const b = path.join(bdir, all[all.length - 1]); fs.copyFileSync(b, path.join(dir, name)); fs.rmSync(b, { force: true }); json({ ok: true, file: name, left: all.length - 1 });
+            } else if (what === "tune") { // write the numbers set with the sliders into film.js: the values inside `export const TUNE = { … }`
+              let vals = {}; try { vals = JSON.parse(body.toString("utf8")); } catch { /* nothing */ }
+              const f = path.join(dir, "film.js"); const src = fs.readFileSync(f, "utf8"); const m = /export\s+const\s+TUNE\s*=\s*\{[\s\S]*?\}/.exec(src);
+              if (!m) { res.statusCode = 400; return json({ error: "This film has no `export const TUNE = { … }`." }); }
+              let block = m[0], set = 0;
+              for (const [k, v] of Object.entries(vals)) { if (!/^[A-Za-z_$][\w$]*$/.test(k) || !Number.isFinite(v)) continue; const re = new RegExp("(\\b" + k + "\\s*:\\s*)(-?\\d+\\.?\\d*(?:e-?\\d+)?)"); if (re.test(block)) { block = block.replace(re, "$1" + +(+v).toFixed(5)); set++; } }
+              if (set) { keepBackup(dir, "film.js"); fs.writeFileSync(f, src.slice(0, m.index) + block + src.slice(m.index + m[0].length)); }
+              json({ ok: true, set });
+            } else if (what === "snap") { // keep the frame on screen as a picture
+              const out = path.join(dir, "out"); fs.mkdirSync(out, { recursive: true }); const name = `frame_${safeId(q.shot)}_${String(Math.round(+q.t * 100)).padStart(5, "0")}.png`; fs.writeFileSync(path.join(out, name), body);
+              json({ ok: true, file: path.join(out, name) });
+            } else if (what === "render") { const W = Math.max(360, Math.min(3840, Math.round(+q.width || 720))), H = Math.max(360, Math.min(4320, Math.round(+q.height || 1280))); json(await render(q.film, { width: W, height: H, fps: +q.fps || 30, force: true, name: `${path.basename(dir)}_${Math.min(W, H)}p` })); }
+            else json(stop());
           } else if (what === "lastframe") { if (!lastFrame) { res.statusCode = 404; return res.end("none"); } res.setHeader("Content-Type", "application/octet-stream"); res.setHeader("Cache-Control", "no-store"); res.setHeader("X-Size", `${lastFrame.w}x${lastFrame.h}`); res.end(lastFrame.b); }
           else { res.statusCode = 404; res.end("not found"); }
         } else {
@@ -329,6 +373,20 @@ function createCine(o) {
     if (r.code && /No module named|not found|ENOENT/.test(r.err)) throw new Error(`This PC's python3 cannot run the tool: ${r.err.trim().split("\n").slice(-1)[0]}. It needs: pip install --user numpy scipy opencv-python-headless pillow. (Or run the tool in Claude's workspace and send the data into the film's folder.)`);
     return { code: r.code, out: r.out.slice(-6000), err: r.err.slice(-3000) };
   }
+  /** A video of a person → a motion clip in a film's folder (tools/mocap/video2clip.py: MediaPipe's body pose), for body.js clipOf + playClip. */
+  async function mocap(film, video, opt = {}) {
+    const dir = filmDir(film), script = path.join(path.dirname(o.web), "tools", "mocap", "video2clip.py"); const v = String(video || "");
+    const src = [v, path.join(dir, v), path.join(ROOT, v)].find((x) => x && path.isAbsolute(x) && fs.existsSync(x) && fs.statSync(x).isFile());
+    if (!src) throw new Error(`No such video: ${v}. Give its whole path, or a file in the film's folder or the Cine folder.`);
+    const name = `${String(opt.name || path.basename(src).replace(/\.[^.]+$/, "")).replace(/[^\w-]+/g, "_").slice(0, 60) || "take"}.json`, out = path.join(dir, name);
+    await fsp.mkdir(ASSETS, { recursive: true }); const model = path.join(ASSETS, "pose_landmarker_heavy.task");
+    const args = [script, src, out, "--model", model, "--ffmpeg", o.ffmpeg || "ffmpeg", ...(opt.from ? ["--from", String(+opt.from)] : []), ...(opt.to ? ["--to", String(+opt.to)] : []), "--name", path.basename(src)];
+    let r = null, why = "";
+    for (const py of [process.env.VIDEOSTUDIO_PYTHON, "python", "python3", "py"].filter(Boolean)) { r = await exec(py, args, { cwd: dir, timeout: 60 * 60_000 }); if (!r.code) break; why = r.err.trim().split("\n").slice(-1)[0] || why; if (/No module named/.test(r.err)) break; }
+    if (!r || r.code) throw new Error(/No module named/.test(why) ? `This PC's Python is missing a part: ${why}. Once: pip install mediapipe numpy — then run this again.` : /ENOENT|not recognized|not found/i.test(why) || !why ? "This PC has no Python on its PATH. Install Python 3 (python.org), then: pip install mediapipe numpy" : `The capture failed: ${why}`);
+    let info = {}; try { info = JSON.parse(r.out.trim().split("\n").slice(-1)[0]); } catch { /* the tool said something else */ }
+    return { ...info, file: out, clip: name, use: `in film.js:  import { clipOf, playClip } from './body.js';  build: c.clip = clipOf(await (await fetch(new URL('${name}', import.meta.url))).json());  frame: playClip(p, c.clip, t, { at: [x, z], yaw })`, note: info.legs === false ? "The legs were not in the picture for most of it: the rig will stand and follow the arms, spine and head. Film the whole body for the legs." : "" };
+  }
   /** Many files at once: a .tar.gz that lies in the Cine folder is unpacked there (bodies, textures, a film's performances). */
   async function unpack(file) {
     const f = path.resolve(path.isAbsolute(String(file)) ? String(file) : path.join(ROOT, String(file || "")));
@@ -350,9 +408,11 @@ function createCine(o) {
     /** Any page of the engine (lab.html …) for a film: wait for its flag, then say which pictures it left in out/. */
     lab: async (film, query, flagName, timeout) => { const dir = filmDir(film), t0 = Date.now(); const r = await page(dir, flagName || 'lab', String(query), null, timeout || 300_000); const out = path.join(dir, 'out'); const files = fs.existsSync(out) ? fs.readdirSync(out).filter((n) => /\.(jpg|png)$/.test(n) && fs.statSync(path.join(out, n)).mtimeMs >= t0 - 500).map((n) => path.join(out, n)) : []; return { said: r, files, log: logs.slice(-6) }; },
     /** Cine Studio: the film playing live in a window (real time, on the graphics card), its code beside it, the library, the checks, a render watched as it is drawn. */
-    studio: async (film) => { await start(); const name = film ? (String(film) === LIB ? LIB : path.basename(filmDir(film))) : ""; const url = `http://127.0.0.1:${port}/studio.html${name ? `?film=${encodeURIComponent(name)}` : ""}`; if (o.openStudio) await o.openStudio(url); return { url, film: name || null, window: !!o.openStudio }; },
+    studio: async (film) => { await start(); const name = film ? (String(film) === LIB ? LIB : path.basename(filmDir(film))) : ""; const url = `http://127.0.0.1:${port}/studio.html?k=${STUDIO_KEY}${name ? `&film=${encodeURIComponent(name)}` : ""}`; if (o.openStudio) await o.openStudio(url); return { url, film: name || null, window: !!o.openStudio }; },
     /** The deep review, measured without drawing: cameras that shake, lenses with a body on them, hands that do not reach or hold (the film notes its holds in c.rep). → the report */
     review: async (film, shot) => { const dir = filmDir(film); const r = await page(dir, "review", `review.html?job=review${shot ? `&id=${safeId(shot)}` : ""}`, null, 300_000); try { return JSON.parse(r); } catch { throw new Error(`The review did not run.\n${lastErr() || r}`.slice(0, 1500)); } },
+    /** A video of a person → a motion clip in the film's folder. */
+    mocap,
     said: () => logs.slice(-60),
     close: () => { try { server && server.close(); } catch { /* closed */ } server = null; },
   };
@@ -397,6 +457,7 @@ function setupCine(o) {
   h("cine.tool", (film, script, args) => cine.tool(film, script, args));
   h("cine.studio", (film) => cine.studio(film));
   h("cine.review", (film, shot) => cine.review(film, shot));
+  h("cine.mocap", (film, video, opt) => cine.mocap(film, video, opt || {}));
   return cine;
 }
 

@@ -201,4 +201,6 @@ export interface CineApi {
   studio?(film?: string): Promise<{ url: string; film: string | null; window: boolean }>;
   /** The deep review, measured without drawing: cameras that shake, a body on the lens, hands that do not reach or hold. */
   review?(film: string, shot?: string): Promise<{ ok: boolean; must: string[]; text: string; shots: unknown[] }>;
+  /** A video of a person → a motion clip in the film's folder (body.js clipOf + playClip). */
+  mocap?(film: string, video: string, opt?: { name?: string; from?: number; to?: number }): Promise<Record<string, unknown>>;
 }

@@ -398,3 +398,58 @@ graphics card with its sound, the code of the current shot beside it; any change
 owner watches the work as it is written. Tabs: Shots, Library (every module the film can use and what each offers — click to read
 the code). Check film runs the review in the window. A render that is running is shown as it is drawn. Film "Library"
 (`@library`) is the CodeScape library itself, live: the people on a turntable, the holds, placing, speech.
+
+## The body, captured motion and editing in Cine Studio (27 Nov 2026)
+
+**body.js — the whole body** (web/codescape; a CodeScape film imports it like motion.js). Every function here keeps three rules that
+the review now measures: a planted foot does not move, a knee never locks, and the weight is over the standing foot before the
+other one lifts.
+- `stand(p, x, z, yaw, t, { weight })` — a person at rest, alive. `weight` −1 … 1 puts them on one leg (the pelvis goes over that
+  foot, the free hip drops, the free heel eases up); `idleWeight(t, seed)` changes the leg every 5–9 s. `restArm(p, s, t)` for a
+  hanging arm.
+- `planWalk(points, { size, speed, step, t0, face })` → a plan: footfalls in time along a path, from a stand to a stand (a first
+  short step, full strides, a closing step). `planTurn([x, z], yaw0, yaw1, { size, t0 })` → a turn on the spot, stepped round: the
+  foot on the side of the turn opens first; a quarter turn is two steps, a half turn four. `chain(a, b)`. A plan's `footfalls`
+  (`{ t, s, p }`) time the footstep sounds.
+- `stepper(p, plan, t, { look, arms })` — the body at time t of a plan: heel first, the foot rolls flat, the heel peels up before
+  it leaves; the pelvis is midway between the feet at each heel strike and rides over the standing leg between; the chest turns
+  against the hips; each arm swings against its own leg, a little late. Before and after the plan it is exactly `stand`, so there
+  is no pop. It returns `ground` (the body's place along its path without the bob): aim a following lens at THAT.
+- `sit(p, { x, z, yaw, h }, k, t, { up })` — sitting down (k 0 → 1): the hips go back as the chest comes forward, the hands come to
+  the thighs. With `up`: the chest goes forward first (nose over toes), then the hips leave the seat. The feet never move.
+- `gesture(p, s, kind, k, t, { hit, at })` — a hand that talks, risen by k from the arm at rest: `beat` (marks a word; `hit` drops
+  it on the stress), `offer` (an open palm held out), `chest` ("I", "mine"), `point` (`at`: a world point), `stop`.
+  `namaste(p, k, t)`.
+- `passSheet(giver, gs, taker, ts, sheet, k, { give, take })` — a hand-over. The FILM moves the sheet; this does both hands: she
+  holds it, his hand comes in already open to its own edge and closes, both hold for a beat, her fingers open, her hand goes back.
+  Stage it side-on, each person holding with the FAR hand, and move the sheet in the plane of those two shoulders: then each
+  forearm runs straight to it (with the sheet on the centre line the wrists bend 75°).
+- Numbers that matter: a leg at 98.5 % of its length already has its knee bent 20° (a crouch); straight to the eye is 99.6–99.7 %.
+  Hips that sink 7 cm a step mean the pelvis is behind the middle of the feet at the heel strike, not that the knees need bending.
+
+**The review measures bodies too** (every person in `c`, on the rig itself): a foot flat on the floor that moves more than 6 mm in
+a frame ("slides"), a leg at its whole length (the foot is out of reach), and — for body.js poses — weight standing more than
+13 cm off its own feet.
+
+**Captured motion** — `cine.mocap {film, video, name?, from?, to?}` (or "Capture motion…" in Cine Studio): an ordinary video of a
+person (no suit, no markers) becomes `<name>.json` in the film's folder. It runs `tools/mocap/video2clip.py` on this PC's Python
+(`pip install mediapipe numpy`, once; the pose model, 30 MB, is fetched once into the shared assets). In the film:
+`c.clip = clipOf(await (await fetch(new URL('take.json', import.meta.url))).json())` in build, `playClip(p, c.clip, t, { at, yaw,
+fist })` in frame. Only DIRECTIONS are taken from the performer (their bones are not the rig's): each limb points as theirs did, on
+the rig's own lengths; the palm comes from wrist → index and wrist → little finger; fingers are not seen by a body-pose capture
+(`fist` 0 … 1 sets them). Legs the camera did not see are not guessed: the rig stands and its hips turn over planted feet. Film the
+whole body, feet in the picture, for the legs. The clip is on the spot (the hips are the origin of every frame): to travel, use a
+plan for the legs and `playClip(..., { legs: false })` for the rest.
+
+**Editing in Cine Studio** (the window is the film's own workbench now):
+- *Edit* turns the code panel into an editor; *Save* (Ctrl+S) writes the file and the picture reloads with it. Every save first
+  keeps the old file in `<film>/.studio/` (the newest 20); *Undo save* puts the last one back.
+- *Live numbers*: a film that has `export const TUNE = { name: number, … }` and reads its numbers from it gets a slider for each,
+  under the picture; moving one redraws at once; *Write to film.js* puts the values into the code.
+- *Inspect* (I): drag on the picture to go round what the shot is looking at, wheel to move in and out, double-click to come
+  back: for looking at a hand or a pose from every side without changing the shot.
+- *Save frame* keeps the picture on screen as a PNG in the film's `out/`. *Render…* starts a 720p preview or the full-size render
+  on the graphics card from the window (and Stop).
+- *Library* rows have *copy import*. *Capture motion…* is the motion capture above.
+- The Library film (`@library`) now also has: walk, turn, sit, gesture, give, mocap. It cannot be changed from the window: copy
+  what you need into a film.

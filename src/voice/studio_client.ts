@@ -17,6 +17,7 @@ import { transcribe } from "../media/asr";
 import { referenceLine } from "./engine/studio_refs";
 import { devanagariLoanwords } from "./engine/studio_loanwords";
 import { NATURAL_PACE, NATURAL_PACE_HI, phrases, pacing } from "./engine/studio_pace";
+import { innerPauses } from "./engine/studio_pause";
 import { studioSpeaker } from "./engine/studio_speaker";
 import { bankKey, bankVoice } from "./engine/studio_bank";
 import { loadCustoms } from "./voicelab";
@@ -25,7 +26,7 @@ import { openVoice } from "./open_client";
 interface StudioBridge {
   status(): Promise<{ available: boolean; installed?: boolean; downloadBytes?: number; totalBytes?: number }>;
   install(): Promise<unknown>;
-  say(p: { key: string; text: string; lang: string; mood?: string; moodAmount?: number; cfg?: number; take?: number; bank?: string }): Promise<{ pcm?: Float32Array; needRef?: boolean }>;
+  say(p: { key: string; text: string; lang: string; mood?: string; moodAmount?: number; cfg?: number; take?: number; bank?: string }): Promise<{ pcm?: Float32Array; stops?: number[]; needRef?: boolean }>;
   speaker(p: { key: string; pcm: Float32Array }): Promise<boolean>;
   onProgress(fn: (m: { done: number; total?: number; what: string }) => void): () => void;
 }
@@ -129,24 +130,40 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
     }
     if (!r.pcm?.length) return null;
     // every sentence is listened back to (studio_check.ts): a take that strays from its words is made again
-    const checked = async (t: string, first: Float32Array): Promise<Float32Array> => {
-      let best = first, err = await heard(first, t, code);
-      for (let k = 1; k < MAX_TAKES && err > GOOD_TAKE; k++) {
+    // (the take that is kept brings where its inner marks are in its sound, for the pauses inside the sentence: studio_pause.ts)
+    type Take = { pcm: Float32Array; stops?: number[] };
+    const checked = async (t: string, first: Take): Promise<Take> => {
+      let best = first, err = await heard(first.pcm, t, code), k = 1;
+      for (; k < MAX_TAKES && err > GOOD_TAKE; k++) {
         onProgress?.(0, `Saying it again (take ${k + 1})`);
         const x = await sayOne(t, k);
         if (!x.pcm?.length) continue;
         const e = await heard(x.pcm, t, code);
-        if (e < err) { best = x.pcm; err = e; }
+        if (e < err) { best = { pcm: x.pcm, stops: x.stops }; err = e; }
+      }
+      // A good take can still run on through a pause the line asks for ("you — not" said as one breath): the pause cannot
+      // be cut into running speech, so with takes left another is made, and kept if it is as true to its words and
+      // holds more of the line's pauses.
+      const runsOn = (x: Take) => innerPauses(x.pcm, t, pace, 24000, x.stops).missed ?? 0;
+      let miss = err <= GOOD_TAKE ? runsOn(best) : 0;
+      for (; miss > 0 && k < MAX_TAKES; k++) {
+        onProgress?.(0, `Saying it again for its pauses (take ${k + 1})`);
+        const x = await sayOne(t, k);
+        if (!x.pcm?.length) continue;
+        const e = await heard(x.pcm, t, code);
+        if (e > GOOD_TAKE) continue;
+        const m = runsOn({ pcm: x.pcm, stops: x.stops });
+        if (m < miss) { best = { pcm: x.pcm, stops: x.stops }; err = e; miss = m; }
       }
       return best;
     };
-    const parts = [await checked(list[0] ?? words, r.pcm)];
+    const takes = [await checked(list[0] ?? words, { pcm: r.pcm, stops: r.stops })];
     for (const t of list.slice(1)) {
       const x = await sayOne(t);
       if (!x.pcm?.length) return null;
-      parts.push(await checked(t, x.pcm));
+      takes.push(await checked(t, { pcm: x.pcm, stops: x.stops }));
     }
-    const { pcm, ...how } = pacing(parts, list, pace);
+    const { pcm, ...how } = pacing(takes.map((t) => t.pcm), list, pace, 24000, takes.map((t) => t.stops));
     // the rest of the tone, worked onto the acted speech: what a line asks beyond its mood (higher, louder, a rising
     // end, a tremble); a mood's own curves are the model's to act (studio_shape.ts)
     const own0 = mood ? TONES[mood] ?? {} : {};

@@ -16,6 +16,7 @@
  */
 import { lineOver, linePass, lineStart, withoutLead } from "./studio_lead";
 import { cleanPass, tailOver } from "./studio_pass";
+import { innerMarks } from "./studio_pause";
 
 export const STUDIO_SR = 24000;
 /**
@@ -335,6 +336,8 @@ export interface SayResult {
   pass?: { from: number; end: number; dirt: number };
   /** With SayOptions.lead: whether the lead was cut away in a pause (false: cut roughly, the take is best made again). */
   lead?: boolean;
+  /** For each mark inside the line (studio_pause.ts innerMarks, in order): the second of `pcm` at which the speech comes to the word after it, read from the alignment; -1 where the speech never got there. */
+  stops?: number[];
   /** With SayOptions.trace: per frame, the text position attended, the strongest attention on the first four text tokens and on the last two. */
   trace?: { cur: number[]; free: number[]; first: number[]; tail: number[]; S: number; skip?: number; head?: number; lead?: { frame: number; clean: boolean; cut: number } };
 }
@@ -583,14 +586,34 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   if (al.trace) { al.trace.skip = skip; al.trace.head = soundBounds(wav)[0]; }
   // The lead is cut away where the speech comes to the line (a speech token is 40 ms of sound). A take whose lead
   // runs into the line without a pause is not a good one: it is cut as well as can be, and counts as not said cleanly.
-  let cleanLead = true;
+  let cleanLead = true, ledCut = 0;
   if (lineAt) {
     const cut = withoutLead(wav, start < 0 ? -1 : Math.round((start * STUDIO_SR) / 25), STUDIO_SR);
+    ledCut = wav.length - cut.pcm.length;
     if (al.trace) al.trace.lead = { frame: start, clean: cut.clean, cut: wav.length - cut.pcm.length };
     wav = cut.pcm;
     cleanLead = cut.clean;
   }
-  return { pcm: trimSilence(wav), complete: (lineS >= 6 ? !!pass && pass.dirt === 0 : al.complete) && cleanLead, reason, tokens: toks.length, ...(al.trace ? { trace: al.trace } : {}), ...(pass ? { pass } : {}), ...(lineAt ? { lead: cleanLead } : {}) };
+  // Where the marks inside the line are in the sound (studio_pause.ts): the frame at which the attention comes to the
+  // word after each, carried through the cuts made above (frames skipped, the lead cut away, the silence trimmed).
+  const head = soundBounds(wav)[0], line = text.trim(), path = lineAt ? al.frees : al.curs, since = Math.max(0, lineAt ? start : skip);
+  // The word's position is counted from the END of the text, as leadEnd does: counted from the front, the tokens that
+  // prepareText adds to a cut-off piece (its closing stop) put the mark 4–6 tokens late, a word or two after the pause.
+  const whole = models.tokenizer.encode(prepareText(lead + line, o.lang, models.tokenizer.cased)).length;
+  const stops = innerMarks(line).map((m) => {
+    const pos = whole - models.tokenizer.encode(prepareText(line.slice(m.next), o.lang, models.tokenizer.cased)).length + 2;
+    // the first frame from which the attention STAYS on or past the word (three of the five frames from it): for a frame
+    // or two it can flick ahead to a later word and come back, which would put the mark a word early
+    let f = -1;
+    for (let g = since; g < path.length; g++) {
+      if (path[g]! < pos) continue;
+      let on = 0, seen = 0;
+      for (let h = g; h < Math.min(path.length, g + 5); h++) { seen++; if (path[h]! >= pos) on++; }
+      if (on >= Math.min(3, seen)) { f = g; break; }
+    }
+    return f < 0 ? -1 : Math.max(0, Math.round((((f - skip) * TOKEN_SAMPLES - ledCut - head) / STUDIO_SR) * 1000) / 1000);
+  });
+  return { pcm: trimSilence(wav), complete: (lineS >= 6 ? !!pass && pass.dirt === 0 : al.complete) && cleanLead, reason, tokens: toks.length, ...(al.trace ? { trace: al.trace } : {}), ...(pass ? { pass } : {}), ...(lineAt ? { lead: cleanLead } : {}), ...(stops.length ? { stops } : {}) };
 
   /** Mean-free attention maps (rows × total) of the aligned heads, batch row 0. */
   function headAttention(out: Record<string, OrtTensor>, rows: number[], total: number, seq: number): Float32Array[] {

@@ -159,6 +159,7 @@ contextBridge.exposeInMainWorld("vsd", {
     unpack: (file) => call("cine.unpack", file),
     studio: (film) => call("cine.studio", film),
     review: (film, shot) => call("cine.review", film, shot),
+    mocap: (film, video, opt) => call("cine.mocap", film, video, opt),
   },
   process: (kind, input, o) => call("media.process", kind, input, o),
   voice16k: (p, from, seconds) => call("audio.voice16k", p, from, seconds),

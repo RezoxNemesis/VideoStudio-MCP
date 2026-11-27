@@ -70,6 +70,11 @@ export function registerCineCommands(_s: Studio): void {
     "{film, shot?} The deep review of a Cine / CodeScape film, measured without drawing a frame (seconds): for every shot, how much the picture shakes (a lens tied to a talking head or a trembling hand: limit 3 px at 720×1280), the nearest body or prop to the lens (limit 12 cm), and every hold the film notes in c.rep (reach under 92 % of the arm, wrist under 60°, finger pads within 2 mm, the thumb long enough). → { ok, must: [what to fix], text }. Run it after every change, before any frame is looked at; then look at full-size frames. A CodeScape film (`// @engine codescape`) gets engine.js, kit.js, rig.js, people.js, face2.js and motion.js (hands that hold: pinchSheet; speech movement: speechPlan/speechHead; steady cameras: steady/anchorAt) from the app.",
     async (_st, a) => { const c = cine(); if (!c.review) throw new Error("This version of VideoStudio Desktop has no review."); const r = await c.review(a.str("film"), a.optStr("shot")); return { ok: r.ok, must: r.must, text: r.text, shots: r.shots }; },
   );
+  registerCommand(
+    "cine.mocap",
+    "{film, video: its whole path, or a file in the film's folder, name?, from?, to? (seconds)} Motion capture from an ordinary video of a person (no suit, no markers): finds the body in every frame (MediaPipe pose, on this PC's Python: pip install mediapipe numpy) and writes <name>.json into the film's folder, a clip the CodeScape rig plays with body.js clipOf + playClip (arms, spine, head, and the legs when the whole body was in the picture). The Library film's \"mocap\" shot shows one.",
+    async (_st, a) => { const c = cine(); if (!c.mocap) throw new Error("This version of VideoStudio Desktop has no motion capture."); return c.mocap(a.str("film"), a.str("video"), { name: a.optStr("name"), from: a.optNum("from"), to: a.optNum("to") }); },
+  );
   registerCommand("cine.unpack", "{file: a .tar.gz lying in the Cine folder} Unpack many files at once into the Cine folder (shared assets, a film's performances): the way data made in a workspace arrives.", async (_st, a) => cine().unpack(a.str("file")));
   registerCommand(
     "cine.tool",

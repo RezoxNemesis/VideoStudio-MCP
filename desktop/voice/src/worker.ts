@@ -212,7 +212,7 @@ async function handle(m: Msg): Promise<unknown> {
       // (with trace: the same takes are made and the same one chosen; how each went is told as well)
       type Take = Awaited<ReturnType<typeof say>>;
       const told = (r: Take, attempt: number, tries: unknown[]) =>
-        p.trace ? { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, lead: r.lead, attempt, tries } : { pcm: r.pcm };
+        p.trace ? { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, lead: r.lead, stops: r.stops, attempt, tries } : { pcm: r.pcm, stops: r.stops };
       const tries: Array<{ complete: boolean; reason: string; lead?: boolean; pass?: Take["pass"]; found?: unknown }> = [];
       let first: Take | null = null;
       let firstAt = 0;
