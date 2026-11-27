@@ -25,7 +25,7 @@ const http = require("node:http");
 const os = require("node:os");
 const { spawn, execFile } = require("node:child_process");
 
-const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream", ".woff2": "font/woff2", ".wav": "audio/wav" };
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".bin": "application/octet-stream", ".woff2": "font/woff2", ".wav": "audio/wav", ".wasm": "application/wasm", ".mp4": "video/mp4" };
 const safeName = (s) => String(s || "").replace(/[^\p{L}\p{N} _.-]+/gu, "").trim().replace(/\s+/g, " ").slice(0, 60);
 const safeId = (s) => { const v = String(s ?? ""); if (!/^[A-Za-z0-9_.-]{1,80}$/.test(v)) throw new Error(`Not a usable name: ${v}`); return v; };
 
@@ -48,6 +48,7 @@ function createCine(o) {
 
   const say = (line) => { logs.push(line); if (logs.length > 400) logs.splice(0, logs.length - 400); if (o.log && /^(ERR|EXC)/.test(line)) o.log(`cine: ${line}`); };
   const body = (req) => new Promise((r) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => r(Buffer.concat(c))); });
+  let ctxTake = null; // the video a capture is reading (served at /take)
   const flag = (name, v) => { const w = waits.get(name); if (w) { waits.delete(name); w.resolve(v ?? "ok"); } };
 
   function filmDir(film) {
@@ -207,6 +208,12 @@ function createCine(o) {
             else json(stop());
           } else if (what === "lastframe") { if (!lastFrame) { res.statusCode = 404; return res.end("none"); } res.setHeader("Content-Type", "application/octet-stream"); res.setHeader("Cache-Control", "no-store"); res.setHeader("X-Size", `${lastFrame.w}x${lastFrame.h}`); res.end(lastFrame.b); }
           else { res.statusCode = 404; res.end("not found"); }
+        } else if (u.pathname === "/take") { // the video being captured (mocap.html), in parts as the player asks for them
+          if (!ctxTake || !fs.existsSync(ctxTake)) { res.statusCode = 404; return res.end("no take"); }
+          const size = fs.statSync(ctxTake).size, m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || ""); res.setHeader("Content-Type", "video/mp4"); res.setHeader("Accept-Ranges", "bytes"); res.setHeader("Cache-Control", "no-store");
+          if (m && (m[1] || m[2])) { const a = m[1] ? +m[1] : Math.max(0, size - +m[2]), b = m[1] && m[2] ? Math.min(size - 1, +m[2]) : size - 1; if (a > b || a >= size) { res.statusCode = 416; res.setHeader("Content-Range", `bytes */${size}`); return res.end(); }
+            res.statusCode = 206; res.setHeader("Content-Range", `bytes ${a}-${b}/${size}`); res.setHeader("Content-Length", b - a + 1); fs.createReadStream(ctxTake, { start: a, end: b }).pipe(res); }
+          else { res.setHeader("Content-Length", size); fs.createReadStream(ctxTake).pipe(res); }
         } else {
           const f = resolve(decodeURIComponent(u.pathname));
           if (!f) { res.statusCode = 404; return res.end("not found"); }
@@ -373,8 +380,8 @@ function createCine(o) {
     if (r.code && /No module named|not found|ENOENT/.test(r.err)) throw new Error(`This PC's python3 cannot run the tool: ${r.err.trim().split("\n").slice(-1)[0]}. It needs: pip install --user numpy scipy opencv-python-headless pillow. (Or run the tool in Claude's workspace and send the data into the film's folder.)`);
     return { code: r.code, out: r.out.slice(-6000), err: r.err.slice(-3000) };
   }
-  /** A video of a person → a motion clip in a film's folder (tools/mocap/video2clip.py: MediaPipe's body pose), for body.js clipOf + playClip. */
-  async function mocap(film, video, opt = {}) {
+  /** The same capture with this PC's Python (tools/mocap/video2clip.py): the second way, for a PC whose graphics cannot run the page. */
+  async function mocapPy(film, video, opt = {}) {
     const dir = filmDir(film), script = path.join(path.dirname(o.web), "tools", "mocap", "video2clip.py"); const v = String(video || "");
     const src = [v, path.join(dir, v), path.join(ROOT, v)].find((x) => x && path.isAbsolute(x) && fs.existsSync(x) && fs.statSync(x).isFile());
     if (!src) throw new Error(`No such video: ${v}. Give its whole path, or a file in the film's folder or the Cine folder.`);
@@ -397,6 +404,38 @@ function createCine(o) {
     if (!r || r.code) throw new Error(/No module named/.test(why) ? `The capture tools are missing a part: ${why}. In a terminal: pip install mediapipe numpy — then run this again.` : /ENOENT|not recognized|not found/i.test(why) || !why ? "This PC has no Python on its PATH. Install Python 3, then press Capture again (the capture sets up the rest itself)." : `The capture failed: ${why}`);
     let info = {}; try { info = JSON.parse(r.out.trim().split("\n").slice(-1)[0]); } catch { /* the tool said something else */ }
     return { ...info, file: out, clip: name, use: `in film.js:  import { clipOf, playClip } from './body.js';  build: c.clip = clipOf(await (await fetch(new URL('${name}', import.meta.url))).json());  frame: playClip(p, c.clip, t, { at: [x, z], yaw })`, note: info.legs === false ? "The legs were not in the picture for most of it: the rig will stand and follow the arms, spine and head. Film the whole body for the legs." : "" };
+  }
+  /** A video of a person → a motion clip in a film's folder, for body.js clipOf + playClip. Done inside the app (mocap.html: MediaPipe's pose model on the
+   *  graphics card, no Python): the video is first copied small at a steady 30 frames a second, so any format opens and every frame is reached exactly. */
+  const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task";
+  const fetchTo = (url, file, hops = 5) => new Promise((res, rej) => { const rq = require("node:https").get(url, (r) => {
+    if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && hops > 0) { r.resume(); return fetchTo(new URL(r.headers.location, url).href, file, hops - 1).then(res, rej); }
+    if (r.statusCode !== 200) { r.resume(); return rej(new Error(`HTTP ${r.statusCode}`)); }
+    const tmp = file + ".part", w = fs.createWriteStream(tmp); r.pipe(w); w.on("finish", () => { try { fs.renameSync(tmp, file); res(file); } catch (e) { rej(e); } }); w.on("error", rej); }); rq.on("error", rej); rq.setTimeout(120_000, () => rq.destroy(new Error("no answer"))); });
+  async function mocap(film, video, opt = {}) {
+    const dir = filmDir(film), v = String(video || "");
+    const src = [v, path.join(dir, v), path.join(ROOT, v)].find((x) => x && path.isAbsolute(x) && fs.existsSync(x) && fs.statSync(x).isFile());
+    if (!src) throw new Error(`No such video: ${v}. Give its whole path, or a file in the film's folder or the Cine folder.`);
+    const name = `${String(opt.name || path.basename(src).replace(/\.[^.]+$/, "")).replace(/[^\w-]+/g, "_").slice(0, 60) || "take"}.json`, out = path.join(dir, name);
+    const tmp = path.join(dir, ".studio"); await fsp.mkdir(tmp, { recursive: true }); await fsp.mkdir(ASSETS, { recursive: true });
+    const proxy = path.join(tmp, `capture_${Date.now()}.mp4`), model = path.join(ASSETS, "pose_landmarker_heavy.task"), from = Math.max(0, +opt.from || 0), to = Math.max(0, +opt.to || 0);
+    let inApp = "";
+    try {
+      // 1. a small steady copy: upright, 30 frames a second, a key frame every 6 (exact, quick seeking), the longer side 960 at most
+      const ff = await exec(o.ffmpeg || "ffmpeg", ["-y", "-v", "error", ...(from ? ["-ss", String(from)] : []), ...(to > from ? ["-t", String(to - from)] : []), "-i", src, "-vf", "scale='if(gt(iw,ih),min(960,iw),-2)':'if(gt(iw,ih),-2,min(960,ih))',fps=30", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-g", "6", "-pix_fmt", "yuv420p", "-movflags", "+faststart", proxy], { timeout: 30 * 60_000 });
+      if (ff.code || !fs.existsSync(proxy)) throw new Error(`the video could not be read (${ff.err.trim().split("\n").slice(-1)[0] || "ffmpeg"})`);
+      // 2. the pose model, once
+      if (!fs.existsSync(model) || fs.statSync(model).size < 1e6) { say("mocap: fetching the pose model (30 MB, once)"); try { await fetchTo(POSE_MODEL, model); } catch (e) { throw new Error(`the pose model could not be fetched (${e.message}): is this PC online? It is needed once.`); } }
+      // 3. the page finds the body in every frame
+      ctxTake = proxy; const r = await page(dir, "mocap", `mocap.html?fps=30&name=${encodeURIComponent(path.basename(src))}`, { width: 660, height: 420 }, 90 * 60_000);
+      if (/^EXC /.test(r)) throw new Error(r.slice(4));
+      const clip = JSON.parse(r); await fsp.writeFile(out, JSON.stringify(clip));
+      const info = { frames: clip.frames.length, fps: clip.fps, seconds: Math.round((clip.frames.length / clip.fps) * 100) / 100, legs: !!(clip.seen && clip.seen.legs), found: clip.found, on: clip.on };
+      return { ...info, file: out, clip: name, use: `in film.js:  import { clipOf, playClip } from './body.js';  build: c.clip = clipOf(await (await fetch(new URL('${name}', import.meta.url))).json());  frame: playClip(p, c.clip, t, { at: [x, z], yaw })`, note: info.legs ? "" : "The legs were not in the picture for most of it: the rig will stand and follow the arms, spine and head. Film the whole body for the legs." };
+    } catch (e) { inApp = String((e && e.message) || e); say(`ERR mocap in the app: ${inApp}`); }
+    finally { ctxTake = null; fs.rm(proxy, { force: true }, () => {}); }
+    // the second way: this PC's Python, if it has the tools
+    try { return await mocapPy(film, src, { ...opt, install: false }); } catch (e) { throw new Error(`The capture failed: ${inApp}`); }
   }
   /** Many files at once: a .tar.gz that lies in the Cine folder is unpacked there (bodies, textures, a film's performances). */
   async function unpack(file) {
@@ -421,7 +460,7 @@ function createCine(o) {
     /** Cine Studio: the film playing live in a window (real time, on the graphics card), its code beside it, the library, the checks, a render watched as it is drawn. */
     studio: async (film) => { await start(); const name = film ? (String(film) === LIB ? LIB : path.basename(filmDir(film))) : ""; const url = `http://127.0.0.1:${port}/studio.html?k=${STUDIO_KEY}${name ? `&film=${encodeURIComponent(name)}` : ""}`; if (o.openStudio) await o.openStudio(url); return { url, film: name || null, window: !!o.openStudio }; },
     /** The deep review, measured without drawing: cameras that shake, lenses with a body on them, hands that do not reach or hold (the film notes its holds in c.rep). → the report */
-    review: async (film, shot) => { const dir = filmDir(film); const r = await page(dir, "review", `review.html?job=review${shot ? `&id=${safeId(shot)}` : ""}`, null, 300_000); try { return JSON.parse(r); } catch { throw new Error(`The review did not run.\n${lastErr() || r}`.slice(0, 1500)); } },
+    review: async (film, shot) => { const dir = String(film) === LIB ? studioDir(film) : filmDir(film); /* the Library film ("@library") is the app's own: it can be reviewed like any other */ const r = await page(dir, "review", `review.html?job=review${shot ? `&id=${safeId(shot)}` : ""}`, null, 300_000); try { return JSON.parse(r); } catch { throw new Error(`The review did not run.\n${lastErr() || r}`.slice(0, 1500)); } },
     /** A video of a person → a motion clip in the film's folder. */
     mocap,
     said: () => logs.slice(-60),

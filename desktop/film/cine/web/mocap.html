@@ -1,0 +1,29 @@
+<!doctype html><meta charset=utf-8><title>Cine — motion capture</title>
+<body style="margin:0;background:#111"><video id=v muted playsinline preload=auto style="width:640px"></video>
+<script type=module>
+// Motion capture inside the app (cine.mocap, Cine Studio's "Capture motion…"): finds the body in every frame of a video with MediaPipe's pose model,
+// on the graphics card, and says the clip back to the app. No Python. The app first makes /take: a small H.264 copy of the video at a steady 30 frames a second
+// (any phone or camera format, already turned upright and cut to the part asked for), so every frame can be reached exactly.
+// The clip: { fps, frames: [[x, y, z] × 33], vis: [[left wrist, right wrist, left ankle, right ankle]], seen: { legs } } in the film's axes
+// (metres, y up, hips at the origin, the performer's left on +x facing +z: MediaPipe's world axes turned half a turn about x). Played by body.js clipOf + playClip.
+import { FilesetResolver, PoseLandmarker } from './vendor/mediapipe/vision_bundle.mjs';
+const q = new URLSearchParams(location.search), post = (p, b) => fetch(p, { method: 'POST', body: b }).catch(() => {}), log = m => post('/log', 'mocap: ' + m);
+const r3 = x => Math.round(x * 1000) / 1000, r2 = x => Math.round(x * 100) / 100;
+(async () => { try {
+  const v = document.getElementById('v'), fps = +q.get('fps') || 30; v.src = '/take';
+  await new Promise((r, j) => { v.onloadeddata = r; v.onerror = () => j(new Error('the video could not be opened' + (v.error && v.error.message ? ' (' + v.error.message + ')' : ''))); });
+  const files = await FilesetResolver.forVisionTasks('./vendor/mediapipe/wasm');
+  const make = delegate => PoseLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: '/pose_landmarker_heavy.task', delegate }, runningMode: 'VIDEO', numPoses: 1 });
+  let lm, on = 'graphics card'; try { lm = await make('GPU'); } catch (e) { on = 'processor'; lm = await make('CPU'); }
+  const seek = t => new Promise(r => { if (Math.abs(v.currentTime - t) < 1e-4) return r(); const done = () => { v.removeEventListener('seeked', done); r(); }; v.addEventListener('seeked', done); v.currentTime = t; });
+  const n = Math.max(1, Math.floor(v.duration * fps + 0.5)), frames = [], vis = []; let last = null, found = 0; const t0 = performance.now();
+  await log(`${n} frames, ${v.videoWidth}×${v.videoHeight}, on the ${on}`);
+  for (let i = 0; i < n; i++) { await seek(Math.min(v.duration - 0.001, (i + 0.5) / fps)); const r = lm.detectForVideo(v, Math.round((i + 1) * 1000 / fps)), w = r.worldLandmarks && r.worldLandmarks[0];
+    if (w) { last = w; found++; }
+    if (last) { frames.push(last.map(p => [r3(p.x), r3(-p.y), r3(-p.z)])); vis.push([15, 16, 27, 28].map(j => r2(last[j].visibility ?? 1))); }   /* a frame with nobody found repeats the last pose rather than leaving a hole */
+    if (i % 90 === 89) await log(`${i + 1}/${n} frames, ${Math.round((i + 1) / ((performance.now() - t0) / 1000))} a second`); }
+  if (!frames.length) throw new Error('nobody was found in the video');
+  const legs = vis.filter(a => a[2] > 0.5 && a[3] > 0.5).length / vis.length > 0.6;
+  await post('/say?name=mocap', JSON.stringify({ fps, frames, vis, seen: { legs }, source: q.get('name') || '', found: r2(found / n), on, note: 'on the spot: the hips are the origin of every frame' }));
+} catch (e) { await log('EXC ' + e.message); await post('/say?name=mocap', 'EXC ' + e.message); } })();
+</script>

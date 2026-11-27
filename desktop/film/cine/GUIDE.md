@@ -432,9 +432,11 @@ a frame ("slides"), a leg at its whole length (the foot is out of reach), and �
 13 cm off its own feet.
 
 **Captured motion** — `cine.mocap {film, video, name?, from?, to?}` (or "Capture motion…" in Cine Studio): an ordinary video of a
-person (no suit, no markers) becomes `<name>.json` in the film's folder. It runs `tools/mocap/video2clip.py` on this PC's Python 3.
-The first time, it sets up its own tools by itself: a private folder `.mocap-tools` in the Cine folder with mediapipe and numpy
-(nothing goes into the system's Python; on Ubuntu this needs `python3-venv`), and the pose model (30 MB) in the shared assets. In the film:
+person (no suit, no markers) becomes `<name>.json` in the film's folder. It runs INSIDE the app, with no Python: the video is copied
+small at a steady 30 frames a second (any phone or camera format, turned upright), and a page (`web/mocap.html`, MediaPipe's pose
+model on the graphics card) finds the body in every frame. The pose model (30 MB) is fetched once into the shared assets.
+(`tools/mocap/video2clip.py` does the same with Python + mediapipe, for a workspace; `node tools/cli.cjs mocap <film> <video>` runs
+the app's own way with a headless Chrome.) In the film:
 `c.clip = clipOf(await (await fetch(new URL('take.json', import.meta.url))).json())` in build, `playClip(p, c.clip, t, { at, yaw,
 fist })` in frame. Only DIRECTIONS are taken from the performer (their bones are not the rig's): each limb points as theirs did, on
 the rig's own lengths; the palm comes from wrist → index and wrist → little finger; fingers are not seen by a body-pose capture
