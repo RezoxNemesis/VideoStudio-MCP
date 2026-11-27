@@ -29,7 +29,8 @@ export class Engine {
     this.postScene = new THREE.Scene(); this.postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.postMesh = new THREE.Mesh(quad, null); this.postMesh.frustumCulled = false; this.postScene.add(this.postMesh);
     this.mBright = new THREE.ShaderMaterial({ uniforms: { t: { value: null }, th: { value: 1.0 } }, vertexShader: FSQ, depthTest: false,
-      fragmentShader: `uniform sampler2D t; uniform float th; varying vec2 vUv; void main(){ vec3 c = texture2D(t, vUv).rgb; float l = max(c.r, max(c.g, c.b)); gl_FragColor = vec4(c * smoothstep(th, th * 2.2, l), 1.); }` });
+      fragmentShader: `uniform sampler2D t; uniform float th; varying vec2 vUv; void main(){ vec3 c = texture2D(t, vUv).rgb; float sum = c.r + c.g + c.b; if (isnan(sum) || isinf(sum) || abs(sum) > 1.0e5) c = vec3(0.0);   /* one pixel that is not a number would be blurred into a black block 700 px wide */
+        float l = max(c.r, max(c.g, c.b)); gl_FragColor = vec4(c * smoothstep(th, th * 2.2, l), 1.); }` });
     this.mBlur = new THREE.ShaderMaterial({ uniforms: { t: { value: null }, dir: { value: new THREE.Vector2() } }, vertexShader: FSQ, depthTest: false,
       fragmentShader: `uniform sampler2D t; uniform vec2 dir; varying vec2 vUv; void main(){ vec3 s = texture2D(t, vUv).rgb * 0.227;
         s += (texture2D(t, vUv + dir * 1.385).rgb + texture2D(t, vUv - dir * 1.385).rgb) * 0.316; s += (texture2D(t, vUv + dir * 3.23).rgb + texture2D(t, vUv - dir * 3.23).rgb) * 0.070; gl_FragColor = vec4(s, 1.); }` });
@@ -44,11 +45,12 @@ export class Engine {
         float coc(vec2 uv){ float d = lin(texture2D(tD, uv).r); return clamp(uDof * abs(d - uFocus) / (d * uFocus) * uRes.y / 1000.0, 0.0, uMaxBlur); }
         float h(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233)) + uT * 3.7) * 43758.5453); }
         vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+        vec3 scn(vec2 uv){ vec3 c = texture2D(tC, uv).rgb; float sum = c.r + c.g + c.b; return (isnan(sum) || isinf(sum) || abs(sum) > 1.0e5) ? vec3(0.0) : c; }   /* the scene, with any pixel that is not a number put out */
         void main(){
-          vec3 c = texture2D(tC, vUv).rgb;
+          vec3 c = scn(vUv);
           if (uDof > 0.0) { float r0 = coc(vUv); if (r0 > 0.35) { vec3 s = c; float wsum = 1.0; float ga = 2.39996;
               for (int i = 1; i < 24; i++) { float fi = float(i); float rr = sqrt(fi / 24.0) * r0; vec2 o = vec2(cos(fi * ga), sin(fi * ga)) * rr / uRes;
-                float rs = coc(vUv + o); float w = smoothstep(rr - 0.5, rr + 0.5, max(rs, r0 * 0.6)); s += texture2D(tC, vUv + o).rgb * w; wsum += w; }
+                float rs = coc(vUv + o); float w = smoothstep(rr - 0.5, rr + 0.5, max(rs, r0 * 0.6)); s += scn(vUv + o) * w; wsum += w; }
               c = s / wsum; } }
           c += (texture2D(tB1, vUv).rgb * 0.6 + texture2D(tB2, vUv).rgb * 0.8) * uGrade.w;
           c *= uExp * uTint;

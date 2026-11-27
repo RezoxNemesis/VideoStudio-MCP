@@ -57,7 +57,7 @@ export function registerCineCommands(_s: Studio): void {
       return cine().render(a.str("film"), p);
     },
   );
-  registerCommand("cine.progress", "The Cine render that is running or just finished: pieces done, frames a second, time left, the finished file, or the mistake.", async () => cine().progress());
+  registerCommand("cine.progress", "The Cine render that is running or just finished: pieces done, frames a second, time left, the finished file, or the mistake. A finished film is looked over: picture.blackBlocks must be [] (a run of seconds there is a solid black block in the picture: run cine.review and do not send the film).", async () => cine().progress());
   registerCommand("cine.join", "{film, maxMB?, name?} Join the drawn pieces again and lay the sound under (after changing only audio.wav).", async (_st, a) => cine().join(a.str("film"), { maxMB: a.optNum("maxMB"), name: a.optStr("name") }));
   registerCommand("cine.stop", "Stop the Cine render (pieces already drawn are kept).", async () => cine().stop());
   registerCommand(
@@ -67,7 +67,7 @@ export function registerCineCommands(_s: Studio): void {
   );
   registerCommand(
     "cine.review",
-    "{film (\"@library\" for the CodeScape Library), shot?} The deep review of a Cine / CodeScape film, measured without drawing a frame (seconds): for every shot, how much the picture shakes (a lens tied to a talking head or a trembling hand: limit 3 px at 720×1280), the nearest body or prop to the lens (limit 12 cm), and every hold the film notes in c.rep (reach under 92 % of the arm, wrist under 60°, finger pads within 2 mm, the thumb long enough). → { ok, must: [what to fix], text }. Run it after every change, before any frame is looked at; then look at full-size frames. A CodeScape film (`// @engine codescape`) gets engine.js, kit.js, rig.js, people.js, face2.js and motion.js (hands that hold: pinchSheet; speech movement: speechPlan/speechHead; steady cameras: steady/anchorAt) from the app.",
+    "{film (\"@library\" for the CodeScape Library), shot?} The deep review of a Cine / CodeScape film, measured without drawing a frame (seconds): for every shot, how much the picture shakes (a lens tied to a talking head or a trembling hand: limit 3 px at 720×1280), the nearest body or prop to the lens (limit 12 cm), and every hold the film notes in c.rep (reach under 92 % of the arm, wrist under 60°, finger pads within 2 mm, the thumb long enough), every body on its feet (no sliding foot, no locked knee), and every mesh whole (a normal list shorter than its points draws as a black block on the GPU). → { ok, must: [what to fix], text }. Run it after every change, before any frame is looked at; then look at full-size frames. A CodeScape film (`// @engine codescape`) gets engine.js, kit.js, rig.js, people.js, face2.js and motion.js (hands that hold: pinchSheet; speech movement: speechPlan/speechHead; steady cameras: steady/anchorAt) from the app.",
     async (_st, a) => { const c = cine(); if (!c.review) throw new Error("This version of VideoStudio Desktop has no review."); const r = await c.review(a.str("film"), a.optStr("shot")); return { ok: r.ok, must: r.must, text: r.text, shots: r.shots }; },
   );
   registerCommand(

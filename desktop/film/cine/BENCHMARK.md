@@ -21,16 +21,31 @@ The body shots of the CodeScape Library film (`films/codescape-library/film.js`)
 - Holds: reach ≤ 92 % of the arm, wrist ≤ 60°, pads on the surface (≤ 2 mm), the thumb reaches.
 - Bodies: a foot flat on the floor moves ≤ 6 mm a frame (benchmark: 0–5 mm), no leg at its whole length (benchmark: 99.7 %),
   weight within 13 cm of its feet when standing.
+- Meshes: every mesh whole — each per-point list (normals, uv) as long as its points, every index inside them, every number finite.
+- The finished render: `cine.progress` must report `picture: { blackBlocks: [] }` (the app looks every render over for a solid black block).
 - The benchmark's own numbers: walk — hips ride 5.6 cm, speed changes ≤ 0.11 m/s a frame; hand-over — reach 77–78 %, wrists 49–53°.
 
 ## How it is used
 1. Before any animation: open the Library film (`cine.studio {film: "@library"}`), read GUIDE.md and the lessons.
 2. Whole-body motion comes from `body.js`, hands from `motion.js`. A new kind of motion is ADDED to them, with a Library shot.
-3. Review until clean, then look at full-size frames from the side with the feet in the picture.
+3. Review until clean, then look at full-size frames from the side with the feet in the picture. FULL size means the size it will be rendered at:
+   a fault one pixel wide (a point with no normal) is missed by a 360 px check sheet and blacks out half the picture at 720 px.
 4. Put the new shot beside the benchmark reel. If it moves worse, it is not sent.
 5. Every new success goes into the Library film and this file: the bar only rises.
 
 `tests/cinelibrary.test.ts` runs the review on the Library film in every build, so the benchmark cannot silently break.
+`tests/cinemesh.test.ts` keeps the whole-mesh check and the render look-over working.
+
+## A fault that got as far as a render, and what now stops it (27 Nov 2026)
+The new trouser seat got a closed underside: one point and 48 triangles were ADDED to a mesh that already had normals.
+`computeVertexNormals()` keeps an existing normal list, so the new point had no normal. On the GPU that point draws as a pixel that
+is not a number, the bloom blurs it, and half the picture is a black block — in one shot, for two seconds, only at full size.
+The 360 px check sheets were clean. It was caught by looking at the PC's own render before sending it. Now:
+1. `people.js`: `deleteAttribute('normal')` before the normals are made again (the rule for ANY mesh that grows).
+2. The review names a mesh that is not whole (`a mesh is not whole … its normal list has 833 entries for 834 points`).
+3. Both engines put out a pixel that is not a number before the bloom, so one bad pixel stays one pixel.
+4. The app looks over every finished render and reports `picture.blackBlocks`; Cine Studio shows it in red.
+5. The rule stays: the PC's render is looked at (a strip of frames from every shot) before anything is sent.
 
 ## What the benchmark is NOT yet (the owner, 27 Nov 2026)
 The motion is the success. The owner then asked for the body MODEL to be reworked (hands and fingers, the waist from the side,

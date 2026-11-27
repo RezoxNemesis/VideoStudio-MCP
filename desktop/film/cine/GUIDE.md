@@ -458,3 +458,8 @@ plan for the legs and `playClip(..., { legs: false })` for the rest.
 - *Library* rows have *copy import*. *Capture motion…* is the motion capture above.
 - The Library film (`@library`) now also has: walk, turn, sit, gesture, give, mocap. It cannot be changed from the window: copy
   what you need into a film.
+
+**Meshes that grow (27 Nov 2026).** When points are added to a mesh that already has normals, throw the old list away first:
+`g.deleteAttribute('normal'); g.computeVertexNormals();`. `computeVertexNormals()` alone keeps the old, shorter list; the new point
+then has no normal and draws on the GPU as a black block over half the picture (blurred by the bloom), only at the full render size.
+`cine.review` now names such a mesh, and `cine.progress` reports `picture.blackBlocks` for every finished render: it must be `[]`.

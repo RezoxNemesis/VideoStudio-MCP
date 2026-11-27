@@ -306,6 +306,7 @@ function createCine(o) {
         if (me.stop) { me.state = "stopped"; return; }
         me.state = "joining";
         me.out = await join(dir, plan, info, p);
+        me.state = "checking"; try { const bb = await blackBlocks(me.out.file); if (bb && bb.length) me.picture = { blackBlocks: bb.slice(0, 12), fix: "A solid black block is in the picture at these seconds. Run cine.review: a mesh that is not whole (a normal list shorter than its points) draws this way on the GPU. Do not send this film." }; else if (bb) me.picture = { blackBlocks: [] }; } catch { /* the check is extra */ }
         me.state = "done"; me.seconds = Math.round((Date.now() - me.started) / 1000);
       } catch (e) { me.state = "failed"; me.error = String(e && e.message).slice(0, 1500); }
     })();
@@ -333,11 +334,24 @@ function createCine(o) {
     if (o.movies) { try { await fsp.mkdir(o.movies, { recursive: true }); await fsp.copyFile(out, path.join(o.movies, `${name}.mp4`)); res.copy = path.join(o.movies, `${name}.mp4`); } catch { /* the film's own folder has it */ } }
     return res;
   }
+  /** A finished film is looked over for a solid black block. A mesh with a broken list (a normal list one point short) draws as one
+   *  on the GPU, only at full size, and small check sheets do not show it (27 Nov 2026). Six pictures a second, 96 × 96 grey:
+   *  runs of { from, to, share } in seconds. A wholly black picture (a fade) and black bars are not blocks. */
+  function blackBlocks(file) {
+    return new Promise((resolve) => {
+      const N = 96, FPS = 6, runs = []; let buf = Buffer.alloc(0), i = 0, p;
+      try { p = spawn(o.ffmpeg, ["-v", "error", "-i", file, "-vf", `fps=${FPS},scale=${N}:${N}`, "-pix_fmt", "gray", "-f", "rawvideo", "-"], { stdio: ["ignore", "pipe", "ignore"] }); } catch { resolve(null); return; }
+      const one = (a) => blockShare(a, N);
+      p.stdout.on("data", (d) => { buf = buf.length ? Buffer.concat([buf, d]) : d; while (buf.length >= N * N) { const share = one(buf.subarray(0, N * N)), t = i / FPS; buf = buf.subarray(N * N); i++;
+        if (share) { const last = runs[runs.length - 1]; if (last && t - last.to < 1.5 / FPS) { last.to = Math.round(t * 100) / 100; last.share = Math.max(last.share, Math.round(share * 100) / 100); } else runs.push({ from: Math.round(t * 100) / 100, to: Math.round(t * 100) / 100, share: Math.round(share * 100) / 100 }); } } });
+      p.on("error", () => resolve(null)); p.on("close", () => resolve(runs));
+    });
+  }
   function progress() {
     if (!run) return { state: "idle" };
     const el = (Date.now() - run.started) / 1000, drawn = run.done - (run.total - run.todo);
     return { film: run.film, state: run.state, pieces: `${run.done}/${run.total}`, piece: run.piece, frames: run.frames, size: run.size, fps: run.fps, encoder: run.encoder, engine: run.engine, seconds: Math.round(el),
-      framesPerSecond: run.frames ? Math.round((run.frames / el) * 10) / 10 : 0, left: drawn > 0 && run.state === "drawing" ? `${Math.round((el / drawn) * (run.total - run.done) / 60)} min` : undefined, out: run.out, error: run.error, said: logs.slice(-3) };
+      framesPerSecond: run.frames ? Math.round((run.frames / el) * 10) / 10 : 0, left: drawn > 0 && run.state === "drawing" ? `${Math.round((el / drawn) * (run.total - run.done) / 60)} min` : undefined, out: run.out, picture: run.picture, error: run.error, said: logs.slice(-3) };
   }
   function stop() { if (run && run.state === "drawing") { run.stop = true; for (const w of waits.values()) w.resolve("stopped"); return { stopping: true }; } return { stopping: false }; }
 
@@ -511,4 +525,9 @@ function setupCine(o) {
   return cine;
 }
 
-module.exports = { createCine, setupCine };
+/** The share of an N × N grey picture taken by ONE solid black block (0 when there is none): black pixels that fill their own
+ *  bounding box. A wholly black picture (a fade) is not a block, nor are black bars, nor a dark scene with scattered black. */
+function blockShare(a, N) { let n = 0, x0 = N, x1 = -1, y0 = N, y1 = -1; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (a[y * N + x] < 6) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const share = n / (N * N); if (share < 0.03 || share > 0.97) return 0; const w = x1 - x0 + 1, h = y1 - y0 + 1; return w >= 8 && h >= 8 && n / (w * h) > 0.9 ? share : 0; }
+
+module.exports = { createCine, setupCine, blockShare };

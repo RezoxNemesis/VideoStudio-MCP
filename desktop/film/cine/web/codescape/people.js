@@ -375,7 +375,8 @@ export function trousersSon(p, E) {
   const seatM = pm.clone(); seatM.side = THREE.DoubleSide; const YS = []; for (let i = 0; i <= 16; i++) YS.push(lerp(0.105, -0.11, i / 16));
   const seat = surf(YS, 48, 0, seatM); p.pelvis.add(seat);
   { const g = seat.geometry, P = g.attributes.position, n0 = P.count, pos = Array.from(P.array), uv = Array.from(g.attributes.uv.array), idx = Array.from(g.index.array); pos.push(0, -0.125, 0.004); uv.push(0.5, 1); const last = (YS.length - 1) * 49; for (let j = 0; j < 48; j++) idx.push(last + j, n0, last + j + 1);   /* the underside, closed (it hides between the legs) */
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals(); }
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx);
+    g.deleteAttribute('normal'); g.computeVertexNormals(); }   /* the old normals are one point short: computeVertexNormals would keep them and leave the new point with NO normal, which draws as a black block on the GPU (27 Nov 2026) */
   // the belt: a leather band standing a little proud of the waist, loops of the cloth over it, a buckle in front
   const leather = new THREE.MeshStandardMaterial({ color: '#2b1c12', roughness: 0.45 }), belt = surf([0.098, 0.094, 0.066, 0.062], 48, 0.0055, leather); belt.geometry.computeVertexNormals(); p.pelvis.add(belt);
   for (const th of [0.42, -0.42, 1.35, -1.35, Math.PI]) { const q = ring(0.08, th, 0.0085), lp = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.05, 0.004), seatM); lp.position.set(q[0], q[1], q[2]); lp.rotation.y = Math.atan2(q[0], q[2]); p.pelvis.add(lp); }
