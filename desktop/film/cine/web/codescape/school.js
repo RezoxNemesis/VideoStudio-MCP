@@ -124,3 +124,4 @@ export function cycleShed(E, o = {}) { const G = new THREE.Group(); E.scene.add(
     rod(b, pipe, [0.4, 0.82, -0.24], [0.4, 0.86, 0.24], 0.011); const sd = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.1), M('#1a1410', { r: 0.6 })); sd.position.set(-0.14, 0.88, 0); b.add(sd);
     if (r() < 0.45) { const bk = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.16, 0.28), M('#6b5a3a', { r: 0.9, x: { wireframe: false } })); bk.position.set(0.56, 0.85, 0); bk.castShadow = true; b.add(bk); } }
   return G; }
+export { plaster, M, box, canvasTex, pot };

@@ -101,7 +101,7 @@ export function restArm(p, s, t, o = {}) { p.hang(s, (o.swing || 0) + 0.03 * Mat
  *  → { t0, t1, steps, pel, rest0, rest1, footfalls: [{ t, s, p }] } — give it to stepper() each frame; footfalls time the footstep sounds */
 export function planWalk(points, o = {}) {
   const sz = o.size ?? 1, path = pathOf(points), D = path.len, t0 = o.t0 ?? 0, w = (o.width ?? 0.085) * sz;
-  const L0 = (o.step ?? 0.62) * sz, speed = (o.speed ?? 1.15) * sz;
+  const L0 = (o.step ?? 0.62) * sz, speed = (o.speed ?? 1.15) * sz; let seed = (o.seed ?? Math.round(Math.abs(points[0][0] * 131 + points[0][1] * 71 + (o.t0 || 0) * 17))) % 2147483646 + 1; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;   /* no two steps quite alike */
   const n = Math.max(2, Math.round(D / L0 + 1.25)), L = D / (n - 1.25), Ts = L / speed, lead = o.lead ?? 0.32, settle = o.settle ?? 0.42, swing = 0.78;
   const a0 = path.at(0), a1 = path.at(D), yaw0 = o.yaw0 ?? yawOf(a0.dir), yaw1 = yawOf(a1.dir);
   const spot = (s, sg, yaw) => { const c = path.at(s), d = yaw == null ? c.dir : fwdOf(yaw), lf = new V3(d.z, 0, -d.x); return { G: c.p.clone().addScaledVector(lf, sg * w), d: d.clone().addScaledVector(lf, sg * 0.1).normalize(), s }; };
@@ -110,14 +110,14 @@ export function planWalk(points, o = {}) {
   const bend = wrap(yawOf(path.at(Math.min(D, L * 2)).dir) - yawOf(a0.dir)), first = o.first || (bend > 0.1 ? 'l' : 'r');
   const steps = [], at = { l: rest0.l, r: rest0.r }, pel = [{ t: t0, s: 0, side: 0 }];
   for (let i = 1; i <= n; i++) { const s = (i % 2 === 1) === (first === 'l') ? 'l' : 'r', sg = s === 'l' ? 1 : -1, other = s === 'l' ? 'r' : 'l';
-    const sTo = i >= n - 1 ? D : (i - 0.25) * L, to = i >= n - 1 ? rest1[s] : spot(sTo, sg), a = t0 + lead + (i - 1) * Ts, b = a + swing * Ts * (i === 1 || i === n ? 1.12 : 1);
-    steps.push({ s, a, b, from: at[s], to, len: to.G.distanceTo(at[s].G), lift: (0.055 + 0.05 * Math.min(1, L / (0.62 * sz))) * sz });
+    const sTo = i >= n - 1 ? D : (i - 0.25) * L, to = i >= n - 1 ? rest1[s] : spot(sTo, sg), jit = (i > 1 && i < n - 1 ? (rnd() - 0.5) * 0.07 : 0) * Ts, a = t0 + lead + (i - 1) * Ts + jit, b = a + swing * Ts * (i === 1 || i === n ? 1.12 : 1) * (1 + (rnd() - 0.5) * 0.06);
+    steps.push({ s, a, b, from: at[s], to, len: to.G.distanceTo(at[s].G), lift: (0.05 + 0.045 * Math.min(1, L / (0.62 * sz))) * sz * (0.9 + 0.2 * rnd()) });
     // as one foot passes the other the pelvis is a little AHEAD of the standing foot, so that at the heel strike it is midway between the two
     // (behind that, the leading leg has to stretch and pulls the hips down 7 cm a step); it has already fallen forward into the first step, and is still arriving in the last
     pel.push({ t: (a + b) / 2, s: i === 1 ? 0.2 * L : i === n ? D - 0.2 * L : clamp(at[other].s + 0.14 * L, 0, D - 0.2 * L), side: -sg });
     at[s] = to; }
   const t1 = steps[n - 1].b + settle; pel.push({ t: t1, s: D, side: 0 });
-  let plan = { t0, t1, steps, rest0, rest1, size: sz, path, D, L, Ts, yaw0, yaw1, pel, kind: 'walk', sway: 0.3 * w };
+  let plan = { t0, t1, steps, rest0, rest1, size: sz, path, D, L, Ts, yaw0, yaw1, pel, kind: 'walk', sway: 0.17 * w };
   plan.footfalls = steps.map(k => ({ t: k.b, s: k.s, p: [k.to.G.x, 0, k.to.G.z] }));
   if (o.face != null && Math.abs(wrap(o.face - yaw1)) > 0.3) plan = chain(plan, planTurn([a1.p.x, a1.p.z], yaw1, o.face, { size: sz, t0: t1 - 0.2, width: o.width }));
   return plan;
@@ -147,13 +147,15 @@ export function chain(A, B) {
     footfalls: [...A.footfalls, ...B.footfalls.map(f => ({ ...f, t: f.t + shift }))], yaw0: A.yaw0, yaw1: B.yaw1 };
 }
 
+/** a real swing foot rises EARLY (the heel goes up behind as the knee folds after toe-off), then glides forward low and reaches out for the heel strike; a symmetric arc reads as marching */
+const SWING = u => u < 0.3 ? Math.sin(PI / 2 * u / 0.3) ** 0.85 : Math.cos(PI / 2 * (u - 0.3) / 0.7) ** 1.7;
 const TOE = 0.72;   // how far the heel is up (radians) when the toe leaves the floor in a full stride: this, not a deeper knee, is what keeps the hips from sinking between steps
 // where a foot is at time t of a plan: planted (heel down first, then flat, then up on its ball before it leaves) or in the air
 function footAt(plan, s, t, p) {
   const mine = plan.steps.filter(k => k.s === s); let prev = null, cur = null, next = null;
   for (const k of mine) { if (t >= k.b) prev = k; else if (t >= k.a) cur = k; else if (!next) next = k; }
   if (cur) { const u = (t - cur.a) / (cur.b - cur.a), big = clamp(cur.len / (0.5 * plan.size), 0, 1), p0 = cur.turn ? -0.1 : -TOE * big - 0.06, p1 = cur.turn ? 0 : 0.2 * big;
-    const A = ankleOf(cur.from.G, cur.from.d, p0, p), B = ankleOf(cur.to.G, cur.to.d, p1, p), e = sm2(u), pos = A.lerp(B, e); pos.y += cur.lift * Math.pow(Math.sin(PI * u), 1.3) * (1 - 0.25 * u);
+    const A = ankleOf(cur.from.G, cur.from.d, p0, p), B = ankleOf(cur.to.G, cur.to.d, p1, p), e = cur.turn ? sm2(u) : sm(clamp(u * 1.04 - 0.01, 0, 1)), pos = A.lerp(B, e); pos.y += cur.lift * (cur.turn ? Math.pow(Math.sin(PI * u), 1.3) * (1 - 0.25 * u) : SWING(u));
     const d = cur.from.d.clone().lerp(cur.to.d, sm(u)).normalize(); return { p: pos, dir: d, pitch: lerp(p0, p1, sm(clamp(u * 1.15, 0, 1))), flat: false, G: null, air: Math.sin(PI * u) }; }
   const here = prev ? prev.to : plan.rest0[s]; let pitch = 0;
   if (prev && !prev.turn) { const big = clamp(prev.len / (0.5 * plan.size), 0, 1); pitch = 0.2 * big * (1 - sm(clamp((t - prev.b) / 0.11, 0, 1))); }   // heel first, then the foot rolls flat
@@ -186,16 +188,16 @@ export function stepper(p, plan, t, o = {}) {
   const still = (1 - clamp(Math.abs(vel) / (0.3 * sz), 0, 1)) * (1 - Math.max(f.l.air, f.r.air)), br = Math.sin(t * 1.6) * 0.004 * still, sway = Math.sin(t * 0.5) * 0.008 * still, brc = Math.sin(t * 1.6 + 0.5) * still;
   const roll = 0.075 * (f.r.air - f.l.air) - sway * 0.9 / sz, pelYaw = -0.13 * split * (q.kind === 'walk' ? 1 : 0.4);   /* the swing side's hip drops a little more, the pelvis turns with the leading leg */
   // height: under the cap of both legs' reach, smoothed over three moments so it rides rather than snaps
-  const goW = clamp(Math.abs(vel) / (0.6 * sz), 0, 1), lat = 0.022 * sz * (f.r.air - f.l.air) * goW;   /* the body rides over the foot that is down: a side-to-side sway of about 2 cm (the height cap knows it) */
+  const goW = clamp(Math.abs(vel) / (0.6 * sz), 0, 1), lat = 0.013 * sz * (f.r.air - f.l.air) * goW;   /* the body rides over the foot that is down: a side-to-side sway of about 2 cm (the height cap knows it) */
   const capAt = ps => pelvisCap(p, ps.P.C.clone().addScaledVector(leftOf(ps.P.yaw), lat), ps.P.yaw + pelYaw, roll, { l: ps.f.l.p, r: ps.f.r.p }, (lerp(STRIDE, STAND, still) - (o.crouch || 0)) * sz + br);
   const capNow = capAt({ f, P }), y = Math.min(capNow, (capAt(pose(T - 0.045)) + 2 * capNow + capAt(pose(T + 0.045))) / 4);   /* eased over three moments, but never above what the legs reach now */
   const C = P.C.clone().addScaledVector(lf, sway + lat); C.y = y;
   p.place(C.x, C.z, yaw);
-  p.body({ pel: C, lean: (o.lean ?? 0.03) + 0.055 * clamp(vel / (1.2 * sz), 0, 1.3) + 0.022 * acc, chestLean: -0.012 * brc + 0.012 * goW * (f.l.air + f.r.air), twist: -pelYaw * 0.7 + 0.025 * Math.sin(t * 0.37 + 0.7) * still, chestTwist: -pelYaw * 1.35 + 0.015 * Math.sin(t * 0.61 + 2.1) * still, side: -roll * 0.5, chestSide: -roll * 0.55 + 0.006 * Math.sin(t * 0.83 + 1.3) * still, pelYaw, pelRoll: roll,
+  p.body({ pel: C, lean: (o.lean ?? 0.04) + 0.06 * clamp(vel / (1.2 * sz), 0, 1.3) + 0.022 * acc, chestLean: -0.012 * brc + 0.012 * goW * (f.l.air + f.r.air), twist: -pelYaw * 0.7 + 0.025 * Math.sin(t * 0.37 + 0.7) * still, chestTwist: -pelYaw * 1.35 + 0.015 * Math.sin(t * 0.61 + 2.1) * still, side: -roll * 0.5, chestSide: -roll * 0.55 + 0.006 * Math.sin(t * 0.83 + 1.3) * still, pelYaw, pelRoll: roll,
     feet: { l: { p: f.l.p, dir: f.l.dir, pitch: f.l.pitch }, r: { p: f.r.p, dir: f.r.dir, pitch: f.r.pitch } } });
   // arms: each against its own leg, a little late, the elbow folding as it comes forward
   const go = clamp(Math.abs(vel) / (0.9 * sz), 0, 1);
-  for (const s of ['l', 'r']) { if (o.arms === false || (o.arms && o.arms[s] === false)) continue; const sw = (s === 'l' ? -1 : 1) * splitLate * (o.swing ?? 0.6) * go; p.hang(s, sw + 0.03 * Math.sin(t * 0.8 + (s === 'l' ? 0 : 2)), lerp(0.26, 0.1 + 0.55 * Math.max(0, sw), go) + 0.04 * go, 0.1 + 0.03 * go); loose(p, s, t, { curl: 0.3 }); }   /* a free swing from the shoulder: nearly straight behind, the elbow folding as it comes forward */
+  for (const s of ['l', 'r']) { if (o.arms === false || (o.arms && o.arms[s] === false)) continue; const sw = (s === 'l' ? -1 : 1) * splitLate * (o.swing ?? 0.32) * go, fw_ = Math.max(0, sw) / 0.32; p.hang(s, sw - 0.06 * go + 0.03 * Math.sin(t * 0.8 + (s === 'l' ? 0 : 2)), lerp(0.26, 0.22 + 0.3 * fw_, go) + 0.03 * go, 0.1 + 0.03 * go - 0.045 * fw_ * go); loose(p, s, t, { curl: 0.42 }); }   /* a free swing from the shoulder: nearly straight behind, the elbow folding as it comes forward */
   if (o.look !== false) { const eye = o.look || (q.kind === 'walk' ? q.path.at(Math.min(q.D, P.s + 4 * sz)).p.clone().add(new V3(0, 1.45 * sz, 0)).addScaledVector(fw, 0.5) : C.clone().addScaledVector(fw, 3).setY(1.45 * sz)); p.look(eye, 0.7); }
   note(p, t, { l: { G: f.l.G, flat: f.l.flat }, r: { G: f.r.G, flat: f.r.flat } }, C, Math.abs(vel));
   const strike = plan.footfalls.find(k => t >= k.t && t < k.t + 1 / 24);

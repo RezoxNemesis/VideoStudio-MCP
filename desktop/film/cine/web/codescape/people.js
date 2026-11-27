@@ -574,12 +574,34 @@ export function kidUniform(p) { const sp2 = p.sp2, Y2 = p.Y2;
 /** A CHILD from the son's body (not the grown man scaled down): a shorter lower face, bigger eyes, a small nose, a small mouth, round cheeks, thin brows,
  *  a slender neck; each child its own face (o.face), skin (o.skin), hair (o.hair: 'fringe' | 'parted' | 'crew' | 'curly' | 'spiky'), build (o.slim). */
 export function makeKid(E, o = {}) {
-  const p = makeSon(E, { kid: 1, skin: o.skin, slim: o.slim ?? 0.8, shoulders: o.shoulders ?? 0.8, face: { jaw: 0.27, mouthW: 0.0255, cheek: 0.0075, cheekY: 0.045, chin: 0.006, lip: '#9a5850', lipA: 0.6, ...(o.face || {}) } });
+  const p = makeSon(E, { kid: 1, skin: o.skin, slim: o.slim ?? 0.8, shoulders: o.shoulders ?? 0.8, face: { jaw: 0.27, mouthW: 0.0255, cheek: 0.0075, cheekY: 0.045, chin: 0.006, lip: '#86463f', lipA: 0.82, ...(o.face || {}) } });
   if (p.bagOff) p.bagOff(); kidHead(p, o); brows(p, o.brow ?? 0.0046, 0.0032, o.browColor || '#2b1d15'); p.head.position.y += 0.01; hairKid(p, o.hair || 'fringe', o);   /* a child's thinner, softer brows; a little more neck above the collar */ p.sleeveTo = o.sleeve ?? 0.56; p.sleeveCover = (o.sleeve ?? 0.56) * 0.95; p.sleeveR = o.sleeveR ?? 0.95; p.kid = true;
   p.root.traverse(m => { if (m.isMesh && m.material && m.material.color && ['8fb0d4', 'a8c8e8', '94b6da'].includes(m.material.color.getHexString())) { m.material = m.material.clone(); m.material.color.set(o.shirt || '#e9e8e2'); } });   /* the son's blue placket and collar pieces become the white of the school shirt */
   { const ct = kidCloth(o.shirt || '#e9e8e2', o.seed ?? 3); if (ct) for (const m of [p.chest.material, p.belly.material]) { m.map = ct; m.color.set('#ffffff'); m.sheen = 0.05; m.roughness = 0.82; m.needsUpdate = true; } }
-  p.neck.scale.set(0.9, 1, 0.9); skinGlow(p); clothFolds(p, o.seed ?? 3);
+  p.neck.scale.set(0.9, 1, 0.9); skinGlow(p, { k: 0.32 }); clothFolds(p, o.seed ?? 3); kidDetails(p, o);
   return p; }
+/** a school shirt's details that a real one has: collar points lying on the chest either side of the knot, and a pocket on the left chest with the
+ *  school's badge stitched on it (a navy shield, a gold rising sun). Built on the shirt's own front surface (p.front), so they move with the chest. */
+export function kidDetails(p, o = {}) { if (!p.front || !browser) return; const sp2 = p.sp2, Y2 = p.Y2, yT = Y2 + 0.196;
+  const surf = (corner, nu, nv, off, mat) => { const pos = [], uv = [], idx = []; for (let j = 0; j <= nv; j++) for (let i = 0; i <= nu; i++) { const u = i / nu, v = j / nv, q0 = corner(u, v), q = p.front(q0[0], q0[1], off); pos.push(q.x, q.y - Y2, q.z); uv.push(u, 1 - v); }
+    for (let j = 0; j < nv; j++) for (let i = 0; i < nu; i++) { const a = j * (nu + 1) + i, b = a + nu + 1; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals(); const m = new THREE.Mesh(g, mat); m.castShadow = true; m.receiveShadow = true; sp2.add(m); return m; };
+  // collar points: from the collar band out over the chest, the tip pointing down and in
+  const ctex = (() => { const c = document.createElement('canvas'); c.width = 128; c.height = 128; const g = c.getContext('2d'); g.fillStyle = o.shirt || '#ecebe6'; g.fillRect(0, 0, 128, 128); g.strokeStyle = 'rgba(110,108,100,.55)'; g.lineWidth = 6; g.strokeRect(3, 3, 122, 122); g.strokeStyle = 'rgba(150,148,140,.6)'; g.lineWidth = 2; g.setLineDash([6, 5]); g.strokeRect(14, 14, 100, 100); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; })();   /* a folded edge and a line of stitching show where the collar lies on the shirt */
+  const col = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.8, side: THREE.DoubleSide, map: ctex });
+  for (const sx of [-1, 1]) { const A = [sx * 0.011, yT + 0.012], B = [sx * 0.05, yT + 0.02], C = [sx * 0.046, yT - 0.018], D = [sx * 0.022, yT - 0.05];
+    surf((u, v) => { const top = [lerp(A[0], B[0], u), lerp(A[1], B[1], u)], bot = [lerp(D[0], C[0], u), lerp(D[1], C[1], u)]; return [lerp(top[0], bot[0], v), lerp(top[1], bot[1], v)]; }, 4, 5, 0.0085, col); }
+  // the pocket and the badge
+  const tex = (() => { const c = document.createElement('canvas'); c.width = 256; c.height = 288; const g = c.getContext('2d'); g.clearRect(0, 0, 256, 288);
+    g.strokeStyle = 'rgba(105,105,100,.95)'; g.lineWidth = 5; g.setLineDash([10, 6]); g.strokeRect(10, 10, 236, 268); g.setLineDash([]); g.strokeStyle = 'rgba(95,95,90,.7)'; g.lineWidth = 7; g.beginPath(); g.moveTo(6, 64); g.lineTo(250, 64); g.stroke(); g.fillStyle = 'rgba(0,0,0,.06)'; g.fillRect(8, 8, 240, 56);   /* the stitched edge and the hem */
+    const cx = 128, cy = 160; g.beginPath(); g.moveTo(cx - 62, cy - 62); g.lineTo(cx + 62, cy - 62); g.lineTo(cx + 62, cy + 6); g.quadraticCurveTo(cx + 58, cy + 58, cx, cy + 82); g.quadraticCurveTo(cx - 58, cy + 58, cx - 62, cy + 6); g.closePath();
+    g.fillStyle = '#1d2a58'; g.fill(); g.lineWidth = 7; g.strokeStyle = '#d6a93a'; g.stroke();
+    g.fillStyle = '#e8b84a'; g.beginPath(); g.arc(cx, cy + 14, 24, Math.PI, 0); g.fill(); g.lineWidth = 5; g.strokeStyle = '#e8b84a'; for (let k = 0; k < 7; k++) { const a = Math.PI + (k + 0.5) / 7 * Math.PI; g.beginPath(); g.moveTo(cx + Math.cos(a) * 30, cy + 14 + Math.sin(a) * 30); g.lineTo(cx + Math.cos(a) * 44, cy + 14 + Math.sin(a) * 44); g.stroke(); }
+    g.fillRect(cx - 40, cy + 18, 80, 5); g.font = 'bold 22px sans-serif'; g.textAlign = 'center'; g.fillText('S V M', cx, cy + 52);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t; })();
+  const pm = new THREE.MeshStandardMaterial({ map: tex, transparent: true, alphaTest: 0.3, roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -2 });
+  const pk = surf((u, v) => [lerp(0.024, 0.08, u), lerp(yT - 0.068, yT - 0.132, v)], 6, 6, 0.0055, pm); }
+
 /** light that goes into the skin and comes back out warm: a wrapped, reddened diffuse at the edge of the light (a cheap subsurface look) and a soft sheen; on the face, hands and arms */
 export function skinGlow(p, o = {}) { const seen = new Set(), k = o.k ?? 0.55;
   p.root.traverse(m => { if (!m.isMesh || !m.material || Array.isArray(m.material) || seen.has(m.material)) return; const mt = m.material; if (!(mt === p.mSkin || mt.vertexColors || (p.face2 && m === p.face2) || mt.userData.skin)) return; seen.add(mt);
@@ -612,7 +634,7 @@ export function kidHead(p, o = {}) { const H = p.head, yE = o.eyeLine ?? 0.096, 
 /** children's hair: a thick shell with locks flowing from the crown, in one of five cuts. Replaces the man's swept-back hair. */
 export function hairKid(p, style = 'fringe', o = {}) {
   for (const c of p.head.children) { if (c === p.hairShell) c.visible = false; if (c.isMesh && c.geometry.type === 'TubeGeometry' && c.material === p.hairShell?.material) c.visible = false; }
-  const g = new THREE.SphereGeometry(1, 220, 160), P = g.attributes.position, N = P.count, hl = new Float32Array(N), R = (o.seed ?? 3) * 1.37;
+  const g = new THREE.SphereGeometry(1, 220, 160), P = g.attributes.position, N = P.count, hl = new Float32Array(N), fls = new Float32Array(N), R = (o.seed ?? 3) * 1.37;
   const crown = new V3(-0.15, 0.93, -0.35).normalize();   /* the whorl, back of the top */
   const line = az => { const a = Math.abs(az);
     if (style === 'fringe') return a < 0.75 ? 0.6 + 0.035 * Math.sin(az * 23 + R) + 0.05 * (a / 0.75) ** 2 : a < 1.3 ? lerp(0.65, 0.4, sm((a - 0.75) / 0.55)) : a < 1.95 ? lerp(0.4, 0.22, sm((a - 1.3) / 0.65)) : lerp(0.22, -0.28, sm((a - 1.95) / 1.0));
@@ -629,12 +651,18 @@ export function hairKid(p, style = 'fringe', o = {}) {
     if (style === 'curly') ridge = 0.5 + 0.5 * Math.sin(d.x * 61 + R) * Math.sin(d.y * 59) * Math.sin(d.z * 63 + R);
     if (style === 'spiky') ridge = Math.pow(Math.max(0, Math.sin(d.x * 37 + R) * Math.sin(d.z * 41 + d.y * 13)), 3) * 2.2;
     T += (style === 'crew' ? 0.0018 : 0.004 + 0.004 * top) * ridge - (partAz < 9 ? 0.006 * Math.exp(-(((az - partAz) / 0.045) ** 2)) * sm((el - 0.7) / 0.3) : 0);
-    T *= lerp(0.3, 1, sm(clamp(h / 0.2, 0, 1))); hl[i] = h;
+    T *= lerp(0.3, 1, sm(clamp(h / 0.2, 0, 1))); hl[i] = h - (0.022 + 0.012 * Math.sin(az * 7 + R)) * Math.pow(Math.abs(Math.sin(az * 47 + R + 3 * Math.sin(az * 5))), 2.5) * (1 - sm(clamp(h / 0.12, 0, 1))); fls[i] = fl;   /* the edge ends in tufts, not a line */
     const q = onHair(d, T); P.setXYZ(i, q.x, q.y, q.z); }
-  g.setAttribute('hl', new THREE.BufferAttribute(hl, 1)); g.computeVertexNormals();
+  g.setAttribute('hl', new THREE.BufferAttribute(hl, 1)); g.setAttribute('fl', new THREE.BufferAttribute(fls, 1)); g.computeVertexNormals();
   const colr = o.hairColor || ['#120c08', '#1a110b', '#0f0b09', '#21170f'][(o.seed ?? 3) % 4];
   const m = new THREE.MeshPhysicalMaterial({ color: colr, roughness: style === 'parted' ? 0.42 : 0.6, sheen: 0.2, sheenRoughness: 0.6, sheenColor: new THREE.Color('#2a2018'), clearcoat: style === 'parted' ? 0.35 : 0.08, clearcoatRoughness: 0.45 });
-  m.onBeforeCompile = sh => { sh.vertexShader = 'attribute float hl; varying float vHl;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vHl = hl;'); sh.fragmentShader = 'varying float vHl;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', 'if (vHl < 0.0) discard;\n#include <clipping_planes_fragment>'); };
+  m.onBeforeCompile = sh => { sh.vertexShader = 'attribute float hl; attribute float fl; varying float vHl; varying float vFl;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vHl = hl; vFl = fl;');
+    sh.fragmentShader = 'varying float vHl; varying float vFl;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', 'if (vHl < 0.0) discard;\n#include <clipping_planes_fragment>')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        { float s1 = sin(vFl * 7.0 + sin(vFl * 1.3) * 2.0), s2 = sin(vFl * 23.0 + 1.7); float strand = 0.5 + 0.32 * s1 + 0.18 * s2;   /* strands along the locks: lighter hair beside darker gaps */
+          diffuseColor.rgb *= mix(0.62, 1.38, strand) * mix(0.8, 1.0, smoothstep(0.0, 0.08, vHl)); }`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+        roughnessFactor = clamp(roughnessFactor + 0.18 * sin(vFl * 23.0 + 1.7), 0.25, 0.95);`); };
   const me = new THREE.Mesh(g, m); me.castShadow = me.receiveShadow = true; p.head.add(me);
   // loose locks that break the edge: a fringe falling over the forehead, tufts at the temples; a cowlick at the crown
   const P2 = (az, el, out) => onHair(dirAt(az, el), out), lk = [];

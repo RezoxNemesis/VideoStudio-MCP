@@ -535,3 +535,12 @@ After "a richer scale of this world, more realistic bodies, a more dramatic open
 - A sunrise: move the sun light every frame (`sun.position = aim + dir × 70`, shadow `reach` 15–17, far = 2 × 70 + 20), set the sky dome's `uSun`, and lerp the sky's colours from absolute dawn values (gold by the sun, peach horizon, deep blue overhead) to the day's; multiplying the day colours up only turns the sky white.
 - Vertex colours (and `Color.setRGB`) are linear: write palettes as sRGB hex and convert, or they come out pale.
 - Depth of field: blur radius = `dof` × |d − focus| ÷ (d × focus) × height ÷ 1000 px, so `dof: 1` hardly blurs; ~18 softens people 5 m behind a 4 m focus.
+
+## A truer walk, school-uniform details, golden-hour light (28 Nov 2026)
+
+- body.js walk, measured against gait norms (knee ~60–70° in swing, hip +30/−15°, side sway ~±2 cm, arm swing ±15–20°, elbow 20–40°): the swing foot rises EARLY (heel up behind as the knee folds) then glides forward low (`SWING`); forward travel eases in and out instead of a symmetric arc; each step gets a small seeded jitter in timing (±3.5 %), swing and lift, so no two steps are identical; side sway 0.17, lateral 0.013; the arms swing from the shoulder with the forearm bending forward on the front swing; lean 0.04 + 0.06·speed. Turn steps keep the old arc.
+- people.js kids: `kidDetails` — stitched collar points and a breast pocket with the school badge; `hairKid` strands (a jagged hairline and a per-strand shade/roughness in the shader); lips a little darker (#86463f, 0.82).
+- Golden hour from a building: put ONE shadow box round the whole chapter (reach big enough to hold the occluder, one aim) or the shade line moves from shot to shot. A low sun only shades the ground near the wall-top's shadow edge — people standing there are lit above the knee. A clean light/shade line for people is the VERTICAL plane thrown by the building's end corner; find it from a top-down debug shot with a marker grid.
+- A prop held out to someone reads only when tipped a little towards the lens (a flat slip on a palm seen side-on vanishes).
+- Ambient occlusion sized for a room (aoR 0.35) draws a dark halo round small things on a desk in an insert: use aoR ~0.05 for close shots.
+- Camera moves the review can pass: smootherstep (sm2) over long spans; smoothstep's jump in acceleration at a span's end reads as a shake.
