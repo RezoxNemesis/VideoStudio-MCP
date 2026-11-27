@@ -508,3 +508,18 @@ rows follow it; two rows on the line, one a little inside, make a lip.
 `g.deleteAttribute('normal'); g.computeVertexNormals();`. `computeVertexNormals()` alone keeps the old, shorter list; the new point
 then has no normal and draws on the GPU as a black block over half the picture (blurred by the bloom), only at the full render size.
 `cine.review` now names such a mesh, and `cine.progress` reports `picture.blackBlocks` for every finished render: it must be `[]`.
+
+## Outdoors, children, and the look (27 Nov 2026)
+
+After "the visuals are plain, no life; the children are the man copied; the walk is stiff", CodeScape gained:
+
+- **The look** (engine.js, per shot in what `frame` returns; all off unless asked):
+  `ao` 0…1 (+ `aoR` metres): ambient occlusion from the depth, at half size, blurred without crossing depth edges; it darkens shade and creases, not sunlit faces.
+  `haze: [start, density, max]` + `hazeCol`: aerial haze by distance (the sky dome is left alone).
+  `sun: [x, y, z]` (a far point) + `rays` (strength) + `rayLen`: sun rays from the bright sky round the sun, only when the sun is ahead of the lens.
+  `split: [r, g, b, r, g, b]`: a colour in the shadows and one in the light. `ca`: a lens fringe (keep 0 or below 0.0012; it shows on leaves).
+- **nature.js**: `sky(E, {sun, cover, env})` a sky dome with sun, glow and clouds that ALSO lights the scene (image-based light from the same sky); `ground(E)` packed earth from tex/ (noise, no photos; tools/textures.py makes them) with a soft edge into a tiling earth; `tree(E, {at, h, spread, seed, leaves})` trunk and limbs with a crown of leaf twigs that move in the wind and cast leafy shadows; `grass(E, place, {n, box, scale})`; `dust(E, {box})` motes in the light; `horizon(E)` a boundary wall, rooftops; `farTrees(E)`; `birds(E)` crows crossing the sky. Wind, clouds and dust follow film time, so every render is the same.
+- **school.js**: `schoolBlock(E, {at, rotY, len})` two storeys, verandah, pillars, grilled windows that reflect the sky, doors, jali railing, name board, water tank, bell, pots, bags, benches; `stage(E, {at})` with the flag; `compoundWall(E, {z, x0, x1, pillars, motto})`.
+- **makeKid(E, {hair, skin, slim, seed})** (people.js): a child built from the son's body, not the man scaled: the face below the eyes pressed up (children's faces are short there), bigger eyes, a small nose, a small mouth, round cheeks, thin brows, a slender neck, narrower shoulders; hair `fringe | parted | crew | curly | spiky` with locks from the crown whorl; a half-sleeved white cotton shirt (`p.sleeveTo`), tie, no bag; skin with a warm light-through edge (`skinGlow`). Give `refineHands(p, {armFrom: 0.1, armK: 0.82})` so the bare arm starts under the short sleeve.
+- **The walk** (body.js stepper): the arm swings freely from the shoulder (nearly straight behind, the elbow folding as it comes forward; `o.swing`, default 0.6), the body rides 2 cm over the foot that is down (the hips' height knows it, so no leg locks), the swing side's hip drops more, the shoulders turn against the hips more, a little more lean with speed. `gesture(p, s, 'wave', k, t, {sway, high})` is a wave.
+- Lessons: a big building BEHIND a line of people with the sun behind it puts them all in its shadow (keep it farther than its height ÷ tan(sun elevation)); a tree's crown shadow lands about 2 × its height away along the light; strong bump on ground in a low sun turns it grey; an attribute named `half` breaks a shader (reserved word); the review must skip per-instance lists.

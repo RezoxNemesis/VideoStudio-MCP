@@ -61,7 +61,7 @@ export function refineHands(p, o = {}) { const k = o.k ?? 1, sk = p.mSkin; const
   /** thumb over the front of a slab that lies on the palm (its back face at hand-local z = 0.022) */
   p.thumbOver = (s, lift = 0) => { const A = p.arm[s]; A.ha.updateWorldMatrix(true, false); const P = A.ha.localToWorld(new V3(A.sg * 0.014, -0.086, 0.0285 + lift * 0.03)); const n = new V3(0, 0, 1).transformDirection(A.ha.matrixWorld); thumbPad(p, s, P, n, {}); };
   p.flat = (s, c = 0.04, spread = 0.15, lift = 0) => { p.fingers(s, c, spread, [1.25, 1.45, 1.1]); p.thumbOver(s, lift); };
-  p.refined = true; fingerSkin(p); armSkin(p, { k: o.armK ?? (k < 1 ? 0.87 : 1) }); return p; }
+  p.refined = true; fingerSkin(p); armSkin(p, { k: o.armK ?? (k < 1 ? 0.87 : 1), from: o.armFrom }); return p; }
 
 /** one smooth curve through keys [[x, y]…] (x rising): no overshoot between them */
 function keyed(keys, x) { const n = keys.length; if (x <= keys[0][0]) return keys[0][1]; if (x >= keys[n - 1][0]) return keys[n - 1][1]; let i = 0; while (i < n - 2 && x > keys[i + 1][0]) i++;

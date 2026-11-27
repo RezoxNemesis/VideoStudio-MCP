@@ -15,7 +15,7 @@ export const LIMITS = { shakePx: 3, lensM: 0.12, reach: 0.92, bendRad: 1.05, gap
 function meshFaults(scene, seen) { const bad = []; if (!scene || !scene.traverse) return bad;
   if (scene.userData && scene.userData.ticks) for (const f of scene.userData.ticks) { try { f(); } catch (e) { /* a tick that needs a renderer */ } }   // meshes remade before each draw (trouser legs)
   scene.traverse(m => { const g = m.isMesh && m.geometry, P = g && g.attributes && g.attributes.position; if (!P) return; const ver = P.version || 0; if (seen.get(g) === ver) return; seen.set(g, ver); const say = [];
-    for (const [k, a] of Object.entries(g.attributes)) { if (a.count !== P.count) say.push(`its ${k} list has ${a.count} entries for ${P.count} points`);
+    for (const [k, a] of Object.entries(g.attributes)) { if (!a.isInstancedBufferAttribute && a.count !== P.count) say.push(`its ${k} list has ${a.count} entries for ${P.count} points`);
       else if (!a.isInterleavedBufferAttribute && (k === 'position' || k === 'normal' || k === 'uv')) { const A = a.array; for (let i = 0; i < A.length; i++) if (!Number.isFinite(A[i])) { say.push(`its ${k} list holds a number that is not finite (point ${Math.floor(i / a.itemSize)})`); break; } } }
     if (g.index) { const I = g.index.array; let mx = 0; for (let i = 0; i < I.length; i++) if (I[i] > mx) mx = I[i]; if (mx >= P.count) say.push(`a triangle uses point ${mx} of ${P.count}`); }
     if (say.length) { let who = ''; for (let q = m; q; q = q.parent) if (q.name) { who = q.name; break; } bad.push({ what: say.join('; '), mesh: `${who ? who + ': ' : ''}${g.type} of ${P.count} points${m.material && m.material.color ? ', colour #' + m.material.color.getHexString() : ''}` }); } });
