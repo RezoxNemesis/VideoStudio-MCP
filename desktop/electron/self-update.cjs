@@ -61,8 +61,9 @@ async function installUserApp(o) {
   await fsp.rm(tmp, { recursive: true, force: true });
   await fsp.mkdir(tmp, { recursive: true });
   try {
-    await fsp.chmod(o.appImage, 0o755);
-    const r = await o.run(o.appImage, ["--appimage-extract"], { cwd: tmp, timeout: 15 * 60_000 });
+    // run a fresh copy of the download: a file that some process still holds open for writing cannot be started (ETXTBSY)
+    const img = path.join(tmp, "update.AppImage"); await fsp.copyFile(o.appImage, img); await fsp.chmod(img, 0o755);
+    const r = await o.run(img, ["--appimage-extract"], { cwd: tmp, timeout: 15 * 60_000 });
     const got = path.join(tmp, "squashfs-root");
     if (r.code !== 0 || !fs.existsSync(path.join(got, exeName))) throw new Error(`The new version could not be unpacked${r.stderr ? `: ${String(r.stderr).trim().split("\n").slice(-1)[0]}` : "."}`);
     await fsp.rm(dir, { recursive: true, force: true });

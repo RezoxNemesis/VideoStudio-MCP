@@ -1162,18 +1162,25 @@ async function downloadUpdate(u, file) {
   const res = await net.fetch(u.url);
   if (!res.ok || !res.body) throw new Error(`Download failed (${res.status}).`);
   await fsp.mkdir(DIRS.downloads, { recursive: true });
-  const part = `${file}.part`;
+  // 27 Nov 2026: a download cut off midway (net::ERR_NETWORK_CHANGED) left its file open for writing, the next download wrote
+  // into the same file and was renamed, and starting it failed with ETXTBSY ("text file busy") until the app was restarted.
+  // Each download now has its own part file, is closed whatever happens, and is used only after it is CLOSED (not just ended).
+  const part = `${file}.${process.pid}.${Date.now()}.part`;
   const out = fs.createWriteStream(part);
+  const closed = new Promise((r) => out.once("close", r));
   let got = 0;
-  const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    got += value.length;
-    if (!out.write(Buffer.from(value))) await new Promise((r) => out.once("drain", r));
-    sendProgress("update", u.size ? got / u.size : 0);
-  }
-  await new Promise((r) => out.end(r));
+  try {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      got += value.length;
+      if (!out.write(Buffer.from(value))) await new Promise((r) => out.once("drain", r));
+      sendProgress("update", u.size ? got / u.size : 0);
+    }
+    out.end();
+  } catch (e) { out.destroy(); await closed; await fsp.rm(part, { force: true }); throw e; }
+  await closed;
   if (u.size && got !== u.size) throw new Error(`Download incomplete (${got} of ${u.size} bytes).`);
   await fsp.rename(part, file);
 }
