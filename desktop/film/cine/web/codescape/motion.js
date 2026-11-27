@@ -29,19 +29,21 @@ function mergeVerts(g) { const p = g.attributes.position, idx = g.index.array, m
   const o = new THREE.BufferGeometry(); o.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); o.setIndex(Array.from(idx, i => re[i])); return o; }
 const G = (parent, x = 0, y = 0, z = 0) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g; };
 // finger geometry (metres, for a person of size 1): knuckle x, knuckle y, bone lengths, base radius
-const FX = [0.0305, 0.0102, -0.0102, -0.0295], FY = [-0.0885, -0.0915, -0.0875, -0.079], FL = [[0.034, 0.024, 0.021], [0.038, 0.027, 0.022], [0.035, 0.025, 0.021], [0.027, 0.019, 0.019]], FR = [0.0089, 0.0092, 0.0087, 0.0077];
+const FX = [0.0305, 0.0102, -0.0102, -0.0295], FY = [-0.0885, -0.0915, -0.0875, -0.079], FL = [[0.034, 0.024, 0.021], [0.038, 0.027, 0.022], [0.035, 0.025, 0.021], [0.027, 0.019, 0.019]], FR = [0.0094, 0.0098, 0.0092, 0.0081];   /* fuller (owner, 27 Nov 2026: the fingers read as thin sticks with gaps between their roots) */
 const TH = { a: 0.044, b: 0.033, c: 0.027, r: 0.0092, base: [0.027, -0.025, 0.012] };
 const tipR = (f, k) => FR[f] * k * 0.8;
 
 /** Give a person real hands. k: finger thickness (1 a man, 0.9 a woman). The rig's own grip/flat/thumb functions are replaced to suit. */
-export function refineHands(p, o = {}) { const k = o.k ?? 1, sk = p.mSkin; const nailM = new THREE.MeshStandardMaterial({ color: new THREE.Color(sk.color).lerp(new THREE.Color('#ffe9e2'), 0.38), roughness: 0.28 });
+export function refineHands(p, o = {}) { const k = o.k ?? 1, sk = p.mSkin; const nailM = new THREE.MeshStandardMaterial({ color: new THREE.Color(sk.color).lerp(new THREE.Color('#f3d5c6'), 0.3), roughness: 0.42 });
   for (const s of ['l', 'r']) { const A = p.arm[s], ha = A.ha, sg = A.sg; for (const ch of [...ha.children]) ha.remove(ch);
     const hand = { fingers: [], thumb: null, k };
     // palm: a rounded slab, narrower at the wrist, the back gently domed, the heel and the thumb's ball fuller
-    const palm = superBall(0.0405 * k, 0.0475, 0.0132 * k, sk, 3.2, (x, y, z) => [x * (1 - 0.16 * Math.max(0, y)) * (1 + 0.04 * Math.max(0, -y)), y, z * (z < 0 ? 1.12 - 0.25 * x * x : 1) * (1 + 0.18 * Math.max(0, y))]); palm.position.set(0, -0.0445, 0.003); ha.add(palm);
+    const palm = superBall(0.042 * k, 0.0475, 0.0138 * k, sk, 3.2, (x, y, z) => [x * (1 - 0.16 * Math.max(0, y)) * (1 + 0.04 * Math.max(0, -y)), y, z * (z < 0 ? 1.12 - 0.25 * x * x : 1) * (1 + 0.18 * Math.max(0, y))]); palm.position.set(0, -0.0445, 0.003); ha.add(palm);
+    { const bar = superBall(0.0405 * k, 0.0135, 0.0112 * k, sk, 2.4); bar.position.set(0, -0.0835, 0.0018); ha.add(bar); }   /* the row of knuckles: the palm's far end, filling the gaps between the fingers' roots */
     const wr = new THREE.Mesh(new THREE.SphereGeometry(0.03 * k, 20, 14), sk); wr.scale.set(1, 0.95, 0.72); wr.position.set(0, -0.002, 0.001); wr.castShadow = true; ha.add(wr);
     for (let f = 0; f < 4; f++) { let par = G(ha, sg * FX[f], FY[f], 0.004); const segs = [];
-      for (let j = 0; j < 3; j++) { const jt = j === 0 ? par : G(par, 0, -FL[f][j - 1], 0); const r0 = FR[f] * k * 0.94 ** j, r1 = j === 2 ? tipR(f, k) : FR[f] * k * 0.94 ** (j + 1); jt.add(taperMesh(r0, r1, FL[f][j] - (j === 2 ? r1 : 0), sk, 12));
+      for (let j = 0; j < 3; j++) { const jt = j === 0 ? par : G(par, 0, -FL[f][j - 1], 0); const r0 = FR[f] * k * 0.955 ** j, r1 = j === 2 ? tipR(f, k) : FR[f] * k * 0.955 ** (j + 1); jt.add(taperMesh(r0, r1, FL[f][j] - (j === 2 ? r1 : 0), sk, 12));
+        { const kn = new THREE.Mesh(new THREE.SphereGeometry(r0 * (j === 0 ? 1.1 : 1.045), 14, 10), sk); kn.scale.set(1, 1, j === 0 ? 1.05 : 1); kn.position.set(0, 0, j === 0 ? -0.0012 : -0.0004); kn.castShadow = true; jt.add(kn); }   /* a joint is a little thicker than the bone on either side of it: knuckles */
         if (j === 2) { const nl = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), nailM); nl.scale.set(r1 * 0.78, r1 * 1.25, r1 * 0.32); nl.position.set(0, -FL[f][2] + r1 * 1.55, -r1 * 0.78); jt.add(nl); }
         segs.push(jt); par = jt; }
       hand.fingers.push(segs); }
@@ -116,7 +118,7 @@ export function blendHand(p, s, A, B, k, o = {}) { const u = o.raw ? k : sm2(k);
   const fd = A.fd.clone().lerp(B.fd, u).normalize(), pd = A.pd.clone().lerp(B.pd, u); pd.addScaledVector(fd, -pd.dot(fd)).normalize(); p.reach(s, T, o.pole || new V3(0, -1, 0.3), fd, pd);
   const h = p.arm[s].hand, J = [...h.fingers.flat(), ...h.thumb], uf = o.fingers ? clamp(o.fingers(u), 0, 1) : u; J.forEach((j, i) => j.quaternion.copy(A.q[i]).slerp(B.q[i], uf)); }
 /** a loose, living hand at rest: the fingers fall in a cascade (little finger most curled), each drifting a little */
-export function looseHand(p, s, t = 0, o = {}) { const A = p.arm[s], b = o.curl ?? 0.3; const w = k => 0.035 * Math.sin(t * (0.5 + 0.13 * k) + k * 1.7 + A.sg); p.fingers(s, [b + w(0), b + 0.1 + w(1), b + 0.18 + w(2), b + 0.26 + w(3)], 0.4, [0.85, 0.9, 0.5]); p.thumbRest(s, 0.18 + 0.05 * Math.sin(t * 0.4 + A.sg)); }
+export function looseHand(p, s, t = 0, o = {}) { const A = p.arm[s], b = o.curl ?? 0.3; const w = k => 0.035 * Math.sin(t * (0.5 + 0.13 * k) + k * 1.7 + A.sg); p.fingers(s, [b + w(0), b + 0.1 + w(1), b + 0.18 + w(2), b + 0.26 + w(3)], o.spread ?? 0.16, [0.85, 0.9, 0.5]); p.thumbRest(s, 0.34 + 0.05 * Math.sin(t * 0.4 + A.sg)); }   /* fingers side by side and the thumb lying near the index: a hand at rest is closed up, not fanned */
 
 // =================================================================================================== SPEECH
 let QUIET = false; // while the camera's anchors are measured, heads do not talk

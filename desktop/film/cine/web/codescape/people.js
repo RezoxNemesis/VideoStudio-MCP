@@ -91,7 +91,7 @@ export function makeSon(E) { const p = new Person(SONC).style('boy', { slim: 0.8
       float lipz = 1.0 - smoothstep(0.012, 0.03, length(vec2(vP.x * 0.75, vP.y + 0.012))) ; float mo = smoothstep(0.075, 0.03, abs(vP.x)) * smoothstep(0.035, 0.012, vP.y) * smoothstep(-0.01, 0.006, vP.y);
       float st = clamp(jw + mo * 0.8, 0.0, 1.0) * (1.0 - lipz) * (0.6 + 0.4 * hh(floor(vP.xy * 900.0)));
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.6, 0.62), st * 0.55);`); };
-  hd.material = sk; refineSon(p); looksSon(p); faceSon(p); return p; }
+  hd.material = sk; refineSon(p); looksSon(p); faceSon(p); trousersSon(p, E); return p; }
 
 // ================================================================== REFINE: structure in the faces, slimmer hands, real skin and cloth (25 Nov 2026 upgrade)
 const gs = (x, y, z, cx, cy, cz, sx, sy, sz) => Math.exp(-(((x - cx) / sx) ** 2 + ((y - cy) / sy) ** 2 + ((z - cz) / sz) ** 2));
@@ -349,4 +349,66 @@ export function widowMaa(p) {
   for (const c of p.sp2.children) if (c.isMesh && c.material !== sar && c.material.color && c.material.metalness > 0.3) c.material = border;
   const bl = p.chest.material, bt = clothTex('#7f7772', '#736b66', 11); if (bt) { bl.map = bt; bl.color.set('#ffffff'); } else bl.color.set('#7f7772'); bl.sheen = 0.05; if (bl.sheenColor) bl.sheenColor.set('#d0c8c0'); bl.needsUpdate = true;
   for (const s of ['l', 'r']) for (const c of p.arm[s].up.children) if (c.isMesh && c.geometry.type === 'TorusGeometry') c.material = M('#6f6762', { r: 0.8, m: 0 });
+}
+
+/** a smooth curve through [x, y] keys that never overshoots one (monotone cubic): a radius along a limb */
+function curveK(keys, x) { const n = keys.length; if (x <= keys[0][0]) return keys[0][1]; if (x >= keys[n - 1][0]) return keys[n - 1][1]; let i = 0; while (i < n - 2 && x > keys[i + 1][0]) i++;
+  const sl = j => (keys[j + 1][1] - keys[j][1]) / Math.max(1e-9, keys[j + 1][0] - keys[j][0]), tg = j => { if (j === 0 || j === n - 1) return sl(Math.min(j, n - 2)); const a = sl(j - 1), b = sl(j); return a * b <= 0 ? 0 : 2 * a * b / (a + b); };
+  const h = keys[i + 1][0] - keys[i][0], u = (x - keys[i][0]) / h, m0 = tg(i) * h, m1 = tg(i + 1) * h, u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * keys[i][1] + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * keys[i + 1][1] + (u3 - u2) * m1; }
+/** Vikas: trousers as trousers (owner, 27 Nov 2026: "waist side, butt and front, and other joints need rework").
+ *  The old lower body was a ball with a cylinder under each side: briefs seen from the front, no seat from the side, a ball at each knee.
+ *  Now: one tube per leg, rebuilt every frame from INSIDE the seat through hip → knee → cuff (thigh and shin stay straight, the knee is one
+ *  cloth bend with a kneecap and folds behind it, a crease runs down the front); a seat-and-waist piece with a real seat behind and a flat
+ *  front; a belt with loops and a buckle where the shirt is tucked in. Nothing needs calling: it follows the legs by itself before each draw. */
+export function trousersSon(p, E) {
+  const pm = p.leg.l.th.children.find(c => c.isMesh).material, hipsBall = p.pelvis.children.find(c => c.isMesh && c.geometry.type === 'SphereGeometry' && c.material === pm);
+  if (hipsBall) hipsBall.visible = false;
+  for (const s of ['l', 'r']) for (const j of [p.leg[s].th, p.leg[s].sn]) for (const c of j.children) if (c.isMesh) c.visible = false;
+  // ---- the seat and waist, in the pelvis's own space. y: 0 is the pelvis joint (hip joints at y -0.02, x ±0.095)
+  const lerpK = (keys, y) => { if (y >= keys[0][0]) return keys[0][1]; for (let i = 1; i < keys.length; i++) if (y >= keys[i][0]) { const u = (y - keys[i][0]) / (keys[i - 1][0] - keys[i][0]), e = u * u * (3 - 2 * u); return lerp(keys[i][1], keys[i - 1][1], e); } return keys[keys.length - 1][1]; };
+  const WX = [[0.105, 0.128], [0.07, 0.132], [0.0, 0.146], [-0.05, 0.150], [-0.11, 0.136]], ZF = [[0.105, 0.102], [0.06, 0.104], [0.0, 0.100], [-0.11, 0.090]], ZB = [[0.105, 0.098], [0.05, 0.108], [-0.01, 0.128], [-0.055, 0.132], [-0.11, 0.108]];
+  const ring = (y, th, grow = 0) => { const c = Math.cos(th), s = Math.sin(th), n = 2.5, a = lerpK(WX, y) + grow, b = (c >= 0 ? lerpK(ZF, y) : lerpK(ZB, y)) + grow; const k = Math.pow(Math.pow(Math.abs(s), n) + Math.pow(Math.abs(c), n), -1 / n);
+    let x = a * s * k, z = b * c * k; if (c < 0 && y < 0.02) z += 0.007 * Math.exp(-Math.pow(x / 0.018, 2)) * Math.min(1, (0.02 - y) / 0.05);   /* the seat's own middle line */ return [x, y, z]; };
+  const surf = (ys, nr, grow, mat0) => { const pos = [], uv = [], idx = []; ys.forEach((y, i) => { for (let j = 0; j <= nr; j++) { const q = ring(y, j / nr * 2 * Math.PI, grow); pos.push(q[0], q[1], q[2]); uv.push(j / nr * 4, i / (ys.length - 1) * 0.6); } });
+    for (let i = 0; i < ys.length - 1; i++) for (let j = 0; j < nr; j++) { const a = i * (nr + 1) + j, b = a + nr + 1; idx.push(a, b, a + 1, b, b + 1, a + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals(); const m = new THREE.Mesh(g, mat0); m.castShadow = m.receiveShadow = true; return m; };
+  const seatM = pm.clone(); seatM.side = THREE.DoubleSide; const YS = []; for (let i = 0; i <= 16; i++) YS.push(lerp(0.105, -0.11, i / 16));
+  const seat = surf(YS, 48, 0, seatM); p.pelvis.add(seat);
+  { const g = seat.geometry, P = g.attributes.position, n0 = P.count, pos = Array.from(P.array), uv = Array.from(g.attributes.uv.array), idx = Array.from(g.index.array); pos.push(0, -0.125, 0.004); uv.push(0.5, 1); const last = (YS.length - 1) * 49; for (let j = 0; j < 48; j++) idx.push(last + j, n0, last + j + 1);   /* the underside, closed (it hides between the legs) */
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals(); }
+  // the belt: a leather band standing a little proud of the waist, loops of the cloth over it, a buckle in front
+  const leather = new THREE.MeshStandardMaterial({ color: '#2b1c12', roughness: 0.45 }), belt = surf([0.098, 0.094, 0.066, 0.062], 48, 0.0055, leather); belt.geometry.computeVertexNormals(); p.pelvis.add(belt);
+  for (const th of [0.42, -0.42, 1.35, -1.35, Math.PI]) { const q = ring(0.08, th, 0.0085), lp = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.05, 0.004), seatM); lp.position.set(q[0], q[1], q[2]); lp.rotation.y = Math.atan2(q[0], q[2]); p.pelvis.add(lp); }
+  { const q = ring(0.08, 0, 0.009), bk = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.03, 0.006), new THREE.MeshStandardMaterial({ color: '#b9a06a', roughness: 0.3, metalness: 0.85 })); bk.position.set(q[0], q[1], q[2]); p.pelvis.add(bk);
+    const fly = new THREE.Mesh(new THREE.BoxGeometry(0.0022, 0.085, 0.0022), new THREE.MeshStandardMaterial({ color: '#23262d', roughness: 0.9 })); const f0 = ring(0.015, 0.11, 0.0006); fly.position.set(f0[0], 0.015, f0[2]); fly.rotation.x = 0.09; p.pelvis.add(fly);
+    for (const sg of [-1, 1]) { const b0 = ring(0.0, Math.PI - sg * 0.62, 0.0008), pk = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.0026, 0.0026), fly.material); pk.position.set(b0[0], 0.004, b0[2]); pk.rotation.y = Math.atan2(b0[0], b0[2]); pk.rotation.z = sg * 0.06; p.pelvis.add(pk); } }
+  // ---- the legs: a tube each, through the joints as they are now
+  const NA = 44, NR = 24, legs = [];
+  for (const s of ['l', 'r']) { const g = new THREE.BufferGeometry(), n = (NA + 1) * (NR + 1), pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), uv = new Float32Array(n * 2), idx = [];
+    for (let i = 0; i < NA; i++) for (let j = 0; j < NR; j++) { const a = i * (NR + 1) + j, b = a + NR + 1; idx.push(a, a + 1, b, b, a + 1, b + 1); }
+    g.setIndex(idx); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    const m = new THREE.Mesh(g, seatM); m.frustumCulled = false; m.castShadow = m.receiveShadow = true; p.root.add(m); legs.push({ lg: p.leg[s], g, pos, nor, uv, sg: p.leg[s].sg }); }
+  const Lr = { thigh: p.L.thigh / p.size, shin: p.L.shin / p.size };
+  p.legsTick = () => { p.root.updateWorldMatrix(true, true); const toL = v => p.root.worldToLocal(v), dirL = (o, v) => toL(o.localToWorld(v.clone())).sub(toL(o.localToWorld(new V3())));
+    for (const a of legs) { const { lg } = a, H = toL(lg.hip.getWorldPosition(new V3())), K = toL(lg.sn.getWorldPosition(new V3())), A = toL(lg.an.getWorldPosition(new V3()));
+      const upP = dirL(p.pelvis, new V3(0, 1, 0)).normalize(), side = dirL(p.pelvis, new V3(1, 0, 0)).normalize(), S0 = H.clone().addScaledVector(upP, 0.062).addScaledVector(side, -a.sg * 0.012);
+      const t1 = K.clone().sub(H).normalize(), t2 = A.clone().sub(K).normalize(), ax = new V3().crossVectors(t1, t2), bend = ax.length(), out = bend > 1e-4 ? t2.clone().sub(t1).normalize().negate() : dirL(p.pelvis, new V3(0, 0, 1)).normalize();   /* out: the way the kneecap points */
+      const Kc = K.clone().addScaledVector(out, 0.006 + 0.016 * Math.min(1, bend * 1.4));
+      const pts = [S0, H.clone().lerp(S0, 0.3), H.clone().lerp(K, 0.12), H.clone().lerp(K, 0.5), H.clone().lerp(K, 0.86), Kc, K.clone().lerp(A, 0.14), K.clone().lerp(A, 0.55), A.clone().addScaledVector(t2, 0.004)];
+      const crv = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5), P = crv.getSpacedPoints(NA), T = P.map((q, i) => (i < NA ? P[i + 1].clone().sub(q) : q.clone().sub(P[i - 1])).normalize());
+      const len = (() => { let l = 0; for (let i = 1; i <= NA; i++) l += P[i].distanceTo(P[i - 1]); return l; })(), uh = 0.062 / len, uk = (0.062 + Lr.thigh) / len;
+      let Nn = side.clone().sub(T[0].clone().multiplyScalar(side.dot(T[0]))).normalize(); const fw0 = dirL(p.pelvis, new V3(0, 0, 1)).normalize();
+      const RK = [[0, 0.088], [uh, 0.097], [uh + 0.45 * (uk - uh), 0.085], [uk - 0.05, 0.0715], [uk, 0.069], [uk + 0.22 * (1 - uk), 0.0685], [uk + 0.6 * (1 - uk), 0.062], [1, 0.057]], R = u => curveK(RK, u);   /* thigh, knee, a little calf, cuff: one smooth curve (a kink in it shows as a ring round the leg) */
+      for (let i = 0; i <= NA; i++) { if (i > 0) { const q = new THREE.Quaternion().setFromUnitVectors(T[i - 1], T[i]); Nn.applyQuaternion(q); Nn.sub(T[i].clone().multiplyScalar(Nn.dot(T[i]))).normalize(); }
+        const B = new V3().crossVectors(T[i], Nn).normalize(), fsg = B.dot(i === 0 ? fw0 : out) >= 0 || bend < 1e-4 && B.dot(fw0) >= 0 ? 1 : -1, u = i / NA, r0 = R(u) + (u > 0.985 ? 0.003 : 0);
+        for (let j = 0; j <= NR; j++) { const th = j / NR * 2 * Math.PI, cs = Math.cos(th), sn = Math.sin(th), front = sn * fsg;   /* front: +1 at the front of the leg, -1 behind */
+          const crease = u > uh * 1.6 ? 0.045 * Math.exp(-Math.pow((1 - Math.max(0, front)) / 0.05, 2)) : 0;                       /* the pressed line down the front */
+          const cap = 0.09 * Math.exp(-Math.pow((u - uk) / 0.05, 2)) * Math.max(0, front) * (0.4 + 0.6 * Math.min(1, bend * 1.5));  /* the kneecap under the cloth */
+          const fold = -bend * 0.2 * Math.exp(-Math.pow((u - uk) / 0.07, 2)) * Math.max(0, -front) * (0.65 + 0.35 * Math.sin(u * 120 + th * 2));   /* cloth gathering behind a bent knee */
+          const r = r0 * (1 + crease + cap + fold + 0.01 * Math.sin(th * 3 + u * 9)), nx = Nn.x * cs + B.x * sn, ny = Nn.y * cs + B.y * sn, nz = Nn.z * cs + B.z * sn, k = i * (NR + 1) + j;
+          a.pos[k * 3] = P[i].x + nx * r; a.pos[k * 3 + 1] = P[i].y + ny * r; a.pos[k * 3 + 2] = P[i].z + nz * r; a.nor[k * 3] = nx; a.nor[k * 3 + 1] = ny; a.nor[k * 3 + 2] = nz; a.uv[k * 2] = j / NR * 2; a.uv[k * 2 + 1] = u * 4; } }
+      a.g.attributes.position.needsUpdate = true; a.g.attributes.normal.needsUpdate = true; a.g.attributes.uv.needsUpdate = true; } };
+  // before every draw of the scene the legs are remade from the joints (a film need not call anything)
+  if (E && E.scene) { const sc = E.scene; (sc.userData.ticks = sc.userData.ticks || []).push(() => { if (p.root.visible) p.legsTick(); }); if (!sc.userData.ticked) { sc.userData.ticked = true; const prev = sc.onBeforeRender; sc.onBeforeRender = function (...a) { if (prev) prev.apply(this, a); for (const f of sc.userData.ticks) f(); }; } }
+  p.legsTick(); return p;
 }

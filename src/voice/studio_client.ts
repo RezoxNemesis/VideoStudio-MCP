@@ -17,7 +17,7 @@ import { transcribe } from "../media/asr";
 import { referenceLine } from "./engine/studio_refs";
 import { devanagariLoanwords } from "./engine/studio_loanwords";
 import { NATURAL_PACE, NATURAL_PACE_HI, phrases, pacing } from "./engine/studio_pace";
-import { innerPauses } from "./engine/studio_pause";
+import { cutTail, innerPauses, tailPiece } from "./engine/studio_pause";
 import { studioSpeaker } from "./engine/studio_speaker";
 import { bankKey, bankVoice } from "./engine/studio_bank";
 import { loadCustoms } from "./voicelab";
@@ -154,6 +154,14 @@ export async function studioSay(text: string, voice: string, tone?: Tone, lang?:
         if (e > GOOD_TAKE) continue;
         const m = runsOn({ pcm: x.pcm, stops: x.stops });
         if (m < miss) { best = { pcm: x.pcm, stops: x.stops }; err = e; miss = m; }
+      }
+      // A short piece of sound alone at the end, after a silence, may be the last word said twice (Whisper writes such an
+      // echo once, so the letters pass). The take is heard again without the piece: if every word is still there, the
+      // piece was an echo and is cut; if the last word is now missing, it was the word itself and stays.
+      const tail = listening === true ? tailPiece(best.pcm, 24000) : null;
+      if (tail) {
+        const without = cutTail(best.pcm, tail.cut, 24000), e = await heard(without, t, code);
+        if (e <= err + 1e-6) { best = { pcm: without, stops: best.stops }; err = e; }
       }
       return best;
     };

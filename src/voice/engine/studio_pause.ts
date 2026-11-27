@@ -204,3 +204,28 @@ export function innerPauses(pcm: Float32Array, text: string, tone: Pace = {}, sr
   lay(pcm.length, false);
   return { pcm: out, made, missed };
 }
+
+/**
+ * A short piece of sound standing alone at the very end of a take, after a silence: either the line's real last word
+ * said after a comma ("…नहीं, माँ?") or a stray echo of it that the model added ("…नहीं, माँ? माँ": the owner heard "maa"
+ * twice, and Whisper wrote it once, so the letter count passed). The sound alone cannot tell the two apart; the caller
+ * listens to the take WITHOUT the piece, and cuts it when the words are all still there (studio_client.ts).
+ * → where to cut (the middle of the silence before the piece), or null when the take does not end that way.
+ */
+export function tailPiece(pcm: Float32Array, sr = 24000): { cut: number; piece: number; gap: number } | null {
+  const v = valleys(pcm, sr);
+  if (!v.list.length || v.last === undefined || v.first === undefined || !v.hop) return null;
+  const end = (v.last + 1) * v.hop, g = [...v.list].reverse().find((x) => x.to < end && (x.to - x.from) / sr >= 0.08);
+  if (!g) return null;
+  const piece = (end - g.to) / sr, before = (g.from - v.first * v.hop) / sr;
+  if (piece < 0.03 || piece > 0.38 || before < 0.5) return null;
+  // nothing but this one piece may follow the silence
+  if (v.list.some((x) => x.from > g.to && (x.to - x.from) / sr >= 0.08 && x.to < end)) return null;
+  return { cut: Math.round((g.from + g.to) / 2), piece: Math.round(piece * 1000) / 1000, gap: Math.round(((g.to - g.from) / sr) * 1000) / 1000 };
+}
+/** The take up to `cut`, dying away over its last 30 ms. */
+export function cutTail(pcm: Float32Array, cut: number, sr = 24000): Float32Array {
+  const out = pcm.slice(0, Math.max(0, Math.min(pcm.length, cut))), f = Math.min(out.length, Math.round(sr * 0.03));
+  for (let i = 0; i < f; i++) out[out.length - 1 - i]! *= i / f;
+  return out;
+}

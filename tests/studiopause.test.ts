@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { innerMarks, innerPauses, valleys } from "../src/voice/engine/studio_pause";
+import { cutTail, innerMarks, innerPauses, tailPiece, valleys } from "../src/voice/engine/studio_pause";
 import { pacing } from "../src/voice/engine/studio_pace";
 
 const sr = 24000;
@@ -86,6 +86,20 @@ describe("the pauses inside a sentence", () => {
     expect(out.made).toHaveLength(0);
     expect(out.missed).toBe(1);
     expect(out.pcm.length).toBe(x.length);
+  });
+  it("finds a short piece of sound alone at the end of a take (a last word said twice), and only that", () => {
+    // 'अट्ठाईस साल... खोली क्यों नहीं, माँ?' as the owner heard it: the line, a silence of 0.13 s, then 0.13 s more ("माँ" again)
+    const echo = speech([0.4, 0.5, 0.48, 0.13], [0.1, 0.03, 0.13]);
+    const t = tailPiece(echo, sr)!;
+    expect(t).not.toBeNull();
+    expect(t.piece).toBeGreaterThan(0.09); expect(t.piece).toBeLessThan(0.18);
+    expect(t.cut / sr).toBeGreaterThan(1.51); expect(t.cut / sr).toBeLessThan(1.64);
+    const cut = cutTail(echo, t.cut, sr);
+    expect(cut.length).toBe(t.cut);
+    expect(rms(cut, cut.length / sr - 0.005, cut.length / sr)).toBeLessThan(0.002);
+    // a take that ends on a long last phrase, or with no silence before its end, has no such piece
+    expect(tailPiece(speech([0.4, 0.5, 0.6], [0.1, 0.13]), sr)).toBeNull();
+    expect(tailPiece(speech([0.4, 0.5, 0.2], [0.1, 0.03]), sr)).toBeNull();
   });
   it("a comma is only given its length where the voice already paused", () => {
     const x = speech([0.3, 0.3, 0.3], [0.02, 0.02]);
