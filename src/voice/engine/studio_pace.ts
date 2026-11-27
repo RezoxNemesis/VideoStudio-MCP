@@ -6,7 +6,7 @@
  * changing its pitch.
  */
 import { timeStretch } from "./audio";
-import { innerPauses } from "./studio_pause";
+import { innerPauses, valleys } from "./studio_pause";
 
 export interface Pace {
   /** Speed (1 natural; 0.86 is a slow, weighty line). */
@@ -158,6 +158,20 @@ export function paceAsked(seconds: number, wordCount: number, tone: Pace = {}): 
   return wordCount < 3 || seconds <= 0 ? 1 / rate : wordCount / seconds / ((tone.natural ?? NATURAL_PACE) * rate);
 }
 
+/** A silence this long inside a sentence is a pause, not part of how fast it was said. */
+export const LONG_PAUSE = 0.2;
+/**
+ * The seconds a sentence was SPOKEN in: its length without the long silences inside it (a tenth of a second of each is kept, as
+ * the gap between two words). The pace used to be measured on the whole length, so a line the model hurried through and broke with
+ * a long silence measured as slow and was never held back: Papa's line in a film was said at 5 words a second between its pauses
+ * and measured 3.2 (27 Nov 2026). Short closures inside words are speech: the natural pace was measured with them in.
+ */
+export function speechSeconds(pcm: Float32Array, sr = 24000): number {
+  let s = pcm.length / sr;
+  for (const v of valleys(pcm, sr).list) { const d = (v.to - v.from) / sr; if (d >= LONG_PAUSE) s -= d - 0.1; }
+  return Math.max(0.05, s);
+}
+
 /** Spoken sentences joined with their silences, the speech brought to the tone's pace (pitch kept). */
 export function paced(parts: Float32Array[], texts: string[], tone: Pace = {}, sr = 24000): Float32Array {
   return pacing(parts, texts, tone, sr).pcm;
@@ -176,7 +190,7 @@ export function pacing(parts: Float32Array[], texts: string[], tone: Pace = {}, 
     cutBefore[i] = b.from / sr;
     return b.from === 0 && b.to === t.length ? t : t.slice(b.from, b.to);
   });
-  const spoken = parts.reduce((n, p) => n + p.length, 0) / sr, count = texts.reduce((n, t) => n + words(t), 0);
+  const spoken = parts.reduce((n, p) => n + speechSeconds(p, sr), 0), count = texts.reduce((n, t) => n + words(t), 0);
   const k = paceFactor(spoken, count, tone);
   if (Math.abs(k - 1) > 0.02) { parts = parts.map((p) => timeStretch(p, k, sr)); quiet = quiet.map((q) => ({ lead: q.lead * k, tail: q.tail * k })); }
   // the pauses inside each sentence ("…", a dash, a comma): found in its sound and given their length

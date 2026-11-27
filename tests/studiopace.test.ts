@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { phrases, pauseAfter, paced, pacing, tidyEnd, trimmed } from "../src/voice/engine/studio_pace";
+import { phrases, pauseAfter, paced, pacing, tidyEnd, trimmed, speechSeconds, NATURAL_PACE_HI } from "../src/voice/engine/studio_pace";
 
 // A studio voice acts a line the way it is written, but it knows nothing of the tone's pace: it ran three short
 // sentences together in two and a half seconds and swallowed the end of a long one. So a line is spoken a
@@ -64,6 +64,22 @@ describe("a studio voice keeps the pace of a line", () => {
     expect(paced([tone(7)], six, { rate: 0.86 }, sr).length / sr).toBeCloseTo(7 * 0.85, 1);
     // a word or two is too little to measure a pace on: only the tone's own rate applies
     expect(paced([tone(0.5)], ["Run!"], { rate: 0.8 }, sr).length / sr).toBeCloseTo(0.5 / 0.8, 1);
+  });
+  it("measures the pace on the time a line was spoken in: a long silence inside it is a pause, not slowness", () => {
+    // 27 Nov 2026: Papa's line in a film was said at 5 words a second between its pauses; with its silences counted it measured 3.2,
+    // passed for slow, and was never held back.
+    const sr = 24000, tone = (s: number) => Float32Array.from({ length: Math.round(sr * s) }, (_, i) => 0.5 * Math.sin((2 * Math.PI * 180 * i) / sr)), hush = (s: number) => new Float32Array(Math.round(sr * s));
+    const join = (...a: Float32Array[]) => { const o = new Float32Array(a.reduce((n, x) => n + x.length, 0)); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    const hurried = join(tone(0.8), hush(0.9), tone(0.8));   // eight words in 1.6 s of sound, a 0.9 s silence in the middle
+    expect(speechSeconds(hurried, sr)).toBeCloseTo(1.7, 1);                       // the silence, less a word gap
+    expect(speechSeconds(join(tone(0.8), hush(0.12), tone(0.8)), sr)).toBeCloseTo(1.72, 1);   // a short gap between words is speech
+    const r = pacing([hurried], ["शाबाश बेटा अब माँ का ख़याल तू रखना।"], { natural: NATURAL_PACE_HI }, sr);
+    expect(r.words).toBe(8);
+    expect(r.spoken).toBeCloseTo(1.7, 1);
+    expect(r.factor).toBeGreaterThan(1.15);     // 4.7 words a second is hurried Hindi: held back
+    expect(r.factor).toBeLessThanOrEqual(1.25);
+    // the same eight words said over the whole 2.5 s are at a calm pace and are left exactly as they were
+    expect(pacing([tone(2.5)], ["शाबाश बेटा अब माँ का ख़याल तू रखना।"], { natural: NATURAL_PACE_HI }, sr).factor).toBe(1);
   });
   it("says how the line was spoken: the words, the seconds the model took and how far it was held", () => {
     const sr = 24000, tone = (s: number) => Float32Array.from({ length: Math.round(sr * s) }, (_, i) => 0.5 * Math.sin((2 * Math.PI * 220 * i) / sr));
