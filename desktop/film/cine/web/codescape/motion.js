@@ -39,7 +39,7 @@ export function refineHands(p, o = {}) { const k = o.k ?? 1, sk = p.mSkin; const
     const hand = { fingers: [], thumb: null, k };
     // palm: a rounded slab, narrower at the wrist, the back gently domed, the heel and the thumb's ball fuller
     const palm = superBall(0.042 * k, 0.0475, 0.0138 * k, sk, 3.2, (x, y, z) => [x * (1 - 0.16 * Math.max(0, y)) * (1 + 0.04 * Math.max(0, -y)), y, z * (z < 0 ? 1.12 - 0.25 * x * x : 1) * (1 + 0.18 * Math.max(0, y))]); palm.position.set(0, -0.0445, 0.003); ha.add(palm);
-    { const bar = superBall(0.0405 * k, 0.0135, 0.0112 * k, sk, 2.4); bar.position.set(0, -0.0835, 0.0018); ha.add(bar); }   /* the row of knuckles: the palm's far end, filling the gaps between the fingers' roots */
+    { const bar = superBall(0.0405 * k, 0.012, 0.0096 * k, sk, 2.4); bar.position.set(0, -0.084, 0.0022); ha.add(bar); }   /* the row of knuckles: the palm's far end, filling the gaps between the fingers' roots */
     const wr = new THREE.Mesh(new THREE.SphereGeometry(0.03 * k, 20, 14), sk); wr.scale.set(1, 0.95, 0.72); wr.position.set(0, -0.002, 0.001); wr.castShadow = true; ha.add(wr);
     for (let f = 0; f < 4; f++) { let par = G(ha, sg * FX[f], FY[f], 0.004); const segs = [];
       for (let j = 0; j < 3; j++) { const jt = j === 0 ? par : G(par, 0, -FL[f][j - 1], 0); const r0 = FR[f] * k * 0.955 ** j, r1 = j === 2 ? tipR(f, k) : FR[f] * k * 0.955 ** (j + 1); jt.add(taperMesh(r0, r1, FL[f][j] - (j === 2 ? r1 : 0), sk, 12));
@@ -61,7 +61,90 @@ export function refineHands(p, o = {}) { const k = o.k ?? 1, sk = p.mSkin; const
   /** thumb over the front of a slab that lies on the palm (its back face at hand-local z = 0.022) */
   p.thumbOver = (s, lift = 0) => { const A = p.arm[s]; A.ha.updateWorldMatrix(true, false); const P = A.ha.localToWorld(new V3(A.sg * 0.014, -0.086, 0.0285 + lift * 0.03)); const n = new V3(0, 0, 1).transformDirection(A.ha.matrixWorld); thumbPad(p, s, P, n, {}); };
   p.flat = (s, c = 0.04, spread = 0.15, lift = 0) => { p.fingers(s, c, spread, [1.25, 1.45, 1.1]); p.thumbOver(s, lift); };
-  p.refined = true; return p; }
+  p.refined = true; fingerSkin(p); armSkin(p, { k: o.armK ?? (k < 1 ? 0.87 : 1) }); return p; }
+
+/** one smooth curve through keys [[x, y]…] (x rising): no overshoot between them */
+function keyed(keys, x) { const n = keys.length; if (x <= keys[0][0]) return keys[0][1]; if (x >= keys[n - 1][0]) return keys[n - 1][1]; let i = 0; while (i < n - 2 && x > keys[i + 1][0]) i++;
+  const sl = j => (keys[j + 1][1] - keys[j][1]) / Math.max(1e-9, keys[j + 1][0] - keys[j][0]), tg = j => { if (j === 0 || j === n - 1) return sl(Math.min(j, n - 2)); const a = sl(j - 1), b = sl(j); return a * b <= 0 ? 0 : 2 * a * b / (a + b); };
+  const h = keys[i + 1][0] - keys[i][0], u = (x - keys[i][0]) / h, m0 = tg(i) * h, m1 = tg(i + 1) * h, u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * keys[i][1] + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * keys[i + 1][1] + (u3 - u2) * m1; }
+/** something to do before every draw of the scene a person stands in (the same list people.js uses for the trouser legs) */
+function beforeDraw(p, f) { let sc = p.root; while (sc.parent) sc = sc.parent; if (!sc.isScene) return false; (sc.userData.ticks = sc.userData.ticks || []).push(() => { if (p.root.visible) f(); });
+  if (!sc.userData.ticked) { sc.userData.ticked = true; const prev = sc.onBeforeRender; sc.onBeforeRender = function (...a) { if (prev) prev.apply(this, a); for (const g of sc.userData.ticks) g(); }; } return true; }
+
+/** EVERY FINGER AS ONE SKIN from inside the palm to its rounded tip (owner, 27 Nov 2026: "the hands, fingers … need rework").
+ *  Before: three little cylinders with a ball at each joint. Close up, each joint was a ragged ring where ball met cylinder, the fingers
+ *  read as strings of sausages, and a bent finger opened at its joints. Now each finger and the thumb is one tube through its joints:
+ *  a knuckle is a swelling on the BACK that grows as the finger bends, the inside creases, the pad of the tip is fuller, the tip is
+ *  round, the nail is the size of a nail. Remade before every draw (p.fingerTick); the joints and every hand function stay as they were. */
+export function fingerSkin(p) { const sk = p.mSkin, NR = 10, NB = 20, NC = 6, NA = NB + NC, X1 = new V3(1, 0, 0), list = [];
+  const FK = [[0, 1.02], [1, 1.06], [1.5, 0.97], [2, 1.0], [2.5, 0.905], [3, 0.93], [3.6, 0.86], [4, 0.8]], TK = [[0, 1.08], [1, 1.02], [1.5, 0.9], [2, 0.86], [2.5, 0.78], [3, 0.8], [3.6, 0.74], [4, 0.66]];
+  for (const s of ['l', 'r']) { const A = p.arm[s], h = A.hand, k = h.k ?? 1; if (!h || !h.fingers) continue;
+    const add = (joints, lens, rB, keys, thumb) => { for (const j of joints) for (const c of j.children) { if (!c.isMesh) continue; if (c.material === sk) { if (!(thumb && c.geometry.type === 'SphereGeometry' && c.scale.y > 1.2)) c.visible = false; }
+        else if (c.geometry.type === 'SphereGeometry') { const r1 = rB * keys[keys.length - 1][1]; const nk = thumb ? 0.86 : 1; c.scale.set(r1 * 0.74 * nk, r1 * 0.86 * nk, r1 * 0.2); c.position.set(0, -lens[2] + r1 * 1.42, -r1 * 0.99); c.material.roughness = 0.36; c.material.color.copy(sk.color).lerp(new THREE.Color('#f0cfc0'), 0.24); } }   /* the nail: a nail's size, nearly the skin's colour */
+      const g = new THREE.BufferGeometry(), n = (NA + 1) * (NR + 1), pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), uv = new Float32Array(n * 2), idx = [];
+      for (let i = 0; i < NA; i++) for (let j = 0; j < NR; j++) { const a = i * (NR + 1) + j, b = a + NR + 1; idx.push(a, a + 1, b, b, a + 1, b + 1); }
+      g.setIndex(idx); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      const m = new THREE.Mesh(g, sk); m.frustumCulled = false; m.castShadow = m.receiveShadow = true; p.root.add(m); list.push({ A, joints, lens, rB, keys, thumb, g, pos, nor, uv }); };
+    h.fingers.forEach((segs, f) => add(segs, FL[f], FR[f] * k, FK, false)); add(h.thumb, [TH.a, TH.b, TH.c], 0.0138 * k, TK, true); }
+  const DB = [0.09, 0.05, 0.03], DG = [0.05, 0.1, 0.07];   /* a knuckle on the back of each joint: at rest, and how much more when it bends */
+  p.fingerTick = () => { p.root.updateWorldMatrix(true, true); const toL = v => p.root.worldToLocal(v), dirL = (ob, v) => toL(ob.localToWorld(v.clone())).sub(toL(ob.localToWorld(new V3()))).normalize();
+    for (const a of list) { const { joints, lens, rB, keys } = a, J = joints.map(j => toL(wp(j))), tip = toL(joints[2].localToWorld(new V3(0, -lens[2], 0))), into = a.thumb ? dirL(joints[0], new V3(0, -1, 0)) : dirL(a.A.ha, new V3(0, -1, 0)), S = J[0].clone().addScaledVector(into, a.thumb ? -0.012 : -0.015);
+      const crv = new THREE.CatmullRomCurve3([S, J[0], J[0].clone().lerp(J[1], 0.5), J[1], J[1].clone().lerp(J[2], 0.5), J[2], J[2].clone().lerp(tip, 0.55), tip], false, 'centripetal', 0.5); crv.arcLengthDivisions = 64;
+      const d = [S.distanceTo(J[0]), J[0].distanceTo(J[1]), J[1].distanceTo(J[2]), J[2].distanceTo(tip)], tot = d[0] + d[1] + d[2] + d[3], c1 = d[0] / tot, c2 = (d[0] + d[1]) / tot, c3 = (d[0] + d[1] + d[2]) / tot;
+      const st = u => u < c1 ? u / c1 : u < c2 ? 1 + (u - c1) / (c2 - c1) : u < c3 ? 2 + (u - c2) / (c3 - c2) : 3 + (u - c3) / (1 - c3), rT = rB * keys[keys.length - 1][1], uC = 1 - Math.min(0.85 * d[3], rT * 1.05) / tot;
+      const b0 = dirL(joints[0], new V3(0, -1, 0)), b1 = dirL(joints[1], new V3(0, -1, 0)), b2 = dirL(joints[2], new V3(0, -1, 0)), bend = [Math.min(1, Math.acos(clamp(into.dot(b0), -1, 1)) / 1.3), Math.min(1, Math.acos(clamp(b0.dot(b1), -1, 1)) / 1.5), Math.min(1, Math.acos(clamp(b1.dot(b2), -1, 1)) / 1.2)];
+      let T0 = crv.getTangentAt(0), N = dirL(joints[0], X1); N.addScaledVector(T0, -N.dot(T0)).normalize(); const sgn = new V3().crossVectors(T0, N).dot(dirL(joints[0], new V3(0, 0, -1))) >= 0 ? 1 : -1; let Tp = T0;
+      for (let i = 0; i <= NA; i++) { const u = i <= NB ? uC * i / NB : uC + (1 - uC) * Math.sin((i - NB) / NC * Math.PI / 2), P = crv.getPointAt(Math.min(1, u)), T = crv.getTangentAt(Math.min(1, u));
+        if (i > 0) { N.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(Tp, T)); N.addScaledVector(T, -N.dot(T)).normalize(); } Tp = T; const D = new V3().crossVectors(T, N), s = st(u);   /* the ring always turns the same way (or the skin would be inside out); sgn says which half of it is the back of the finger */
+        const x = u > uC ? (u - uC) / (1 - uC) : 0, cap = Math.sqrt(Math.max(0, 1 - x * x)), r = rB * keyed(keys, s), ra = r * cap, rb = r * 0.93 * cap; let back = 0, crease = 0; for (let q = 0; q < 3; q++) { const g2 = Math.exp(-Math.pow((s - (q + 1)) / 0.2, 2)); back += (DB[q] + DG[q] * bend[q]) * g2; crease += 0.07 * bend[q] * g2; }
+        const pad = 0.07 * Math.exp(-Math.pow((s - 3.55) / 0.3, 2));
+        for (let j = 0; j <= NR; j++) { const th = j / NR * 2 * Math.PI, cs = Math.cos(th), sn = Math.sin(th), bk = sn * sgn, kb = 1 + (bk > 0 ? back * bk : (crease - pad) * bk), q = i * (NR + 1) + j;   /* bk > 0: the back of the finger */
+          const dx = N.x * cs * ra + D.x * sn * rb * kb, dy = N.y * cs * ra + D.y * sn * rb * kb, dz = N.z * cs * ra + D.z * sn * rb * kb; let nx = (N.x * cs + D.x * sn) * cap + T.x * x, ny = (N.y * cs + D.y * sn) * cap + T.y * x, nz = (N.z * cs + D.z * sn) * cap + T.z * x; const nl = Math.hypot(nx, ny, nz) || 1;
+          a.pos[q * 3] = P.x + dx; a.pos[q * 3 + 1] = P.y + dy; a.pos[q * 3 + 2] = P.z + dz; a.nor[q * 3] = nx / nl; a.nor[q * 3 + 1] = ny / nl; a.nor[q * 3 + 2] = nz / nl; a.uv[q * 2] = j / NR; a.uv[q * 2 + 1] = u * 3; } }
+      a.g.attributes.position.needsUpdate = true; a.g.attributes.normal.needsUpdate = true; a.g.attributes.uv.needsUpdate = true; } };
+  beforeDraw(p, p.fingerTick); p.fingerTick(); return p; }
+
+/** THE ARM'S SKIN AS ONE SURFACE, from under the sleeve through the elbow to the heel of the hand (owner, 27 Nov 2026: "the other joints").
+ *  Before: a cylinder, a ball, a cylinder, and a ball at the wrist as thick as the forearm; and a turn of the palm happened all at the
+ *  wrist joint, so a turned hand sat on its arm like a lid. Now: the forearm is fullest below the elbow and flat and narrow at the wrist;
+ *  the turn of the hand is spread down the forearm (as its two bones do it); a bent elbow has its point; the last rings bend WITH the
+ *  hand, so the wrist is skin, not a hinge. Remade before every draw (p.armTick). o.k: thickness (Maa 0.9); o.from: where on the upper
+ *  arm it starts (0.35: under any sleeve). */
+export function armSkin(p, o = {}) { const NA = 44, NR = 20, k = o.k ?? 1, from = o.from ?? 0.35, HEND = 0.022, sk = p.mSkin, arms = [], X1 = new V3(1, 0, 0);
+  const cover = () => o.cover ?? p.sleeveCover ?? 0.8;   /* stations under a sleeve: the skin is slimmer there and makes no elbow point (the cloth makes it) */
+  for (const s of ['l', 'r']) { const A = p.arm[s];
+    for (const c of A.up.children) if (c.isMesh && c.geometry.type === 'LatheGeometry' && c.material && c.material.color && c.material.color.equals(sk.color)) c.visible = false;
+    let band = null; for (const c of A.fo.children) { if (!c.isMesh) continue; if (c.geometry.type === 'SphereGeometry' || c.geometry.type === 'LatheGeometry') c.visible = false; else if (c.geometry.type === 'TorusGeometry' && c.visible && !band && c.geometry.parameters.radius < 0.039) band = c; }
+    for (const c of A.ha.children) if (c.isMesh && c.geometry.type === 'SphereGeometry' && Math.abs(c.position.y + 0.002) < 1e-6) c.scale.set(0.8, 0.8, 0.5);   /* the old wrist ball: kept small, inside */
+    const g = new THREE.BufferGeometry(), n = (NA + 1) * (NR + 1), pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), uv = new Float32Array(n * 2), idx = [];
+    for (let i = 0; i < NA; i++) for (let j = 0; j < NR; j++) { const a = i * (NR + 1) + j, b = a + NR + 1; idx.push(a, a + 1, b, b, a + 1, b + 1); }
+    g.setIndex(idx); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    const rings = A.fo.children.filter(c => c.isMesh && c.geometry.type === 'TorusGeometry' && c !== band && c.visible).map(c => ({ c, y0: c.position.y, R: c.geometry.parameters.radius, tube: c.geometry.parameters.tube }));   /* bangles: loose rings that hang and slide */
+    const m = new THREE.Mesh(g, sk); m.frustumCulled = false; m.castShadow = m.receiveShadow = true; p.root.add(m); arms.push({ A, g, pos, nor, uv, band, m, rings }); }
+  // half-width (across the hand) and half-thickness along the arm. Stations: 0 where it starts, 1 the elbow, 2 the wrist, 3 its end inside the palm
+  const AK = [[0, 0.0455], [0.7, 0.042], [1, 0.0405], [1.22, 0.0432], [1.6, 0.0365], [1.85, 0.0312], [2, 0.0288], [2.5, 0.0295], [3, 0.027]], BK = [[0, 0.0445], [0.7, 0.0405], [1, 0.0385], [1.22, 0.0392], [1.6, 0.0305], [1.85, 0.0242], [2, 0.0208], [2.5, 0.0165], [3, 0.0115]];
+  const ang = (r, v, t) => { const a = r.clone().addScaledVector(t, -r.dot(t)), b = v.clone().addScaledVector(t, -v.dot(t)); if (a.lengthSq() < 1e-10 || b.lengthSq() < 1e-10) return 0; a.normalize(); b.normalize(); return Math.atan2(new V3().crossVectors(a, b).dot(t), a.dot(b)); };
+  p.armTick = () => { p.root.updateWorldMatrix(true, true); const toL = v => p.root.worldToLocal(v), dirL = (ob, v) => toL(ob.localToWorld(v.clone())).sub(toL(ob.localToWorld(new V3()))).normalize();
+    for (const a of arms) { const { A } = a, S = toL(wp(A.up)), E = toL(wp(A.fo)), W = toL(wp(A.ha)), t1 = E.clone().sub(S).normalize(), t2 = W.clone().sub(E).normalize(), hd = dirL(A.ha, new V3(0, -1, 0));
+      const cv = cover(), bare = cv < 1, bend = new V3().crossVectors(t1, t2).length(), out = bend > 1e-4 ? t1.clone().sub(t2).normalize() : null, Ec = out ? E.clone().addScaledVector(out, (bare ? 0.003 : 0.002) + (bare ? 0.011 : 0.006) * Math.min(1, bend * 1.3)) : E.clone();
+      const pts = [S.clone().lerp(E, from), S.clone().lerp(E, 0.72), E.clone().addScaledVector(t1, -0.034), Ec, E.clone().addScaledVector(t2, 0.04), E.clone().lerp(W, 0.5), E.clone().lerp(W, 0.86), W, W.clone().addScaledVector(hd, HEND)];
+      const crv = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5), P = crv.getSpacedPoints(NA), T = P.map((q, i) => (i < NA ? P[i + 1].clone().sub(q) : q.clone().sub(P[i - 1])).normalize());
+      const L1 = (1 - from) * S.distanceTo(E), L2 = E.distanceTo(W), tot = L1 + L2 + HEND, uE = L1 / tot, uW = (L1 + L2) / tot, st = u => u < uE ? u / uE : u < uW ? 1 + (u - uE) / (uW - uE) : 2 + (u - uW) / (1 - uW);
+      // a frame carried down the arm without rolling; then two rolls laid on it: to the forearm's own side axis by the elbow, and the hand's turn spread down the forearm
+      const ax = dirL(A.up, X1); let Nn = ax.clone().addScaledVector(T[0], -ax.dot(T[0])).normalize(); const Ns = [Nn.clone()];
+      for (let i = 1; i <= NA; i++) { Nn.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(T[i - 1], T[i])); Nn.addScaledVector(T[i], -Nn.dot(T[i])).normalize(); Ns.push(Nn.clone()); }
+      const iE = Math.round(uE * NA), xf = dirL(A.fo, X1), xh = dirL(A.ha, X1), dl = ang(Ns[iE], xf, T[iE]), ph = ang(xf, xh, t2);
+      for (let i = 0; i <= NA; i++) { const u = i / NA, s = st(u), roll = dl * sm((s - 0.55) / 0.45) + ph * sm((s - 1.12) / 0.88), N = Ns[i].clone().applyAxisAngle(T[i], roll), B = new V3().crossVectors(T[i], N).normalize();
+        const slim = 1 - 0.13 * (1 - sm((s - cv + 0.12) / 0.2)), ra = keyed(AK, s) * k * slim, rb = keyed(BK, s) * k * slim, tipW = out && bare ? Math.exp(-Math.pow((s - 1) / 0.16, 2)) * Math.min(1, bend * 1.5) : 0;
+        for (let j = 0; j <= NR; j++) { const th = j / NR * 2 * Math.PI, cs = Math.cos(th), sn = Math.sin(th); let dx = N.x * cs * ra + B.x * sn * rb, dy = N.y * cs * ra + B.y * sn * rb, dz = N.z * cs * ra + B.z * sn * rb;
+          if (tipW > 0) { const rl = Math.hypot(dx, dy, dz), d = (dx * out.x + dy * out.y + dz * out.z) / rl, g2 = 1 + tipW * (d > 0 ? 0.10 * d * d : -0.07 * d * d); dx *= g2; dy *= g2; dz *= g2; }   /* the elbow's point outside, a little hollow inside */
+          let nx = N.x * cs / ra + B.x * sn / rb, ny = N.y * cs / ra + B.y * sn / rb, nz = N.z * cs / ra + B.z * sn / rb; const nl = Math.hypot(nx, ny, nz) || 1, q = i * (NR + 1) + j;
+          a.pos[q * 3] = P[i].x + dx; a.pos[q * 3 + 1] = P[i].y + dy; a.pos[q * 3 + 2] = P[i].z + dz; a.nor[q * 3] = nx / nl; a.nor[q * 3 + 1] = ny / nl; a.nor[q * 3 + 2] = nz / nl; a.uv[q * 2] = j / NR * 2; a.uv[q * 2 + 1] = u * 5; } }
+      a.g.attributes.position.needsUpdate = true; a.g.attributes.normal.needsUpdate = true; a.g.attributes.uv.needsUpdate = true;
+      if (a.band) { const bs = 2 - 0.03 / Math.max(0.05, L2 / (p.size || 1)), tw = ph * sm((bs - 1.12) / 0.88); a.band.quaternion.setFromAxisAngle(new V3(0, 1, 0), tw).multiply(new THREE.Quaternion().setFromAxisAngle(X1, Math.PI / 2)); a.band.scale.set((keyed(AK, bs) * k + 0.0035) / 0.038, (keyed(BK, bs) * k + 0.0035) / 0.038, 1); a.band.updateMatrixWorld(true); }   /* a watch or band sits on the wrist as it is there */
+      if (a.rings.length) { const Lf = Math.abs(A.ha.position.y) || 0.2, dn = new V3(0, -1, 0).applyQuaternion(A.fo.getWorldQuaternion(new THREE.Quaternion()).invert()), slide = sm((dn.y - 0.15) / 0.5), pl = Math.hypot(dn.x, dn.z);   /* which way is down, seen from the forearm */
+        a.rings.forEach((r, i) => { const y = lerp(r.y0, -Lf * 0.36 + i * (r.tube * 2 + 0.002), slide), s2 = 1 + (-y) / Lf, ra = (keyed(AK, s2) + keyed(BK, s2)) / 2 * k, off = Math.max(0, r.R - r.tube - ra) * Math.min(1, pl * 1.6); r.c.position.set(pl > 1e-3 ? dn.x / pl * off : 0, y, pl > 1e-3 ? dn.z / pl * off : 0); r.c.updateMatrixWorld(true); }); } } };   /* a bangle hangs from the top of the arm, and slides toward the elbow when the hand is raised */
+  beforeDraw(p, p.armTick); p.armTick(); return p; }
 
 /** The thumb's pad pressed on a surface: P a point of the surface (world), n its normal toward the thumb. o.lift: metres off the surface; o.dir: where the thumb points along the surface (world). → { far } when it cannot reach. */
 export function thumbPad(p, s, P, n, o = {}) { const A = p.arm[s], h = A.hand, z = p.size, k = h.k ?? 1; for (const j of h.thumb) j.rotation.set(0, 0, 0); const S = wp(h.thumb[0]); const r = (o.r0 ?? TH.r * k) * z;

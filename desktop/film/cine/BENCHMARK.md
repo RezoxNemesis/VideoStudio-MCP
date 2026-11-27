@@ -47,8 +47,22 @@ The 360 px check sheets were clean. It was caught by looking at the PC's own ren
 4. The app looks over every finished render and reports `picture.blackBlocks`; Cine Studio shows it in red.
 5. The rule stays: the PC's render is looked at (a strip of frames from every shot) before anything is sent.
 
-## What the benchmark is NOT yet (the owner, 27 Nov 2026)
-The motion is the success. The owner then asked for the body MODEL to be reworked (hands and fingers, the waist from the side,
-seat and front, the other joints) and said the voices' delivery is not yet natural. First answer, the same day: `people.js`
-trousersSon (a seat and waist, a belt, one cloth tube per leg through hip, knee and cuff) and fuller hands with knuckles in
-`motion.js` refineHands. Not yet judged by the owner; faces, Maa's body under the saree, shoulders and the voices are still open.
+## The body MODEL, reworked the same day (the owner, 27 Nov 2026: "hands, fingers, waist side, butt and front, and other joints")
+The motion was the success; the model was pieces: balls and cylinders that cut through each other. The rule that fixed every part is
+the same one: **a part of the body is ONE skin, drawn through its joints and remade before every draw; it begins INSIDE the part it
+grows from.** A ball at a joint, or two pieces meeting on the surface, always shows.
+- `people.js` trousersSon: the seat and waist carry the hips (as wide as the thighs where they begin), curve under into the crotch
+  (no flap in front, no shelf under the seat) and go WITH the thighs below the hips (sitting, nothing hangs under the legs); each leg
+  is one cloth tube from inside the seat through hip, knee and cuff; a belt with loops and a framed buckle; pocket lines on the seat.
+- `people.js` shirtSon: the shirt is one surface from inside the waistband to under the collar, each ring going with the hips, the
+  waist or the chest (a lean is a bend; the cloth at the belt stays in the trousers); shoulders slope from the neck (joints 2 cm
+  lower) and take the sleeve into themselves; a placket and buttons to the belt; a collar band; the lanyard laid on the cloth.
+- `people.js` sleevesSon: the sleeve begins deep inside the body and makes the elbow's point itself.
+- `motion.js` armSkin (every person with refined hands): the arm's skin is one surface from under the sleeve through the elbow to
+  the palm: fullest below the elbow, flat and narrow at the wrist, the turn of the hand spread down the forearm, the last rings
+  bending with the hand. A watch fits the wrist where it is; bangles hang from the arm and slide when the hand is raised.
+- `motion.js` fingerSkin: each finger and the thumb is one skin through its joints: a knuckle is a swelling on the back that grows
+  as the finger bends, the inside creases, the tip is round with a fuller pad, the nail is a nail's size.
+How to look at a body: a lab shot with one pose and one close camera per second (shoulder, elbow, wrist, hand both sides, waist
+all round, sitting, mid-stride), drawn at 540 px or more per view. A whole-figure frame hides every one of these faults.
+Still open: faces, Maa's body under the saree and her shoulders, the voices' delivery.

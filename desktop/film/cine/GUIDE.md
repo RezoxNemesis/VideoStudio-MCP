@@ -459,6 +459,15 @@ plan for the legs and `playClip(..., { legs: false })` for the rest.
 - The Library film (`@library`) now also has: walk, turn, sit, gesture, give, mocap. It cannot be changed from the window: copy
   what you need into a film.
 
+**A body part is one skin through its joints (27 Nov 2026).** Never build a limb as cylinder + ball + cylinder, or a torso as balls
+that overlap: every meeting shows as a ring, a ragged line or a box. Build one tube or one ringed surface through the joints, remade
+before each draw from where the joints are (`scene.userData.ticks`: people.js trousersSon / shirtSon, motion.js armSkin / fingerSkin),
+and begin it INSIDE the part it grows from (a leg inside the seat, a sleeve inside the chest, a finger inside the palm). Where a
+surface must follow two bones, give each ring a share of each (the shirt between hips, waist and chest; the seat's underside between
+hips and thighs). A turn that a real limb spreads along its length (the forearm) is spread along the tube, not left at one joint.
+A point moved by such a tick needs `updateMatrixWorld(true)` there, or it is drawn a frame late. To judge a body, make a lab shot:
+one pose and one close camera per second, each joint from the side it shows worst.
+
 **Meshes that grow (27 Nov 2026).** When points are added to a mesh that already has normals, throw the old list away first:
 `g.deleteAttribute('normal'); g.computeVertexNormals();`. `computeVertexNormals()` alone keeps the old, shorter list; the new point
 then has no normal and draws on the GPU as a black block over half the picture (blurred by the bloom), only at the full render size.

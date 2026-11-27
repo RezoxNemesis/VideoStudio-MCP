@@ -91,7 +91,7 @@ export function makeSon(E) { const p = new Person(SONC).style('boy', { slim: 0.8
       float lipz = 1.0 - smoothstep(0.012, 0.03, length(vec2(vP.x * 0.75, vP.y + 0.012))) ; float mo = smoothstep(0.075, 0.03, abs(vP.x)) * smoothstep(0.035, 0.012, vP.y) * smoothstep(-0.01, 0.006, vP.y);
       float st = clamp(jw + mo * 0.8, 0.0, 1.0) * (1.0 - lipz) * (0.6 + 0.4 * hh(floor(vP.xy * 900.0)));
       diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.62, 0.6, 0.62), st * 0.55);`); };
-  hd.material = sk; refineSon(p); looksSon(p); faceSon(p); trousersSon(p, E); return p; }
+  hd.material = sk; refineSon(p); looksSon(p); faceSon(p); trousersSon(p, E); shirtSon(p, E); return p; }
 
 // ================================================================== REFINE: structure in the faces, slimmer hands, real skin and cloth (25 Nov 2026 upgrade)
 const gs = (x, y, z, cx, cy, cz, sx, sy, sz) => Math.exp(-(((x - cx) / sx) ** 2 + ((y - cy) / sy) ** 2 + ((z - cz) / sz) ** 2));
@@ -243,7 +243,7 @@ const shoulders = (p, k) => { for (const s of ['l', 'r']) { const A = p.arm[s]; 
 // ================================================================== CLOTHES v4: sleeves that cover the arm properly
 /** son: shirt sleeves rolled to the middle of the forearm (a sleeve over the elbow + a thick rolled band) */
 export function sleevesSon(p) { const sh = p.chest.material; let matDone = false;
-  const NA = 34, NR = 22; p.sleeveTick = () => {};
+  const NA = 34, NR = 22; p.sleeveTick = () => {}; p.sleeveCover = 1.36;   /* how far down the arm the sleeve reaches: 1 = the elbow, 2 = the wrist (the arm's skin stays slim under it) */
   const arms = [];
   for (const s of ['l', 'r']) { const A = p.arm[s], L = p.L;
     // hide every old sleeve piece and the skin that sits inside the new sleeve
@@ -261,9 +261,11 @@ export function sleevesSon(p) { const sh = p.chest.material; let matDone = false
   p.sleeveTick = () => { p.root.updateWorldMatrix(true, true); if (!matDone) { matDone = true; const s2 = p.chest.material.clone(); s2.side = THREE.FrontSide; for (const a of arms) a.m.material = s2; }
     for (const a of arms) { const { A } = a; const toL = v => p.root.worldToLocal(v);
       const S = toL(A.up.getWorldPosition(new V3())), E = toL(A.fo.getWorldPosition(new V3())), C = toL(A.fo.localToWorld(new V3(0, -a.len, 0)));
-      const CH = toL(p.sp2.getWorldPosition(new V3())).add(new V3(0, 0.17, 0)); const inw = CH.clone().sub(S); inw.y = 0; inw.normalize(); const S0 = S.clone().addScaledVector(inw, 0.07).add(new V3(0, 0.005, 0));
+      const CH = toL(p.sp2.getWorldPosition(new V3())).add(new V3(0, 0.17, 0)); const inw = CH.clone().sub(S); inw.y = 0; inw.normalize(); const S0 = S.clone().addScaledVector(inw, p.shirt ? 0.118 : 0.07).add(new V3(0, p.shirt ? -0.004 : 0.005, 0));   /* with the one-piece shirt (shirtSon) the sleeve begins deep inside the body: its capped start used to show on the shoulder as a box */
       const lU = S0.distanceTo(S) + S.distanceTo(E), lT = lU + E.distanceTo(C); a.us = S0.distanceTo(S) / lT; a.ue = lU / lT;
-      const crv = new THREE.CatmullRomCurve3([S0, S0.clone().lerp(S, 0.6), S.clone().lerp(E, 0.5), E, E.clone().lerp(C, 0.5), C], false, 'centripetal', 0.5);
+      // the elbow's point is the SLEEVE's (the cloth goes round it): the same point the arm's skin makes (motion.js armSkin), a little further out
+      const t1 = E.clone().sub(S).normalize(), t2 = C.clone().sub(E).normalize(), bnd = new V3().crossVectors(t1, t2).length(), out = bnd > 1e-4 ? t1.clone().sub(t2).normalize() : null, Ec = out ? E.clone().addScaledVector(out, 0.004 + 0.012 * Math.min(1, bnd * 1.3)) : E;
+      const crv = new THREE.CatmullRomCurve3([S0, S0.clone().lerp(S, 0.6), S.clone().lerp(E, 0.5), E.clone().addScaledVector(t1, -0.036), Ec, E.clone().addScaledVector(t2, 0.036), C], false, 'centripetal', 0.5);
       const P = crv.getSpacedPoints(NA), T = P.map((q, i) => (i < NA ? P[i + 1].clone().sub(q) : q.clone().sub(P[i - 1])).normalize());
       // a stable frame: the arm's own side axis from the upper arm's world X, parallel-transported down the sleeve
       const ax = toL(A.up.localToWorld(new V3(1, 0, 0))).sub(toL(A.up.localToWorld(new V3(0, 0, 0)))).normalize(); let Nn = ax.clone().sub(T[0].clone().multiplyScalar(ax.dot(T[0]))).normalize();
@@ -273,8 +275,9 @@ export function sleevesSon(p) { const sh = p.chest.material; let matDone = false
         for (let j = 0; j <= NR; j++) { const th = j / NR * Math.PI * 2; const cs = Math.cos(th), sn = Math.sin(th);
           // soft folds bunching at the inside of the elbow when the arm bends
           const fold = bend * 0.12 * Math.exp(-Math.pow((u - UE) / 0.08, 2)) * Math.max(0, sn) * (0.6 + 0.4 * Math.sin(u * 90 + th * 2));
-          const r = r0 * (1 + fold + 0.015 * Math.sin(th * 3 + u * 11));
           const nx = Nn.x * cs + B.x * sn, ny = Nn.y * cs + B.y * sn, nz = Nn.z * cs + B.z * sn; const k = (i * (NR + 1) + j);
+          const tip = out ? 0.09 * Math.exp(-Math.pow((u - UE) / 0.07, 2)) * Math.max(0, nx * out.x + ny * out.y + nz * out.z) * Math.min(1, bnd * 1.5) : 0;
+          const r = r0 * (1 + fold + tip + 0.015 * Math.sin(th * 3 + u * 11));
           a.pos[k * 3] = P[i].x + nx * r; a.pos[k * 3 + 1] = P[i].y + ny * r; a.pos[k * 3 + 2] = P[i].z + nz * r; a.nor[k * 3] = nx; a.nor[k * 3 + 1] = ny; a.nor[k * 3 + 2] = nz; a.uv[k * 2] = j / NR; a.uv[k * 2 + 1] = u * 1.6; } }
       a.g.attributes.position.needsUpdate = true; a.g.attributes.normal.needsUpdate = true; a.g.attributes.uv.needsUpdate = true; } };
   // the rolled cuff edge: a darker inner lining just visible at the opening
@@ -284,7 +287,7 @@ export function sleevesMaa(p) { { const m = p.chest.material; m.sheen = 0.12; m.
   const bl = p.chest.material, gold = M('#d9a43a', { r: 0.35, m: 0.5 }); for (const s of ['l', 'r']) { const A = p.arm[s], L = p.L;
     for (const c of A.up.children) if (c.isMesh && c.geometry.type === 'TorusGeometry') { c.material = gold; c.geometry.dispose(); c.geometry = new THREE.TorusGeometry(0.047, 0.006, 8, 28); }
     const ups = A.up.children.filter(m => m.isMesh && m.geometry.type === 'LatheGeometry'); if (ups[0]) { ups[0].material = bl; ups[0].scale.set(0.84, 1, 0.84); } if (ups[1]) ups[1].scale.set(0.78, 1, 0.78);
-    A.sho.children[0].material = bl; A.sho.children[0].scale.setScalar(0.55); } }
+    A.sho.children[0].material = bl; A.sho.children[0].scale.setScalar(0.55); } p.sleeveCover = 0.66; }   /* her sleeve ends above the elbow: the arm's skin (motion.js armSkin) is bare from there */
 /** Maa's saree: a wide woven gold border at the hem and a fan of pleats in front */
 export function sareeMaa(p) { const gold = M('#c8952e', { r: 0.4, m: 0.45 }), sar = p.skirt.material;
   const R = y => y > 0.03 ? lerp(0.162, 0.128, (y - 0.03) / 0.12) : y > -0.2 ? lerp(0.162, 0.172, -(y - 0.03) / 0.23) : y > -0.48 ? lerp(0.172, 0.182, -(y + 0.2) / 0.28) : lerp(0.182, 0.196, -(y + 0.48) / 0.255);
@@ -355,6 +358,66 @@ export function widowMaa(p) {
 function curveK(keys, x) { const n = keys.length; if (x <= keys[0][0]) return keys[0][1]; if (x >= keys[n - 1][0]) return keys[n - 1][1]; let i = 0; while (i < n - 2 && x > keys[i + 1][0]) i++;
   const sl = j => (keys[j + 1][1] - keys[j][1]) / Math.max(1e-9, keys[j + 1][0] - keys[j][0]), tg = j => { if (j === 0 || j === n - 1) return sl(Math.min(j, n - 2)); const a = sl(j - 1), b = sl(j); return a * b <= 0 ? 0 : 2 * a * b / (a + b); };
   const h = keys[i + 1][0] - keys[i][0], u = (x - keys[i][0]) / h, m0 = tg(i) * h, m1 = tg(i + 1) * h, u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * keys[i][1] + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * keys[i + 1][1] + (u3 - u2) * m1; }
+/** Vikas's shirt as ONE surface that bends with the spine (owner, 27 Nov 2026: "the other joints").
+ *  Before: a ball for the belly, a ball for the chest, a shell round both, a flat ball across the shoulders and a ball at each shoulder —
+ *  five pieces that cut through each other in ragged lines, a box across the shoulders, and a belly that came out over the belt when he
+ *  sat. Now: the same outline as one skin from inside the waistband to under the collar, each ring going with the hips, the waist or the
+ *  chest (so a lean is a bend, and the cloth at the belt stays in the trousers); shoulders that slope from the neck and take the sleeve
+ *  into themselves (the shoulder joints sit 2 cm lower); a placket and buttons that run down to the belt; the lanyard and card laid on it.
+ *  Remade before every draw (p.shirtTick). */
+export function shirtSon(p, E) { const sp1 = p.sp1, sp2 = p.sp2, Y1 = sp1.position.y, Y2 = Y1 + sp2.position.y, mat0 = p.chest.material;
+  for (const s of ['l', 'r']) p.arm[s].sho.position.y -= 0.02;
+  const shY = Y2 + p.arm.l.sho.position.y, shX = Math.abs(p.arm.l.sho.position.x);
+  // what makes the outline (in the pelvis's space, the spine straight): the old belly and chest, the old shell, and a line across the shoulders
+  const ell = (m, r, y0) => ({ cy: y0 + m.position.y, cz: m.position.z, a: r * m.scale.x, b: r * m.scale.y, c: r * m.scale.z });
+  const GEN = [ell(p.belly, 0.17, Y1), ell(p.chest, 0.165, Y2), { cy: shY + 0.004, cz: -0.012, a: shX + 0.014, b: 0.05, c: 0.074 }];
+  const SH = [[-0.06, 0.142], [0.04, 0.14], [0.14, 0.15], [0.24, 0.162], [0.3, 0.14], [0.33, 0.02]].map(([y, r]) => [y + Y1, r]), shellR = y => y < SH[0][0] || y > SH[SH.length - 1][0] ? 0 : curveK(SH, y);
+  const ray = (A, C, cz, sn, cs) => { const qa = sn * sn / (A * A) + cs * cs / (C * C), qb = -2 * cz * cs / (C * C), qc = cz * cz / (C * C) - 1, d = qb * qb - 4 * qa * qc; return d <= 0 ? 0 : (-qb + Math.sqrt(d)) / (2 * qa); };
+  const waist = (sn, cs) => { const n = 2.5, k = Math.pow(Math.pow(Math.abs(sn), n) + Math.pow(Math.abs(cs), n), -1 / n); return Math.hypot(0.128 * sn * k, (cs >= 0 ? 0.102 : 0.098) * cs * k); };   /* the trousers' waistband (trousersSon) */
+  const yBot = 0.05, yTop = Y2 + p.neck.position.y + 0.03, neckY0 = shY + 0.028, NG = 48, NS = 48;
+  const rad0 = (y, sn, cs) => { let r = 0; for (const g of GEN) { const h = (y - g.cy) / g.b; if (Math.abs(h) < 1) { const f = Math.sqrt(1 - h * h); r = Math.max(r, ray(g.a * f, g.c * f, g.cz, sn, cs)); } }
+    const rs = shellR(y); if (rs > 0) r = Math.max(r, ray(rs, rs * 0.7, -0.005, sn, cs));
+    if (y > neckY0) { const nk = ray(0.066, 0.06, 0.002, sn, cs); r = lerp(Math.max(r, nk), nk, sm((y - neckY0) / (yTop - neckY0))); }
+    if (y < 0.13) { const w = waist(sn, cs); r = lerp(Math.min(r, w - 0.004), r, sm((y - 0.1) / 0.03)); } return r; };
+  // the rings, smoothed up the body (two passes), so where one old piece met another is a soft fold and not a line
+  const YS = [], TB = []; for (let i = 0; i <= NG; i++) { const y = lerp(yBot, yTop, i / NG); YS.push(y); const row = new Float32Array(NS + 1); for (let j = 0; j <= NS; j++) { const th = j / NS * 2 * Math.PI; row[j] = rad0(y, Math.sin(th), Math.cos(th)); } TB.push(row); }
+  for (let pass = 0; pass < 2; pass++) for (let j = 0; j <= NS; j++) { let prev = TB[0][j]; for (let i = 1; i < NG; i++) { const cur = TB[i][j], v = YS[i] < 0.135 ? cur : 0.25 * prev + 0.5 * cur + 0.25 * TB[i + 1][j]; prev = cur; TB[i][j] = v; } }
+  const radAt = (y, th) => { const fi = clamp((y - yBot) / (yTop - yBot), 0, 1) * NG, i = Math.min(NG - 1, Math.floor(fi)), u = fi - i, fj = ((th / (2 * Math.PI)) % 1 + 1) % 1 * NS, j = Math.min(NS - 1, Math.floor(fj)), w = fj - j; return lerp(lerp(TB[i][j], TB[i][j + 1], w), lerp(TB[i + 1][j], TB[i + 1][j + 1], w), u); };
+  /** a point of the shirt's front at height y and side x (straight spine), out metres off the cloth */
+  const front = (x, y, out = 0) => { let th = 0, r = radAt(y, 0); for (let k = 0; k < 4; k++) { th = Math.asin(clamp(x / Math.max(1e-4, r), -1, 1)); r = radAt(y, th); } return new V3((r + out) * Math.sin(th), y, (r + out) * Math.cos(th)); };
+  const pos = [], uv = [], idx = []; for (let i = 0; i <= NG; i++) for (let j = 0; j <= NS; j++) { const th = j / NS * 2 * Math.PI, r = TB[i][j]; pos.push(r * Math.sin(th), YS[i], r * Math.cos(th)); uv.push(j / NS, (YS[i] - yBot) / 0.42); }
+  for (let i = 0; i < NG; i++) for (let j = 0; j < NS; j++) { const a = i * (NS + 1) + j, b = a + NS + 1; idx.push(a, a + 1, b, b, a + 1, b + 1); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
+  const body = new THREE.Mesh(g, mat0); body.castShadow = body.receiveShadow = true; body.frustumCulled = false; p.pelvis.add(body); p.shirt = body;
+  // the placket: a darker strip down the front, on the cloth, to the belt; and the buttons on it
+  const dark = M('#8fb0d4', { r: 0.75 }), btn = M('#f4f4f0', { r: 0.3 }), PKN = 30, pk0 = [], pkI = []; for (let i = 0; i <= PKN; i++) { const y = lerp(0.108, yTop - 0.012, i / PKN); for (const sx of [-1, 1]) { const q = front(sx * 0.0105, y, 0.0022); pk0.push(q.x, q.y, q.z); } }
+  for (let i = 0; i < PKN; i++) { const a = i * 2; pkI.push(a, a + 1, a + 2, a + 2, a + 1, a + 3); }
+  const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.Float32BufferAttribute(pk0, 3)); pg.setIndex(pkI); pg.computeVertexNormals(); const plk = new THREE.Mesh(pg, dark); plk.receiveShadow = true; plk.frustumCulled = false; p.pelvis.add(plk);
+  const BT = []; for (let i = 0; i < 6; i++) { const y = lerp(0.135, yTop - 0.05, i / 5), q = front(0, y, 0.0042), b = new THREE.Mesh(new THREE.SphereGeometry(0.0052, 10, 8), btn); b.scale.z = 0.45; p.pelvis.add(b); BT.push({ b, q }); }
+  // the collar: a band that stands round the neck and folds over (it was a fat rolled ring)
+  { const col = p.neck.children.find(o => o.isMesh && o.geometry.type === 'TorusGeometry'); if (col) { col.geometry.dispose(); col.geometry = new THREE.LatheGeometry([[0.0625, -0.004], [0.0665, -0.02], [0.0725, -0.021], [0.0738, -0.004], [0.0712, 0.019], [0.0668, 0.0235], [0.0632, 0.019], [0.0625, -0.004]].map(a => new THREE.Vector2(a[0], a[1])), 40); col.rotation.set(-0.2, 0, 0); col.position.set(0, 0.004, 0.002); col.castShadow = true; } }
+  // the old pieces go: belly, chest, shell, the flat ball across the shoulders, the shoulder balls, the old placket and buttons
+  for (const m of [p.belly, p.chest, p.shell]) if (m) m.visible = false; for (const s of ['l', 'r']) { const b = p.arm[s].sho.children[0]; if (b && b.isMesh) b.visible = false; }
+  for (const o of [...sp2.children, ...sp1.children]) { if (!o.isMesh) continue; const t = o.geometry.type, c = o.material && o.material.color ? o.material.color.getHexString() : '';
+    if (t === 'SphereGeometry' && Math.abs(o.position.y - 0.165) < 1e-3 && Math.abs(o.position.x) < 1e-3) o.visible = false;
+    if (t === 'SphereGeometry' && o.geometry.parameters.radius === 0.0055) o.visible = false; if (t === 'TubeGeometry' && c === '8fb0d4') o.visible = false;
+    if (t === 'TubeGeometry' && c === 'c0283a') { o.visible = false; o.userData.oldLanyard = true; } }
+  // the lanyard and its card, laid on the new cloth (they ride the chest)
+  { const lan = M('#c0283a', { r: 0.6 }), cy = Y2 + 0.035, toC = v => new V3(v.x, v.y - Y2, v.z), cz = front(0, cy, 0.007);
+    if (p.card) { const clip = sp2.children.find(o => o.isMesh && o.geometry.type === 'BoxGeometry' && Math.abs(o.position.y - (p.card.position.y + 0.046)) < 1e-4); p.card.position.set(0, cy - Y2, cz.z); if (clip) clip.position.set(0, cy - Y2 + 0.046, cz.z + 0.002); }
+    for (const s of [-1, 1]) { const ny = p.neck.position.y, pts = [new V3(0, ny + 0.012, -0.0668), new V3(s * 0.05, ny + 0.011, -0.044), new V3(s * 0.0672, ny + 0.006, -0.004), new V3(s * 0.061, ny - 0.006, 0.034)]; for (const [u, x] of [[0.12, 0.057], [0.34, 0.05], [0.62, 0.03], [0.86, 0.016], [1, 0.009]]) { const y = lerp(Y2 + 0.168, cy + 0.052, u); pts.push(toC(front(s * x, y, 0.0045))); } sp2.add(tube(pts, 0.0032, lan, 36, 5)); } }
+  // how much each ring goes with the waist (sp1) and with the chest (sp2): the cloth inside the waistband stays with the hips
+  const rest = Float32Array.from(g.attributes.position.array), m1 = new THREE.Matrix4(), m2 = new THREE.Matrix4(), v = new V3();
+  const skin = (x, y, z, out) => { const w1 = sm((y - 0.095) / 0.11), w2 = sm((y - 0.215) / 0.13); let X = x, Y = y, Z = z; if (w1 > 0) { v.set(x, y - Y1, z).applyMatrix4(m1); X += (v.x - X) * w1; Y += (v.y - Y) * w1; Z += (v.z - Z) * w1; } if (w2 > 0) { v.set(x, y - Y2, z).applyMatrix4(m2); X += (v.x - X) * w2; Y += (v.y - Y) * w2; Z += (v.z - Z) * w2; } return out.set(X, Y, Z); };
+  const o3 = new V3(); p.shirtTick = () => { sp1.updateMatrix(); sp2.updateMatrix(); m1.copy(sp1.matrix); m2.multiplyMatrices(sp1.matrix, sp2.matrix);
+    const A = g.attributes.position.array; for (let i = 0, n = rest.length / 3; i < n; i++) { skin(rest[i * 3], rest[i * 3 + 1], rest[i * 3 + 2], o3); A[i * 3] = o3.x; A[i * 3 + 1] = o3.y; A[i * 3 + 2] = o3.z; }
+    g.attributes.position.needsUpdate = true; g.computeVertexNormals(); { const N = g.attributes.normal.array; for (let i = 0; i <= NG; i++) { const a = i * (NS + 1) * 3, b = a + NS * 3; for (let k = 0; k < 3; k++) { const q = (N[a + k] + N[b + k]) / 2; N[a + k] = N[b + k] = q; } } }   /* no line of light where the surface closes on itself */
+    const B = pg.attributes.position.array; for (let i = 0, n = pk0.length / 3; i < n; i++) { skin(pk0[i * 3], pk0[i * 3 + 1], pk0[i * 3 + 2], o3); B[i * 3] = o3.x; B[i * 3 + 1] = o3.y; B[i * 3 + 2] = o3.z; } pg.attributes.position.needsUpdate = true; pg.computeVertexNormals();
+    for (const t of BT) { skin(t.q.x, t.q.y, t.q.z, o3); t.b.position.copy(o3); t.b.updateMatrixWorld(true); } };   /* moved before a draw, after the scene's own matrices were made: its matrix is made here, or the button would be a frame late */
+  if (E && E.scene) { const sc = E.scene; (sc.userData.ticks = sc.userData.ticks || []).push(() => { if (p.root.visible) p.shirtTick(); }); if (!sc.userData.ticked) { sc.userData.ticked = true; const prev = sc.onBeforeRender; sc.onBeforeRender = function (...a) { if (prev) prev.apply(this, a); for (const f of sc.userData.ticks) f(); }; } }
+  p.shirtTick(); return p;
+}
+
 /** Vikas: trousers as trousers (owner, 27 Nov 2026: "waist side, butt and front, and other joints need rework").
  *  The old lower body was a ball with a cylinder under each side: briefs seen from the front, no seat from the side, a ball at each knee.
  *  Now: one tube per leg, rebuilt every frame from INSIDE the seat through hip → knee → cuff (thigh and shin stay straight, the knee is one
@@ -365,47 +428,61 @@ export function trousersSon(p, E) {
   if (hipsBall) hipsBall.visible = false;
   for (const s of ['l', 'r']) for (const j of [p.leg[s].th, p.leg[s].sn]) for (const c of j.children) if (c.isMesh) c.visible = false;
   // ---- the seat and waist, in the pelvis's own space. y: 0 is the pelvis joint (hip joints at y -0.02, x ±0.095)
-  const lerpK = (keys, y) => { if (y >= keys[0][0]) return keys[0][1]; for (let i = 1; i < keys.length; i++) if (y >= keys[i][0]) { const u = (y - keys[i][0]) / (keys[i - 1][0] - keys[i][0]), e = u * u * (3 - 2 * u); return lerp(keys[i][1], keys[i - 1][1], e); } return keys[keys.length - 1][1]; };
-  const WX = [[0.105, 0.128], [0.07, 0.132], [0.0, 0.146], [-0.05, 0.150], [-0.11, 0.136]], ZF = [[0.105, 0.102], [0.06, 0.104], [0.0, 0.100], [-0.11, 0.090]], ZB = [[0.105, 0.098], [0.05, 0.108], [-0.01, 0.128], [-0.055, 0.132], [-0.11, 0.108]];
+  const ascK = new Map(), lerpK = (keys, y) => { let a = ascK.get(keys); if (!a) ascK.set(keys, a = keys.slice().reverse()); return curveK(a, y); };   /* one smooth curve through the keys (eased steps between them showed as rings) */
+  // below the hips the piece curves UNDER (27 Nov 2026, second pass): it used to stop at -0.11 with a straight lower edge, which stood proud of the
+  // thighs as a flap in front and a shelf under the seat. Now it closes like a bowl inside the legs; only its middle shows, narrowing into the crotch.
+  // The hips are the SEAT's (it is as wide as the thighs where they begin, so no leg top shows under the belt as a shelf); the legs come out of it lower down.
+  const WX = [[0.105, 0.128], [0.07, 0.133], [0.03, 0.150], [0.0, 0.164], [-0.04, 0.174], [-0.08, 0.170], [-0.11, 0.150], [-0.14, 0.104], [-0.172, 0.046]], ZF = [[0.105, 0.102], [0.06, 0.104], [0.0, 0.100], [-0.06, 0.092], [-0.10, 0.076], [-0.14, 0.048], [-0.172, 0.014]], ZB = [[0.105, 0.098], [0.05, 0.106], [-0.01, 0.120], [-0.055, 0.124], [-0.10, 0.108], [-0.14, 0.072], [-0.172, 0.022]];
   const ring = (y, th, grow = 0) => { const c = Math.cos(th), s = Math.sin(th), n = 2.5, a = lerpK(WX, y) + grow, b = (c >= 0 ? lerpK(ZF, y) : lerpK(ZB, y)) + grow; const k = Math.pow(Math.pow(Math.abs(s), n) + Math.pow(Math.abs(c), n), -1 / n);
     let x = a * s * k, z = b * c * k; if (c < 0 && y < 0.02) z += 0.007 * Math.exp(-Math.pow(x / 0.018, 2)) * Math.min(1, (0.02 - y) / 0.05);   /* the seat's own middle line */ return [x, y, z]; };
   const surf = (ys, nr, grow, mat0) => { const pos = [], uv = [], idx = []; ys.forEach((y, i) => { for (let j = 0; j <= nr; j++) { const q = ring(y, j / nr * 2 * Math.PI, grow); pos.push(q[0], q[1], q[2]); uv.push(j / nr * 4, i / (ys.length - 1) * 0.6); } });
     for (let i = 0; i < ys.length - 1; i++) for (let j = 0; j < nr; j++) { const a = i * (nr + 1) + j, b = a + nr + 1; idx.push(a, b, a + 1, b, b + 1, a + 1); }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals(); const m = new THREE.Mesh(g, mat0); m.castShadow = m.receiveShadow = true; return m; };
-  const seatM = pm.clone(); seatM.side = THREE.DoubleSide; const YS = []; for (let i = 0; i <= 16; i++) YS.push(lerp(0.105, -0.11, i / 16));
+  const seatM = pm.clone(); seatM.side = THREE.DoubleSide; const YS = []; for (let i = 0; i <= 24; i++) YS.push(lerp(0.105, -0.172, i / 24));
   const seat = surf(YS, 48, 0, seatM); p.pelvis.add(seat);
-  { const g = seat.geometry, P = g.attributes.position, n0 = P.count, pos = Array.from(P.array), uv = Array.from(g.attributes.uv.array), idx = Array.from(g.index.array); pos.push(0, -0.125, 0.004); uv.push(0.5, 1); const last = (YS.length - 1) * 49; for (let j = 0; j < 48; j++) idx.push(last + j, n0, last + j + 1);   /* the underside, closed (it hides between the legs) */
+  { const g = seat.geometry, P = g.attributes.position, n0 = P.count, pos = Array.from(P.array), uv = Array.from(g.attributes.uv.array), idx = Array.from(g.index.array); pos.push(0, -0.18, 0.0); uv.push(0.5, 1); const last = (YS.length - 1) * 49; for (let j = 0; j < 48; j++) idx.push(last + j, n0, last + j + 1);   /* the underside, closed (it hides between the legs) */
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx);
     g.deleteAttribute('normal'); g.computeVertexNormals(); }   /* the old normals are one point short: computeVertexNormals would keep them and leave the new point with NO normal, which draws as a black block on the GPU (27 Nov 2026) */
+  // the part below the hips goes with the thighs (skinned to them): sitting, the seat no longer hangs under the legs like a bag, and in a stride each side follows its leg
+  const seat0 = Float32Array.from(seat.geometry.attributes.position.array), seatW = new Float32Array(seat0.length / 3 * 2);
+  for (let i = 0; i < seat0.length / 3; i++) { const x = seat0[i * 3], y = seat0[i * 3 + 1], t = clamp((-0.03 - y) / 0.12, 0, 1), w = t * t * (3 - 2 * t), sx = clamp((x + 0.04) / 0.08, 0, 1), sl = sx * sx * (3 - 2 * sx); seatW[i * 2] = w * sl; seatW[i * 2 + 1] = w * (1 - sl); }
+  const seatTick = () => { const P = seat.geometry.attributes.position, A = P.array, v = new V3(), L = [[p.leg.l.th.quaternion, p.leg.l.hip.position], [p.leg.r.th.quaternion, p.leg.r.hip.position]];
+    for (let i = 0, n = seat0.length / 3; i < n; i++) { const x = seat0[i * 3], y = seat0[i * 3 + 1], z = seat0[i * 3 + 2]; let X = x, Y = y, Z = z;
+      for (let k = 0; k < 2; k++) { const w = seatW[i * 2 + k]; if (w < 1e-4) continue; const h = L[k][1]; v.set(x - h.x, y - h.y, z - h.z).applyQuaternion(L[k][0]); X += w * (v.x + h.x - x); Y += w * (v.y + h.y - y); Z += w * (v.z + h.z - z); }
+      A[i * 3] = X; A[i * 3 + 1] = Y; A[i * 3 + 2] = Z; }
+    P.needsUpdate = true; seat.geometry.computeVertexNormals(); };
   // the belt: a leather band standing a little proud of the waist, loops of the cloth over it, a buckle in front
   const leather = new THREE.MeshStandardMaterial({ color: '#2b1c12', roughness: 0.45 }), belt = surf([0.098, 0.094, 0.066, 0.062], 48, 0.0055, leather); belt.geometry.computeVertexNormals(); p.pelvis.add(belt);
-  for (const th of [0.42, -0.42, 1.35, -1.35, Math.PI]) { const q = ring(0.08, th, 0.0085), lp = new THREE.Mesh(new THREE.BoxGeometry(0.011, 0.05, 0.004), seatM); lp.position.set(q[0], q[1], q[2]); lp.rotation.y = Math.atan2(q[0], q[2]); p.pelvis.add(lp); }
-  { const q = ring(0.08, 0, 0.009), bk = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.03, 0.006), new THREE.MeshStandardMaterial({ color: '#b9a06a', roughness: 0.3, metalness: 0.85 })); bk.position.set(q[0], q[1], q[2]); p.pelvis.add(bk);
+  const loopM = new THREE.MeshStandardMaterial({ color: '#2f333c', roughness: 0.92 });   /* plain cloth: the trousers' own sheen made the loops shine pale blue */
+  for (const th of [0.42, -0.42, 1.35, -1.35, Math.PI]) { const q = ring(0.08, th, 0.0072), lp = new THREE.Mesh(new THREE.BoxGeometry(0.0085, 0.043, 0.003), loopM); lp.position.set(q[0], q[1], q[2]); lp.rotation.y = Math.atan2(q[0], q[2]); p.pelvis.add(lp); }
+  { const q = ring(0.08, 0, 0.008), brass = new THREE.MeshStandardMaterial({ color: '#b9a06a', roughness: 0.32, metalness: 0.85 }), bk = new THREE.Group(); bk.position.set(q[0], q[1], q[2]); p.pelvis.add(bk);   /* a buckle: a frame with the belt showing through and a prong, not a plate */
+    for (const [w, h, x, y] of [[0.036, 0.0045, 0, 0.0145], [0.036, 0.0045, 0, -0.0145], [0.0045, 0.0335, -0.0158, 0], [0.0045, 0.0335, 0.0158, 0]]) { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.005), brass); b.position.set(x, y, 0.001); bk.add(b); }
+    { const pr = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.0032, 0.0034), brass); pr.position.set(0.001, 0, 0.0028); bk.add(pr); }
     const fly = new THREE.Mesh(new THREE.BoxGeometry(0.0022, 0.085, 0.0022), new THREE.MeshStandardMaterial({ color: '#23262d', roughness: 0.9 })); const f0 = ring(0.015, 0.11, 0.0006); fly.position.set(f0[0], 0.015, f0[2]); fly.rotation.x = 0.09; p.pelvis.add(fly);
-    for (const sg of [-1, 1]) { const b0 = ring(0.0, Math.PI - sg * 0.62, 0.0008), pk = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.0026, 0.0026), fly.material); pk.position.set(b0[0], 0.004, b0[2]); pk.rotation.y = Math.atan2(b0[0], b0[2]); pk.rotation.z = sg * 0.06; p.pelvis.add(pk); } }
+    for (const sg of [-1, 1]) { const pts = []; for (let i = 0; i <= 6; i++) { const th = Math.PI - sg * (0.40 + 0.42 * i / 6), q = ring(0.008 - 0.004 * i / 6, th, 0.0011); pts.push(q); } p.pelvis.add(tube(pts, 0.0013, fly.material, 14, 4)); } }   /* back pocket welts that lie ON the seat (a straight bar stuck out past its curve) */
   // ---- the legs: a tube each, through the joints as they are now
   const NA = 44, NR = 24, legs = [];
   for (const s of ['l', 'r']) { const g = new THREE.BufferGeometry(), n = (NA + 1) * (NR + 1), pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), uv = new Float32Array(n * 2), idx = [];
     for (let i = 0; i < NA; i++) for (let j = 0; j < NR; j++) { const a = i * (NR + 1) + j, b = a + NR + 1; idx.push(a, a + 1, b, b, a + 1, b + 1); }
     g.setIndex(idx); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     const m = new THREE.Mesh(g, seatM); m.frustumCulled = false; m.castShadow = m.receiveShadow = true; p.root.add(m); legs.push({ lg: p.leg[s], g, pos, nor, uv, sg: p.leg[s].sg }); }
-  const Lr = { thigh: p.L.thigh / p.size, shin: p.L.shin / p.size };
-  p.legsTick = () => { p.root.updateWorldMatrix(true, true); const toL = v => p.root.worldToLocal(v), dirL = (o, v) => toL(o.localToWorld(v.clone())).sub(toL(o.localToWorld(new V3())));
+  const Lr = { thigh: p.L.thigh / p.size, shin: p.L.shin / p.size }; const UP0 = 0.036;   /* the leg begins this far above the hip joint, inside the seat where the seat is already as wide as the leg */
+  p.legsTick = () => { p.root.updateWorldMatrix(true, true); seatTick(); const toL = v => p.root.worldToLocal(v), dirL = (o, v) => toL(o.localToWorld(v.clone())).sub(toL(o.localToWorld(new V3())));
     for (const a of legs) { const { lg } = a, H = toL(lg.hip.getWorldPosition(new V3())), K = toL(lg.sn.getWorldPosition(new V3())), A = toL(lg.an.getWorldPosition(new V3()));
-      const upP = dirL(p.pelvis, new V3(0, 1, 0)).normalize(), side = dirL(p.pelvis, new V3(1, 0, 0)).normalize(), S0 = H.clone().addScaledVector(upP, 0.062).addScaledVector(side, -a.sg * 0.012);
+      const upP = dirL(p.pelvis, new V3(0, 1, 0)).normalize(), side = dirL(p.pelvis, new V3(1, 0, 0)).normalize(), S0 = H.clone().addScaledVector(upP, UP0).addScaledVector(side, -a.sg * 0.016);
       const t1 = K.clone().sub(H).normalize(), t2 = A.clone().sub(K).normalize(), ax = new V3().crossVectors(t1, t2), bend = ax.length(), out = bend > 1e-4 ? t2.clone().sub(t1).normalize().negate() : dirL(p.pelvis, new V3(0, 0, 1)).normalize();   /* out: the way the kneecap points */
       const Kc = K.clone().addScaledVector(out, 0.006 + 0.016 * Math.min(1, bend * 1.4));
       const pts = [S0, H.clone().lerp(S0, 0.3), H.clone().lerp(K, 0.12), H.clone().lerp(K, 0.5), H.clone().lerp(K, 0.86), Kc, K.clone().lerp(A, 0.14), K.clone().lerp(A, 0.55), A.clone().addScaledVector(t2, 0.004)];
       const crv = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5), P = crv.getSpacedPoints(NA), T = P.map((q, i) => (i < NA ? P[i + 1].clone().sub(q) : q.clone().sub(P[i - 1])).normalize());
-      const len = (() => { let l = 0; for (let i = 1; i <= NA; i++) l += P[i].distanceTo(P[i - 1]); return l; })(), uh = 0.062 / len, uk = (0.062 + Lr.thigh) / len;
+      const len = (() => { let l = 0; for (let i = 1; i <= NA; i++) l += P[i].distanceTo(P[i - 1]); return l; })(), uh = UP0 / len, uk = (UP0 + Lr.thigh) / len;
       let Nn = side.clone().sub(T[0].clone().multiplyScalar(side.dot(T[0]))).normalize(); const fw0 = dirL(p.pelvis, new V3(0, 0, 1)).normalize();
-      const RK = [[0, 0.088], [uh, 0.097], [uh + 0.45 * (uk - uh), 0.085], [uk - 0.05, 0.0715], [uk, 0.069], [uk + 0.22 * (1 - uk), 0.0685], [uk + 0.6 * (1 - uk), 0.062], [1, 0.057]], R = u => curveK(RK, u);   /* thigh, knee, a little calf, cuff: one smooth curve (a kink in it shows as a ring round the leg) */
+      const RK = [[0, 0.066], [uh, 0.080], [uh + 0.25 * (uk - uh), 0.086], [uh + 0.55 * (uk - uh), 0.082], [uk - 0.05, 0.0715], [uk, 0.069], [uk + 0.22 * (1 - uk), 0.0685], [uk + 0.6 * (1 - uk), 0.062], [1, 0.057]], R = u => curveK(RK, u);   /* thigh, knee, a little calf, cuff: one smooth curve (a kink in it shows as a ring round the leg) */
       for (let i = 0; i <= NA; i++) { if (i > 0) { const q = new THREE.Quaternion().setFromUnitVectors(T[i - 1], T[i]); Nn.applyQuaternion(q); Nn.sub(T[i].clone().multiplyScalar(Nn.dot(T[i]))).normalize(); }
         const B = new V3().crossVectors(T[i], Nn).normalize(), fsg = B.dot(i === 0 ? fw0 : out) >= 0 || bend < 1e-4 && B.dot(fw0) >= 0 ? 1 : -1, u = i / NA, r0 = R(u) + (u > 0.985 ? 0.003 : 0);
         for (let j = 0; j <= NR; j++) { const th = j / NR * 2 * Math.PI, cs = Math.cos(th), sn = Math.sin(th), front = sn * fsg;   /* front: +1 at the front of the leg, -1 behind */
           const crease = u > uh * 1.6 ? 0.045 * Math.exp(-Math.pow((1 - Math.max(0, front)) / 0.05, 2)) : 0;                       /* the pressed line down the front */
           const cap = 0.09 * Math.exp(-Math.pow((u - uk) / 0.05, 2)) * Math.max(0, front) * (0.4 + 0.6 * Math.min(1, bend * 1.5));  /* the kneecap under the cloth */
-          const fold = -bend * 0.2 * Math.exp(-Math.pow((u - uk) / 0.07, 2)) * Math.max(0, -front) * (0.65 + 0.35 * Math.sin(u * 120 + th * 2));   /* cloth gathering behind a bent knee */
+          const fold = -bend * 0.11 * Math.exp(-Math.pow((u - uk) / 0.07, 2)) * Math.max(0, -front) * (0.7 + 0.3 * Math.sin(u * 75 + th * 2));   /* soft: deep, fine folds drew as dark pits */   /* cloth gathering behind a bent knee */
           const r = r0 * (1 + crease + cap + fold + 0.01 * Math.sin(th * 3 + u * 9)), nx = Nn.x * cs + B.x * sn, ny = Nn.y * cs + B.y * sn, nz = Nn.z * cs + B.z * sn, k = i * (NR + 1) + j;
           a.pos[k * 3] = P[i].x + nx * r; a.pos[k * 3 + 1] = P[i].y + ny * r; a.pos[k * 3 + 2] = P[i].z + nz * r; a.nor[k * 3] = nx; a.nor[k * 3 + 1] = ny; a.nor[k * 3 + 2] = nz; a.uv[k * 2] = j / NR * 2; a.uv[k * 2 + 1] = u * 4; } }
       a.g.attributes.position.needsUpdate = true; a.g.attributes.normal.needsUpdate = true; a.g.attributes.uv.needsUpdate = true; } };
