@@ -111,7 +111,7 @@ export function planWalk(points, o = {}) {
   const steps = [], at = { l: rest0.l, r: rest0.r }, pel = [{ t: t0, s: 0, side: 0 }];
   for (let i = 1; i <= n; i++) { const s = (i % 2 === 1) === (first === 'l') ? 'l' : 'r', sg = s === 'l' ? 1 : -1, other = s === 'l' ? 'r' : 'l';
     const sTo = i >= n - 1 ? D : (i - 0.25) * L, to = i >= n - 1 ? rest1[s] : spot(sTo, sg), jit = (i > 1 && i < n - 1 ? (rnd() - 0.5) * 0.07 : 0) * Ts, a = t0 + lead + (i - 1) * Ts + jit, b = a + swing * Ts * (i === 1 || i === n ? 1.12 : 1) * (1 + (rnd() - 0.5) * 0.06);
-    steps.push({ s, a, b, from: at[s], to, len: to.G.distanceTo(at[s].G), lift: (0.05 + 0.045 * Math.min(1, L / (0.62 * sz))) * sz * (0.9 + 0.2 * rnd()) });
+    steps.push({ s, a, b, from: at[s], to, len: to.G.distanceTo(at[s].G), lift: (0.038 + 0.034 * Math.min(1, L / (0.62 * sz))) * sz * (0.9 + 0.2 * rnd()) });
     // as one foot passes the other the pelvis is a little AHEAD of the standing foot, so that at the heel strike it is midway between the two
     // (behind that, the leading leg has to stretch and pulls the hips down 7 cm a step); it has already fallen forward into the first step, and is still arriving in the last
     pel.push({ t: (a + b) / 2, s: i === 1 ? 0.2 * L : i === n ? D - 0.2 * L : clamp(at[other].s + 0.14 * L, 0, D - 0.2 * L), side: -sg });
@@ -148,7 +148,7 @@ export function chain(A, B) {
 }
 
 /** a real swing foot rises EARLY (the heel goes up behind as the knee folds after toe-off), then glides forward low and reaches out for the heel strike; a symmetric arc reads as marching */
-const SWING = u => u < 0.3 ? Math.sin(PI / 2 * u / 0.3) ** 0.85 : Math.cos(PI / 2 * (u - 0.3) / 0.7) ** 1.7;
+const SWING = u => u < 0.26 ? Math.sin(PI / 2 * u / 0.26) ** 0.85 : Math.cos(PI / 2 * (u - 0.26) / 0.74) ** 2.5;   /* 28 Nov: the foot falls sooner after its early peak, so the knee straightens while the hip swings through (a high knee with a flexed hip read as marching) */
 const TOE = 0.72;   // how far the heel is up (radians) when the toe leaves the floor in a full stride: this, not a deeper knee, is what keeps the hips from sinking between steps
 // where a foot is at time t of a plan: planted (heel down first, then flat, then up on its ball before it leaves) or in the air
 function footAt(plan, s, t, p) {
