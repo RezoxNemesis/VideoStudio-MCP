@@ -703,17 +703,30 @@ export async function say(models: StudioModels, text: string, spk: Speaker, o: S
   }
 }
 
-/** Trim leading and trailing silence (40 dB below the loudest 20 ms frame), keeping a short margin. */
+/**
+ * Trim leading and trailing silence, keeping a short margin; the END keeps the line's own dying sound and fades it softly.
+ *
+ * 27 Nov 2026, the owner: "more natural ending of any dialogue". A line was cut where its sound fell 40 dB under its loudest
+ * moment and stopped there with no fade: the breath and the last syllable's release, which real speakers let die away over a
+ * fifth of a second, were chopped (heard as an abrupt, unnatural end). Now the end follows the sound down while it stays
+ * unbroken and above -54 dB (at most 0.45 s past the -40 dB point, so a separate sound after a silence is never taken in),
+ * and the last part is faded with a cosine (40 to 200 ms), as a voice ends by itself.
+ */
 export function trimSilence(pcm: Float32Array, sr = STUDIO_SR): Float32Array {
-  const [start, end] = soundBounds(pcm, sr);
-  return start === 0 && end === pcm.length ? pcm : pcm.slice(start, end);
+  const [start, end, fadeFrom] = soundBounds(pcm, sr);
+  const out = start === 0 && end === pcm.length && fadeFrom >= end ? pcm : pcm.slice(start, end);
+  const from = Math.max(0, fadeFrom - start), n = out.length - from;
+  if (n <= 0) return out;
+  const res = out === pcm ? new Float32Array(out) : out;
+  for (let i = 0; i < n; i++) { const c = Math.cos((Math.PI / 2) * ((i + 1) / n)); res[from + i] = res[from + i]! * c * c; }
+  return res;
 }
 
 /** Where the sound of a clip begins and ends (samples), with the short margin trimSilence keeps. */
-function soundBounds(pcm: Float32Array, sr = STUDIO_SR): [number, number] {
+function soundBounds(pcm: Float32Array, sr = STUDIO_SR): [number, number, number] {
   const hop = Math.round(sr * 0.02);
   const frames = Math.floor(pcm.length / hop);
-  if (frames < 3) return [0, pcm.length];
+  if (frames < 3) return [0, pcm.length, pcm.length];
   const e = new Float32Array(frames);
   let peak = 0;
   for (let f = 0; f < frames; f++) {
@@ -727,9 +740,14 @@ function soundBounds(pcm: Float32Array, sr = STUDIO_SR): [number, number] {
   let b = frames - 1;
   while (a < frames && e[a]! < floor) a++;
   while (b > a && e[b]! < floor) b--;
+  // the end: on down the line's own decay while it is unbroken and above -54 dB, for at most 0.45 s
+  let c = b;
+  const most = Math.round((0.45 * sr) / hop);
+  while (c + 1 < frames && c - b < most && e[c + 1]! >= peak * 0.002) c++;
   const start = Math.max(0, (a - 2) * hop);
-  const end = Math.min(pcm.length, (b + 4) * hop);
-  return [start, end];
+  const end = Math.min(pcm.length, (c + 3) * hop);
+  const fadeLen = Math.min(Math.round(0.2 * sr), Math.max(Math.round(0.04 * sr), end - (b + 1) * hop));
+  return [start, end, Math.max(start, end - fadeLen)];
 }
 
 // ---------------------------------------------------------------- model graph

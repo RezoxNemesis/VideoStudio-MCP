@@ -81,3 +81,20 @@ export function steadiness(pcm: Float32Array, sr = 24000): Steadiness | null {
 
 /** A take cracks when its pitch breaks more often than any real reader's does (and at least three times: one break is a breath). */
 export const cracked = (s: Steadiness | null): boolean => !!s && s.steps >= 3 && s.jumps > CRACKS;
+
+/**
+ * Where a line ENDS against its middle, in semitones: the middle pitch of its last 0.3 s of voice against the middle pitch of all
+ * of it. A statement said naturally ends low (real readers and the lines the owner accepted: -1 to -7); one that ends HIGH sounds
+ * like an unfinished thought or a question (the workspace measure found a take at +1.8 that read wrong however smooth it was).
+ * null when there is too little voice to tell.
+ */
+export function endingOf(pcm: Float32Array, sr = 24000): number | null {
+  const { f0 } = pitchTrack(pcm, sr), v: Array<[number, number]> = [];
+  for (let f = 0; f < f0.length; f++) if (f0[f]! > 0) v.push([f * 0.01, f0[f]!]);
+  if (v.length < 25) return null;
+  const med = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]!; };
+  const mid = med(v.map((x) => x[1])), lastT = v[v.length - 1]![0], tail = v.filter((x) => x[0] > lastT - 0.3).map((x) => x[1]);
+  return 12 * Math.log2(med(tail) / mid);
+}
+/** A statement (not a question) that ends above its middle by more than half a semitone ends wrong. */
+export const endsWrong = (text: string, ending: number | null) => ending !== null && !/[?？]\s*["'”’)]*\s*$/.test(text.trim()) && ending > 0.5;

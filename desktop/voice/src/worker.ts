@@ -36,7 +36,7 @@ import {
   type StudioModels,
 } from "../../../src/voice/engine/studio";
 import { leadFor } from "../../../src/voice/engine/studio_lead";
-import { steadiness, cracked } from "../../../src/voice/engine/studio_steady";
+import { steadiness, cracked, endingOf, endsWrong } from "../../../src/voice/engine/studio_steady";
 
 type Msg = { id: string; method: string; params: Record<string, unknown> };
 const send = (m: unknown) => process.send?.(m);
@@ -215,7 +215,7 @@ async function handle(m: Msg): Promise<unknown> {
       type Take = Awaited<ReturnType<typeof say>>;
       const told = (r: Take, attempt: number, tries: unknown[]) =>
         p.trace ? { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, lead: r.lead, stops: r.stops, attempt, tries } : { pcm: r.pcm, stops: r.stops };
-      const tries: Array<{ complete: boolean; reason: string; lead?: boolean; pass?: Take["pass"]; found?: unknown; jumps?: number }> = [];
+      const tries: Array<{ complete: boolean; reason: string; lead?: boolean; pass?: Take["pass"]; found?: unknown; jumps?: number; ending?: number | null }> = [];
       let first: Take | null = null;
       let firstAt = 0;
       let firstScore = Infinity;
@@ -235,10 +235,14 @@ async function handle(m: Msg): Promise<unknown> {
           onToken: (n) => n % 25 === 0 && send({ id: m.id, event: "progress", done: n, what: "Acting the line" }),
         });
         const how = r.complete && !mayCrack ? steadiness(r.pcm) : null;
-        tries.push({ complete: r.complete, reason: r.reason, lead: r.lead, pass: r.pass, found: r.trace?.lead, ...(how ? { jumps: how.jumps } : {}) });
+        // and how it ENDS: a statement that ends above its middle sounds unfinished (studio_steady.ts endingOf); asked for by the
+        // owner, "more natural ending of any dialogue". A question may rise; crying and fear are left alone.
+        const ending = r.complete && !mayCrack ? endingOf(r.pcm) : null, wrongEnd = endsWrong(text, ending);
+        tries.push({ complete: r.complete, reason: r.reason, lead: r.lead, pass: r.pass, found: r.trace?.lead, ...(how ? { jumps: how.jumps } : {}), ...(ending !== null ? { ending } : {}) });
         if (r.complete) {
-          if (!cracked(how)) return told(r, attempt, tries);
-          if (how!.jumps < steadyJumps) { steady = r; steadyAt = attempt; steadyJumps = how!.jumps; }
+          if (!cracked(how) && !wrongEnd) return told(r, attempt, tries);
+          const score = (how ? how.jumps : 0) + (wrongEnd ? 2 : 0);
+          if (score < steadyJumps) { steady = r; steadyAt = attempt; steadyJumps = score; }
           continue;
         }
         // none clean so far: a take that said the line with a leap is still better than one that never got through it;
