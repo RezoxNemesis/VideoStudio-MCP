@@ -381,9 +381,20 @@ function createCine(o) {
     const name = `${String(opt.name || path.basename(src).replace(/\.[^.]+$/, "")).replace(/[^\w-]+/g, "_").slice(0, 60) || "take"}.json`, out = path.join(dir, name);
     await fsp.mkdir(ASSETS, { recursive: true }); const model = path.join(ASSETS, "pose_landmarker_heavy.task");
     const args = [script, src, out, "--model", model, "--ffmpeg", o.ffmpeg || "ffmpeg", ...(opt.from ? ["--from", String(+opt.from)] : []), ...(opt.to ? ["--to", String(+opt.to)] : []), "--name", path.basename(src)];
-    let r = null, why = "";
-    for (const py of [process.env.VIDEOSTUDIO_PYTHON, "python", "python3", "py"].filter(Boolean)) { r = await exec(py, args, { cwd: dir, timeout: 60 * 60_000 }); if (!r.code) break; why = r.err.trim().split("\n").slice(-1)[0] || why; if (/No module named/.test(r.err)) break; }
-    if (!r || r.code) throw new Error(/No module named/.test(why) ? `This PC's Python is missing a part: ${why}. Once: pip install mediapipe numpy — then run this again.` : /ENOENT|not recognized|not found/i.test(why) || !why ? "This PC has no Python on its PATH. Install Python 3 (python.org), then: pip install mediapipe numpy" : `The capture failed: ${why}`);
+    // Python: the capture's own (a private set of tools in the Cine folder, made the first time), else this PC's
+    const venv = path.join(ROOT, ".mocap-tools"), own = path.join(venv, process.platform === "win32" ? "Scripts/python.exe" : "bin/python"), last = (t) => t.trim().split("\n").slice(-1)[0] || "";
+    const run = async (list) => { let r = null, why = ""; for (const py of list.filter(Boolean)) { r = await exec(py, args, { cwd: dir, timeout: 60 * 60_000 }); if (!r.code) return { r, why: "" }; why = last(r.err) || why; if (/No module named/.test(r.err)) break; } return { r, why }; };
+    let { r, why } = await run([fs.existsSync(own) ? own : null, process.env.VIDEOSTUDIO_PYTHON, "python3", "python", "py"]);
+    if ((!r || r.code) && /No module named/.test(why) && opt.install !== false) {
+      // The pose tools are missing: set them up once, privately (nothing is installed into the system's Python), and try again
+      say(`mocap: setting up the capture tools once in ${venv} (${why})`);
+      let base = null; for (const py of [process.env.VIDEOSTUDIO_SETUP_PYTHON, "python3", "python", "py"].filter(Boolean)) { const v = await exec(py, ["-m", "venv", venv], { timeout: 5 * 60_000 }); if (!v.code && fs.existsSync(own)) { base = py; break; } why = last(v.err) || why; }
+      if (!base) throw new Error(`The capture tools could not be set up: this PC's Python cannot make a private tool folder (${why}). On Ubuntu / Kubuntu, once, in a terminal: sudo apt install python3-venv — then press Capture again.`);
+      const pip = await exec(own, ["-m", "pip", "install", "--disable-pip-version-check", ...(Array.isArray(opt.packages) ? opt.packages : ["mediapipe", "numpy"])], { timeout: 30 * 60_000 });
+      if (pip.code) throw new Error(`The capture tools could not be downloaded (${last(pip.err)}). Is this PC online? Press Capture again to retry.`);
+      ({ r, why } = await run([own]));
+    }
+    if (!r || r.code) throw new Error(/No module named/.test(why) ? `The capture tools are missing a part: ${why}. In a terminal: pip install mediapipe numpy — then run this again.` : /ENOENT|not recognized|not found/i.test(why) || !why ? "This PC has no Python on its PATH. Install Python 3, then press Capture again (the capture sets up the rest itself)." : `The capture failed: ${why}`);
     let info = {}; try { info = JSON.parse(r.out.trim().split("\n").slice(-1)[0]); } catch { /* the tool said something else */ }
     return { ...info, file: out, clip: name, use: `in film.js:  import { clipOf, playClip } from './body.js';  build: c.clip = clipOf(await (await fetch(new URL('${name}', import.meta.url))).json());  frame: playClip(p, c.clip, t, { at: [x, z], yaw })`, note: info.legs === false ? "The legs were not in the picture for most of it: the rig will stand and follow the arms, spine and head. Film the whole body for the legs." : "" };
   }

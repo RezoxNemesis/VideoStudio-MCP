@@ -72,7 +72,7 @@ export function registerCineCommands(_s: Studio): void {
   );
   registerCommand(
     "cine.mocap",
-    "{film, video: its whole path, or a file in the film's folder, name?, from?, to? (seconds)} Motion capture from an ordinary video of a person (no suit, no markers): finds the body in every frame (MediaPipe pose, on this PC's Python: pip install mediapipe numpy) and writes <name>.json into the film's folder, a clip the CodeScape rig plays with body.js clipOf + playClip (arms, spine, head, and the legs when the whole body was in the picture). The Library film's \"mocap\" shot shows one.",
+    "{film, video: its whole path, or a file in the film's folder, name?, from?, to? (seconds)} Motion capture from an ordinary video of a person (no suit, no markers): finds the body in every frame (MediaPipe pose on this PC's Python 3; the first run sets up its own private tools, a few minutes) and writes <name>.json into the film's folder, a clip the CodeScape rig plays with body.js clipOf + playClip (arms, spine, head, and the legs when the whole body was in the picture). The Library film's \"mocap\" shot shows one.",
     async (_st, a) => { const c = cine(); if (!c.mocap) throw new Error("This version of VideoStudio Desktop has no motion capture."); return c.mocap(a.str("film"), a.str("video"), { name: a.optStr("name"), from: a.optNum("from"), to: a.optNum("to") }); },
   );
   registerCommand("cine.unpack", "{file: a .tar.gz lying in the Cine folder} Unpack many files at once into the Cine folder (shared assets, a film's performances): the way data made in a workspace arrives.", async (_st, a) => cine().unpack(a.str("file")));
