@@ -82,6 +82,7 @@ export function fingerOnPlane(p, s, f, P0, n, o = {}) { const ratio = o.ratio ||
  *   into: angle (rad, 0 = the sheet's +X, π/2 = its +Y) of the direction from the hand INTO the sheet (so the hand lies outside the opposite edge)
  *   flex: 0 … 1   0: fingers lie flat behind the sheet, the forearm runs in the sheet's plane.  1: a curled pinch, the forearm square to the sheet
  *   th: the sheet's thickness; open: 0 held … 1 let go (the thumb lifts, the fingers ease off); thumbBack: the thumb takes the back face
+ *   rest: 0 … 1 in a pinch, how open the ring and little finger stay (0: folded away)
  *   pole: where the elbow points
  * → { ratio (shoulder→wrist over the arm's length: keep under 0.92), bend (rad between forearm and hand: keep under ~0.9), gap (m, worst pad off the face), far (thumb short) }
  */
@@ -102,7 +103,7 @@ export function pinchSheet(p, s, L, o = {}) { const A = p.arm[s], h = A.hand, sg
   A.ha.updateWorldMatrix(true, false); const Wn = wp(A.ha), miss = Wn.distanceTo(W); const E = wp(A.fo); const fo = Wn.clone().sub(E).normalize();
   // 4. pads onto the back face; ring and little finger lie on it too in a flat hold, fold away in a pinch
   let gap = miss; for (const f of [0, 1]) { const r = fingerOnPlane(p, s, f, back, nO, { ratio, c0: c - 0.35, c1: c + 0.45 }); gap = Math.max(gap, r.gap); }
-  if (flex < 0.45) for (const f of [2, 3]) fingerOnPlane(p, s, f, back, nO, { ratio, c0: c - 0.35, c1: c + 0.6 }); else for (const f of [2, 3]) setFinger(p, s, f, lerp(c + 0.25, 1.25, sm(seg(flex, 0.45, 1))) + 0.06 * f, [1.05, 1.15, 0.7]);
+  if (flex < 0.45) for (const f of [2, 3]) fingerOnPlane(p, s, f, back, nO, { ratio, c0: c - 0.35, c1: c + 0.6 }); else for (const f of [2, 3]) setFinger(p, s, f, lerp(lerp(c + 0.25, 1.25, sm(seg(flex, 0.45, 1))) + 0.06 * f, 0.62 + 0.1 * (f - 2), clamp(o.rest || 0, 0, 1)), [1.05, 1.15, 0.7]);   /* rest 0 … 1: how far the ring and little finger stay open in a pinch (0 folds them away: safest beside other things, but the hand reads as a fist) */
   // 5. the thumb onto the front face, pointing into the sheet
   const tr = thumbPad(p, s, front, nO, { lift: open * 0.022, dir: o.thumbDir || dO.clone().addScaledVector(eO, (o.thumbSkew ?? 0.25) * sg * side), press: 0.12 * (1 - open) });
   return { ratio: S.distanceTo(W) / (p.L.upper + p.L.fore), bend: Math.acos(clamp(fo.dot(fdir), -1, 1)), gap, far: tr.far, W, fdir, pdir }; }

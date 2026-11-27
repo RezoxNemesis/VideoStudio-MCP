@@ -380,7 +380,9 @@ joins between pieces (ratio of change across a join to the change around it; abo
   To let go: ramp `open` 0→1, then `snap` the pose and `blendHand` to the next one through a `via` point that slides the fingers
   out the way they came. To take: the reverse (pre-shape while travelling, stop 4–5 cm short, close, then move the thing).
 - *Staging a hand action.* The camera sees the forearm side-on or three-quarter, never end-on (an arm that points at the lens is a
-  blob). The thing held stays readable. Nothing passes over a flame. Travel takes a quarter of the time; contact and the action half.
+  blob). A grip on a top edge is filmed LOW and across the hand (lens at the height of the thing, well to one side): from above and
+  in front the lens sees only the back of the hand, and any pinch reads as a fist. In a pinch, `rest: 1` leaves the ring and little
+  finger open (a hand, not a ball); keep `rest: 0` only where they would touch a neighbouring thing. The thing held stays readable. Nothing passes over a flame. Travel takes a quarter of the time; contact and the action half.
 - *Heads talk, cameras do not.* `speechPlan(words)` + `speechHead(plan, T)` + `nodHead(p, sp)`: a small lift before a phrase, a nod
   on its weightiest word, a settle after, a brow flash. Never a sine of the loudness.
   `steady(shot, times, sample)` + `anchorAt(c, name, t)`: the lens aims at REST positions measured at fixed moments. A lens aimed at
