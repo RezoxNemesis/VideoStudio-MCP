@@ -8,9 +8,10 @@ import { blinkAt } from './rig.js';
 import { makeMaa, makeSon } from './people.js';
 import { refineHands, pinchSheet, snap, blendHand, looseHand, speechPlan, speechHead, nodHead, steady, anchorAt, blinks, saccade } from './motion.js';
 import { stand, restArm, idleWeight, planWalk, planTurn, stepper, sit, gesture, namaste, passSheet, clipOf, playClip } from './body.js';
-export const META = { name: 'CodeScapeLibrary', width: 1080, height: 1920, fps: 30, order: ['vikas', 'maa', 'walk', 'turn', 'sit', 'gesture', 'give', 'mocap', 'hold', 'place', 'talk'] };
+import { liveActor } from './live.js';
+export const META = { name: 'CodeScapeLibrary', width: 1080, height: 1920, fps: 30, order: ['vikas', 'maa', 'walk', 'turn', 'sit', 'gesture', 'give', 'mocap', 'live', 'hold', 'place', 'talk'] };
 /** numbers Cine Studio shows as sliders (move one and the picture follows) */
-export const TUNE = { walkSpeed: 1.1, walkStep: 0.6, giveInto: 0.2, takeInto: 0.2, holdInto: 0.3, holdFlex: 0.08, pinchInto: -1.2, pinchFlex: 1 };
+export const TUNE = { liveHeight: 2.04, liveTol: 0.16, liveSpill: 0.8, walkSpeed: 1.1, walkStep: 0.6, giveInto: 0.2, takeInto: 0.2, holdInto: 0.3, holdFlex: 0.08, pinchInto: -1.2, pinchFlex: 1 };
 export const S = {};
 const PI = Math.PI, XV = new V3(1, 0, 0), _x = new V3(), _y = new V3(), _z = new V3(), _m = new THREE.Matrix4();
 function setL(L, c, ax, nrm) { _x.copy(ax).normalize(); _z.copy(nrm).addScaledVector(_x, -nrm.dot(_x)).normalize(); _y.crossVectors(_z, _x); _m.makeBasis(_x, _y, _z); L.quaternion.setFromRotationMatrix(_m); L.position.copy(c); L.updateMatrixWorld(true); }
@@ -82,6 +83,17 @@ S.mocap = { dur: 8, about: 'captured motion on the rig: clipOf + playClip (body.
   frame(t, c) { const { p } = c; if (c.clip) playClip(p, c.clip, t, { at: [0, 0], yaw: 0.1, fist: 0.9 }); else { stand(p, 0, 0, 0.1, t); idleArm(p, 'l', t); idleArm(p, 'r', t); p.look(new V3(0.3, 1.3, 2.5), 0.7); }
     face(p, t, { smile: 0.05, brow: 0.2 }); if (p.sleeveTick) p.sleeveTick();
     return { p: [0.45, 1.2, 2.75], t: [0, 1.02, 0], fov: 36, focus: 2.8, dof: 0, ...look, hud: label('captured motion', c.clip ? 'your own take, on the rig (waist up: the legs stand)' : 'no clip found beside the film') }; } };
+
+// live action: a person FILMED before a plain wall, standing in the coded room (live.js). The wall is keyed out on the graphics card; the person
+// stands on the floor, turns to the lens as it moves, is hidden by the stool in front, and throws a shadow of their own outline.
+// The take here is a stand-in (a coded figure before a green wall). Film yourself the same way, run cine.actor {film, video, name}, and it is you.
+S.live = { dur: 7, about: 'live action in the coded world: liveActor (live.js) puts a take filmed before a plain wall into the scene: keyed on the graphics card, on the floor at a mark, behind and in front of things, with a shadow. cine.actor makes a take ready. Sliders: liveHeight (metres the picture stands for), liveTol (how much like the wall is wall), liveSpill',
+  build: async E => { await K.init(E); room(E); const me = await liveActor(E, 'live_demo', { at: [0, 0] }); const wood = new THREE.MeshStandardMaterial({ color: '#6b4a2e', roughness: 0.7 }), st = new THREE.Group();
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.04, 32), wood); top.position.y = 0.43; top.castShadow = top.receiveShadow = true; st.add(top); for (let i = 0; i < 4; i++) { const a = i * PI / 2 + 0.4, lg = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.43, 10), wood); lg.position.set(0.13 * Math.cos(a), 0.215, 0.13 * Math.sin(a)); lg.castShadow = true; st.add(lg); }
+    st.position.set(0.42, 0, 0.55); E.scene.add(st); const ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 32, 24), new THREE.MeshStandardMaterial({ color: '#c8402c', roughness: 0.5 })); ball.position.set(-0.55, 0.16, -0.7); ball.castShadow = ball.receiveShadow = true; E.scene.add(ball); return { me, key: '' }; },
+  frame(t, c) { const a = -0.55 + 1.1 * sm(t / 7), me = c.me; me.play(t % 6); me.group.scale.setScalar(TUNE.liveHeight / me.height); me.card.material.uniforms.tol.value = TUNE.liveTol; me.card.material.uniforms.spill.value = TUNE.liveSpill;
+    return { p: [3.5 * Math.sin(a), 1.05, 3.5 * Math.cos(a)], t: [0, 0.9, 0], fov: 36, focus: 3.5, dof: 0, ...look, hud: label('live action', 'a filmed take in the coded room (a stand-in here): cine.actor + liveActor') }; } };
+
 
 // the holds: the same card held flat (fingers behind, thumb in front) and then in a curled pinch — pinchSheet(p, side, sheet, { at, into, flex })
 S.hold = { dur: 8, about: 'the holds, close: a card held flat in the left hand (thumb on its front, finger pads on its back), then pinched by its top edge in the right. pinchSheet (motion.js): the hand follows the thing, so it cannot float or slide', build: async E => { const c = await person('son')(E); c.card = card('HOLD'); E.scene.add(c.card); c.rep = {}; return c; },

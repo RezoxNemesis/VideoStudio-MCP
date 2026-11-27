@@ -1325,6 +1325,12 @@ function setupIpc() {
     if (r.code !== 0) throw new Error(`Could not prepare the voice: ${r.stderr.trim().split("\n").pop()}`);
     return new Uint8Array(r.stdout.buffer, r.stdout.byteOffset, r.stdout.length);
   });
+  handle("audio.pcm24k", async (p) => { const x = await pcm(mustAllow(p), 24000, 0, 600); return new Uint8Array(x.buffer, x.byteOffset, x.byteLength); });
+  handle("audio.pcm24kBytes", async (bytes, name) => {
+    const tmp = path.join(os.tmpdir(), `vsd-${crypto.randomUUID()}-${String(name || "audio").replace(/[^\w.-]/g, "_")}`);
+    await fsp.writeFile(tmp, Buffer.from(bytes));
+    try { const x = await pcm(tmp, 24000, 0, 600); return new Uint8Array(x.buffer, x.byteOffset, x.byteLength); } finally { fsp.rm(tmp, { force: true }).catch(() => {}); }
+  });
   handle("audio.inspectBytes", async (bytes, name, o) => {
     // For project assets that only live inside the app: write a temp copy, inspect, remove.
     const tmp = path.join(os.tmpdir(), `vsd-${crypto.randomUUID()}-${String(name || "audio").replace(/[^\w.-]/g, "_")}`);

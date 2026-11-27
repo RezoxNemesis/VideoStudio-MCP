@@ -7,6 +7,7 @@
  *   node cli.cjs render <film dir> [shot,shot…] [width] [height]     (resumable: pieces already drawn are kept)
  *   node cli.cjs join   <film dir> [maxMB]
  *   node cli.cjs open   <film dir>
+ *   node cli.cjs actor  <film dir> <video> [name] [from] [to]         (a person filmed before a plain wall, made ready to stand in a scene: <name>.mp4 + <name>.actor.json)
  *   node cli.cjs mocap  <film dir> <video> [name] [from] [to]         (motion capture from a video of a person → <name>.json in the film)
  *   node cli.cjs lab    <film dir> "lab.html?views=hero23:face,hero23:front" [flag]   (close looks at a body: pictures in out/)
  * Environment: CINE_ROOT (folder that holds `assets/`; default: the film's parent), CINE_CHROME, CINE_FFMPEG, CINE_GPU=1 (use the real GPU).
@@ -33,6 +34,7 @@ const strip = (r) => { if (r && r.jpeg) r = { ...r, jpeg: `(${Math.round(r.jpeg.
     else if (cmd === "sheet") console.log(strip(await cine.sheet(film, rest[0], String(rest[1] || "0").split(",").map(Number), +rest[2] || 4, +rest[3] || 640, +rest[4] || undefined)));
     else if (cmd === "lab") console.log(await cine.lab(film, rest[0], rest[1]));
     else if (cmd === "open") console.log(JSON.stringify(await cine.open(film), null, 1));
+    else if (cmd === "actor") console.log(JSON.stringify(await cine.actor(film, path.resolve(rest[0]), { name: rest[1], from: +rest[2] || 0, to: +rest[3] || 0 })));
     else if (cmd === "mocap") console.log(JSON.stringify(await cine.mocap(film, path.resolve(rest[0]), { name: rest[1], from: +rest[2] || 0, to: +rest[3] || 0 })));
     else if (cmd === "join") console.log(await cine.join(film, { maxMB: +rest[0] || 0 }));
     else if (cmd === "render") {

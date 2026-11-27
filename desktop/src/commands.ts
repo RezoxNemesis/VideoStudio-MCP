@@ -11,7 +11,9 @@ import { setModelFileUrl } from "../../src/stage/models";
 import { registerForgeCommands } from "./forge";
 import { registerCineCommands } from "./cine";
 import { registerMusicCommands } from "../../src/agent/music";
-import { registerOpenVoiceCommands } from "../../src/agent/voiceopen";
+import { registerOpenVoiceCommands, readTone, wavBlob } from "../../src/agent/voiceopen";
+import { studioRevoice } from "../../src/voice/studio_client";
+import { mouthEnvelope } from "../../src/voice/engine/audio";
 import * as ops from "../../src/core/ops";
 import * as model from "../../src/core/model";
 import { ProRender, type ProCodec } from "./render";
@@ -130,6 +132,35 @@ export function registerDesktopCommands(s: Studio): void {
     },
   );
 
+  registerCommand(
+    "voice.act",
+    '{assetId | clipId | path, voice?="hf_alpha", tone?, toTimeline?=true, start?} A recorded performance said in a VolTune voice: record a line the way it should be said (your own voice, any gender, on a phone is fine), and the same timing, stresses and pauses come back in the character\'s voice (VolTune Studio must be installed: voice.studio). The new sound is exactly as long as the recording; with clipId it is laid on the timeline at that clip\'s place (the recording itself is left alone: mute or remove it). Best with a clear recording, one speaker, little room echo; up to ten minutes. → { assetId, clipId?, seconds, voice }.',
+    async (st, a) => {
+      const b = need();
+      if (!b.pcm24k || !b.pcm24kBytes) throw new Error("This version of VideoStudio Desktop cannot read a recording for re-voicing: install the latest update.");
+      let bytes: Uint8Array, name = "performance", at: number | undefined;
+      const clipId = a.optStr("clipId"), path = a.optStr("path");
+      let assetId = a.optStr("assetId");
+      if (clipId) { const f = model.findClip(st.project, clipId); if (!f) throw new Error(`No clip ${clipId}.`); assetId = f.clip.assetId ?? undefined; at = f.clip.start; }
+      if (assetId) { const asset = st.project.assets.find((x) => x.id === assetId); if (!asset) throw new Error(`No asset ${assetId}.`); name = asset.name; bytes = await b.pcm24kBytes(new Uint8Array(await (await st.pool.blob(asset)).arrayBuffer()), asset.name); }
+      else if (path) { name = path.split(/[\\/]/).pop() || name; bytes = await b.pcm24k(path); }
+      else throw new Error("Give the recording: assetId, clipId or path.");
+      const pcm = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + (bytes.byteLength & ~3)));
+      if (pcm.length < 24000 * 0.3) throw new Error("The recording is shorter than a third of a second.");
+      st.setStatus("Giving it the voice…");
+      try {
+        const voice = a.str("voice", "hf_alpha"), r = await studioRevoice(pcm, voice, readTone(a.any("tone")), (d, what) => st.setStatus(`${what}… ${Math.round(d * 100)}%`));
+        if (!r) throw new Error("VolTune Studio is not installed or not switched on (voice.studio {install: true, engine: \"studio\"}).");
+        // as loud as the performance was
+        let pin = 0, pout = 0; for (let i = 0; i < pcm.length; i++) pin = Math.max(pin, Math.abs(pcm[i]!)); for (let i = 0; i < r.pcm.length; i++) pout = Math.max(pout, Math.abs(r.pcm[i]!));
+        const g = pout > 0 ? Math.min(3, Math.min(0.9, Math.max(0.3, pin)) / pout) : 1; for (let i = 0; i < r.pcm.length; i++) r.pcm[i] = r.pcm[i]! * g;
+        const asset = await st.addBlobAsset(wavBlob(r.pcm), `Voice – acted – ${name.replace(/\.[^.]+$/, "")}.wav`, "voice", { mouth: mouthEnvelope(r.pcm, 30) });
+        let placed: string | undefined;
+        if (a.bool("toTimeline", true)) placed = st.mutate("place acted voice", (p) => ops.addClip(p, { assetId: asset.id, start: a.num("start", at ?? st.time) }).id);
+        return { assetId: asset.id, clipId: placed, seconds: Math.round((r.pcm.length / 24000) * 100) / 100, voice: r.voice };
+      } finally { st.setStatus(""); }
+    },
+  );
   registerCommand(
     "audio.inspect",
     "{assetId | path, from?, seconds?, pictures?=true, song?=true, detail?=false} Read music, a voice or a sound effect: loudness (LUFS, range, true peak), loud/quiet sections, silences, tempo, beat grid, hits, plus the song's key, mood and labelled sections (intro/verse/chorus/drop…), and pictures of the waveform and the spectrogram (time and frequency axes).",

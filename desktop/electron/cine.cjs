@@ -218,7 +218,12 @@ function createCine(o) {
           const f = resolve(decodeURIComponent(u.pathname));
           if (!f) { res.statusCode = 404; return res.end("not found"); }
           res.setHeader("Content-Type", MIME[path.extname(f).toLowerCase()] || "application/octet-stream"); res.setHeader("Cache-Control", "no-store");
-          fs.createReadStream(f).pipe(res);
+          // a video of the film (a filmed actor's take) is asked for in parts, so the player can go to any frame
+          const rg = /bytes=(\d*)-(\d*)/.exec(req.headers.range || "");
+          if (rg && (rg[1] || rg[2])) { const size = fs.statSync(f).size, a = rg[1] ? +rg[1] : Math.max(0, size - +rg[2]), b = rg[1] && rg[2] ? Math.min(size - 1, +rg[2]) : size - 1; res.setHeader("Accept-Ranges", "bytes");
+            if (a > b || a >= size) { res.statusCode = 416; res.setHeader("Content-Range", `bytes */${size}`); return res.end(); }
+            res.statusCode = 206; res.setHeader("Content-Range", `bytes ${a}-${b}/${size}`); res.setHeader("Content-Length", b - a + 1); fs.createReadStream(f, { start: a, end: b }).pipe(res); }
+          else { if (/\.(mp4|webm|mov)$/i.test(f)) { res.setHeader("Accept-Ranges", "bytes"); res.setHeader("Content-Length", fs.statSync(f).size); } fs.createReadStream(f).pipe(res); }
         }
       } catch (e) { say(`ERR server ${e && e.message}`); res.statusCode = 500; res.end(String(e && e.message)); }
     });
@@ -426,6 +431,34 @@ function createCine(o) {
     if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && hops > 0) { r.resume(); return fetchTo(new URL(r.headers.location, url).href, file, hops - 1).then(res, rej); }
     if (r.statusCode !== 200) { r.resume(); return rej(new Error(`HTTP ${r.statusCode}`)); }
     const tmp = file + ".part", w = fs.createWriteStream(tmp); r.pipe(w); w.on("finish", () => { try { fs.renameSync(tmp, file); res(file); } catch (e) { rej(e); } }); w.on("error", rej); }); rq.on("error", rej); rq.setTimeout(120_000, () => rq.destroy(new Error("no answer"))); });
+  /**
+   * A take of a person filmed before a plain wall, made ready to stand in a CodeScape scene (web/codescape/live.js liveActor):
+   * <name>.mp4 in the film's folder (upright, the film's frame rate, EVERY frame a key frame so a render can go to any one exactly,
+   * the longer side 1600 at most) and <name>.actor.json (its size, length, and the wall's colour, read from the picture's border).
+   */
+  async function actor(film, video, opt = {}) {
+    const dir = filmDir(film), v = String(video || "");
+    const src = [v, path.join(dir, v), path.join(ROOT, v)].find((x) => x && path.isAbsolute(x) && fs.existsSync(x) && fs.statSync(x).isFile());
+    if (!src) throw new Error(`No such video: ${v}. Give its whole path, or a file in the film's folder or the Cine folder.`);
+    const name = String(opt.name || path.basename(src).replace(/\.[^.]+$/, "")).replace(/[^\w-]+/g, "_").slice(0, 60) || "actor", out = path.join(dir, `${name}.mp4`), fps = Math.round(+opt.fps || 30), from = Math.max(0, +opt.from || 0), to = Math.max(0, +opt.to || 0);
+    const ff = await exec(o.ffmpeg || "ffmpeg", ["-y", "-v", "error", ...(from ? ["-ss", String(from)] : []), ...(to > from ? ["-t", String(to - from)] : []), "-i", src, "-vf", `scale='if(gt(iw,ih),min(1600,iw),-2)':'if(gt(iw,ih),-2,min(1600,ih))',fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-g", "1", "-movflags", "+faststart", out], { timeout: 30 * 60_000 });
+    if (ff.code || !fs.existsSync(out)) throw new Error(`The video could not be read (${ff.err.trim().split("\n").slice(-1)[0] || "ffmpeg"}).`);
+    // its size and length
+    const pr = await exec(o.ffprobe || "ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,nb_frames:format=duration", "-of", "json", out]);
+    let w = 0, h = 0, seconds = 0; try { const j = JSON.parse(pr.out); w = +j.streams[0].width; h = +j.streams[0].height; seconds = +j.format.duration; } catch { /* asked of the picture below */ }
+    // the wall's colour: the middle colour of the picture's border in three frames (a person stands in the middle, the wall is at the sides and the top)
+    let key = null;
+    try { const N = 32, cols = [];
+      for (const at of [0.1, 0.5, 0.9]) { const r = await new Promise((res) => execFile(o.ffmpeg || "ffmpeg", ["-v", "error", "-ss", String(Math.max(0, seconds * at)), "-i", out, "-frames:v", "1", "-vf", `scale=${N}:${N}`, "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], { encoding: "buffer", maxBuffer: 1 << 22 }, (e, so) => res(e ? null : so)));
+        if (!r || r.length < N * N * 3) continue; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (y < 3 || x < 3 || x >= N - 3) cols.push([r[(y * N + x) * 3], r[(y * N + x) * 3 + 1], r[(y * N + x) * 3 + 2]]); }
+      if (cols.length) { const med = (k) => { const a = cols.map((c) => c[k]).sort((p, q) => p - q); return a[a.length >> 1] / 255; }; key = [med(0), med(1), med(2)].map((x) => Math.round(x * 1000) / 1000); } } catch { /* the film gives the key itself */ }
+    const sat = key ? Math.max(...key) - Math.min(...key) : 0;
+    const meta = { video: `${name}.mp4`, w, h, fps, seconds: Math.round(seconds * 1000) / 1000, frames: Math.round(seconds * fps), ...(key ? { key } : {}) };
+    await fsp.writeFile(path.join(dir, `${name}.actor.json`), JSON.stringify(meta, null, 1));
+    return { ...meta, file: out, MB: Math.round(fs.statSync(out).size / 1e4) / 100,
+      use: `in film.js:  import { liveActor } from './live.js';  build: c.me = await liveActor(E, '${name}', { at: [0, 0], height: 1.7 });  frame: c.me.at(x, z); c.me.play(t);`,
+      note: sat < 0.18 ? "The picture's border is nearly grey: a wall of one strong colour (green, yellow, blue) keys far better. If the wall is in the picture only in part, give liveActor a crop." : "The wall's colour was read from the border of the picture; if the person touches the border, give liveActor a key: 'green' | 'yellow' | [r, g, b]." };
+  }
   async function mocap(film, video, opt = {}) {
     const dir = filmDir(film), v = String(video || "");
     const src = [v, path.join(dir, v), path.join(ROOT, v)].find((x) => x && path.isAbsolute(x) && fs.existsSync(x) && fs.statSync(x).isFile());
@@ -477,6 +510,7 @@ function createCine(o) {
     review: async (film, shot) => { const dir = String(film) === LIB ? studioDir(film) : filmDir(film); /* the Library film ("@library") is the app's own: it can be reviewed like any other */ const r = await page(dir, "review", `review.html?job=review${shot ? `&id=${safeId(shot)}` : ""}`, null, 300_000); try { return JSON.parse(r); } catch { throw new Error(`The review did not run.\n${lastErr() || r}`.slice(0, 1500)); } },
     /** A video of a person → a motion clip in the film's folder. */
     mocap,
+    actor,
     said: () => logs.slice(-60),
     close: () => { try { server && server.close(); } catch { /* closed */ } server = null; },
   };
@@ -522,6 +556,7 @@ function setupCine(o) {
   h("cine.studio", (film) => cine.studio(film));
   h("cine.review", (film, shot) => cine.review(film, shot));
   h("cine.mocap", (film, video, opt) => cine.mocap(film, video, opt || {}));
+  h("cine.actor", (film, video, opt) => cine.actor(film, video, opt || {}));
   return cine;
 }
 

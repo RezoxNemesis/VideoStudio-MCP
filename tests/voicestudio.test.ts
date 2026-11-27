@@ -160,3 +160,21 @@ describe("studio model graph", () => {
     expect(() => exposeAlignment(Uint8Array.from([0x08, 0x08]))).toThrow();
   });
 });
+
+describe("a performance in another voice (revoice)", () => {
+  it("takes a long recording in pieces no longer than the encoder keeps, cut at its quietest moments", async () => {
+    const { revoicePieces, REVOICE_MAX } = await import("../src/voice/engine/studio");
+    const sr = 24000, tone = (s: number) => Float32Array.from({ length: Math.round(sr * s) }, (_, i) => 0.5 * Math.sin((2 * Math.PI * 200 * i) / sr)), hush = (s: number) => new Float32Array(Math.round(sr * s));
+    const join = (...a: Float32Array[]) => { const o = new Float32Array(a.reduce((n, x) => n + x.length, 0)); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+    expect(revoicePieces(tone(3), sr)).toEqual([[0, 3 * sr]]);                       // a short line is one piece
+    // 4 s of speech, a 0.3 s pause, 4 s, a pause, 3 s: cut IN the pauses, never inside the speech
+    const rec = join(tone(4), hush(0.3), tone(4), hush(0.3), tone(3)), pieces = revoicePieces(rec, sr);
+    expect(pieces[0]![0]).toBe(0);
+    expect(pieces[pieces.length - 1]![1]).toBe(rec.length);
+    for (let i = 0; i < pieces.length; i++) { expect((pieces[i]![1] - pieces[i]![0]) / sr).toBeLessThanOrEqual(REVOICE_MAX + 0.01); if (i) expect(pieces[i]![0]).toBe(pieces[i - 1]![1]); }
+    const cuts = pieces.slice(1).map((p) => p[0] / sr);
+    expect(cuts.length).toBe(2);
+    expect(cuts[0]).toBeGreaterThan(4); expect(cuts[0]).toBeLessThan(4.3);
+    expect(cuts[1]).toBeGreaterThan(8.3); expect(cuts[1]).toBeLessThan(8.6);
+  });
+});

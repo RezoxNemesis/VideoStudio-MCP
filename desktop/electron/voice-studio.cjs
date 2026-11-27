@@ -55,6 +55,7 @@ function setupStudio(o) {
   o.handle("studio.install", () => call("install"));
   o.handle("studio.say", (p) => call("say", p));
   o.handle("studio.speaker", (p) => call("speaker", p));
+  o.handle("studio.revoice", (p) => call("revoice", p));
   return { stop: () => { try { proc && proc.kill(); } catch { /* already gone */ } } };
 }
 

@@ -459,6 +459,24 @@ plan for the legs and `playClip(..., { legs: false })` for the rest.
 - The Library film (`@library`) now also has: walk, turn, sit, gesture, give, mocap. It cannot be changed from the window: copy
   what you need into a film.
 
+**Live action in a coded world (27 Nov 2026).** A person filmed in front of a plain wall of one colour stands inside a CodeScape scene.
+`cine.actor {film, video, name}` makes the take ready (`<name>.mp4`, every frame a key frame, and `<name>.actor.json` with the wall's
+colour read from the picture's border). In `film.js`: `import { liveActor } from './live.js'`; in build `c.me = await liveActor(E,
+'<name>', { at: [x, z], height: 1.7 })`; in frame `c.me.at(x, z); c.me.play(t)`. The person is keyed on the graphics card by colour
+without brightness (a shadow on the wall is still wall), stands on the floor, turns to the lens, is hidden by what stands in front
+(the outline is written into the depth), throws a shadow of their own outline (a second card turned to the key light), and passes
+through the film's lens and grade. A render waits for the take's exact frame before each picture (`E.waits`); Cine Studio shows the
+nearest. Filming: the whole body with the feet in the picture, the camera still and level at chest height, the wall evenly lit, no
+clothes of the wall's colour, a little floor under the feet (`feet`: its share of the picture). The Library's `live` shot is the
+recipe (its take is a stand-in). Not yet: the person does not turn in depth (a card), and the scene's light does not relight them:
+match with `gain` and `tint`.
+
+**A recorded performance in a character's voice (27 Nov 2026).** `voice.act {assetId | clipId | path, voice}`: say the line the way it
+should be said (any voice, any gender); the timing, stresses and pauses stay yours and the voice becomes the character's (engine
+`revoice`: the recording's speech tokens decoded with the character's speaker). The result is as long as the recording to the sample.
+A character's voice is only as natural as its reference clip: a reference that scores low (UTMOS under 3) drags every line down, and
+a real reader's clip given the character's voice with `revoice` makes a better reference.
+
 **A body part is one skin through its joints (27 Nov 2026).** Never build a limb as cylinder + ball + cylinder, or a torso as balls
 that overlap: every meeting shows as a ring, a ragged line or a box. Build one tube or one ringed surface through the joints, remade
 before each draw from where the joints are (`scene.userData.ticks`: people.js trousersSon / shirtSon, motion.js armSkin / fingerSkin),

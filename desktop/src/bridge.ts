@@ -97,6 +97,9 @@ export interface Vsd {
   process(kind: string, input: string, o?: Record<string, unknown>): Promise<{ path: string; note: string }>;
   needsConversion(p: string): Promise<boolean>;
   voice16k(p: string, from?: number, seconds?: number): Promise<Uint8Array>;
+  /** A sound file (or bytes of one) as mono 24 kHz float samples, as bytes. */
+  pcm24k?(p: string): Promise<Uint8Array>;
+  pcm24kBytes?(bytes: Uint8Array, name: string): Promise<Uint8Array>;
   crashLog(): Promise<string>;
   updateCheck(): Promise<{ current: string; latest?: string; available: boolean; notes?: string; size?: number; name?: string; /** the release's AppImage: with it the update goes into the person's own folder, without a password */ img?: { name: string; url: string; size: number } | null; password?: boolean }>;
   updateInstall(): Promise<{ installed: boolean; version?: string; note: string }>;
@@ -203,4 +206,5 @@ export interface CineApi {
   review?(film: string, shot?: string): Promise<{ ok: boolean; must: string[]; text: string; shots: unknown[] }>;
   /** A video of a person → a motion clip in the film's folder (body.js clipOf + playClip). */
   mocap?(film: string, video: string, opt?: { name?: string; from?: number; to?: number }): Promise<Record<string, unknown>>;
+  actor?(film: string, video: string, opt?: { name?: string; from?: number; to?: number; fps?: number }): Promise<Record<string, unknown>>;
 }

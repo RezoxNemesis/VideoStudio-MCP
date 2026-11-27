@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld("vsd", {
     install: () => call("studio.install"),
     say: (p) => call("studio.say", p),
     speaker: (p) => call("studio.speaker", p),
+    revoice: (p) => call("studio.revoice", p),
     onProgress: (fn) => { const l = (_e, m) => fn(m); ipcRenderer.on("studio:progress", l); return () => ipcRenderer.removeListener("studio:progress", l); },
   },
   /** Code Studio: films written as code (see electron/film.cjs). */
@@ -160,9 +161,13 @@ contextBridge.exposeInMainWorld("vsd", {
     studio: (film) => call("cine.studio", film),
     review: (film, shot) => call("cine.review", film, shot),
     mocap: (film, video, opt) => call("cine.mocap", film, video, opt),
+    actor: (film, video, opt) => call("cine.actor", film, video, opt),
   },
   process: (kind, input, o) => call("media.process", kind, input, o),
   voice16k: (p, from, seconds) => call("audio.voice16k", p, from, seconds),
+  /** A sound file, or bytes of one, as mono 24 kHz samples (for a performance to be re-voiced). */
+  pcm24k: (p) => call("audio.pcm24k", p),
+  pcm24kBytes: (bytes, name) => call("audio.pcm24kBytes", bytes, name),
   updateCheck: () => call("update.check"),
   crashLog: () => call("app.crashLog"),
   updateInstall: () => call("update.install"),

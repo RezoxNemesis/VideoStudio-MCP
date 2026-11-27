@@ -275,6 +275,58 @@ export async function makeSpeaker(models: StudioModels, ref: Float32Array): Prom
   };
 }
 
+/**
+ * ONE PERFORMANCE IN ANOTHER VOICE (27 Nov 2026). The owner: "the way the dialogue is said is a little unnatural". A
+ * written line is acted by the model, and how it is said is the model's choice. Here the delivery is a PERSON's (or a take that
+ * was liked): the speech encoder turns the recording into its speech tokens (what was said, and when: 25 a second), and the
+ * decoder, which makes the sound, is given those tokens with the CHARACTER's voice. The timing, the stresses and the pauses
+ * are the performer's; the voice is the character's. A man can act a mother's line.
+ * The encoder keeps six seconds of tokens, so a longer recording is taken in pieces cut at its quietest moments.
+ */
+export const REVOICE_MAX = 5.4;
+/** Where a recording is cut so that no piece is longer than `max` seconds: [from, to) in samples, at the quietest 10 ms near each limit. */
+export function revoicePieces(pcm: Float32Array, sr = STUDIO_SR, max = REVOICE_MAX): Array<[number, number]> {
+  const N = pcm.length, lim = Math.round(max * sr);
+  if (N <= lim) return [[0, N]];
+  const hop = Math.round(sr * 0.01), n = Math.floor(N / hop), e = new Float32Array(n);
+  for (let f = 0; f < n; f++) { let q = 0; for (let i = f * hop; i < (f + 1) * hop; i++) q += pcm[i]! * pcm[i]!; e[f] = Math.sqrt(q / hop); }
+  const out: Array<[number, number]> = [];
+  let from = 0;
+  while (N - from > lim) {
+    // the quietest moment in the second half of what may still be taken: a cut inside a word would be heard
+    const a = Math.floor((from + lim * 0.5) / hop), b = Math.min(n - 1, Math.floor((from + lim) / hop) - 1);
+    let k = a;
+    for (let f = a; f <= b; f++) if (e[f]! < e[k]!) k = f;
+    const cut = Math.min(N, k * hop + (hop >> 1));
+    out.push([from, cut]);
+    from = cut;
+  }
+  out.push([from, N]);
+  return out;
+}
+/** The recording `source` (24 kHz) said in the voice of `spk`, as long as the recording to the sample (so a mouth moved to one fits the other). */
+export async function revoice(models: StudioModels, source: Float32Array, spk: Speaker, onPiece?: (done: number, of: number) => void): Promise<Float32Array> {
+  const pieces = revoicePieces(source), out = new Float32Array(source.length), fade = Math.round(STUDIO_SR * 0.006);
+  let k = 0;
+  for (const [a, b] of pieces) {
+    const piece = source.subarray(a, b);
+    let peak = 0;
+    for (let i = 0; i < piece.length; i++) peak = Math.max(peak, Math.abs(piece[i]!));
+    if (peak > 1e-4 && piece.length > STUDIO_SR * 0.12) {
+      const perf = await makeSpeaker(models, piece);            // its speech tokens (the encoder gives a reference clip's; a performance is one)
+      const speech = new BigInt64Array(spk.promptToken.length + perf.promptToken.length);
+      speech.set(spk.promptToken);
+      speech.set(perf.promptToken, spk.promptToken.length);
+      const T = models.tensor;
+      const dec = await models.decoder.run({ speech_tokens: T("int64", speech, [1, speech.length]), speaker_embeddings: T("float32", spk.xvec, [1, 192]), speaker_features: T("float32", spk.promptFeat, [1, spk.featLen, 80]) });
+      const wav = Object.values(dec)[0]!.data as Float32Array, n = Math.min(wav.length, piece.length);
+      for (let i = 0; i < n; i++) out[a + i] = wav[i]! * (i < fade ? i / fade : n - 1 - i < fade ? (n - 1 - i) / fade : 1);
+    }
+    onPiece?.(++k, pieces.length);
+  }
+  return out;
+}
+
 /** Speaker ⇄ bytes, for caching on disk. Layout: magic, 3 lengths, then the arrays (float32 / int64). */
 export function packSpeaker(s: Speaker): Uint8Array {
   const head = new Int32Array([0x56545331, s.condLen, s.promptToken.length, s.featLen]);

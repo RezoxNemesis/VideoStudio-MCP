@@ -1,14 +1,15 @@
 <canvas id=c></canvas>
 <script>addEventListener('error', e => { const q = new URLSearchParams(location.search), m = 'ERR ' + (e.message || 'a file of the film did not load') + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : ''); fetch('/log', { method: 'POST', body: m }); fetch(q.get('info') ? '/say?name=info' : '/flag?name=' + (q.get('job') || q.get('id')) + '&v=failed', { method: 'POST', body: m }); }, true);</script>
 <script type=module>
-import { Engine, post, log } from './engine.js'; import * as K from './kit.js'; import * as FILM from './film.js'; const S = FILM.S;
+import { Engine, post, log } from './engine.js'; import * as K from './kit.js'; import * as FILM from './film.js'; const S = FILM.S; const TM = [['modules', performance.now()]], tm = n => TM.push([n, performance.now()]);
 const q = new URLSearchParams(location.search); const W = +(q.get('w') || 640), H = +(q.get('h') || 360), fps = +(q.get('fps') || 30), id = q.get('id'); const job = q.get('job') || id;
 window.OFF = q.get('off') || ''; window.onerror = (m, s, l) => log('ERR ' + m + ' @' + l);
 (async () => { try { if (q.get('info')) { const M = FILM.META || {}; const order = M.order || Object.keys(S); await post('/say?name=info', JSON.stringify({ name: M.name || '', width: M.width || 2560, height: M.height || 1440, fps: M.fps || 30, audio: M.audio || 'audio.wav', shots: order.map(id => ({ id, dur: S[id].dur, about: S[id].about || '' })) })); return; }
-  const c = document.getElementById('c'); c.width = W; c.height = H; const E = new Engine(c, W, H); await K.init(E); const sh = S[id]; if (!sh) throw new Error('no shot named ' + id); E.soft = typeof sh.soft === 'function' ? sh.soft((+(q.get('f0') || 0)) / fps) : !!sh.soft; const ctx = await sh.build(E);
+  const c = document.getElementById('c'); c.width = W; c.height = H; const E = new Engine(c, W, H); tm('engine'); await K.init(E); tm('kit'); const sh = S[id]; if (!sh) throw new Error('no shot named ' + id); E.soft = typeof sh.soft === 'function' ? sh.soft((+(q.get('f0') || 0)) / fps) : !!sh.soft; const ctx = await sh.build(E); tm('build');
   const stills = q.get('stills') ? q.get('stills').split(',').map(Number) : null; const N = Math.round(sh.dur * fps); const t00 = performance.now(); let tr = 0, nr = 0;
   const f0 = +(q.get('f0') || 0), f1 = Math.min(N, +(q.get('f1') || N));
   for (let f = 0; f < f1; f++) { const t = f / fps; const cam = sh.frame(t, ctx, E); const want = stills ? stills.some(s => Math.round(s * fps) === f) : f >= f0; if (!want) { E.scene.updateMatrixWorld(true); E.tick(t + (sh.t0 || 0)); continue; }
+    if (E.waits) { E.cam.position.set(...cam.p); for (const w of E.waits) await w(t); }   /* a filmed actor's take is brought to this exact frame before the picture is drawn (codescape/live.js) */
     const dbg = q.get('dbg') || ''; if (dbg.includes('rim')) E.L.uRimCol.value.set(0, 0, 0); if (dbg.includes('light')) E.L.uLightCol.value.set(0, 0, 0); if (dbg.includes('amb')) E.L.uAmbCol.value.set(0, 0, 0); if (dbg.includes('bloom')) E.P.uGrade.value.w = 0;
     const t0 = performance.now(); E.setCam(cam); E.render(t + (sh.t0 || 0)); const px = E.pixels(); const dt_ = performance.now() - t0; tr += dt_; nr++; if (q.get('prof')) await log(`t=${t.toFixed(2)} ${dt_.toFixed(0)} ms`); if (nr > 3) { window.tr2 = (window.tr2 || 0) + dt_; window.n2 = (window.n2 || 0) + 1; }
     if (stills && q.get('nosave')) continue;
@@ -16,5 +17,6 @@ window.OFF = q.get('off') || ''; window.onerror = (m, s, l) => log('ERR ' + m + 
     else await post(`/frame?job=${job}&w=${W}&h=${H}&fps=${fps}&crf=${q.get('crf') || 16}&preset=${q.get('preset') || 'veryfast'}${nr === 1 ? '&first=1' : ''}`, px);
     if (nr % 60 === 0) await log(`${id} frame ${f}/${N} avg render ${(tr / nr).toFixed(0)} ms, total ${((performance.now() - t00) / nr).toFixed(0)} ms`); }
   await log(`${id} done ${nr} frames, warm avg ${(window.tr2 / Math.max(1, window.n2)).toFixed(0)} ms, avg render ${(tr / Math.max(1, nr)).toFixed(0)} ms, wall ${((performance.now() - t00) / 1000).toFixed(1)} s`);
+  tm('frames'); if (!stills) await log('times since the page opened (ms): ' + TM.map(x => x[0] + ' ' + Math.round(x[1])).join(', '));
   if (!stills) await post(`/done?job=${job}`, ''); else await post(`/flag?name=${job}`, ''); } catch (e) { await log('EXC ' + e.message + ' ' + (e.stack || '').slice(0, 600)); await post(`/flag?name=${job}`, ''); } })();
 </script>

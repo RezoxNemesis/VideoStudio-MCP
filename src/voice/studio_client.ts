@@ -28,6 +28,7 @@ interface StudioBridge {
   install(): Promise<unknown>;
   say(p: { key: string; text: string; lang: string; mood?: string; moodAmount?: number; cfg?: number; take?: number; bank?: string }): Promise<{ pcm?: Float32Array; stops?: number[]; needRef?: boolean }>;
   speaker(p: { key: string; pcm: Float32Array }): Promise<boolean>;
+  revoice?(p: { key: string; pcm: Float32Array; bank?: string }): Promise<{ pcm?: Float32Array; needRef?: boolean }>;
   onProgress(fn: (m: { done: number; total?: number; what: string }) => void): () => void;
 }
 
@@ -82,6 +83,36 @@ export async function installStudio(onProgress?: (done: number, what: string) =>
  * Say one line with the studio engine, or return null when it is not available here (not the desktop app,
  * not installed, switched off, or a language it cannot read) so the caller uses the standard voice.
  */
+/**
+ * A recorded performance said in a VolTune voice (engine/studio.ts revoice): the timing, the stresses and the pauses stay the
+ * performer's, the voice becomes the character's. `pcm`: mono, 24 kHz. The answer is as long as the recording, to the sample.
+ * null when the studio voice is not installed or this build has no re-voicing.
+ */
+export async function studioRevoice(pcm: Float32Array, voice: string, tone?: Tone, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string } | null> {
+  const b = bridge();
+  if (!b || !b.revoice || voiceEngine() !== "studio") return null;
+  if (installed === null) await studioStatus().catch(() => (installed = false));
+  if (!installed) return null;
+  const customs = loadCustoms();
+  const own = resolveVoice(lookupVoiceRef(voice, customs), customs);
+  const mix = own.mix, vlang = mixLang(parseMix(mix));
+  const female = own.gender ? own.gender === "Female" : /^[a-z]f_/.test(parseMix(mix)[0]?.[0] ?? mix);
+  const spk = studioSpeaker({ mix, pitch: own.pitch }, tone?.mood, tone);
+  const real = bankVoice(vlang, female, spk.pitch, mix);
+  const key = real ? `v3-${bankKey(real)}` : spk.key, bank = real?.file;
+  const off = b.onProgress((m) => onProgress?.(m.total ? m.done / m.total : 0, m.what));
+  try {
+    let r = await b.revoice({ key, pcm, ...(bank ? { bank } : {}) });
+    if (r.needRef) {
+      onProgress?.(0, "Preparing the voice");
+      const ref = await openVoice.say(referenceLine(vlang, tone?.mood, female), voice, Object.keys(spk.tone).length ? spk.tone : undefined);
+      await b.speaker({ key, pcm: ref.pcm });
+      r = await b.revoice({ key, pcm, ...(bank ? { bank } : {}) });
+    }
+    return r.pcm?.length ? { pcm: r.pcm, voice } : null;
+  } finally { off(); }
+}
+
 export async function studioSay(text: string, voice: string, tone?: Tone, lang?: string, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string; pace: StudioPace; peak: number } | null> {
   const b = bridge();
   if (!b || voiceEngine() !== "studio") return null;

@@ -18,7 +18,7 @@ describe("the CodeScape Library film", () => {
       try { out = execFileSync(process.execPath, [path.join(cine, "tools/review/run.mjs"), dir], { encoding: "utf8", timeout: 240_000 }); }
       catch (e) { out = String((e as { stdout?: string }).stdout ?? e); }
       expect(out).toContain("REVIEW: clean");
-      for (const shot of ["walk", "turn", "sit", "gesture", "give", "mocap", "hold", "place", "talk"]) expect(out).toMatch(new RegExp(`ok\\s+${shot}\\b`));
+      for (const shot of ["walk", "turn", "sit", "gesture", "give", "mocap", "live", "hold", "place", "talk"]) expect(out).toMatch(new RegExp(`ok\\s+${shot}\\b`));
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 300_000);
 });

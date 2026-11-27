@@ -1,0 +1,11 @@
+{
+ "video": "live_demo.mp4",
+ "w": 360,
+ "h": 640,
+ "fps": 30,
+ "seconds": 6,
+ "frames": 180,
+ "key": [0.07, 0.62, 0.2],
+ "height": 2.04,
+ "feet": 0.044
+}

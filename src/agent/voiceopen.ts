@@ -15,7 +15,7 @@ import { hinglishShare, transliterateHinglish } from "../voice/engine/hinglish";
 import { openVoice } from "../voice/open_client";
 import { isMood } from "../voice/engine/learned";
 
-function wavBlob(pcm: Float32Array): Blob {
+export function wavBlob(pcm: Float32Array): Blob {
   const n = pcm.length;
   const out = new Uint8Array(44 + n * 2);
   const dv = new DataView(out.buffer);

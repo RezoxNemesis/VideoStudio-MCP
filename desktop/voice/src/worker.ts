@@ -19,6 +19,7 @@ import {
   acting,
   exposeAlignment,
   makeSpeaker,
+  revoice,
   packSpeaker,
   say,
   seedFor,
@@ -235,6 +236,22 @@ async function handle(m: Msg): Promise<unknown> {
         if (!first || score < firstScore) { first = r; firstAt = attempt; firstScore = score; }
       }
       return told(first!, firstAt, tries);
+    }
+    case "revoice": {
+      // a recorded performance (24 kHz) said in the voice `key`: the delivery is the performer's, the voice the character's
+      const key = String(p.key);
+      let spk = await speaker(key);
+      if (!spk && typeof p.bank === "string" && /^[\w-]+$/.test(p.bank)) {
+        const clip = readWav(await readFile(path.join(bankDir, `${p.bank}.wav`)));
+        const s = await makeSpeaker(await load(), clip);
+        mkdirSync(path.dirname(speakerFile(key)), { recursive: true });
+        await writeFile(speakerFile(key), packSpeaker(s));
+        speakers.set(key, s);
+        spk = s;
+      }
+      if (!spk) return { needRef: true };
+      const pcm = await revoice(await load(), p.pcm as Float32Array, spk, (done, of) => send({ id: m.id, event: "progress", done, total: of, what: "Giving it the voice" }));
+      return { pcm };
     }
     default:
       throw new Error(`Unknown studio voice request: ${m.method}`);
