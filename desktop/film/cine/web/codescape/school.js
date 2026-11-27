@@ -108,3 +108,19 @@ export async function compoundWall(E, o = {}) { const G = new THREE.Group(); E.s
   const mt = canvasTex(2048, 256, (g, w, h) => { g.clearRect(0, 0, w, h); g.fillStyle = 'rgba(122,42,30,.88)'; g.font = '150px Baloo'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(o.motto || 'सच बोलो  •  रोशनी में रहो', w / 2, h / 2 + 10); });
   const mm = new THREE.Mesh(new THREE.PlaneGeometry(o.mottoW ?? 4.2, (o.mottoW ?? 4.2) / 8), new THREE.MeshStandardMaterial({ map: mt, transparent: true, roughness: 0.9, depthWrite: false })); mm.position.set(o.mottoX ?? 1.8, o.mottoY ?? 2.0, Z + 0.003); mm.receiveShadow = true; G.add(mm);
   return G; }
+
+/** a cycle stand: a tin roof on pipe posts and a row of children's bicycles under it (each: two spoked wheels, a diamond frame, saddle, bars, a basket on some) */
+export function cycleShed(E, o = {}) { const G = new THREE.Group(); E.scene.add(G); G.position.set(o.at?.[0] ?? 12, 0, o.at?.[1] ?? -18); G.rotation.y = o.rotY || 0; const LEN = o.len ?? 9, r = rng(o.seed ?? 51);
+  const pipe = M('#5c6468', { r: 0.45, m: 0.6 }), tin = M('#8d969a', { r: 0.5, m: 0.55 }), tire = M('#141414', { r: 0.8 });
+  for (let x = -LEN / 2; x <= LEN / 2 + 0.01; x += LEN / 3) for (const z of [-1.1, 1.1]) { const p = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, z < 0 ? 2.5 : 2.2, 8), pipe); p.position.set(x, (z < 0 ? 2.5 : 2.2) / 2, z); p.castShadow = true; G.add(p); }
+  { const g = new THREE.BoxGeometry(LEN + 0.6, 0.03, 2.9, 1, 1, 24); const P = g.attributes.position; for (let i = 0; i < P.count; i++) { const z = P.getZ(i); P.setY(i, P.getY(i) + 0.025 * Math.sin(z * 40)); } g.computeVertexNormals(); const roof = new THREE.Mesh(g, tin); roof.position.set(0, 2.36, 0); roof.rotation.x = -0.11; roof.castShadow = roof.receiveShadow = true; G.add(roof); }
+  const cols = ['#1f3c7a', '#8a1c1c', '#1d1d1d', '#2a5c3a', '#6a2a6a', '#b0a020', '#333a44'];
+  const wheel = () => { const w = new THREE.Group(); const t = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.022, 8, 28), tire); w.add(t); const rim = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.008, 6, 28), pipe); w.add(rim);
+    for (let k = 0; k < 12; k++) { const s = new THREE.Mesh(new THREE.CylinderGeometry(0.0025, 0.0025, 0.54, 4), pipe); s.rotation.z = k / 12 * Math.PI; w.add(s); } return w; };
+  const rod = (g, m, a, b, rad = 0.014) => { const A = new V3(...a), B = new V3(...b), L = A.distanceTo(B); const c = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, L, 6), m); c.position.copy(A).add(B).multiplyScalar(0.5); c.quaternion.setFromUnitVectors(new V3(0, 1, 0), B.clone().sub(A).normalize()); c.castShadow = true; g.add(c); };
+  const n = o.n ?? 12; for (let i = 0; i < n; i++) { if (r() < 0.15) continue; const b = new THREE.Group(); b.position.set(-LEN / 2 + 0.4 + i * (LEN - 0.8) / (n - 1), 0, (r() - 0.5) * 0.2); b.rotation.y = Math.PI / 2 + (r() - 0.5) * 0.12; b.rotation.z = (r() - 0.5) * 0.06; G.add(b);
+    const fm = M(cols[Math.floor(r() * cols.length)], { r: 0.35, m: 0.5 }); const w1 = wheel(), w2 = wheel(); w1.position.set(-0.52, 0.31, 0); w2.position.set(0.5, 0.31, 0); w1.rotation.y = w2.rotation.y = 0; b.add(w1, w2);
+    const BB = [0, 0.33, 0], ST = [-0.12, 0.82, 0], HT = [0.38, 0.8, 0]; rod(b, fm, BB, ST); rod(b, fm, ST, HT); rod(b, fm, BB, HT, 0.017); rod(b, fm, BB, [-0.52, 0.31, 0.02]); rod(b, fm, ST, [-0.52, 0.31, 0.02]); rod(b, fm, HT, [0.5, 0.31, 0.02], 0.012);
+    rod(b, pipe, [0.4, 0.82, -0.24], [0.4, 0.86, 0.24], 0.011); const sd = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.05, 0.1), M('#1a1410', { r: 0.6 })); sd.position.set(-0.14, 0.88, 0); b.add(sd);
+    if (r() < 0.45) { const bk = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.16, 0.28), M('#6b5a3a', { r: 0.9, x: { wireframe: false } })); bk.position.set(0.56, 0.85, 0); bk.castShadow = true; b.add(bk); } }
+  return G; }

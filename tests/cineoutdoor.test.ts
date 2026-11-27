@@ -34,4 +34,30 @@ describe("the outdoor world and the children", () => {
       expect(out).toContain("REVIEW: clean");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 300_000);
+  // 27 Nov 2026, after "a richer scale of this world, more realistic bodies, a more dramatic opening": a whole school at once (crowd.js:
+  // instanced children with faces, plaits and folded hands, walking in the vertex shader), hills far off, a cycle stand, and folds in the cloth.
+  it("a crowd of children, hills and a cycle stand build in node and the review stays clean while the crowd walks off", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cscrowd-"));
+    const film = `// @engine codescape
+import { THREE, V3 } from './engine.js';
+import { sky, ground, hills } from './nature.js';
+import { cycleShed } from './school.js';
+import { assembly } from './crowd.js';
+import { makeKid } from './people.js';
+import { stand, restArm } from './body.js';
+export const META = { name: 'crowd', fps: 30, order: ['a'] };
+export const S = { a: { dur: 2, about: 'a school assembly that turns and walks back to class', build: async E => {
+    sky(E, { sun: [0.1, 0.45, -1] }); await ground(E); hills(E, { r: 160 }); cycleShed(E, { at: [10, -8], n: 6 });
+    const crowd = assembly(E, { cols: 6, rows: 4, at: [-2.5, -3] }); for (const q of crowd.kids) q.walk = { dir: new V3(0, 0, -1), yaw: Math.PI, t0: 0.2 + 0.1 * q.c, speed: 1.1 };
+    const kid = makeKid(E, { hair: 'curly', seed: 2 }); return { crowd, kid }; },
+  frame(t, c) { stand(c.kid, 0, 1.5, 0, t); restArm(c.kid, 'l', t); restArm(c.kid, 'r', t); if (c.kid.sleeveTick) c.kid.sleeveTick();
+    if (c.crowd.kids.length !== 24) throw new Error('crowd size ' + c.crowd.kids.length);
+    return { p: [0, 3, 8], t: [0, 0.6, -2], fov: 40, ao: 0.8 }; } } };
+`;
+    try {
+      cpSync(path.join(cine, "web/codescape"), dir, { recursive: true }); cpSync(path.join(cine, "web/three.module.js"), path.join(dir, "three.module.js")); writeFileSync(path.join(dir, "film.js"), film);
+      let out = ""; try { out = execFileSync(process.execPath, [path.join(cine, "tools/review/run.mjs"), dir], { encoding: "utf8", timeout: 240_000 }); } catch (e) { out = String((e as { stdout?: string }).stdout ?? e); }
+      expect(out).toContain("REVIEW: clean");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 300_000);
 });

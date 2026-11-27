@@ -578,7 +578,7 @@ export function makeKid(E, o = {}) {
   if (p.bagOff) p.bagOff(); kidHead(p, o); brows(p, o.brow ?? 0.0046, 0.0032, o.browColor || '#2b1d15'); p.head.position.y += 0.01; hairKid(p, o.hair || 'fringe', o);   /* a child's thinner, softer brows; a little more neck above the collar */ p.sleeveTo = o.sleeve ?? 0.56; p.sleeveCover = (o.sleeve ?? 0.56) * 0.95; p.sleeveR = o.sleeveR ?? 0.95; p.kid = true;
   p.root.traverse(m => { if (m.isMesh && m.material && m.material.color && ['8fb0d4', 'a8c8e8', '94b6da'].includes(m.material.color.getHexString())) { m.material = m.material.clone(); m.material.color.set(o.shirt || '#e9e8e2'); } });   /* the son's blue placket and collar pieces become the white of the school shirt */
   { const ct = kidCloth(o.shirt || '#e9e8e2', o.seed ?? 3); if (ct) for (const m of [p.chest.material, p.belly.material]) { m.map = ct; m.color.set('#ffffff'); m.sheen = 0.05; m.roughness = 0.82; m.needsUpdate = true; } }
-  p.neck.scale.set(0.9, 1, 0.9); skinGlow(p);
+  p.neck.scale.set(0.9, 1, 0.9); skinGlow(p); clothFolds(p, o.seed ?? 3);
   return p; }
 /** light that goes into the skin and comes back out warm: a wrapped, reddened diffuse at the edge of the light (a cheap subsurface look) and a soft sheen; on the face, hands and arms */
 export function skinGlow(p, o = {}) { const seen = new Set(), k = o.k ?? 0.55;
@@ -645,6 +645,19 @@ export function hairKid(p, style = 'fringe', o = {}) {
   for (const L of lk) p.head.add(L); p.hairKid = me; return me; }
 
 /** a school shirt's white cotton: a fine even weave, no stripes, the faintest creases */
+/** folds in the cloth: soft creases as a bump map on the shirt (pulls from the shoulders, bunching where it is tucked in) and on the trousers (breaks above the shoe, pulls at the seat).
+ *  Which material is which comes from its colour: the white of the shirt, the navy of the trousers. A low raking sun finds every fold. */
+function foldTex(seed, o = {}) { if (!browser) return null; const n = 512, c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'); g.fillStyle = '#808080'; g.fillRect(0, 0, n, n);
+  let s = seed * 7919 + 3; const R = () => (s = (s * 16807) % 2147483647) / 2147483647; g.filter = `blur(${o.blur ?? 7}px)`;
+  for (let i = 0; i < (o.n ?? 34); i++) { const x = R() * n, y = R() * n, L = 60 + R() * 200, a = (o.dir ?? Math.PI / 2) + (R() - 0.5) * (o.spread ?? 0.9), w = 3 + R() * 9;
+    for (const [dx, col] of [[-w * 0.6, `rgba(20,20,20,${0.35 + R() * 0.3})`], [w * 0.6, `rgba(235,235,235,${0.35 + R() * 0.3})`]]) { g.strokeStyle = col; g.lineWidth = w; g.lineCap = 'round'; g.beginPath();
+      for (const [ox, oy] of [[0, 0], [n, 0], [-n, 0], [0, n], [0, -n]]) { const ca = Math.cos(a), sa = Math.sin(a), px = -sa * dx, py = ca * dx; g.moveTo(x + ox + px - ca * L / 2, y + oy + py - sa * L / 2); g.quadraticCurveTo(x + ox + px + (R() - 0.5) * 40, y + oy + py + (R() - 0.5) * 40, x + ox + px + ca * L / 2, y + oy + py + sa * L / 2); } g.stroke(); } }
+  g.filter = 'none'; const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(o.rep ?? 1, o.rep ?? 1); return t; }
+export function clothFolds(p, seed = 3, o = {}) { if (!browser) return; const shirt = foldTex(seed, { dir: Math.PI / 2, spread: 1.1, n: 30, blur: 6 }), trou = foldTex(seed + 11, { dir: 0.2, spread: 0.7, n: 26, blur: 8 }), seen = new Set();
+  const th = p.leg.l.th.children.find(c => c.isMesh), tm = th && th.material, tmap = tm && tm.map, whites = o.shirts || ['e9e8e2', 'f3ece0'];   /* the trousers: every material that wears the thigh's cloth (legs, seat) */
+  p.root.traverse(m => { if (!m.isMesh || !m.material || Array.isArray(m.material) || seen.has(m.material) || !m.geometry.attributes.uv) return; const mt = m.material; seen.add(mt); if (!mt.color) return;
+    if (m === p.chest || m === p.belly || (!mt.map && whites.includes(mt.color.getHexString()))) { mt.bumpMap = shirt; mt.bumpScale = o.shirtK ?? 4; mt.needsUpdate = true; }
+    else if (mt === tm || (tmap && mt.map === tmap)) { mt.bumpMap = trou; mt.bumpScale = o.trouK ?? 5; mt.needsUpdate = true; } }); }
 function kidCloth(base, seed) { if (!browser) return null; const n = 512, c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'); g.fillStyle = base; g.fillRect(0, 0, n, n);
   let s = seed * 977 + 13; const R = () => (s = (s * 16807) % 2147483647) / 2147483647; for (let y = 0; y < n; y += 2) { g.fillStyle = `rgba(0,0,0,${0.012 + R() * 0.01})`; g.fillRect(0, y, n, 1); } for (let x = 0; x < n; x += 2) { g.fillStyle = `rgba(0,0,0,${0.008 + R() * 0.008})`; g.fillRect(x, 0, 1, n); }
   for (let i = 0; i < 9000; i++) { g.fillStyle = `rgba(${R() < 0.5 ? '0,0,0' : '255,255,255'},${0.015 + R() * 0.02})`; g.fillRect(R() * n, R() * n, 1 + R() * 2, 1); }

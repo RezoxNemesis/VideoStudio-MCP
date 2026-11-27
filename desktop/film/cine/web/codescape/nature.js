@@ -173,3 +173,14 @@ export function birds(E, o = {}) { clock(E); const r = rng(o.seed ?? 21), n = o.
     G.add(b); B.push({ b, wings, p0: new V3(...(o.from || [-40, 14, -20])).add(new V3(r() * 6, r() * 4, r() * 8)), v: new V3(...(o.dir || [1, 0.02, 0.25])).normalize().multiplyScalar(4 + r() * 2), ph: r() * 6, f: 5 + r() * 2 }); }
   E.updaters.push(t => { for (const q of B) { q.b.position.copy(q.p0).addScaledVector(q.v, t); q.b.lookAt(q.b.position.clone().add(q.v)); const a = Math.sin(t * q.f + q.ph) * 0.7; q.wings[0].rotation.z = a; q.wings[1].rotation.z = -a; } });
   return G; }
+
+// ------------------------------------------------------------------ hills far off: low ridges round the town, blue in the morning haze (the scale of the world beyond the wall)
+/** o: r (distance), n (ridges), seed, col. Each ridge is a long strip with a noisy top, two rows deep (the nearer one darker). */
+export function hills(E, o = {}) { const r = rng(o.seed ?? 41), G = new THREE.Group(); E.scene.add(G); const R = o.r ?? 150;
+  for (const [k, col, hk] of [[1.0, o.col || '#8e9aa6', 1], [0.82, o.col2 || '#7c8a86', 0.7]]) { const N = 240, pos = [], idx = []; const ph = [r() * 6, r() * 6, r() * 6, r() * 6];
+    for (let i = 0; i <= N; i++) { const a = i / N * Math.PI * 2, rr = R * k; const h = hk * (o.h ?? 14) * (0.35 + 0.35 * Math.sin(a * 3 + ph[0]) ** 2 + 0.2 * Math.sin(a * 7 + ph[1]) ** 2 + 0.1 * Math.sin(a * 17 + ph[2]) + 0.06 * Math.sin(a * 41 + ph[3]));
+      pos.push(Math.cos(a) * rr, -2, Math.sin(a) * rr, Math.cos(a) * rr, Math.max(1, h), Math.sin(a) * rr); if (i < N) { const j = i * 2; idx.push(j, j + 2, j + 1, j + 1, j + 2, j + 3); } }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide, fog: false }); const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; G.add(mesh); }
+  E.updaters.push(() => { if (E.cam) G.position.set(E.cam.position.x, 0, E.cam.position.z); });   /* far enough that they keep their place as the lens moves */
+  return G; }
