@@ -16,7 +16,7 @@ const path = require("node:path"), fs = require("node:fs"), os = require("node:o
 const { createCine } = require("../../../electron/cine.cjs");
 const [cmd, filmArg, ...rest] = process.argv.slice(2);
 if (!cmd || !filmArg) { console.log(fs.readFileSync(__filename, "utf8").split("*/")[0]); process.exit(1); }
-const film = path.resolve(filmArg), root = process.env.CINE_ROOT || path.dirname(film);
+const film = filmArg === "@library" ? filmArg : path.resolve(filmArg), root = process.env.CINE_ROOT || (filmArg === "@library" ? path.join(os.tmpdir(), "cine-root") : path.dirname(film));   /* "@library": the app's own Library film, drawn from a working copy */
 const chrome = process.env.CINE_CHROME || ["google-chrome", "chromium", "chromium-browser"].find((c) => (process.env.PATH || "").split(":").some((d) => fs.existsSync(path.join(d, c)))) || "google-chrome";
 let n = 0;
 const openPage = async (url, size) => {

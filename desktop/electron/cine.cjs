@@ -53,6 +53,7 @@ function createCine(o) {
 
   function filmDir(film) {
     const name = String(film || "");
+    if (name === "@library") throw new Error("The Library is the app's own film: it can be looked at, reviewed and rendered (film: \"@library\"), not changed. Copy what you need into a film of yours.");
     const d = path.isAbsolute(name) ? path.resolve(name) : path.join(ROOT, safeName(name));
     if (o.mustAllow) o.mustAllow(d);
     if (!fs.existsSync(path.join(d, "film.js"))) throw new Error(`Not a Cine film (no film.js): ${d}`);
@@ -84,6 +85,11 @@ function createCine(o) {
   /** The engine's own library film (people, hands, holds, speech: every piece seen live), or a film by name. */
   const LIB = "@library";
   const studioDir = (film) => (String(film) === LIB ? path.join(path.dirname(o.web), "films", "codescape-library") : filmDir(film));
+  /** A film's folder for LOOKING and DRAWING (a frame, a sheet, a render). The Library ("@library") is drawn from a working copy in the
+   *  Cine folder (.library), brought level with the app's own each time, so its pictures and renders have somewhere to go. */
+  const drawDir = (film) => { if (String(film) !== LIB) return filmDir(film); const src = studioDir(LIB), dst = path.join(ROOT, ".library"); fs.mkdirSync(dst, { recursive: true });
+    for (const f of fs.readdirSync(src)) { const a = path.join(src, f), b = path.join(dst, f); if (!fs.statSync(a).isFile()) continue; let same = false; try { same = fs.statSync(b).size === fs.statSync(a).size && fs.readFileSync(a).equals(fs.readFileSync(b)); } catch { /* not there yet */ } if (!same) fs.copyFileSync(a, b); }
+    return dst; };
   /** What a module offers: its exported functions and constants with the comment written above each. */
   function exportsOf(file) {
     const out = []; let text = ""; try { text = fs.readFileSync(file, "utf8"); } catch { return out; }
@@ -254,7 +260,7 @@ function createCine(o) {
   const exec = (cmd, args, opt = {}) => new Promise((res) => execFile(cmd, args, { maxBuffer: 1 << 26, ...opt }, (e, so, se) => res({ code: e ? (typeof e.code === "number" ? e.code : 1) : 0, out: String(so || ""), err: String(se || "") })));
 
   async function frame(film, shot, t, width, height) {
-    const dir = filmDir(film), id = safeId(shot), W = Math.min(3840, Math.max(320, Math.round(width || 1280))), H = Math.round(height || W * 9 / 16);
+    const dir = drawDir(film), id = safeId(shot), W = Math.min(3840, Math.max(320, Math.round(width || 1280))), H = Math.round(height || W * 9 / 16);
     const tt = Math.max(0, +t || 0), tag = `st_${id}_${String(Math.round(tt * 100)).padStart(5, "0")}`;
     const r = await page(dir, "still", `shot.html?id=${id}&w=${W}&h=${H}&stills=${tt}&job=still`, null, 240_000);
     const f = path.join(dir, "out", `${tag}.jpg`);
@@ -262,7 +268,7 @@ function createCine(o) {
     return { jpeg: `data:image/jpeg;base64,${(await fsp.readFile(f)).toString("base64")}`, file: f, shot: id, t: tt, width: W, height: H };
   }
   async function sheet(film, shot, times, cols, cell, cellHeight) {
-    const dir = filmDir(film), id = safeId(shot), W = Math.min(1920, Math.max(240, Math.round(cell || 640))), H = Math.min(3840, Math.max(135, Math.round(cellHeight || W * 9 / 16)));
+    const dir = drawDir(film), id = safeId(shot), W = Math.min(1920, Math.max(240, Math.round(cell || 640))), H = Math.min(3840, Math.max(135, Math.round(cellHeight || W * 9 / 16)));
     const ts = (times || []).map((v) => Math.max(0, +v || 0)).slice(0, 24);
     if (!ts.length) throw new Error("Give the moments to look at: times: [seconds…].");
     const r = await page(dir, "still", `shot.html?id=${id}&w=${W}&h=${H}&stills=${ts.join(",")}&job=still`, null, 600_000);
@@ -278,7 +284,7 @@ function createCine(o) {
   /** Draw the film (or some shots) in pieces, join them, lay the sound under. Runs on; ask `progress`. */
   async function render(film, p = {}) {
     if (run && run.state === "drawing") throw new Error(`A film is being drawn (${run.film}). Wait for it or stop it (cine.stop).`);
-    const dir = filmDir(film), info = await shots(dir);
+    const dir = drawDir(film), info = await shots(dir);
     const W = Math.min(3840, Math.max(640, Math.round(p.width || info.width || 2560))), H = Math.round(p.height || W * (info.height || 1440) / (info.width || 2560)), fps = Math.round(p.fps || info.fps || 30);
     const PIECE = Math.max(30, Math.round(p.piece || 150)), crf = p.crf ?? 15; let only = Array.isArray(p.shots) && p.shots.length ? new Set(p.shots.map(String)) : null;
     const seg = path.join(dir, "out", "seg"); await fsp.mkdir(seg, { recursive: true });
@@ -371,7 +377,7 @@ function createCine(o) {
     return { root: ROOT, films, assets: { folder: ASSETS, bodies: Math.floor(have("data") / 2), textures: have("tex"), fonts: have("fonts") }, engine: o.web, guide: "cine.help", clay: { engine: path.join(o.web, "clay"), guide: "cine.help {topic: \"clay\"}", start: "cine.new {name, kind: \"clay\"}" } };
   }
   async function open(film) {
-    const dir = filmDir(film), info = await shots(dir);
+    const dir = drawDir(film), info = await shots(dir);
     const files = []; const walk = async (d, rel) => { for (const e of await fsp.readdir(d, { withFileTypes: true })) { if (e.name.startsWith(".") || e.name === "out" || e.name === "__pycache__") continue; const r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) { if (r !== "data/mo") await walk(path.join(d, e.name), r); else files.push("data/mo/ (performances)"); } else files.push(r); } };
     await walk(dir, "");
     const seg = path.join(dir, "out", "seg"); let drawn = 0; try { drawn = (await fsp.readdir(seg)).filter((n) => /\.mp4$/.test(n)).length; } catch { /* nothing drawn */ }
@@ -523,9 +529,9 @@ function createCine(o) {
     engineOf,
     read: async (film, file) => fsp.readFile(source(film, file), "utf8"),
     write: async (film, file, text) => { const f = source(film, file); await fsp.mkdir(path.dirname(f), { recursive: true }); await fsp.writeFile(f, String(text ?? "")); if (path.basename(f) === "film.js") { try { const i = await shots(filmDir(film)); return { file: f, loads: true, shots: i.shots.length }; } catch (e) { return { file: f, loads: false, mistake: String(e.message).slice(0, 1200) }; } } return { file: f }; },
-    join: async (film, p) => { const dir = filmDir(film), info = await shots(dir), fps = info.fps || 30, PIECE = 150, plan = []; for (const s of info.shots) { const K = Math.ceil(Math.round(s.dur * fps) / PIECE); for (let k = 0; k < K; k++) plan.push({ job: `${s.id}_${k}` }); } return join(dir, plan, info, p || {}); },
+    join: async (film, p) => { const dir = drawDir(film), info = await shots(dir), fps = info.fps || 30, PIECE = 150, plan = []; for (const s of info.shots) { const K = Math.ceil(Math.round(s.dur * fps) / PIECE); for (let k = 0; k < K; k++) plan.push({ job: `${s.id}_${k}` }); } return join(dir, plan, info, p || {}); },
     /** Any page of the engine (lab.html …) for a film: wait for its flag, then say which pictures it left in out/. */
-    lab: async (film, query, flagName, timeout) => { const dir = filmDir(film), t0 = Date.now(); const r = await page(dir, flagName || 'lab', String(query), null, timeout || 300_000); const out = path.join(dir, 'out'); const files = fs.existsSync(out) ? fs.readdirSync(out).filter((n) => /\.(jpg|png)$/.test(n) && fs.statSync(path.join(out, n)).mtimeMs >= t0 - 500).map((n) => path.join(out, n)) : []; return { said: r, files, log: logs.slice(-6) }; },
+    lab: async (film, query, flagName, timeout) => { const dir = drawDir(film), t0 = Date.now(); const r = await page(dir, flagName || 'lab', String(query), null, timeout || 300_000); const out = path.join(dir, 'out'); const files = fs.existsSync(out) ? fs.readdirSync(out).filter((n) => /\.(jpg|png)$/.test(n) && fs.statSync(path.join(out, n)).mtimeMs >= t0 - 500).map((n) => path.join(out, n)) : []; return { said: r, files, log: logs.slice(-6) }; },
     /** Cine Studio: the film playing live in a window (real time, on the graphics card), its code beside it, the library, the checks, a render watched as it is drawn. */
     studio: async (film) => { await start(); const name = film ? (String(film) === LIB ? LIB : path.basename(filmDir(film))) : ""; const url = `http://127.0.0.1:${port}/studio.html?k=${STUDIO_KEY}${name ? `&film=${encodeURIComponent(name)}` : ""}`; if (o.openStudio) await o.openStudio(url); return { url, film: name || null, window: !!o.openStudio }; },
     /** The deep review, measured without drawing: cameras that shake, lenses with a body on them, hands that do not reach or hold (the film notes its holds in c.rep). → the report */

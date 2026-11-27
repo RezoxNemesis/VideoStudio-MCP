@@ -100,6 +100,8 @@ export interface Vsd {
   /** A sound file (or bytes of one) as mono 24 kHz float samples, as bytes. */
   pcm24k?(p: string): Promise<Uint8Array>;
   pcm24kBytes?(bytes: Uint8Array, name: string): Promise<Uint8Array>;
+  /** A sound written out as a file (inside the folders the app may use). */
+  saveSound?(p: string, bytes: Uint8Array): Promise<string>;
   crashLog(): Promise<string>;
   updateCheck(): Promise<{ current: string; latest?: string; available: boolean; notes?: string; size?: number; name?: string; /** the release's AppImage: with it the update goes into the person's own folder, without a password */ img?: { name: string; url: string; size: number } | null; password?: boolean }>;
   updateInstall(): Promise<{ installed: boolean; version?: string; note: string }>;

@@ -168,6 +168,7 @@ contextBridge.exposeInMainWorld("vsd", {
   /** A sound file, or bytes of one, as mono 24 kHz samples (for a performance to be re-voiced). */
   pcm24k: (p) => call("audio.pcm24k", p),
   pcm24kBytes: (bytes, name) => call("audio.pcm24kBytes", bytes, name),
+  saveSound: (p, bytes) => call("audio.saveBytes", p, bytes),
   updateCheck: () => call("update.check"),
   crashLog: () => call("app.crashLog"),
   updateInstall: () => call("update.install"),

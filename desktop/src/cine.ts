@@ -40,7 +40,7 @@ export function registerCineCommands(_s: Studio): void {
   );
   registerCommand(
     "cine.sheet",
-    "{film, shot, times: [s…], cols?=4, cell?=640 (a cell's width), height? (a cell's height; give it for a vertical film, e.g. cell 360, height 640)} Several moments of a shot in one picture: the way to judge movement, staging and the camera's path.",
+    "{film, shot, times: [s…], cols?=4, cell?=640 (a cell's width), height? (a cell's height; give it for a vertical film, e.g. cell 360, height 640)} Several moments of a shot in one picture: the way to judge movement, staging and the camera's path. film: \"@library\" draws the app's own Library film (cine.render takes it too: the body reel, drawn again on this version).",
     async (_st, a) => { const t = a.any("times"); const r = await cine().sheet(a.str("film"), a.str("shot"), Array.isArray(t) ? t.map(Number) : [], a.optNum("cols"), a.optNum("cell"), a.optNum("height")); return { jpeg: r.jpeg, shot: r.shot, times: r.times, cols: r.cols, rows: r.rows, file: r.file }; },
   );
   registerCommand(

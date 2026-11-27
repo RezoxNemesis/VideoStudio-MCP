@@ -134,7 +134,7 @@ export function registerDesktopCommands(s: Studio): void {
 
   registerCommand(
     "voice.act",
-    '{assetId | clipId | path, voice?="hf_alpha", like?: a clip OF the voice (its whole path, or an assetId), tone?, toTimeline?=true, start?} A recorded performance said in a character\'s voice: record a line the way it should be said (your own voice, any gender, on a phone is fine), and the same timing, stresses and pauses come back in the character\'s voice (VolTune Studio must be installed: voice.studio). The voice is a VolTune voice by name, or, with like, the voice of a SAMPLE: a few clean seconds of the character speaking alone (an earlier line, a cut from a finished film), so a voice made anywhere can be kept. The new sound is exactly as long as the recording; with clipId it is laid on the timeline at that clip\'s place (the recording itself is left alone: mute or remove it). Best with a clear recording, one speaker, little room echo; up to ten minutes. → { assetId, clipId?, seconds, voice }.',
+    '{assetId | clipId | path, voice?="hf_alpha", like?: a clip OF the voice (its whole path, or an assetId), tone?, toTimeline?=true, start?, file?: also save the new sound as this .wav (its whole path: for a Cine film, whose sound is mixed outside the project)} A recorded performance said in a character\'s voice: record a line the way it should be said (your own voice, any gender, on a phone is fine), and the same timing, stresses and pauses come back in the character\'s voice (VolTune Studio must be installed: voice.studio). The voice is a VolTune voice by name, or, with like, the voice of a SAMPLE: a few clean seconds of the character speaking alone (an earlier line, a cut from a finished film), so a voice made anywhere can be kept. The new sound is exactly as long as the recording; with clipId it is laid on the timeline at that clip\'s place (the recording itself is left alone: mute or remove it). Best with a clear recording, one speaker, little room echo; up to ten minutes. → { assetId, clipId?, seconds, voice }.',
     async (st, a) => {
       const b = need();
       if (!b.pcm24k || !b.pcm24kBytes) throw new Error("This version of VideoStudio Desktop cannot read a recording for re-voicing: install the latest update.");
@@ -169,7 +169,9 @@ export function registerDesktopCommands(s: Studio): void {
         const asset = await st.addBlobAsset(wavBlob(r.pcm), `Voice – acted – ${name.replace(/\.[^.]+$/, "")}.wav`, "voice", { mouth: mouthEnvelope(r.pcm, 30) });
         let placed: string | undefined;
         if (a.bool("toTimeline", true)) placed = st.mutate("place acted voice", (p) => ops.addClip(p, { assetId: asset.id, start: a.num("start", at ?? st.time) }).id);
-        return { assetId: asset.id, clipId: placed, seconds: Math.round((r.pcm.length / 24000) * 100) / 100, voice: r.voice };
+        let file: string | undefined; const want = a.optStr("file");
+        if (want) { if (!b.saveSound) throw new Error("This version of VideoStudio Desktop cannot save the sound as a file: install the latest update."); file = await b.saveSound(want, new Uint8Array(await wavBlob(r.pcm).arrayBuffer())); }
+        return { assetId: asset.id, clipId: placed, seconds: Math.round((r.pcm.length / 24000) * 100) / 100, voice: r.voice, ...(file ? { file } : {}) };
       } finally { st.setStatus(""); }
     },
   );

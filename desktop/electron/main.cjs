@@ -1326,6 +1326,8 @@ function setupIpc() {
     return new Uint8Array(r.stdout.buffer, r.stdout.byteOffset, r.stdout.length);
   });
   handle("audio.pcm24k", async (p) => { const x = await pcm(mustAllow(p), 24000, 0, 600); return new Uint8Array(x.buffer, x.byteOffset, x.byteLength); });
+  // a sound made in the app (a voice given to a recording) written out as a file, for a film whose sound is mixed outside the project
+  handle("audio.saveBytes", async (p, bytes) => { const f = mustAllow(p); if (!/\.(wav|mp3|m4a|flac|ogg)$/i.test(f)) throw new Error("Give the file a sound's name (.wav)."); await fsp.mkdir(path.dirname(f), { recursive: true }); await fsp.writeFile(f, Buffer.from(bytes)); return f; });
   handle("audio.pcm24kBytes", async (bytes, name) => {
     const tmp = path.join(os.tmpdir(), `vsd-${crypto.randomUUID()}-${String(name || "audio").replace(/[^\w.-]/g, "_")}`);
     await fsp.writeFile(tmp, Buffer.from(bytes));

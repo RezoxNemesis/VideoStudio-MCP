@@ -36,6 +36,7 @@ import {
   type StudioModels,
 } from "../../../src/voice/engine/studio";
 import { leadFor } from "../../../src/voice/engine/studio_lead";
+import { steadiness, cracked } from "../../../src/voice/engine/studio_steady";
 
 type Msg = { id: string; method: string; params: Record<string, unknown> };
 const send = (m: unknown) => process.send?.(m);
@@ -214,10 +215,16 @@ async function handle(m: Msg): Promise<unknown> {
       type Take = Awaited<ReturnType<typeof say>>;
       const told = (r: Take, attempt: number, tries: unknown[]) =>
         p.trace ? { pcm: r.pcm, complete: r.complete, reason: r.reason, tokens: r.tokens, trace: r.trace, pass: r.pass, lead: r.lead, stops: r.stops, attempt, tries } : { pcm: r.pcm, stops: r.stops };
-      const tries: Array<{ complete: boolean; reason: string; lead?: boolean; pass?: Take["pass"]; found?: unknown }> = [];
+      const tries: Array<{ complete: boolean; reason: string; lead?: boolean; pass?: Take["pass"]; found?: unknown; jumps?: number }> = [];
       let first: Take | null = null;
       let firstAt = 0;
       let firstScore = Infinity;
+      // a complete take whose pitch cracks (studio_steady.ts) is kept in hand while another is tried: the steadiest complete one is told.
+      // Crying and fear break the voice on purpose, so they are not asked to be steady.
+      const mayCrack = mood === "crying" || mood === "scared";
+      let steady: Take | null = null;
+      let steadyAt = 0;
+      let steadyJumps = Infinity;
       for (let attempt = 0; attempt < 3; attempt++) {
         const r = await say(mdl, text, spk, {
           lang: String(p.lang ?? "en"),
@@ -227,15 +234,20 @@ async function handle(m: Msg): Promise<unknown> {
           lead: p.lead === false ? "" : leadFor(text, String(p.lang ?? "en")),
           onToken: (n) => n % 25 === 0 && send({ id: m.id, event: "progress", done: n, what: "Acting the line" }),
         });
-        tries.push({ complete: r.complete, reason: r.reason, lead: r.lead, pass: r.pass, found: r.trace?.lead });
-        if (r.complete) return told(r, attempt, tries);
+        const how = r.complete && !mayCrack ? steadiness(r.pcm) : null;
+        tries.push({ complete: r.complete, reason: r.reason, lead: r.lead, pass: r.pass, found: r.trace?.lead, ...(how ? { jumps: how.jumps } : {}) });
+        if (r.complete) {
+          if (!cracked(how)) return told(r, attempt, tries);
+          if (how!.jumps < steadyJumps) { steady = r; steadyAt = attempt; steadyJumps = how!.jumps; }
+          continue;
+        }
         // none clean so far: a take that said the line with a leap is still better than one that never got through it;
         // a lead that could not be parted cleanly from the line (the first word may be clipped, or a trace of the
         // lead left) counts like a small leap, less than words leapt over
         const score = (r.pass ? r.pass.dirt : 1e6) + (r.lead === false ? 3 : 0);
         if (!first || score < firstScore) { first = r; firstAt = attempt; firstScore = score; }
       }
-      return told(first!, firstAt, tries);
+      return steady ? told(steady, steadyAt, tries) : told(first!, firstAt, tries);
     }
     case "revoice": {
       // a recorded performance (24 kHz) said in the voice `key`: the delivery is the performer's, the voice the character's
