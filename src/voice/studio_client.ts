@@ -113,6 +113,28 @@ export async function studioRevoice(pcm: Float32Array, voice: string, tone?: Ton
   } finally { off(); }
 }
 
+/**
+ * The same, in the voice of a SAMPLE: a few seconds of the voice itself (a character's earlier line, a clip from a finished
+ * film, a recording), 24 kHz mono. `key` names the voice, so the same sample is prepared once.
+ * Null when VolTune Studio is not installed or not the engine in use.
+ */
+export async function studioRevoiceLike(pcm: Float32Array, sample: Float32Array, key: string, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string } | null> {
+  const b = bridge();
+  if (!b || !b.revoice || voiceEngine() !== "studio") return null;
+  if (installed === null) await studioStatus().catch(() => (installed = false));
+  if (!installed) return null;
+  const off = b.onProgress((m) => onProgress?.(m.total ? m.done / m.total : 0, m.what));
+  try {
+    let r = await b.revoice({ key, pcm });
+    if (r.needRef) {
+      onProgress?.(0, "Preparing the voice");
+      await b.speaker({ key, pcm: sample });
+      r = await b.revoice({ key, pcm });
+    }
+    return r.pcm?.length ? { pcm: r.pcm, voice: key } : null;
+  } finally { off(); }
+}
+
 export async function studioSay(text: string, voice: string, tone?: Tone, lang?: string, onProgress?: (done: number, what: string) => void): Promise<{ pcm: Float32Array; voice: string; pace: StudioPace; peak: number } | null> {
   const b = bridge();
   if (!b || voiceEngine() !== "studio") return null;

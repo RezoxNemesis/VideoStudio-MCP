@@ -34,7 +34,7 @@ const strip = (r) => { if (r && r.jpeg) r = { ...r, jpeg: `(${Math.round(r.jpeg.
     else if (cmd === "sheet") console.log(strip(await cine.sheet(film, rest[0], String(rest[1] || "0").split(",").map(Number), +rest[2] || 4, +rest[3] || 640, +rest[4] || undefined)));
     else if (cmd === "lab") console.log(await cine.lab(film, rest[0], rest[1]));
     else if (cmd === "open") console.log(JSON.stringify(await cine.open(film), null, 1));
-    else if (cmd === "actor") console.log(JSON.stringify(await cine.actor(film, path.resolve(rest[0]), { name: rest[1], from: +rest[2] || 0, to: +rest[3] || 0 })));
+    else if (cmd === "actor") console.log(JSON.stringify(await cine.actor(film, path.resolve(rest[0]), { name: rest[1], from: +rest[2] || 0, to: +rest[3] || 0, fps: +rest[4] || 0, quality: +rest[5] || 0 })));
     else if (cmd === "mocap") console.log(JSON.stringify(await cine.mocap(film, path.resolve(rest[0]), { name: rest[1], from: +rest[2] || 0, to: +rest[3] || 0 })));
     else if (cmd === "join") console.log(await cine.join(film, { maxMB: +rest[0] || 0 }));
     else if (cmd === "render") {

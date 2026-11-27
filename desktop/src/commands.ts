@@ -12,7 +12,7 @@ import { registerForgeCommands } from "./forge";
 import { registerCineCommands } from "./cine";
 import { registerMusicCommands } from "../../src/agent/music";
 import { registerOpenVoiceCommands, readTone, wavBlob } from "../../src/agent/voiceopen";
-import { studioRevoice } from "../../src/voice/studio_client";
+import { studioRevoice, studioRevoiceLike } from "../../src/voice/studio_client";
 import { mouthEnvelope } from "../../src/voice/engine/audio";
 import * as ops from "../../src/core/ops";
 import * as model from "../../src/core/model";
@@ -134,7 +134,7 @@ export function registerDesktopCommands(s: Studio): void {
 
   registerCommand(
     "voice.act",
-    '{assetId | clipId | path, voice?="hf_alpha", tone?, toTimeline?=true, start?} A recorded performance said in a VolTune voice: record a line the way it should be said (your own voice, any gender, on a phone is fine), and the same timing, stresses and pauses come back in the character\'s voice (VolTune Studio must be installed: voice.studio). The new sound is exactly as long as the recording; with clipId it is laid on the timeline at that clip\'s place (the recording itself is left alone: mute or remove it). Best with a clear recording, one speaker, little room echo; up to ten minutes. → { assetId, clipId?, seconds, voice }.',
+    '{assetId | clipId | path, voice?="hf_alpha", like?: a clip OF the voice (its whole path, or an assetId), tone?, toTimeline?=true, start?} A recorded performance said in a character\'s voice: record a line the way it should be said (your own voice, any gender, on a phone is fine), and the same timing, stresses and pauses come back in the character\'s voice (VolTune Studio must be installed: voice.studio). The voice is a VolTune voice by name, or, with like, the voice of a SAMPLE: a few clean seconds of the character speaking alone (an earlier line, a cut from a finished film), so a voice made anywhere can be kept. The new sound is exactly as long as the recording; with clipId it is laid on the timeline at that clip\'s place (the recording itself is left alone: mute or remove it). Best with a clear recording, one speaker, little room echo; up to ten minutes. → { assetId, clipId?, seconds, voice }.',
     async (st, a) => {
       const b = need();
       if (!b.pcm24k || !b.pcm24kBytes) throw new Error("This version of VideoStudio Desktop cannot read a recording for re-voicing: install the latest update.");
@@ -149,7 +149,19 @@ export function registerDesktopCommands(s: Studio): void {
       if (pcm.length < 24000 * 0.3) throw new Error("The recording is shorter than a third of a second.");
       st.setStatus("Giving it the voice…");
       try {
-        const voice = a.str("voice", "hf_alpha"), r = await studioRevoice(pcm, voice, readTone(a.any("tone")), (d, what) => st.setStatus(`${what}… ${Math.round(d * 100)}%`));
+        const voice = a.str("voice", "hf_alpha"), like = a.optStr("like"), said = (d: number, what: string) => st.setStatus(`${what}… ${Math.round(d * 100)}%`);
+        let r: { pcm: Float32Array; voice: string } | null;
+        if (like) {
+          // the voice of a sample: the clip itself is the reference (its first clean ten seconds); named by what is in it, so it is prepared once
+          const la = st.project.assets.find((x) => x.id === like), lb = la ? await b.pcm24kBytes(new Uint8Array(await (await st.pool.blob(la)).arrayBuffer()), la.name) : await b.pcm24k(like);
+          let sample = new Float32Array(lb.buffer.slice(lb.byteOffset, lb.byteOffset + (lb.byteLength & ~3)));
+          let i0 = 0; while (i0 < sample.length && Math.abs(sample[i0]!) < 0.01) i0++;
+          sample = sample.subarray(Math.max(0, i0 - 1200), Math.max(0, i0 - 1200) + 24000 * 10);
+          if (sample.length < 24000 * 1.5) throw new Error("The sample of the voice is too short: give two seconds or more of the character speaking alone.");
+          let h = 2166136261; for (let i = 0; i < sample.length; i += 37) h = Math.imul(h ^ Math.round(sample[i]! * 32767), 16777619);
+          r = await studioRevoiceLike(pcm, sample, `like-${(h >>> 0).toString(36)}-${sample.length}`, said);
+          if (r) r.voice = `like ${la ? la.name : like.split(/[\\/]/).pop()}`;
+        } else r = await studioRevoice(pcm, voice, readTone(a.any("tone")), said);
         if (!r) throw new Error("VolTune Studio is not installed or not switched on (voice.studio {install: true, engine: \"studio\"}).");
         // as loud as the performance was
         let pin = 0, pout = 0; for (let i = 0; i < pcm.length; i++) pin = Math.max(pin, Math.abs(pcm[i]!)); for (let i = 0; i < r.pcm.length; i++) pout = Math.max(pout, Math.abs(r.pcm[i]!));

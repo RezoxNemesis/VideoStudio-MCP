@@ -460,20 +460,32 @@ plan for the legs and `playClip(..., { legs: false })` for the rest.
   what you need into a film.
 
 **Live action in a coded world (27 Nov 2026).** A person filmed in front of a plain wall of one colour stands inside a CodeScape scene.
-`cine.actor {film, video, name}` makes the take ready (`<name>.mp4`, every frame a key frame, and `<name>.actor.json` with the wall's
-colour read from the picture's border). In `film.js`: `import { liveActor } from './live.js'`; in build `c.me = await liveActor(E,
-'<name>', { at: [x, z], height: 1.7 })`; in frame `c.me.at(x, z); c.me.play(t)`. The person is keyed on the graphics card by colour
+`cine.actor {film, video, name}` makes the take ready (`<name>.frames`: every picture of the take as a picture of its own, one after
+another, and `<name>.actor.json` with each picture's place in that file, the wall's colour read from the picture's border, and where
+the person's feet and head are: `feet`, `body`). About a quarter of a megabyte a picture at full size: cut the take with `from`/`to`. In `film.js`: `import { liveActor }
+from './live.js'`; in build `c.me = await liveActor(E, '<name>', { at: [x, z], tall: 1.72 })` (`tall`: the person's own height in
+metres); in frame `c.me.at(x, z); c.me.play(t)`. The person is keyed on the graphics card by colour
 without brightness (a shadow on the wall is still wall), stands on the floor, turns to the lens, is hidden by what stands in front
 (the outline is written into the depth), throws a shadow of their own outline (a second card turned to the key light), and passes
-through the film's lens and grade. A render waits for the take's exact frame before each picture (`E.waits`); Cine Studio shows the
-nearest. Filming: the whole body with the feet in the picture, the camera still and level at chest height, the wall evenly lit, no
-clothes of the wall's colour, a little floor under the feet (`feet`: its share of the picture). The Library's `live` shot is the
-recipe (its take is a stand-in). Not yet: the person does not turn in depth (a card), and the scene's light does not relight them:
+through the film's lens and grade. A render waits for the take's exact picture before each of its own (`E.waits`); Cine Studio shows
+the nearest. Filming: the whole body with the feet in the picture, the camera still and level at chest height, the wall evenly lit, no
+clothes of the wall's colour, a little floor under the feet. The outline is drawn one dot in (`choke`), so no thin line of the
+wall's colour is left round the person. The Library's `live` shot is the recipe (its take is a stand-in). If a take's size is
+written wrong in its `.actor.json` the person stands squeezed: let `cine.actor` write that file.
+**Never put a video element in a film's page (27 Nov 2026).** On the owner's PC (RTX 3050, Linux) a `<video>` that only LOADS loses
+the page's graphics context for about a second: every picture drawn in that second is black, whole, and the small check sheets made
+with software drawing never show it. That is why a take is stored as pictures and read by place (`fetch` with a `Range`, then
+`createImageBitmap`). The render page now waits when the context is lost and draws the picture again, and `cine.progress` tells of
+a stretch that is wholly black and cut in and out (`picture.black`). To find a fault that shows only on the PC: a small test film
+with one suspect per shot (the room alone, each mesh alone, the bare element), `log` from engine.js for what the page knows
+(`gl.isContextLost()`), rendered there, and the brightness of every frame read back. Not yet: the person does not turn in depth (a card), and the scene's light does not relight them:
 match with `gain` and `tint`.
 
 **A recorded performance in a character's voice (27 Nov 2026).** `voice.act {assetId | clipId | path, voice}`: say the line the way it
 should be said (any voice, any gender); the timing, stresses and pauses stay yours and the voice becomes the character's (engine
 `revoice`: the recording's speech tokens decoded with the character's speaker). The result is as long as the recording to the sample.
+The voice is a VolTune voice by name, or the voice of a SAMPLE: `like: <a clip of the character speaking alone, two seconds or more>`
+(an earlier line, a cut from a finished film), so a voice that was made anywhere can be kept.
 A character's voice is only as natural as its reference clip: a reference that scores low (UTMOS under 3) drags every line down, and
 a real reader's clip given the character's voice with `revoice` makes a better reference.
 
@@ -485,6 +497,12 @@ surface must follow two bones, give each ring a share of each (the shirt between
 hips and thighs). A turn that a real limb spreads along its length (the forearm) is spread along the tube, not left at one joint.
 A point moved by such a tick needs `updateMatrixWorld(true)` there, or it is drawn a frame late. To judge a body, make a lab shot:
 one pose and one close camera per second, each joint from the side it shows worst.
+Two surfaces that only TOUCH (they cross at a shallow angle: a sleeve tube lying along a shoulder, a neck standing in a chest of its
+own width) show a ragged line or a bright ring. Either make them one skin (blouseMaa: the neck is the body's own upper rows, with a
+share of the neck's turn), or let one GROW out of the other: its first ring lies on the other's surface, a few millimetres under it
+(the sleeve's armhole ring, found on the body at rest), and the next rings become its own shape. A body's ribs are narrower than its
+shoulders: a chest as wide as the shoulder joints swallows the hanging arm. A line on a surface (a neckline) is clean when the mesh's
+rows follow it; two rows on the line, one a little inside, make a lip.
 
 **Meshes that grow (27 Nov 2026).** When points are added to a mesh that already has normals, throw the old list away first:
 `g.deleteAttribute('normal'); g.computeVertexNormals();`. `computeVertexNormals()` alone keeps the old, shorter list; the new point

@@ -57,4 +57,15 @@ describe("the look over a finished render", () => {
     expect(blockShare(pic((x, y) => ((x * 7 + y * 13) % 5 === 0 ? 0 : 30)), N)).toBe(0);       // black scattered through a dark scene
     expect(blockShare(pic((x, y) => 60 + ((x + y) % 40)), N)).toBe(0);
   });
+
+  it("tells of a stretch that is wholly black and cut in and out (a lost graphics context), and leaves fades alone", () => {
+    const { blackCuts } = createRequire(import.meta.url)("../desktop/electron/cine.cjs") as { blackCuts: (lit: number[], fps: number) => { from: number; to: number }[] };
+    // the live shot as the owner's PC first drew it: a lit film, a second of nothing, lit again (six pictures a second)
+    expect(blackCuts([120, 121, 119, -1, -1, -1, -1, -1, -1, 101, 102, 101], 6)).toEqual([{ from: 0.5, to: 1.5 }]);
+    expect(blackCuts([-1, -1, -1, 110, 112], 6)).toEqual([{ from: 0, to: 0.5 }]);            // black from the first picture, then a cut to the room
+    expect(blackCuts([118, 90, 50, 14, 3, -1, -1, -1, 2, 20, 70, 118], 6)).toEqual([]);      // a fade to black and back
+    expect(blackCuts([-1, -1, -1, 4, 12, 40, 90], 6)).toEqual([]);                           // a film that fades in from black
+    expect(blackCuts([-1, -1, -1, -1], 6)).toEqual([]);                                      // nothing but black is not a cut
+    expect(blackCuts([120, 118, 119], 6)).toEqual([]);
+  });
 });

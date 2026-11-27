@@ -47,6 +47,12 @@ The 360 px check sheets were clean. It was caught by looking at the PC's own ren
 4. The app looks over every finished render and reports `picture.blackBlocks`; Cine Studio shows it in red.
 5. The rule stays: the PC's render is looked at (a strip of frames from every shot) before anything is sent.
 
+## Look at the PC's render, every time (27 Nov 2026, second lesson of the day)
+The live-action shot was right in every check sheet and review, and black for the first second of each piece in the PC's render: a
+video element in the film's page lost the graphics context there. The app's own look-over said "no black blocks" (a wholly black
+picture counted as a fade). Only the scan of the PC's file and a strip of its frames showed it. So the bar stays: the PC's render is
+scanned and looked at before anything is sent, and the look-over now tells of wholly black stretches with hard cuts too.
+
 ## The body MODEL, reworked the same day (the owner, 27 Nov 2026: "hands, fingers, waist side, butt and front, and other joints")
 The motion was the success; the model was pieces: balls and cylinders that cut through each other. The rule that fixed every part is
 the same one: **a part of the body is ONE skin, drawn through its joints and remade before every draw; it begins INSIDE the part it
@@ -58,6 +64,12 @@ grows from.** A ball at a joint, or two pieces meeting on the surface, always sh
   waist or the chest (a lean is a bend; the cloth at the belt stays in the trousers); shoulders slope from the neck (joints 2 cm
   lower) and take the sleeve into themselves; a placket and buttons to the belt; a collar band; the lanyard laid on the cloth.
 - `people.js` sleevesSon: the sleeve begins deep inside the body and makes the elbow's point itself.
+- `people.js` blouseMaa (Maa, the same evening): one skin from inside the skirt's top to under the chin: the saree's wrap, the blouse
+  up to a scooped neckline (the mesh's rows follow the line; a second row makes its lip), her skin above, and the NECK as its top rows
+  (a share of the neck's turn), so no ring shows at the neck's base. Ribs narrower than the shoulders (the arm hangs beside them); the
+  shoulder girdle is a bar that keeps its thickness out to the joint. Each sleeve grows from an ARMHOLE ring found on the body at rest
+  (a little under its surface) and becomes round down the arm: where a tube was pushed through the body, the two only touched and a
+  ragged line showed. A hanging arm's sleeve passes 2 cm under the joint, so its top is the shoulder's slope and not a puff.
 - `motion.js` armSkin (every person with refined hands): the arm's skin is one surface from under the sleeve through the elbow to
   the palm: fullest below the elbow, flat and narrow at the wrist, the turn of the hand spread down the forearm, the last rings
   bending with the hand. A watch fits the wrist where it is; bangles hang from the arm and slide when the hand is raised.

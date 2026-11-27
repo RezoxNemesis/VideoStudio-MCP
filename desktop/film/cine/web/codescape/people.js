@@ -54,7 +54,7 @@ export function makeMaa(E) { const p = new Person(MAAC).style('maa', { slim: 0.9
     const bor = M('#d9a43a', { r: 0.35, m: 0.5 }); for (const E of edge) p.sp2.add(tube(E.filter((_, i) => i % 3 === 0), 0.0045, bor, 90, 5));
     { const uv = []; for (let i = 0; i <= n; i++) for (let j = 0; j <= W; j++) uv.push(i / n * 6, j / W); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); } }
   // blouse sleeves end above the elbow (the rig's sleeve is the blouse)
-  refineMaa(p); looksMaa(p); faceMaa(p); return p; }
+  refineMaa(p); looksMaa(p); faceMaa(p); blouseMaa(p, E); return p; }
 
 export function makeSon(E) { const p = new Person(SONC).style('boy', { slim: 0.86, hair: '#16100c' }); E.scene.add(p.root);
   for (const m of p.belt) m.visible = false; for (const b of p.buttons) b.visible = false; const sp2 = p.sp2, ch = p.chest; brows(p, 0.0062, 0.003, '#18100c'); liftMouth(p, 0.005, 0.005); trimShoulders(p, 0.86);
@@ -358,6 +358,74 @@ export function widowMaa(p) {
 function curveK(keys, x) { const n = keys.length; if (x <= keys[0][0]) return keys[0][1]; if (x >= keys[n - 1][0]) return keys[n - 1][1]; let i = 0; while (i < n - 2 && x > keys[i + 1][0]) i++;
   const sl = j => (keys[j + 1][1] - keys[j][1]) / Math.max(1e-9, keys[j + 1][0] - keys[j][0]), tg = j => { if (j === 0 || j === n - 1) return sl(Math.min(j, n - 2)); const a = sl(j - 1), b = sl(j); return a * b <= 0 ? 0 : 2 * a * b / (a + b); };
   const h = keys[i + 1][0] - keys[i][0], u = (x - keys[i][0]) / h, m0 = tg(i) * h, m1 = tg(i + 1) * h, u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * keys[i][1] + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * keys[i + 1][1] + (u3 - u2) * m1; }
+/** Maa's body under the saree as ONE surface that bends with her spine (27 Nov 2026, after Vikas's shirt): the saree's wrap round the
+ *  waist, the blouse above it up to a scooped neckline, and her own skin from there to the neck: one skin from inside the skirt's top
+ *  to the neck, each ring going with the hips, the waist or the chest. The mesh's rows follow the neckline, so the blouse's edge is a
+ *  clean line with a small lip. Each sleeve GROWS out of the body: its first ring lies on the body's surface round the shoulder (the
+ *  armhole) and the rings after it turn into the round sleeve down the arm, so there is no line where two surfaces cross (a tube pushed
+ *  through the body left a ragged one). The pallu, the skirt and her jewellery are as they were. Remade before every draw. */
+export function blouseMaa(p, E) { const sp1 = p.sp1, sp2 = p.sp2, Y1 = sp1.position.y, Y2 = Y1 + sp2.position.y, blouse = p.chest.material, wrap = p.belly.material;
+  const nkM = p.neck.children.find(o => o.isMesh && o.geometry.type === 'CapsuleGeometry'), skinM = nkM ? nkM.material : blouse, nkR = nkM ? 0.055 * nkM.scale.x : 0.049, yNk = Y2 + p.neck.position.y, yHead = yNk + 0.095;   /* the neck is part of this skin (her neck was a capsule standing in the body: a ring showed where the two met) */
+  const shY = Y2 + p.arm.l.sho.position.y, shX = Math.abs(p.arm.l.sho.position.x);
+  const ell = (m, r, y0) => ({ cy: y0 + m.position.y, cz: m.position.z, a: r * m.scale.x, b: r * m.scale.y, c: r * m.scale.z });
+  // the ribs are narrower than the shoulders, so a hanging arm lies BESIDE them (the old chest ball was as wide as the shoulder joints, and the arm sank into it); the shoulder girdle is a bar that keeps its thickness out to the joint
+  const chest = ell(p.chest, 0.165, Y2); chest.a *= 0.87;
+  const GEN = [ell(p.belly, 0.17, Y1), chest, { cy: shY - 0.004, cz: -0.011, a: shX + 0.012, b: 0.05, c: 0.072, n: 4 }];
+  const ray = (A, C, cz, sn, cs) => { const qa = sn * sn / (A * A) + cs * cs / (C * C), qb = -2 * cz * cs / (C * C), qc = cz * cz / (C * C) - 1, d = qb * qb - 4 * qa * qc; return d <= 0 ? 0 : (-qb + Math.sqrt(d)) / (2 * qa); };
+  const rayN = (g, q, sn, cs) => { if ((g.cz / g.c) ** 2 >= q) return 0; let lo = 0, hi = 0.4; for (let k = 0; k < 22; k++) { const m = (lo + hi) / 2; if (Math.pow(Math.abs(m * sn) / g.a, g.n) + ((m * cs - g.cz) / g.c) ** 2 < q) lo = m; else hi = m; } return lo; };   /* a section that is blunter than an ellipse along x */
+  const yBot = 0.1, yTop = Y2 + p.neck.position.y + 0.02, neckY0 = shY + 0.026, yHem = Y2 - 0.012, yW = shY - 0.05, NS = 64, skirtTop = (sn, cs) => ray(0.128, 0.128 * 0.86, 0, sn, cs) - 0.003;
+  const rad0 = (y, sn, cs) => { let r = 0; for (const g of GEN) { const h = (y - g.cy) / g.b; if (Math.abs(h) < 1) { const f = Math.sqrt(1 - h * h); r = Math.max(r, g.n ? rayN(g, 1 - h * h, sn, cs) : ray(g.a * f, g.c * f, g.cz, sn, cs)); } }
+    if (y > neckY0) { const nk = ray(nkR, nkR, 0, sn, cs); r = lerp(Math.max(r, nk), nk, sm((y - neckY0) / (yTop - neckY0))); }
+    if (y < 0.19) r = lerp(Math.min(r, skirtTop(sn, cs)), r, sm((y - 0.15) / 0.04)); return r; };
+  // the neckline: the blouse's upper edge, scooped in front and a little at the back; her skin above it
+  const neckline = th => { const c = Math.cos(th); return shY + 0.05 - 0.052 * Math.pow(Math.max(0, c), 1.5) - 0.03 * Math.pow(Math.max(0, -c), 1.5); };
+  // rows: level ones from the skirt to under the arms, then rows that rise to the neckline (the last is the blouse's edge), the skin's own first row on the same line, and the skin up to the neck
+  const NA0 = 30, NB = 8, NC = 9, ROWS = []; for (let i = 0; i < NA0; i++) { const y = lerp(yBot, yW, i / (NA0 - 1)); ROWS.push({ y: () => y, kind: 0 }); }
+  for (let k = 1; k <= NB; k++) ROWS.push({ y: th => lerp(yW, neckline(th), k / NB), kind: k === NB ? 1 : 0 });
+  ROWS.push({ y: th => neckline(th), kind: 2 }); for (let k = 1; k <= NC; k++) ROWS.push({ y: th => lerp(neckline(th), yTop, k / NC), kind: 3, k }); for (let k = 1; k <= 7; k++) { const y = lerp(yTop, yHead, k / 7); ROWS.push({ y: () => y, kind: 3, k: 9 }); }
+  const NG = ROWS.length - 1, RY = [], TB = []; for (let i = 0; i <= NG; i++) { const ry = new Float32Array(NS + 1), row = new Float32Array(NS + 1); for (let j = 0; j <= NS; j++) { const th = j / NS * 2 * Math.PI, y = ROWS[i].y(th); ry[j] = y; row[j] = rad0(y, Math.sin(th), Math.cos(th)); } RY.push(ry); TB.push(row); }
+  for (let pass = 0; pass < 2; pass++) for (let j = 0; j <= NS; j++) { let prev = TB[0][j]; for (let i = 1; i < NG; i++) { const cur = TB[i][j], lone = ROWS[i].kind === 1 || ROWS[i].kind === 2, v = RY[i][j] < 0.2 || lone ? cur : 0.25 * prev + 0.5 * cur + 0.25 * TB[i + 1][j]; prev = cur; TB[i][j] = v; } }
+  const edgeI = ROWS.findIndex(r => r.kind === 1); for (let j = 0; j <= NS; j++) { const q = (TB[edgeI - 1][j] + TB[edgeI + 2][j]) / 2; TB[edgeI][j] = TB[edgeI + 1][j] = (q + TB[edgeI][j]) / 2; }
+  /** the body's surface at rest: how far it reaches from the spine at a height and an angle (read from the rows, as drawn) */
+  const bodyR = (y, th) => { const u = ((th / (2 * Math.PI)) % 1 + 1) % 1 * NS, j = Math.min(NS - 1, Math.floor(u)), f = u - j, yy = i => lerp(RY[i][j], RY[i][j + 1], f), rr = i => lerp(TB[i][j], TB[i][j + 1], f);
+    if (y <= yy(0)) return rr(0); for (let i = 0; i < NG; i++) { const a = yy(i), b = yy(i + 1); if (y <= b) return b - a < 1e-6 ? rr(i) : lerp(rr(i), rr(i + 1), (y - a) / (b - a)); } return 0; };
+  const pos = [], uv = [], idx = [], LIP = 0.0028; let hemI = 0; for (let i = 0; i <= NG; i++) { if (ROWS[i].kind === 0 && i < NA0 && RY[i][0] < yHem) hemI = i; const k = ROWS[i].kind, off = k === 2 ? -LIP : k === 3 ? -LIP * (1 - sm(ROWS[i].k / 3)) : 0;
+    for (let j = 0; j <= NS; j++) { const th = j / NS * 2 * Math.PI, r = TB[i][j] + off, y = RY[i][j]; pos.push(r * Math.sin(th), y, r * Math.cos(th)); uv.push(j / NS, (y - yBot) / 0.4); } }
+  for (let i = 0; i < NG; i++) for (let j = 0; j < NS; j++) { const a = i * (NS + 1) + j, b = a + NS + 1; idx.push(a, a + 1, b, b, a + 1, b + 1); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
+  g.addGroup(0, hemI * NS * 6, 0); g.addGroup(hemI * NS * 6, (edgeI + 1 - hemI) * NS * 6, 1); g.addGroup((edgeI + 1) * NS * 6, (NG - edgeI - 1) * NS * 6, 2);   /* the saree's wrap, the blouse (with its lip at the neckline), her skin */
+  const body = new THREE.Mesh(g, [wrap, blouse, skinM]); body.castShadow = body.receiveShadow = true; body.frustumCulled = false; p.pelvis.add(body); p.shirt = body;
+  for (const m of [p.belly, p.chest]) m.visible = false; if (nkM) nkM.visible = false; for (const o of sp2.children) if (o.isMesh && o.geometry.type === 'SphereGeometry' && Math.abs(o.position.y - 0.165) < 1e-3 && Math.abs(o.position.x) < 1e-3) o.visible = false;
+  // the sleeves: each begins as a ring ON the body round the shoulder, a little under its surface, and becomes the round sleeve down to above the elbow
+  const SL = p.C && p.C.sleeveL ? p.C.sleeveL : 0.78, NA = 24, NR = 24, arms = [], X0 = shX - 0.03, DROP = 0.02, RS = 0.053;
+  for (const s of ['l', 'r']) { const A = p.arm[s], sg = Math.sign(A.sho.position.x) || 1; const ball = A.sho.children[0]; if (ball && ball.isMesh) ball.visible = false; for (const c of A.up.children) if (c.isMesh && c.geometry.type === 'LatheGeometry' && c.material === blouse) c.visible = false;
+    const c0 = new V3(sg * X0, shY - DROP, -0.011), inside = (x, y, z) => y > yBot && y < yTop && Math.hypot(x, z) < bodyR(y, Math.atan2(x, z)), loop = [];
+    for (let j = 0; j <= NR; j++) { const ph = j / NR * 2 * Math.PI, cs = Math.cos(ph), sn = Math.sin(ph); let lo = 0, hi = 0.16; for (let k = 0; k < 20; k++) { const m = (lo + hi) / 2; if (inside(c0.x, c0.y + m * cs, c0.z + sg * m * sn)) lo = m; else hi = m; }
+      const rho = lerp(Math.min(lo - 0.004, 0.066), 0.05, sm(-cs / 0.35)); loop.push(new V3(c0.x, c0.y - Y2 + rho * cs, c0.z + sg * rho * sn)); }
+    const sgm = new THREE.BufferGeometry(), n = (NA + 1) * (NR + 1), spA = new Float32Array(n * 3), su = new Float32Array(n * 2), si = []; for (let i = 0; i < NA; i++) for (let j = 0; j < NR; j++) { const a = i * (NR + 1) + j, b = a + NR + 1; si.push(a, a + 1, b, b, a + 1, b + 1); }
+    for (let i = 0; i <= NA; i++) for (let j = 0; j <= NR; j++) { su[(i * (NR + 1) + j) * 2] = j / NR; su[(i * (NR + 1) + j) * 2 + 1] = i / NA; }
+    sgm.setIndex(si); sgm.setAttribute('position', new THREE.BufferAttribute(spA, 3)); sgm.setAttribute('uv', new THREE.BufferAttribute(su, 2)); sgm.computeVertexNormals(); const m = new THREE.Mesh(sgm, blouse); m.frustumCulled = false; m.castShadow = m.receiveShadow = true; p.root.add(m);
+    arms.push({ A, sg, sgm, spA, loop, c0: new V3(c0.x, c0.y - Y2, c0.z) }); }
+  const rest = Float32Array.from(g.attributes.position.array), m1 = new THREE.Matrix4(), m2 = new THREE.Matrix4(), m3 = new THREE.Matrix4(), v = new V3(), o3 = new V3(), NROW = NG + 1;
+  const skin = (x, y, z, out) => { const w1 = sm((y - 0.15) / 0.09), w2 = sm((y - 0.215) / 0.13), w3 = sm((y - yNk + 0.014) / 0.05); let X = x, Y = y, Z = z; if (w1 > 0) { v.set(x, y - Y1, z).applyMatrix4(m1); X += (v.x - X) * w1; Y += (v.y - Y) * w1; Z += (v.z - Z) * w1; } if (w2 > 0) { v.set(x, y - Y2, z).applyMatrix4(m2); X += (v.x - X) * w2; Y += (v.y - Y) * w2; Z += (v.z - Z) * w2; }
+    if (w3 > 0) { v.set(x, y - yNk, z).applyMatrix4(m3); X += (v.x - X) * w3; Y += (v.y - Y) * w3; Z += (v.z - Z) * w3; } return out.set(X, Y, Z); };   /* hips, waist, chest, and the neck's own turn for the rows on the neck */
+  const seam = (geo, rows, cols) => { const N = geo.attributes.normal.array; for (let i = 0; i < rows; i++) { const a = i * (cols + 1) * 3, b = a + cols * 3; for (let k = 0; k < 3; k++) { const q = (N[a + k] + N[b + k]) / 2; N[a + k] = N[b + k] = q; } } };
+  p.shirtTick = () => { sp1.updateMatrix(); sp2.updateMatrix(); p.neck.updateMatrix(); m1.copy(sp1.matrix); m2.multiplyMatrices(sp1.matrix, sp2.matrix); m3.multiplyMatrices(m2, p.neck.matrix);
+    const A0 = g.attributes.position.array; for (let i = 0, n = rest.length / 3; i < n; i++) { skin(rest[i * 3], rest[i * 3 + 1], rest[i * 3 + 2], o3); A0[i * 3] = o3.x; A0[i * 3 + 1] = o3.y; A0[i * 3 + 2] = o3.z; }
+    g.attributes.position.needsUpdate = true; g.computeVertexNormals(); seam(g, NROW, NS);
+    p.root.updateWorldMatrix(true, true); const toL = q => p.root.worldToLocal(q), fromChest = q => toL(sp2.localToWorld(q.clone()));
+    for (const a of arms) { const A = a.A, P0 = fromChest(a.c0), upB = fromChest(a.c0.clone().add(new V3(0, 1, 0))).sub(P0).normalize(), S = toL(A.up.getWorldPosition(new V3())), El = toL(A.fo.getWorldPosition(new V3())), C = S.clone().lerp(El, SL);
+      const hang = clamp(-El.clone().sub(S).normalize().dot(upB), 0, 1), S1 = S.clone().addScaledVector(upB, -DROP * hang);   /* a hanging arm's sleeve passes a little under the joint, so its top is the shoulder's own slope and not a puff above it */
+      const crv = new THREE.CatmullRomCurve3([P0, S1, S.clone().lerp(C, 0.3), S.clone().lerp(C, 0.7), C], false, 'centripetal', 0.5), P = crv.getSpacedPoints(NA), T = P.map((q, i) => (i < NA ? P[i + 1].clone().sub(q) : q.clone().sub(P[i - 1])).normalize());
+      const L = a.loop.map(fromChest); let Nn = upB.clone().sub(T[0].clone().multiplyScalar(upB.dot(T[0]))).normalize();
+      for (let i = 0; i <= NA; i++) { if (i > 0) { Nn.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(T[i - 1], T[i])); Nn.sub(T[i].clone().multiplyScalar(Nn.dot(T[i]))).normalize(); } const B = T[i].clone().cross(Nn).normalize(), u = i / NA, r = lerp(RS, 0.0475, sm(u * 1.15)) + (u > 0.9 ? 0.0025 * Math.sin((u - 0.9) / 0.1 * Math.PI) : 0), k = sm(i / 3);
+        for (let j = 0; j <= NR; j++) { const th = j / NR * 2 * Math.PI, cs = Math.cos(th), sn2 = Math.sin(th), rr = r * (1 + 0.012 * Math.sin(th * 3 + u * 9)), q = i * (NR + 1) + j, Lj = L[j];
+          a.spA[q * 3] = lerp(Lj.x + P[i].x - P0.x, P[i].x + (Nn.x * cs + B.x * sn2) * rr, k); a.spA[q * 3 + 1] = lerp(Lj.y + P[i].y - P0.y, P[i].y + (Nn.y * cs + B.y * sn2) * rr, k); a.spA[q * 3 + 2] = lerp(Lj.z + P[i].z - P0.z, P[i].z + (Nn.z * cs + B.z * sn2) * rr, k); } }
+      a.sgm.attributes.position.needsUpdate = true; a.sgm.computeVertexNormals(); seam(a.sgm, NA + 1, NR); } };
+  if (E && E.scene) { const sc = E.scene; (sc.userData.ticks = sc.userData.ticks || []).push(() => { if (p.root.visible) p.shirtTick(); }); if (!sc.userData.ticked) { sc.userData.ticked = true; const prev = sc.onBeforeRender; sc.onBeforeRender = function (...a) { if (prev) prev.apply(this, a); for (const f of sc.userData.ticks) f(); }; } }
+  p.shirtTick(); return p;
+}
+
 /** Vikas's shirt as ONE surface that bends with the spine (owner, 27 Nov 2026: "the other joints").
  *  Before: a ball for the belly, a ball for the chest, a shell round both, a flat ball across the shoulders and a ball at each shoulder —
  *  five pieces that cut through each other in ragged lines, a box across the shoulders, and a belly that came out over the belt when he

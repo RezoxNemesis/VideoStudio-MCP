@@ -311,7 +311,9 @@ function createCine(o) {
         if (me.stop) { me.state = "stopped"; return; }
         me.state = "joining";
         me.out = await join(dir, plan, info, p);
-        me.state = "checking"; try { const bb = await blackBlocks(me.out.file); if (bb && bb.length) me.picture = { blackBlocks: bb.slice(0, 12), fix: "A solid black block is in the picture at these seconds. Run cine.review: a mesh that is not whole (a normal list shorter than its points) draws this way on the GPU. Do not send this film." }; else if (bb) me.picture = { blackBlocks: [] }; } catch { /* the check is extra */ }
+        me.state = "checking"; try { const bb = await blackBlocks(me.out.file); if (bb) me.picture = { blackBlocks: bb.blocks.slice(0, 12),
+          ...(bb.blocks.length ? { fix: "A solid black block is in the picture at these seconds. Run cine.review: a mesh that is not whole (a normal list shorter than its points) draws this way on the GPU. Do not send this film." } : {}),
+          ...(bb.black.length ? { black: bb.black.slice(0, 12), blackNote: "The whole picture is black at these seconds, cut in and out with no fade. If the film does not mean it, the graphics context was lost while those pictures were drawn (a video element in the film's page does this on some PCs): look at them before sending." } : {}) }; } catch { /* the check is extra */ }
         me.state = "done"; me.seconds = Math.round((Date.now() - me.started) / 1000);
       } catch (e) { me.state = "failed"; me.error = String(e && e.message).slice(0, 1500); }
     })();
@@ -341,15 +343,17 @@ function createCine(o) {
   }
   /** A finished film is looked over for a solid black block. A mesh with a broken list (a normal list one point short) draws as one
    *  on the GPU, only at full size, and small check sheets do not show it (27 Nov 2026). Six pictures a second, 96 × 96 grey:
-   *  runs of { from, to, share } in seconds. A wholly black picture (a fade) and black bars are not blocks. */
+   *  blocks: runs of { from, to, share } in seconds. A wholly black picture (a fade) and black bars are not blocks.
+   *  black: stretches where the WHOLE picture is black and is cut to and from a lit picture with no fade (a lost graphics context
+   *  draws these; a film may also mean them, so they are told and not forbidden). */
   function blackBlocks(file) {
     return new Promise((resolve) => {
-      const N = 96, FPS = 6, runs = []; let buf = Buffer.alloc(0), i = 0, p;
+      const N = 96, FPS = 6, runs = [], lit = []; let buf = Buffer.alloc(0), i = 0, p;
       try { p = spawn(o.ffmpeg, ["-v", "error", "-i", file, "-vf", `fps=${FPS},scale=${N}:${N}`, "-pix_fmt", "gray", "-f", "rawvideo", "-"], { stdio: ["ignore", "pipe", "ignore"] }); } catch { resolve(null); return; }
       const one = (a) => blockShare(a, N);
-      p.stdout.on("data", (d) => { buf = buf.length ? Buffer.concat([buf, d]) : d; while (buf.length >= N * N) { const share = one(buf.subarray(0, N * N)), t = i / FPS; buf = buf.subarray(N * N); i++;
+      p.stdout.on("data", (d) => { buf = buf.length ? Buffer.concat([buf, d]) : d; while (buf.length >= N * N) { const pic = buf.subarray(0, N * N), share = one(pic), t = i / FPS; { let mx = 0, sum = 0; for (let k = 0; k < N * N; k++) { const v = pic[k]; sum += v; if (v > mx) mx = v; } lit.push(mx < 6 ? -1 : sum / (N * N)); } buf = buf.subarray(N * N); i++;
         if (share) { const last = runs[runs.length - 1]; if (last && t - last.to < 1.5 / FPS) { last.to = Math.round(t * 100) / 100; last.share = Math.max(last.share, Math.round(share * 100) / 100); } else runs.push({ from: Math.round(t * 100) / 100, to: Math.round(t * 100) / 100, share: Math.round(share * 100) / 100 }); } } });
-      p.on("error", () => resolve(null)); p.on("close", () => resolve(runs));
+      p.on("error", () => resolve(null)); p.on("close", () => resolve({ blocks: runs, black: blackCuts(lit, FPS) }));
     });
   }
   function progress() {
@@ -433,30 +437,48 @@ function createCine(o) {
     const tmp = file + ".part", w = fs.createWriteStream(tmp); r.pipe(w); w.on("finish", () => { try { fs.renameSync(tmp, file); res(file); } catch (e) { rej(e); } }); w.on("error", rej); }); rq.on("error", rej); rq.setTimeout(120_000, () => rq.destroy(new Error("no answer"))); });
   /**
    * A take of a person filmed before a plain wall, made ready to stand in a CodeScape scene (web/codescape/live.js liveActor):
-   * <name>.mp4 in the film's folder (upright, the film's frame rate, EVERY frame a key frame so a render can go to any one exactly,
-   * the longer side 1600 at most) and <name>.actor.json (its size, length, and the wall's colour, read from the picture's border).
+   * <name>.frames in the film's folder (every picture of the take as a picture of its own, one after another: upright, the film's
+   * frame rate, the longer side 1600 at most, colour at full sharpness for the key) and <name>.actor.json (its size, length, where
+   * each picture lies in the file, the wall's colour read from the picture's border, where the person's feet and head are).
+   * Not a video: a video element in the film's page lost the page's graphics context on the owner's PC (27 Nov 2026), and a
+   * picture asked for by its place in a file is the exact frame with nothing to wait for.
    */
   async function actor(film, video, opt = {}) {
     const dir = filmDir(film), v = String(video || "");
     const src = [v, path.join(dir, v), path.join(ROOT, v)].find((x) => x && path.isAbsolute(x) && fs.existsSync(x) && fs.statSync(x).isFile());
     if (!src) throw new Error(`No such video: ${v}. Give its whole path, or a file in the film's folder or the Cine folder.`);
-    const name = String(opt.name || path.basename(src).replace(/\.[^.]+$/, "")).replace(/[^\w-]+/g, "_").slice(0, 60) || "actor", out = path.join(dir, `${name}.mp4`), fps = Math.round(+opt.fps || 30), from = Math.max(0, +opt.from || 0), to = Math.max(0, +opt.to || 0);
-    const ff = await exec(o.ffmpeg || "ffmpeg", ["-y", "-v", "error", ...(from ? ["-ss", String(from)] : []), ...(to > from ? ["-t", String(to - from)] : []), "-i", src, "-vf", `scale='if(gt(iw,ih),min(1600,iw),-2)':'if(gt(iw,ih),-2,min(1600,ih))',fps=${fps},format=yuv420p`, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-g", "1", "-movflags", "+faststart", out], { timeout: 30 * 60_000 });
+    const name = String(opt.name || path.basename(src).replace(/\.[^.]+$/, "")).replace(/[^\w-]+/g, "_").slice(0, 60) || "actor", out = path.join(dir, `${name}.frames`), fps = Math.round(+opt.fps || 30), from = Math.max(0, +opt.from || 0), to = Math.max(0, +opt.to || 0), q = Math.min(12, Math.max(2, Math.round(+opt.quality || 4)));
+    const ff = await exec(o.ffmpeg || "ffmpeg", ["-y", "-v", "error", ...(from ? ["-ss", String(from)] : []), ...(to > from ? ["-t", String(to - from)] : []), "-i", src, "-vf", `scale='if(gt(iw,ih),min(1600,iw),-2)':'if(gt(iw,ih),-2,min(1600,ih))',fps=${fps},format=yuvj444p`, "-an", "-c:v", "mjpeg", "-q:v", String(q), "-f", "mjpeg", out], { timeout: 30 * 60_000 });
     if (ff.code || !fs.existsSync(out)) throw new Error(`The video could not be read (${ff.err.trim().split("\n").slice(-1)[0] || "ffmpeg"}).`);
-    // its size and length
-    const pr = await exec(o.ffprobe || "ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,nb_frames:format=duration", "-of", "json", out]);
-    let w = 0, h = 0, seconds = 0; try { const j = JSON.parse(pr.out); w = +j.streams[0].width; h = +j.streams[0].height; seconds = +j.format.duration; } catch { /* asked of the picture below */ }
+    // where each picture lies in the file: a picture begins FF D8 and ends FF D9, and neither pair can stand inside one
+    const at = [], size = fs.statSync(out).size; { const fd = fs.openSync(out, "r"), buf = Buffer.alloc(1 << 20); let pos = 0, prev = -1, ended = true;
+      try { for (;;) { const n = fs.readSync(fd, buf, 0, buf.length, pos); if (!n) break; for (let i = 0; i < n; i++) { const c = buf[i]; if (prev === 0xff) { if (c === 0xd8 && ended) { at.push(pos + i - 1); ended = false; } else if (c === 0xd9) ended = true; } prev = c; } pos += n; } } finally { fs.closeSync(fd); } }
+    if (!at.length) throw new Error("The take has no pictures (the video is empty, or from/to lie outside it).");
+    at.push(size);
+    // its size (the first picture's own header) and length
+    let w = 0, h = 0; { const fd = fs.openSync(out, "r"), b = Buffer.alloc(Math.min(65536, at[1] - at[0])); fs.readSync(fd, b, 0, b.length, 0); fs.closeSync(fd);
+      for (let i = 2; i + 9 < b.length && b[i] === 0xff;) { const m = b[i + 1], len = b.readUInt16BE(i + 2); if (m >= 0xc0 && m <= 0xc3) { h = b.readUInt16BE(i + 5); w = b.readUInt16BE(i + 7); break; } i += 2 + len; } }
+    const seconds = (at.length - 1) / fps;
     // the wall's colour: the middle colour of the picture's border in three frames (a person stands in the middle, the wall is at the sides and the top)
     let key = null;
     try { const N = 32, cols = [];
-      for (const at of [0.1, 0.5, 0.9]) { const r = await new Promise((res) => execFile(o.ffmpeg || "ffmpeg", ["-v", "error", "-ss", String(Math.max(0, seconds * at)), "-i", out, "-frames:v", "1", "-vf", `scale=${N}:${N}`, "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], { encoding: "buffer", maxBuffer: 1 << 22 }, (e, so) => res(e ? null : so)));
+      for (const part of [0.1, 0.5, 0.9]) { const r = await new Promise((res) => execFile(o.ffmpeg || "ffmpeg", ["-v", "error", "-ss", String(from + Math.max(0, seconds * part)), "-i", src, "-frames:v", "1", "-vf", `scale=${N}:${N}`, "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], { encoding: "buffer", maxBuffer: 1 << 22 }, (e, so) => res(e ? null : so)));
         if (!r || r.length < N * N * 3) continue; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (y < 3 || x < 3 || x >= N - 3) cols.push([r[(y * N + x) * 3], r[(y * N + x) * 3 + 1], r[(y * N + x) * 3 + 2]]); }
       if (cols.length) { const med = (k) => { const a = cols.map((c) => c[k]).sort((p, q) => p - q); return a[a.length >> 1] / 255; }; key = [med(0), med(1), med(2)].map((x) => Math.round(x * 1000) / 1000); } } catch { /* the film gives the key itself */ }
     const sat = key ? Math.max(...key) - Math.min(...key) : 0;
-    const meta = { video: `${name}.mp4`, w, h, fps, seconds: Math.round(seconds * 1000) / 1000, frames: Math.round(seconds * fps), ...(key ? { key } : {}) };
+    // where the person stands in the picture: keyed the way the film keys it (colour without brightness), in a dozen frames. `feet`: the share of the
+    // picture under the feet, `body`: the share of its height the person takes, so a film can give the person's own height (liveActor's `tall`).
+    let feet, body;
+    if (key && w && h) try { const NW = 96, NH = Math.max(24, Math.round(NW * h / w)), tops = [], bots = [], chroma = (r, g, b) => { const y = 0.299 * r + 0.587 * g + 0.114 * b; return [(b - y) / (0.35 + y), (r - y) / (0.35 + y)]; }, kc = chroma(key[0], key[1], key[2]);
+      for (let k = 0; k < 12; k++) { const when = from + seconds * (k + 0.5) / 12, r = await new Promise((res) => execFile(o.ffmpeg || "ffmpeg", ["-v", "error", "-ss", String(when), "-i", src, "-frames:v", "1", "-vf", `scale=${NW}:${NH}`, "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], { encoding: "buffer", maxBuffer: 1 << 22 }, (e, so) => res(e ? null : so)));
+        if (!r || r.length < NW * NH * 3) continue; let top = -1, bot = -1;
+        for (let y = 0; y < NH; y++) { let n = 0; for (let x = 0; x < NW; x++) { const i = (y * NW + x) * 3, c = chroma(r[i] / 255, r[i + 1] / 255, r[i + 2] / 255); if (Math.hypot(c[0] - kc[0], c[1] - kc[1]) > 0.22) n++; } if (n >= 2) { if (top < 0) top = y; bot = y; } }
+        if (top >= 0 && bot > top) { tops.push(top / NH); bots.push((bot + 1) / NH); } }
+      if (tops.length >= 3) { const mid = (a) => a.slice().sort((p, q) => p - q)[a.length >> 1], t = mid(tops), b = mid(bots); if (b - t > 0.2) { feet = Math.round(Math.max(0, 1 - b) * 1000) / 1000; body = Math.round((b - t) * 1000) / 1000; } } } catch { /* the film places the person itself */ }
+    const meta = { pack: `${name}.frames`, w, h, fps, seconds: Math.round(seconds * 1000) / 1000, frames: at.length - 1, ...(key ? { key } : {}), ...(body ? { feet, body } : {}), at };
     await fsp.writeFile(path.join(dir, `${name}.actor.json`), JSON.stringify(meta, null, 1));
-    return { ...meta, file: out, MB: Math.round(fs.statSync(out).size / 1e4) / 100,
-      use: `in film.js:  import { liveActor } from './live.js';  build: c.me = await liveActor(E, '${name}', { at: [0, 0], height: 1.7 });  frame: c.me.at(x, z); c.me.play(t);`,
+    return { ...meta, at: undefined, file: out, MB: Math.round(fs.statSync(out).size / 1e4) / 100,
+      use: `in film.js:  import { liveActor } from './live.js';  build: c.me = await liveActor(E, '${name}', { at: [0, 0], tall: 1.7 });  frame: c.me.at(x, z); c.me.play(t);  (tall: the person's own height in metres)`,
       note: sat < 0.18 ? "The picture's border is nearly grey: a wall of one strong colour (green, yellow, blue) keys far better. If the wall is in the picture only in part, give liveActor a crop." : "The wall's colour was read from the border of the picture; if the person touches the border, give liveActor a key: 'green' | 'yellow' | [r, g, b]." };
   }
   async function mocap(film, video, opt = {}) {
@@ -565,4 +587,11 @@ function setupCine(o) {
 function blockShare(a, N) { let n = 0, x0 = N, x1 = -1, y0 = N, y1 = -1; for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (a[y * N + x] < 6) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
   const share = n / (N * N); if (share < 0.03 || share > 0.97) return 0; const w = x1 - x0 + 1, h = y1 - y0 + 1; return w >= 8 && h >= 8 && n / (w * h) > 0.9 ? share : 0; }
 
-module.exports = { createCine, setupCine, blockShare };
+/** Stretches of wholly black pictures (lit: each picture's mean brightness, -1 for wholly black) that begin and end with a CUT: the
+ *  picture before and the picture after are lit (mean over 30), or the film begins or ends there. A fade passes through dark pictures. */
+function blackCuts(lit, fps) { const out = [], hard = (v) => v === undefined || v > 30;
+  for (let i = 0; i < lit.length; i++) { if (lit[i] !== -1) continue; let j = i; while (j + 1 < lit.length && lit[j + 1] === -1) j++;
+    if (hard(lit[i - 1]) && hard(lit[j + 1]) && !(i === 0 && j === lit.length - 1)) out.push({ from: Math.round(i / fps * 100) / 100, to: Math.round((j + 1) / fps * 100) / 100 }); i = j; }
+  return out; }
+
+module.exports = { createCine, setupCine, blockShare, blackCuts };

@@ -206,5 +206,5 @@ export interface CineApi {
   review?(film: string, shot?: string): Promise<{ ok: boolean; must: string[]; text: string; shots: unknown[] }>;
   /** A video of a person → a motion clip in the film's folder (body.js clipOf + playClip). */
   mocap?(film: string, video: string, opt?: { name?: string; from?: number; to?: number }): Promise<Record<string, unknown>>;
-  actor?(film: string, video: string, opt?: { name?: string; from?: number; to?: number; fps?: number }): Promise<Record<string, unknown>>;
+  actor?(film: string, video: string, opt?: { name?: string; from?: number; to?: number; fps?: number; quality?: number }): Promise<Record<string, unknown>>;
 }
