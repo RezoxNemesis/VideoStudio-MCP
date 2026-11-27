@@ -574,8 +574,8 @@ export function kidUniform(p) { const sp2 = p.sp2, Y2 = p.Y2;
 /** A CHILD from the son's body (not the grown man scaled down): a shorter lower face, bigger eyes, a small nose, a small mouth, round cheeks, thin brows,
  *  a slender neck; each child its own face (o.face), skin (o.skin), hair (o.hair: 'fringe' | 'parted' | 'crew' | 'curly' | 'spiky'), build (o.slim). */
 export function makeKid(E, o = {}) {
-  const p = makeSon(E, { kid: 1, skin: o.skin, slim: o.slim ?? 0.8, shoulders: o.shoulders ?? 0.8, face: { jaw: 0.27, mouthW: 0.0255, cheek: 0.0075, cheekY: 0.045, chin: 0.006, ...(o.face || {}) } });
-  if (p.bagOff) p.bagOff(); kidHead(p, o); hairKid(p, o.hair || 'fringe', o); p.sleeveTo = o.sleeve ?? 0.56; p.sleeveCover = (o.sleeve ?? 0.56) * 0.95; p.sleeveR = o.sleeveR ?? 0.95; p.kid = true;
+  const p = makeSon(E, { kid: 1, skin: o.skin, slim: o.slim ?? 0.8, shoulders: o.shoulders ?? 0.8, face: { jaw: 0.27, mouthW: 0.0255, cheek: 0.0075, cheekY: 0.045, chin: 0.006, lip: '#9a5850', lipA: 0.6, ...(o.face || {}) } });
+  if (p.bagOff) p.bagOff(); kidHead(p, o); brows(p, o.brow ?? 0.0046, 0.0032, o.browColor || '#2b1d15'); p.head.position.y += 0.01; hairKid(p, o.hair || 'fringe', o);   /* a child's thinner, softer brows; a little more neck above the collar */ p.sleeveTo = o.sleeve ?? 0.56; p.sleeveCover = (o.sleeve ?? 0.56) * 0.95; p.sleeveR = o.sleeveR ?? 0.95; p.kid = true;
   p.root.traverse(m => { if (m.isMesh && m.material && m.material.color && ['8fb0d4', 'a8c8e8', '94b6da'].includes(m.material.color.getHexString())) { m.material = m.material.clone(); m.material.color.set(o.shirt || '#e9e8e2'); } });   /* the son's blue placket and collar pieces become the white of the school shirt */
   { const ct = kidCloth(o.shirt || '#e9e8e2', o.seed ?? 3); if (ct) for (const m of [p.chest.material, p.belly.material]) { m.map = ct; m.color.set('#ffffff'); m.sheen = 0.05; m.roughness = 0.82; m.needsUpdate = true; } }
   p.neck.scale.set(0.9, 1, 0.9); skinGlow(p);
@@ -591,9 +591,9 @@ export function skinGlow(p, o = {}) { const seen = new Set(), k = o.k ?? 0.55;
       #endif`); }; mt.needsUpdate = true; }); }
 
 /** the head's lower part pressed up toward the eyes (children's faces are short below the eyes), eyes a little bigger, nose and brows smaller */
-export function kidHead(p, o = {}) { const H = p.head, yE = o.eyeLine ?? 0.096, k0 = o.lower ?? 0.86, rigid = new Set();
+export function kidHead(p, o = {}) { const H = p.head, yE = o.eyeLine ?? 0.096, k0 = o.lower ?? 0.9, rigid = new Set();
   for (const e of p.eyes || []) { rigid.add(e.piv); if (e.brow) rigid.add(e.brow); }
-  const warp = v => { const d = yE - v.y; if (d > 0) { const k = 1 - (1 - k0) * sm(d / 0.06); v.y = yE - d * k; const f = sm(d / 0.1); v.z *= 1 - 0.035 * f * (v.z > 0 ? 1 : 0); v.x *= 1 + 0.03 * Math.exp(-(((v.y - 0.045) / 0.05) ** 2)); } return v; };
+  const warp = v => { const d = yE - v.y; if (d > 0) { const k = 1 - (1 - k0) * sm(d / 0.06); v.y = yE - d * k; const f = sm(d / 0.1); v.z *= 1 - 0.035 * f * (v.z > 0 ? 1 : 0); v.x *= 1 + 0.03 * Math.exp(-(((v.y - 0.045) / 0.05) ** 2)) * sm(d / 0.03); } return v; };   /* (the cheek fullness grows in from the eye line: a step there showed as a seam across the face) */
   const inv = new THREE.Matrix4(), mt = new THREE.Matrix4(), v = new V3(), w = new V3();
   H.updateMatrixWorld(true); const Hi = new THREE.Matrix4().copy(H.matrixWorld).invert();
   const top = H.children.slice();
@@ -605,7 +605,7 @@ export function kidHead(p, o = {}) { const H = p.head, yE = o.eyeLine ?? 0.096, 
       for (let i = 0; i < n; i++) { v.set(P.getX(i), P.getY(i), P.getZ(i)).applyMatrix4(mt); warp(v).applyMatrix4(inv); P.setXYZ(i, v.x, v.y, v.z); }
       const MA = g.morphAttributes.position; if (MA && g.morphTargetsRelative) for (const D of MA) for (let i = 0; i < n; i++) { v.set(old[i * 3] + D.getX(i), old[i * 3 + 1] + D.getY(i), old[i * 3 + 2] + D.getZ(i)).applyMatrix4(mt); warp(v).applyMatrix4(inv); D.setXYZ(i, v.x - P.getX(i), v.y - P.getY(i), v.z - P.getZ(i)); }
       P.needsUpdate = true; g.deleteAttribute('normal'); g.computeVertexNormals(); g.computeBoundingSphere(); }); }
-  const es = o.eyeScale ?? 1.12; for (const e of p.eyes || []) { e.piv.scale.multiplyScalar(es); e.piv.position.y -= 0.004; e.piv.position.x *= 1.03; if (e.brow) { e.brow.scale.set(e.brow.scale.x * 0.92, e.brow.scale.y * 0.72, e.brow.scale.z); e.brow.position.y += 0.002; } }
+  const es = o.eyeScale ?? 1.05; for (const e of p.eyes || []) { e.piv.scale.multiplyScalar(es); e.piv.position.y -= 0.004; e.piv.position.x *= 1.03; e.piv.position.z -= 0.003; if (e.brow) { e.brow.scale.set(e.brow.scale.x * 0.92, e.brow.scale.y * 0.72, e.brow.scale.z); e.brow.position.y += 0.002; } }
   if (p.noseG) { const ns = o.noseScale ?? 0.8; p.noseG.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(p.noseG); const root = new V3((bb.min.x + bb.max.x) / 2, bb.max.y, bb.min.z).applyMatrix4(Hi);
     p.noseG.traverse(m => { if (!m.isMesh) return; mt.multiplyMatrices(Hi, m.matrixWorld); inv.copy(mt).invert(); const P = m.geometry.attributes.position; for (let i = 0; i < P.count; i++) { v.set(P.getX(i), P.getY(i), P.getZ(i)).applyMatrix4(mt); w.copy(v).sub(root).multiply(new V3(ns, ns * 0.95, ns * 0.88)).add(root); w.applyMatrix4(inv); P.setXYZ(i, w.x, w.y, w.z); } P.needsUpdate = true; m.geometry.deleteAttribute('normal'); m.geometry.computeVertexNormals(); }); }
   return p; }
@@ -633,7 +633,7 @@ export function hairKid(p, style = 'fringe', o = {}) {
     const q = onHair(d, T); P.setXYZ(i, q.x, q.y, q.z); }
   g.setAttribute('hl', new THREE.BufferAttribute(hl, 1)); g.computeVertexNormals();
   const colr = o.hairColor || ['#120c08', '#1a110b', '#0f0b09', '#21170f'][(o.seed ?? 3) % 4];
-  const m = new THREE.MeshPhysicalMaterial({ color: colr, roughness: style === 'parted' ? 0.35 : 0.55, sheen: 0.3, sheenRoughness: 0.5, sheenColor: new THREE.Color('#2e241c'), clearcoat: style === 'parted' ? 0.6 : 0.25, clearcoatRoughness: 0.35 });
+  const m = new THREE.MeshPhysicalMaterial({ color: colr, roughness: style === 'parted' ? 0.42 : 0.6, sheen: 0.2, sheenRoughness: 0.6, sheenColor: new THREE.Color('#2a2018'), clearcoat: style === 'parted' ? 0.35 : 0.08, clearcoatRoughness: 0.45 });
   m.onBeforeCompile = sh => { sh.vertexShader = 'attribute float hl; varying float vHl;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vHl = hl;'); sh.fragmentShader = 'varying float vHl;\n' + sh.fragmentShader.replace('#include <clipping_planes_fragment>', 'if (vHl < 0.0) discard;\n#include <clipping_planes_fragment>'); };
   const me = new THREE.Mesh(g, m); me.castShadow = me.receiveShadow = true; p.head.add(me);
   // loose locks that break the edge: a fringe falling over the forehead, tufts at the temples; a cowlick at the crown
