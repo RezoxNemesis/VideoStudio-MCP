@@ -195,10 +195,11 @@ export function pinchSheet(p, s, L, o = {}) { const A = p.arm[s], h = A.hand, sg
 
 /** the whole arm and hand, as it is now: for moving between poses */
 export function snap(p, s) { const A = p.arm[s], h = A.hand; A.ha.updateWorldMatrix(true, false); const J = [...h.fingers.flat(), ...h.thumb];
-  return { T: wp(A.ha), fd: new V3(0, -1, 0).transformDirection(A.ha.matrixWorld), pd: new V3(0, 0, 1).transformDirection(A.ha.matrixWorld), q: J.map(j => j.quaternion.clone()) }; }
+  return { T: wp(A.ha), E: wp(A.fo), S: wp(A.up), fd: new V3(0, -1, 0).transformDirection(A.ha.matrixWorld), pd: new V3(0, 0, 1).transformDirection(A.ha.matrixWorld), q: J.map(j => j.quaternion.clone()) }; }
 /** move arm+hand from pose A to pose B (k 0…1, already eased by the caller or not): the wrist rides an arc through `via`, the hand turns on the way, fingers change shape on the way */
 export function blendHand(p, s, A, B, k, o = {}) { const u = o.raw ? k : sm2(k); let T; if (o.via) { const a = A.T.clone().lerp(o.via, u), b = o.via.clone().lerp(B.T, u); T = a.lerp(b, u); } else T = A.T.clone().lerp(B.T, u); if (o.lift) T.y += Math.sin(u * PI) * o.lift;
-  const fd = A.fd.clone().lerp(B.fd, u).normalize(), pd = A.pd.clone().lerp(B.pd, u); pd.addScaledVector(fd, -pd.dot(fd)).normalize(); p.reach(s, T, o.pole || new V3(0, -1, 0.3), fd, pd);
+  const fd = A.fd.clone().lerp(B.fd, u).normalize(), pd = A.pd.clone().lerp(B.pd, u); pd.addScaledVector(fd, -pd.dot(fd)).normalize(); /* 28 Nov 2026: the elbow goes where each pose had it (snap keeps elbow + shoulder); a fixed pole here threw every reach's own elbow away */
+  const pole = o.pole || (A.E && B.E ? A.E.clone().sub(A.S).lerp(B.E.clone().sub(B.S), u) : new V3(0, -1, 0.3)); p.reach(s, T, pole, fd, pd);
   const h = p.arm[s].hand, J = [...h.fingers.flat(), ...h.thumb], uf = o.fingers ? clamp(o.fingers(u), 0, 1) : u; J.forEach((j, i) => j.quaternion.copy(A.q[i]).slerp(B.q[i], uf)); }
 /** a loose, living hand at rest: the fingers fall in a cascade (little finger most curled), each drifting a little */
 export function looseHand(p, s, t = 0, o = {}) { const A = p.arm[s], b = o.curl ?? 0.3; const w = k => 0.035 * Math.sin(t * (0.5 + 0.13 * k) + k * 1.7 + A.sg); p.fingers(s, [b + w(0), b + 0.1 + w(1), b + 0.18 + w(2), b + 0.26 + w(3)], o.spread ?? 0.16, [0.85, 0.9, 0.5]); p.thumbRest(s, 0.34 + 0.05 * Math.sin(t * 0.4 + A.sg)); }   /* fingers side by side and the thumb lying near the index: a hand at rest is closed up, not fanned */
